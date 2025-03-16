@@ -1,6 +1,18 @@
-Let's create a robust documentation and workflow strategy tailored for a complex Rust workspace maintained by a single developer. I'll integrate your CONVENTIONS and IDIOMATIC_RUST requirements with practical Git management.
+-----
 
----
+**NOTE: This is a foundational design document currently under review**
+This file is speculative and actively being edited as the proposed
+structure for the project. It will continue to be edited as we work on the
+proposed project structure and does not accurately reflect the current state of
+the project.
+
+This is a planning document **only*** and will be archived once a design
+decision is chosen. The only part of this project that is at MVP status so far
+is the `syn_parser`, which is the parser for the project.
+
+-----
+
+# PROPOSED_DOCS
 
 **1. Documentation Hierarchy** (Aligned with IDIOMATIC_RUST)
 ```
