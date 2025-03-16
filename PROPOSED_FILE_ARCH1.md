@@ -37,7 +37,12 @@ rust-rag/
 
 **Key Architectural Decisions**:
 
-1. **Domain-Driven Separation**:
+1. **Type System Design**:
+   - ID Types: Evaluate `NonZeroUsize`, `AtomicUsize`, and Blake3 hashing
+   - Concurrency-safe primitives: `Send`/`Sync` traits required
+   - Newtype patterns for semantic validation (C-NEWTYPE)
+
+2. **Domain-Driven Separation**:
    - Isolate code parsing (ingest) from reasoning (context/llm)
    - Separate hardware-sensitive components (CUDA in llm/embed)
    - Decouple IDE integration from core logic
