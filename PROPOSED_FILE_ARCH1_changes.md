@@ -75,6 +75,19 @@ pub trait LLMBackend {
 3. Prevents introduction of non-Send types in critical paths
 4. Enables incremental optimization:
    ```rust
+   // Core embedding trait (safe interface)
+   pub trait Embeddable: Send + Sync {
+       fn to_embedding(&self) -> Result<Embedding, EmbedError>;
+       fn similarity(&self, other: &impl Embeddable) -> f32;
+   }
+
+   // LLM interface
+   #[async_trait]
+   pub trait LLMBackend: Send + Sync {
+       async fn prompt(&self, context: Vec<Embedding>, query: &str) -> Result<String, LLMError>;
+       fn optimal_batch_size(&self) -> usize;
+   }
+
    // MVP (sync)
    pub fn process_file(path: &Path) -> Result<()> { ... }
    

@@ -62,11 +62,42 @@ rust-rag/
 
 **Implementation Priorities for MVP**:
 1. Focus on `ingest` → `core` → `context` → `llm` pipeline
-2. Initial interface: Simple CLI
-3. Mockable components for:
+2. Concurrency primitives:
+   - Async-ready LLM interface
+   - Pooled DB connections
+   - Atomic type IDs
+3. Initial interface: Simple CLI
+4. Mockable components for:
    - IDE watcher (file system events only)
    - LLM backend (dummy responses)
    - CozoDB (in-memory)
+
+**Concurrency Strategy**:
+```markdown
+### Concurrency Policy
+- Thread Safety: All public types must be `Send + Sync` by default
+- Async Boundaries: LLM/DB ops use async/await; CPU-bound work uses rayon
+- Channel Types: 
+  - Intra-crate: `std::sync::mpsc` 
+  - Cross-crate: `flume` (bounded, async-sync bridging)
+- Connection Pooling: CozoDB access uses `deadpool` or similar
+- Atomic ID Generation: Use `AtomicUsize` for all graph node IDs
+
+### Testable Verification
+```rust
+#[test]
+fn test_type_send_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<CodeGraph>();
+}
+
+#[tokio::test]
+async fn test_async_pipeline() {
+    let (tx, rx) = flume::bounded(10);
+    tokio::spawn(process_stream(rx));
+    tx.send("test.rs").unwrap();
+}
+```
 
 **Hardware Optimization Strategy**:
 ```rust
