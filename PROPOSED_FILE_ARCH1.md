@@ -49,20 +49,24 @@ rust-rag/
 
 2. **Crate Structure Rationale**:
    - `core/`: Shared data structures (AST representations, embedding types)
-   - `ingest/`: Parallelizable pipeline stages (parse→embed→graph)
-   - `context/`: Hybrid ranking algorithms (LLM + traditional)
+   - `ingest/`: Parallelizable pipeline stages (parse→embed→store)
+   - `context/`: Hybrid ranking using VectorGraphDB + Core embeddings
    - `llm/`: Abstracted LLM backend (Candle/Ollama/etc)
    - `ide/`: Platform-specific watcher implementations
 // AI:
 3. **Critical Cross-Crate Considerations**:
    ```mermaid
    graph TD
-     A[IDE] -->|events| B[Context]
-     B -->|queries| C[GraphDB]
-     C -->|results| D[LLM]
-     D -->|responses| A
-     ingest -->|AST| Core
-     Context -->|embeddings| Core
+    A[IDE] -->|events| B[Context]
+    B -->|queries| C[VectorGraphDB]
+    C -->|hybrid results| D[LLM]
+    D -->|augmented responses| A
+    ingest -->|raw AST| E[Core]
+    ingest -->|processed| C
+    E -->|normalized data| C
+    C -->|schema| E
+    B -->|semantic search| E
+    D -->|embedding storage| C
    ```
 // The Critical Cross-Crate Considerations diagram is missing key information.
 // There are two groups which do not have connections. Is this intended or is it
@@ -75,7 +79,7 @@ rust-rag/
 // AI!
 
  **Implementation Priorities for MVP**:
-1. Focus on `ingest` → `core` → `context` → `llm` pipeline
+1. Focus on `ingest` → `VectorGraphDB` → `context` → `llm` pipeline
 2. Concurrency primitives:
    - Async-ready LLM interface
    - Pooled DB connections
@@ -94,7 +98,7 @@ rust-rag/
 - Channel Types: 
   - Intra-crate: `std::sync::mpsc` 
   - Cross-crate: `flume` (bounded, async-sync bridging)
-- Connection Pooling: CozoDB access uses `deadpool` or similar
+- Connection Pooling: VectorGraphDB (Cozo) access uses `deadpool` with LRU cache
 - Atomic ID Generation: Use `AtomicUsize` for all graph node IDs
 
 ### Testable Verification
@@ -142,7 +146,7 @@ pub enum RAGError {
 **Testing Strategy**:
 1. Three test suites:
    - Unit: `cargo test` in each crate
-   - Integration: `tests/` directory with DB interactions
+   - Integration: Verify ingest→VectorGraphDB roundtripping and DB interactions
    - Benchmarks: CPU/GPU comparison in `benches/`
    
 2. Example-driven docs:
