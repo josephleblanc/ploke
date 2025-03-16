@@ -137,7 +137,7 @@ pub enum RAGError {
    - Benchmarks: CPU/GPU comparison in `benches/`
    
 2. Example-driven docs:
-```rust
+
 /// Example of basic code ingestion
 /// 
 /// ```rust
@@ -145,7 +145,6 @@ pub enum RAGError {
 /// let embeddings = generate_embeddings(&ast)?;
 /// db.store(embeddings)?;
 /// ```
-```
 
 **Critical Questions for Next Steps**:
 1. Should `syn_parser` become a thin wrapper around `syn` or contain custom logic?
