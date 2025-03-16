@@ -1,0 +1,3 @@
+[submodule "syn_parser"]
+	path = syn_parser
+	url = git@github.com:josephleblanc/syn_parser.git
