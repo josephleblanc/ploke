@@ -57,16 +57,18 @@ rust-rag/
 3. **Critical Cross-Crate Considerations**:
    ```mermaid
    graph TD
-    A[IDE] -->|events| B[Context]
-    B -->|queries| C[VectorGraphDB]
-    C -->|hybrid results| D[LLM]
-    D -->|augmented responses| A
-    ingest -->|raw AST| E[Core]
-    ingest -->|processed| C
-    E -->|normalized data| C
-    C -->|schema| E
-    B -->|semantic search| E
-    D -->|embedding storage| C
+    A[IDE] -->|file changes| F[Ingest]
+    A -->|events| B[Context]
+    B -->|query| C[VectorGraphDB]
+    C -->|results| B
+    B -->|enhanced query| D[LLM]
+    D -->|response| E[Interface]
+    E -->|output| A
+    F -->|AST| G[Core]
+    F -->|processed| C
+    C -->|schema| G
+    B -->|semantic search| G
+    D -->|embeddings| C
    ```
 // The Critical Cross-Crate Considerations diagram is missing key information.
 // There are two groups which do not have connections. Is this intended or is it
@@ -84,7 +86,10 @@ rust-rag/
    - Async-ready LLM interface
    - Pooled DB connections
    - Atomic type IDs
-3. Initial interface: Simple CLI
+3. Interface layers:
+   - CLI for initial MVP
+   - Response validation & formatting
+   - Output routing to correct channel
 4. Mockable components for:
    - IDE watcher (file system events only)
    - LLM backend (dummy responses)
