@@ -20,5 +20,8 @@ ai_workflow/
 # Test ouput file
 tests/data/code_graph.ron
 
+# Ignore temp file for random stuff
+temp.md
+
 # backups of old implementations
 *.back
