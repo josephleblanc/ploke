@@ -1,0 +1,4 @@
+[ xacrimon on March 27, 2020 | parent | next](https://news.ycombinator.com/item?id=22699176)
+
+Hi! I am the author of dashmap. CHashMap is essentially a table behind an rwlock where each slot is also behind its own rwlock. This is great in theory since it allows decently concurrent operations providing they don't need to lock the whole table for resizing. In practice this falls short quickly because of the contention on the outer lock and the large amount of locks and unlocks when traversing the map.
+dashmap works by splitting into an array of shards, each shard behind its own rwlock. The shard is decided from the keys hash. This will only lock and unlock once for any one shard and allows concurrent table locking operations provided they are on different shards. Further, there is no central rwlock each thread must go thru which improves performance significantly.
