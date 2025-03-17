@@ -209,7 +209,7 @@ pub enum RAGError {
 3. What's the first user-facing outcome? (Code completion vs documentation gen)
 4. Will you need proc macros for AST transformations?
 
-**Critical Unasked Questions**
+### Miscellaneous Planned Functionality
 
 **1. Model Provenance Verification**
 - **Problem:** Local models could be tampered with
