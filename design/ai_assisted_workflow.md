@@ -75,11 +75,12 @@ The collaboration workflow between developer and AI follows a structured review 
 /// Future Implementation Path: crates/interface/src/collab.rs
 /////////////////////////////////////////////////////////////
 
-#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
-pub struct CodeReviewCycle {
-    /// Unique identifier using UUIDv7 temporal stamps
-    #[schema(example = "018e0c15-5b8f-7f7a-8e6a-1e3b5e8c7f7a")]
-    pub id: uuid::Uuid,
+/// NOTIONAL: Code Review Workflow Structure
+/// Purpose: Define human-AI collaboration protocol
+#[derive(Debug)]
+pub struct CodeReviewCycle<'a> {  // Lifetime enforces scope boundaries
+    /// Temporal identifier (ADR-004 format)
+    id: uuid::Uuid,
     
     /// Affected components from PROPOSED_FILE_ARCH1 architecture
     #[serde(rename = "TargetCrates")]
@@ -147,11 +148,12 @@ AI-generated proposals must provide machine-readable rationales linked to projec
 /// Future Implementation Path: crates/interface/src/rationale.rs
 /////////////////////////////////////////////////////////////
 
-#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
-pub struct AiRationale {
-    /// Links to CONVENTIONS.md sections
-    #[serde(rename = "ComplianceReferences")]
-    pub conventions: Vec<String>,
+/// NOTIONAL: LLM Decision Transparency
+/// Implements IDIOMATIC_RUST C-FAILURE requirements
+#[derive(Debug)]
+struct AiRationale<'a> {  // Lifetime prevents static assumptions
+    /// CONVENTIONS.md cross-refs (C-LINK compliant)
+    conventions: Vec<&'a str>,
     
     /// Memory/performance estimates in MB/ns
     #[serde(rename = "ResourceProjections")]
