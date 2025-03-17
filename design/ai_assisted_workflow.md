@@ -265,3 +265,84 @@ pub struct DomainPolicy {
     /// Allowed context switches
     pub max_context_switches: u8,
 }
+
+### Document Index Infrastructure (Phase 1.6)
+
+#### Taxonomy Framework - Conceptual Overview
+The AI-assisted workflow taxonomy provides standardized classification for all development artifacts. Key aspects:
+
+1. **Categorical Dimensions**:
+   - Criticality (Safety Critical, Best Effort)
+   - Maturity (Experimental, Stable, Deprecated)
+   - Complexity (C0-C5 based on cognitive load)
+2. **Hierarchical Tagging**: Taxonomies applied at crate/module/function levels
+3. **Automated Analysis**: CozoDB-powered tag propagation
+
+#### Taxonomy Framework - Design Specification
+
+/////////////////////////////////////////////////////////////
+/// Design Specification: Workflow Taxonomy
+/// Status: Proposed
+/// Future Implementation Path: crates/interface/src/taxonomy.rs
+/////////////////////////////////////////////////////////////
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum DevelopmentCriticality {
+    SafetyCritical,
+    OperationalEssential,
+    BestEffort,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum MaturityLevel {
+    Experimental,  // No stability guarantees
+    Provisional,   // API surface may change
+    Stable,        // Following semver
+    Deprecated,    // Scheduled for removal
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ComplexityTier {
+    C0, // Trivial (e.g. getter methods)
+    C1, // Simple control flow
+    C2, // Basic algorithms 
+    C3, // Nested conditionals
+    C4, // Concurrency patterns
+    C5, // Unsafe/FFI boundaries
+}
+
+/// Unified taxonomy tagging system
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct CodeArtifactTags {
+    /// Safety impact classification
+    pub criticality: DevelopmentCriticality,
+    /// Stability guarantees
+    pub maturity: MaturityLevel,
+    /// Cognitive load estimate
+    pub complexity: ComplexityTier,
+    /// Linked ADR identifiers
+    pub adr_links: Vec<uuid::Uuid>,
+}
+
+#### Cross-Document Linking - Implementation Strategy
+1. **Anchor Schemas**: Protobuf-like message numbering
+2. **Content Addressing**: Blake3 hash-based fragment identifiers
+3. **Version Propagation**: Semantic version pins in URL paths
+4. **Automated Indexes**: Generated via CozoDB queries
+
+Example cross-link structure:
+`/design/v0.1.0-α#hash=9aeb8f3.../section=3.2.1`
+
+Link validation pseudocode:
+```rust
+fn validate_crosslink(link: &str) -> Result<VerifiedLink> {
+    let parts: Vec<&str> = link.split('#').collect();
+    let version = verify_semver(parts[0])?;
+    let hash = blake3::Hash::from_hex(parts[1])?;
+    let content = get_content_by_hash(hash)?;
+    Ok(VerifiedLink::new(version, content))
+}
+```
