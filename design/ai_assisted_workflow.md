@@ -130,3 +130,88 @@ pub struct StructuredComment {
     #[serde(rename = "CriticalityLevel")]
     pub level: u8,
 }
+
+#### Explainability Requirements - Conceptual Framework
+AI-generated proposals must provide machine-readable rationales linked to project standards. Key aspects include:
+
+1. **Architecture Alignment**: Direct references to IDIOMATIC_RUST.md sections
+2. **Performance Projections**: Estimated memory/throughput impacts
+3. **Safety Analysis**: Thread safety and lifetime annotations
+4. **Alternative Options**: Ordered list of considered alternatives
+
+#### Explainability Requirements - Design Specification
+
+/////////////////////////////////////////////////////////////
+/// Design Specification: AI Rationale Format
+/// Status: Draft
+/// Future Implementation Path: crates/interface/src/rationale.rs
+/////////////////////////////////////////////////////////////
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct AiRationale {
+    /// Links to CONVENTIONS.md sections
+    #[serde(rename = "ComplianceReferences")]
+    pub conventions: Vec<String>,
+    
+    /// Memory/performance estimates in MB/ns
+    #[serde(rename = "ResourceProjections")]
+    pub resources: ResourceEstimates,
+    
+    /// Thread safety and ownership guarantees
+    #[serde(rename = "ConcurrencyProfile")]
+    pub concurrency: ConcurrencyClaims,
+    
+    /// Ordered alternatives with rejection reasons  
+    #[serde(rename = "ConsideredOptions")]
+    pub alternatives: Vec<DesignOption>,
+}
+
+/// Hardware-aware performance predictions
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct ResourceEstimates {
+    /// Worst-case memory consumption (MB)
+    pub memory_ceiling: f32,
+    /// 95th percentile operation latency (ns)
+    pub latency_p95: u64,
+    /// Projected GPU utilization ratio
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_util: Option<f32>,
+}
+
+/// Concurrency safety declarations
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct ConcurrencyClaims {
+    /// Implements Send/Sync where appropriate
+    pub send_sync_compliance: bool,
+    /// Lifetime elision validation
+    pub lifetime_safety: LifetimeStatus,
+    /// Deadlock risk assessment
+    pub deadlock_risk: RiskLevel,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum LifetimeStatus {
+    FullyElidedSafe,
+    ExplicitAnnotationsRequired,
+    PotentialDanglingRisk,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case")] 
+pub enum RiskLevel {
+    Negligible,
+    Mitigated,
+    RequiresReview,
+}
+
+/// Alternative design option documentation
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct DesignOption {
+    /// Concrete type/methodology name
+    pub option_name: String,
+    /// RFC-style rejection rationale
+    pub rejection_reason: String,
+    /// Specific constraint violations
+    pub constraint_violations: Vec<String>,
+}
