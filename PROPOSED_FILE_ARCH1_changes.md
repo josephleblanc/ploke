@@ -53,16 +53,87 @@ Adapter types for CozoDB integration:
 - Phase 2 completion blocker: CUDA feature flag implementation
 - Estimated completion: Q3 2024
 
-**2. Vector/Graph Hybrid Handling**
-- **Oversight:** Missing clear path for joint querying
-- **Critical Impact:** Entire RAG use case relies on this
-- **Required Diagram Fix**:
-  ```mermaid
-  graph TD
-    C[VectorGraphDB] -->|vector search| B[Context]
-    C -->|graph traversal| B
-    G[Core] -->|shared schemas| C
+**2. Hybrid Vector/Graph Architecture**
+
+**CozoDB Integration Strategy**  
+Based on cozo_db_hnsw.txt recommendations:
+```cozo
+::hnsw create code_graph:embeddings {
+    dim: 384,
+    dtype: F32,
+    fields: [embedding],
+    distance: Cosine
+}
+
+::create code_graph {
+    content_hash: Bytes, 
+    type_stamp: Uuid,
+    embedding: <F32; 384>,
+    relations: [{target: Bytes, kind: String}]
+}
+```
+
+**Concurrency Design** (Per IDIOMATIC_RUST C-SEND-SYNC)
+```rust
+// sync_parser/src/parallel.rs
+pub struct GraphRecorder {
+    // Thread-safe writers for concurrent ingestion
+    hnsw_writer: Arc<Mutex<HnswWriter>>, // Cozo HNSW batch inserter
+    graph_writer: cozo::DbWriter,        // Cozo's atomic transaction API
+}
+
+// Runtime isolation to prevent Tokio/Rayon conflicts
+#[tokio::main(flavor = "multi_thread")]
+async fn parse_and_ingest() {
+    rayon::scope(|s| {
+        s.spawn(|| process_file(recorder.clone()));
+    });
+}
+```
+
+**Type Converters** (Near-Term)
+```rust
+impl From<ast::Function> for CozoNode {
+    fn from(f: ast::Function) -> Self {
+        CozoNode {
+            content_hash: blake3_hash(&f),
+            embedding: model.embed(&f.signature),
+            relations: f.calls.into_iter().map(|c| Relation {
+                target: blake3_hash(c),
+                kind: "CALLS".into()
+            }).collect()
+        }
+    }
+}
+```
+
+**Long-Term Optimizations**
+- **Native Cozo Types in syn_parser** with `cfg(cozo)`
+  ```rust
+  #[cfg(feature = "cozo")]
+  pub type NodeHash = cozo::Bytes;  // Blake3 directly as Cozo type
   ```
+  
+- **Hybrid Query Example** (From cozo_db_release_07.txt)
+  ```cozo
+  ?[dist, target, code] := 
+    ~code_graph:embeddings{ content_hash: t, embedding: e, | query: $q, k: 5 },
+    *code_graph{ content_hash: t => code, relations: r },
+    relation_in(r, "IMPLEMENTS"),
+    cozo::similarity(e, $query_vec) as dist
+  ```
+
+**Validation Plan**
+1. Test vector dimension matches (384d F32) via:
+   ```rust
+   #[test]
+   fn test_embedding_dim() {
+       let node = sample_node();
+       assert_eq!(node.embedding.len(), 384);
+   }
+   ```
+2. Benchmark hybrid queries with `cozo-rs` mock
+3. Stress test concurrent writes (10k req/s")
 
 **3. CUDA Feature Granularity**
 - **Current Proposal:** `cuda` flag enables GPU for `llm` and `embed`
