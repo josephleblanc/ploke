@@ -1,4 +1,4 @@
-# PROPOSED_FILE_ARCHITECTURE
+# PROPOSED_FILE_ARCHITECTURE_VERSION_1
 
 **Proposed Workspace Structure**:
 ```

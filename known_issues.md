@@ -114,3 +114,57 @@
      ```
 
 ---
+
+## Franz Review v1 - google endpoint Gemma3-27B
+
+**1. Type System Design – A Disaster Waiting to Happen:**
+
+*   **Content Addressing with Blake3:** 
+  - blake3 vs MD5.
+  - performance?
+  - tradeoffs?
+    - collision resistance?
+    - speed?
+    - sufficient vs overkill?
+*   **Temporal Versioning with UUIDv7:** UUIDs for *every* version? Are you
+kidding me? That's going to bloat the database to an unmanageable size. We need
+a proper versioning scheme, not just throwing random identifiers at the
+problem. And UUIDv7? Seriously? It's barely standardized.
+*   **CozoDB Schema:** The schema itself is… questionable. `vec: <F32; 384>`?
+Hardcoding the embedding dimension *in the schema*? What happens when we switch
+embedding models? We have to migrate the entire database? This is inflexible
+and short-sighted. And why are we storing the hash *and* the type versions?
+Redundancy!
+  - Possible solution: Compile time generics? What are those called again?
+*   **DashMap for Caching:** DashMap? For *everything*? That's going to
+introduce a massive amount of contention. We need a more sophisticated caching
+strategy, potentially leveraging a read-copy-update (RCU) approach.
+  - *Double checking*: DashMap is a concurrent map, but if there's high
+  contention, it might not be the best choice. The reviewer suggests RCU
+  (Read-Copy-Update), which is a good point for high-read/low-write
+  scenarios. So that's a valid concern. 
+DashMap is mentioned as a lock-free structure, but DashMap uses        
+   sharding and locks internally. It's thread-safe but not lock-free. The 
+   distinction is important for performance but maybe not correctness.    
+   However, the review's suggestion to use lock-free alternatives where   
+   appropriate needs clarification. Which structures? Maybe crossbeam or  
+   other crates?
+
+**2. Hybrid Vector/Graph Architecture – A Confused Mess:**
+*   **Graph Storage Schema:** Again, hardcoding the embedding dimension. And
+the `relations` field? A list of `(target, kind)` pairs? That's going to be
+incredibly inefficient for graph traversal. We need a proper adjacency list or
+matrix representation.
+  * *Double Checking*: Hybrid Vector/Graph Architecture: The reviewer is right
+  about the relations field being inefficient for graph traversal.
+  Using an adjacency list or a proper graph structure in the database would be
+  better. The test vectors only checking dimension is indeed insufficient; more
+  comprehensive testing is needed.
+
+**3. Crate Structure Rationale – Over-Engineered and Unnecessary:**
+*   `ide/`? A separate crate for an IDE watcher? That's premature optimization.
+It should be part of the `interface` crate, if it's even necessary at all.
+  * *Double Checking:* Crate structure: Having many small crates can lead to
+  dependency management issues and increased compilation times. The reviewer's
+  point about crate bloat is valid, especially if some crates don't have clear
+  responsibilities.
