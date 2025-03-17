@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    # Add more modules as needed
+]
+exclude = ["ai_workflow"]
+
+[workspace.dependencies]
+# Shared dependencies with versions
+syn = "2.0"
+# Other shared dependencies

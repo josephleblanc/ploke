@@ -1,0 +1,19 @@
+[package]
+name = "syn_parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+quote = "1"
+proc-macro2 = "1"
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+petgraph = "0.7.1"
+# indradb-lib = { version = "*", features = ["rocksdb-datastore"] }
+# This is not installing correctly, and I am getting errors related to rocksb,
+# so for now we will move ahead with in-memory storage from indradb and figure
+# out the errors for rocksdb later.
+indradb-lib = "*"
+
+[dev-dependencies]
