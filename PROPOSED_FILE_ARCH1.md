@@ -53,7 +53,7 @@ rust-rag/
    - `context/`: Hybrid ranking using VectorGraphDB + Core embeddings
    - `llm/`: Abstracted LLM backend (Candle/Ollama/etc)
    - `ide/`: Platform-specific watcher implementations
-// AI:
+
 3. **Critical Cross-Crate Considerations**:
    ```mermaid
    graph TD
@@ -70,15 +70,6 @@ rust-rag/
     B -->|semantic search| G
     D -->|embeddings| C
    ```
-// The Critical Cross-Crate Considerations diagram is missing key information.
-// There are two groups which do not have connections. Is this intended or is it
-// an oversight? At first glance to looks like there should be a link from Core to
-// GraphDB. There is currently no path representing how elements are stored in the
-// database. Also, its should be a vector/graph db, not just a graphdb. Are there
-// any other critical oversights in the mermaid diagram?
-// Are there other changes that must be made to the rest of the
-// PROPOSED_FILE_ARCH1.md file to reflect the updated mermaid diagram?
-// AI!
 
  **Implementation Priorities for MVP**:
 1. Focus on `ingest` → `VectorGraphDB` → `context` → `llm` pipeline
