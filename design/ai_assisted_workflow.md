@@ -215,3 +215,53 @@ pub struct DesignOption {
     /// Specific constraint violations
     pub constraint_violations: Vec<String>,
 }
+
+#### Cognitive Load Management - Conceptual Framework
+Solo developers using AI assistance require rigorous attention management to prevent burnout and maintain code quality. Our strategy includes:
+
+1. **Time Boxing**: Strict limits on continuous focus periods
+2. **Context Isolation**: Domain-specific work sessions
+3. **Priority Stacking**: Risk-weighted task ordering
+4. **Recovery Buffers**: Mandatory break intervals
+
+#### Cognitive Load Management - Design Specification
+
+/////////////////////////////////////////////////////////////
+/// Design Specification: Attention Management
+/// Status: Draft
+/// Future Implementation Path: crates/interface/src/cognitive.rs
+/////////////////////////////////////////////////////////////
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct CognitivePolicy {
+    /// Maximum continuous work period (minutes)
+    #[serde(rename = "MaxFocusDuration")]
+    pub focus_duration: u32,
+    
+    /// Minimum break between work sessions
+    #[serde(rename = "MinRecoveryTime")]
+    pub recovery_time: u32,
+    
+    /// Domain-specific time allocations
+    #[serde(rename = "DomainBudgets")]
+    pub budgets: HashMap<WorkDomain, DomainPolicy>,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema, Hash, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkDomain {
+    CodeIngestion,
+    GraphTraversal,
+    ModelInference,
+    SecurityValidation,
+}
+
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct DomainPolicy {
+    /// Time allocation in minutes
+    pub time_budget: u32,
+    /// Complexity multiplier (1.0 = baseline)
+    pub complexity_factor: f32,
+    /// Allowed context switches
+    pub max_context_switches: u8,
+}
