@@ -16,12 +16,14 @@ book/*.js
 ## AI stuff
 .aider*
 ai_workflow/
+!ai_workflow/experiments/active/
 
 # Test ouput file
 tests/data/code_graph.ron
 
 # Ignore temp file for random stuff
 temp.md
+.temp/
 
 # backups of old implementations
 *.back
