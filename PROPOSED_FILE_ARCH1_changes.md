@@ -5,13 +5,36 @@
 ### **Critical Architecture Alignment Check**
 
 **1. Type System Gaps**
-- **Problem:** Proposed `NonZeroUsize` vs `AtomicUsize` debate doesn't resolve ownership implications
-- **Risk:** Mismatch between ID uniqueness guarantees (parser vs graphdb)
-- **Recommendation:** 
+- **Problem:** Current `usize` IDs lack semantic meaning and versioning
+  - `TypeId` serves as a temporal identifier for type relationships (ownership, inheritance)
+  - Current ID system doesn't handle code changes/versioning (critical for CozoDB's validity tracking)
+- **Analysis of Options:**
+  | Approach       | Pro                         | Con                          | CozoDB Compatibility          |
+  |----------------|-----------------------------|------------------------------|--------------------------------|
+  | `AtomicUsize`  | Thread-safe increments       | Memory overhead for atomic ops| Requires explicit version cols|
+  | Blake3 Hash    | Content-addressable storage | Hash collisions possible      | Native HNSW index support      |
+  | UUIDv7         | Time-ordered uniqueness      | Storage overhead (16 bytes)   | Works with Bytes type storage  |
+- **Recommendation:**
   ```rust
-  pub struct NodeId(NonZeroUsize); // Uniqueness + memory efficiency
-  pub struct TypeId(AtomicUsize); // Concurrency safety for type graph
+  pub struct NodeId(blake3::Hash);  // Content-addressed code elements (AST nodes)
+  pub struct TypeId(uuid::Uuid);    // Time-ordered type versions for validity
+  
+  // CozoDB schema compatibility
+  :create nodes {
+    id: Bytes =>  // Blake3 hash of AST content
+    type_id: Uuid,
+    vec: <F32; 384>,  // Embedding vector
+    validity: Validity
+  }
   ```
+  - Justification from Cozo docs: 
+    - "Vec<F32> native HNSW support" (cozo_db_hnsw.txt)
+    - "Validity type for time travel" (cozodb_docs_types.txt)
+    - "UUID as native type" (cozo_db_release_07.txt)
+- **Benefits:**
+  1. Enables incremental parsing (via content hashes)
+  2. Automatic deduplication of identical code elements
+  3. Efficient temporal queries for context tracking
 
 **2. Vector/Graph Hybrid Handling**
 - **Oversight:** Missing clear path for joint querying
