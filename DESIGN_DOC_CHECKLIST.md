@@ -62,6 +62,10 @@
 - All decisions must reference IDIOMATIC_RUST.md guidelines
 - Document structure must align with PROPOSED_FILE_ARCH1.md
 - Error handling follows CONVENTIONS.md zero-copy principles
+- Code examples use communication-first style with:
+  - Clear "Design Specification Code Block" headers
+  - Purpose/relation/update protocol comments
+  - Notional vs implementation code distinction
 
 ### Phase 5: AI/Human Symbiosis
 - [ ] Develop Common Ground Notation System

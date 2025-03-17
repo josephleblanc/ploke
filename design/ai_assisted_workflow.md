@@ -345,4 +345,66 @@ fn validate_crosslink(link: &str) -> Result<VerifiedLink> {
     let content = get_content_by_hash(hash)?;
     Ok(VerifiedLink::new(version, content))
 }
+
+#### Automated Index Generation - Conceptual Framework
+The self-maintaining document index system ensures design decisions remain connected to implementation. Core features:
+
+1. **Embedding Integration**: Hybrid HNSW indexes combining text and code embeddings
+2. **Taxonomy-Driven Clustering**: Automatic grouping using CodeArtifactTags
+3. **Real-Time Updates**: CDC pipelines from CozoDB to vector store
+4. **Versioned Indexes**: Semantic version isolation for historical queries
+
+#### Automated Index Generation - Design Specification
+
+/////////////////////////////////////////////////////////////
+/// Design Specification Code Block (Protocol Definition Only)
+/// Purpose: Document index maintenance strategy pattern
+/// Relation to Codebase: Will inform future crates/indexing
+/// Update Protocol: Requires ADR for breaking changes
+/////////////////////////////////////////////////////////////
+
+/// Example CozoDB schema representation demonstrating
+/// the index structure, not actual implementation code
+::create design_index {
+    content_hash: String,    // Blake3 hash
+    semantic_version: String, // SemVer format
+    embedding: <F32; 384>,   // Matching PROPOSED_FILE_ARCH1
+    relationships: [String], // ADR links
+    artifact_type: String,   // Serialized CodeArtifactTags
+}
+
+/// Hypothetical HNSW configuration showing indexing strategy
+/// Note: Actual parameters will be finalized during implementation
+::hnsw create doc_hnsw_idx:design_index {
+    dim: 384,
+    dtype: F32,
+    fields: [embedding],
+    filter_fields: [semantic_version, artifact_type],
+    distance: Cosine,
+}
+
+/// Notional maintenance pattern - illustrates update cadence
+::update-index doc_hnsw_idx [
+    $hash <- [?hash, ?version, ?embed, ?rels, ?tags]
+    ?[hash, version, embed, rels, tags] := ~design_index{hash, version, embed, rels, tags}
+] {
+    "interval": "15m",  // Batch update interval
+    "version_policy": { 
+        "retain": ["current", "previous"]
+    }
+}
+
+/// Rust type sketch for index entries
+/// Demonstrates serialization pattern, not final implementation
+#[derive(Debug, serde::Serialize)]
+pub struct IndexEntry {
+    #[serde(rename = "contentHash")]
+    pub content_hash: String,
+    #[serde(rename = "semanticVersion")]
+    pub version: String,
+    pub embedding: Vec<f32>,
+    pub relationships: Vec<String>,
+    #[serde(flatten)]
+    pub artifact_type: CodeArtifactTags,
+}
 ```
