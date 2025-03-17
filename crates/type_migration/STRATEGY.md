@@ -1,0 +1,131 @@
+# Type System Migration Strategy
+
+## [PROBLEM]
+Current `usize`-based IDs in `syn_parser`:
+1. Lack semantic meaning for code entity identity
+2. Prevent content-addressable storage patterns
+3. Complicate concurrency safety (per `IDIOMATIC_RUST` C-SEND-SYNC)
+4. Limit integration with CozoDB's native types (`cozodb_docs_types.txt`)
+
+## [SOLUTION]
+Three-phase migration to content-hashed identifiers:
+```
+Phase 1: Introduce newtypes with backward compatibility
+Phase 2: Parallel implementation with deprecations
+Phase 3: Full adoption with concurrency safety
+```
+
+## [REASONING]
+Aligns with:
+- `CONVENTIONS.md` zero-copy requirements via content addressing
+- `IDIOMATIC_RUST` C-NEWTYPE patterns
+- CozoDB recommendations for vector/graph hybrid storage
+
+---
+
+## 1. Immediate Fix (Backward-Compatible Foundation)
+
+```rust
+// types.rs
+#[deprecated(note = "Use ContentHash for new code")]
+pub type NodeId = usize;
+
+#[deprecated(note = "Use TypeStamp for new code")]
+pub type TypeId = usize;
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub struct ContentHash([u8; 32]);
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TypeStamp {
+    content: ContentHash,
+    version: uuid::Uuid,
+}
+```
+
+**Validation Strategy:**
+```bash
+cargo test --no-fail-if-warnings  # Allow deprecated usage in tests
+```
+
+---
+
+## 2. Phase-Out Strategy (3-4 Weeks)
+
+**key Change:** Gradual adoption with parallel implementations
+```rust
+// visitor.rs
+use dashmap::DashMap;  // Thread-safe alternative to HashMap
+
+struct VisitorState {
+    #[deprecated]
+    type_map: HashMap<String, TypeId>,
+    
+    // New thread-safe version
+    content_cache: DashMap<ContentHash, TypeStamp>,
+    parsing_versions: DashMap<ContentHash, Uuid>,
+}
+```
+
+**Example Migration:**
+```rust
+// Before
+fn get_or_create_type(&mut self, ty: &Type) -> TypeId { ... }
+
+// After (preserves API surface)
+fn get_or_create_type(&mut self, ty: &Type) -> TypeId {
+    let hash = calculate_hash(ty);
+    let version = *self.parsing_versions.entry(hash)
+        .or_insert_with(Uuid::now_v7);
+        
+    TypeId::from(
+        self.content_cache.entry(hash)
+            .or_insert_with(|| TypeStamp {
+                content: hash,
+                version
+            })
+            .clone()
+    )
+}
+```
+
+---
+
+## 3. Complete Migration
+
+**Final Changes:**
+1. Remove deprecated types from `types.rs`
+2. Update all struct fields in `nodes.rs` and `graph.rs`
+3. Implement `Send + Sync` for all graph types
+
+**Validation Test:**
+```rust
+#[test]
+fn test_roundtrip_serialization() {
+    let graph = analyze_code("tests/fixtures/sample.rs");
+    let ron = to_ron_string(&graph);
+    let reconstructed: CodeGraph = from_ron_str(&ron);
+    
+    assert_eq!(graph, reconstructed);
+}
+
+#[tokio::test]
+async fn test_concurrent_parsing() {
+    let state = Arc::new(VisitorState::new());
+    let handles: Vec<_> = (0..10).map(|_| {
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            parse_code_sample(&state).await
+        })
+    }).collect();
+    
+    let results = join_all(handles).await;
+    assert!(results.iter().all(Result::is_ok));
+}
+```
+
+**Post-Migration Cleanup:**
+```bash
+# Cleanup command after full migration
+rg -l 'NodeId|TypeId' | xargs sed -i '/deprecated/d'
+```
