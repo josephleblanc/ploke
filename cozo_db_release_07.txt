@@ -1,0 +1,96 @@
+Version 0.7: MinHash-LSH near-duplicate indexing, Full-text search (FTS) indexing, Json values and update
+Continuing with the empowerment of CozoDB by vector search, This version brings you a few more features!
+
+MinHash-LSH indices
+Let’s say you collect news articles from the Internet. There will be duplicates, but these are not exact duplicates. How do you deduplicate them? Simple. Let’s say your article is stored thus:
+
+:create article{id: Int => content: String}
+To find the duplicates, you create an LSH index on it:
+
+::lsh create article:lsh {
+    extractor: content, 
+    tokenizer: Simple, 
+    n_gram: 7,
+    n_perm: 200,
+    target_threshold: 0.7,
+}
+Now if you do this query:
+
+?[id, content] := ~article:lsh {id, content | query: $q }
+then articles with its content about 70% or more similar to the passed-in text in $q will be returned to you.
+
+If you want, you can also mark the duplicates at insertion time. For this, use the following schema:
+
+:create article{id: Int => content: String, dup_for: Int?}
+Then at insertion time, use the query:
+
+{
+    ?[id, dup_for] := ~article:lsh {id, dup_for | query: $q, k: 1} 
+    :create _existing {id, dup_for}
+}
+
+%if _existing
+    %then {
+        ?[id, content, dup_for] := *_existing[eid, edup], 
+                                   id = $id, 
+                                   content = $content, 
+                                   dup_for = edup ~ eid
+        :put article {id => content, dup_for}
+    }
+    %else {
+        ?[id, content, dup_for] <- [[$id, $content, null]]
+        :put article {id => content, dup_for}
+    }
+%end
+For our own use-case, this achieves about 20x speedup compared to using the equivalent Python library. And we are no longer bound by RAM.
+
+As with vector search, LSH-search integrates seamlessly with Datalog in CozoDB.
+
+Full-text search
+After finding the duplicates, what if I want all articles that mentions the word “iPhone”? Using vector search seems such an overkill and may not yield good results. So we have full-text search indices as well!
+
+To apply the FTS index:
+
+::fts create article:fts {
+    extractor: content,
+    tokenizer: Simple,
+    filters: [Lowercase, Stemmer('english'), Stopwords('en')]
+}
+and it’s ready to be searched:
+
+?[id, content, score] := ~article:fts {id, content | query: $q, bind_score: score }
+:order -score
+Passing 'iPhone' to $q will give you articles that explicitly mention the iPhone, 'iPhone iPad' will give you articles that mention both, and 'iPhone OR iPad' will give you articles that mention either.
+
+For more information on FTS and LSH, refer to the proximity search chapter.
+
+Json values and update
+Now we will have AI commentators analyze and comment on the articles. We will use the following schema:
+
+:create article{id: Int => content: String, dup_for: Int?, comments: Json default {}}
+The Json type is newly available. Now let’s say our economics analyzer has produced a report for article 42, in the following Json:
+
+{
+    "economic_impact": "The economic impact of ChatGPT has been significant since its introduction. As an advanced language model, ChatGPT has revolutionized various industries and business sectors. It has enhanced customer support services by providing automated and intelligent responses, reducing the need for human intervention. This efficiency has resulted in cost savings for businesses while improving customer satisfaction. Moreover, ChatGPT has been utilized for market research, content generation, and data analysis, empowering organizations to make informed decisions quickly. Overall, ChatGPT has streamlined processes, increased productivity, and created new opportunities, thus positively impacting the economy by driving innovation and growth."
+}
+To merge this comment into the relation:
+
+?[id, json] := id = $id, *article{id, json: old}, json = old ++ $new_report
+:update article {id => json}
+Note that with :update, we did not specify the dup_for field, and it will keep whatever its old value.
+
+Next, our political analyzer AI weighs in:
+
+{
+    "political_impact": "The political impact of ChatGPT has been a subject of debate and scrutiny. On one hand, ChatGPT has the potential to democratize access to information and empower individuals to engage in political discourse. It can facilitate communication between citizens and government officials, enabling greater transparency and accountability. Additionally, it can assist in analyzing vast amounts of data, helping policymakers make informed decisions. However, concerns have been raised regarding the potential misuse of ChatGPT in spreading disinformation or manipulating public opinion. The technology's ability to generate realistic and persuasive content raises ethical and regulatory challenges, necessitating careful consideration of its deployment to ensure fair and responsible use. As a result, the political impact of ChatGPT remains complex, with both potential benefits and risks to navigate."
+}
+We just run the same query but with a different $new_report bound.
+
+Now if you query the database for article 42, you will see that its comments contain both reports!
+
+There are many more things you can do with Json values: refer to Functions and operators and Types for more details.
+
+Misc
+In this version the semantics of %if in imperative scripts has changed: now a relation is considered truthy as long as it contains any row at all, regardless of the content of its rows. We found the old behaviour confusing in most circumstances.
+
+Happy hacking!
