@@ -51,12 +51,35 @@ rust-rag/
      ```
    - Concurrency: `DashMap` for thread-safe content caching
 
-2. **Domain-Driven Separation**:
-   - Isolate code parsing (ingest) from reasoning (context/llm)
-   - Separate hardware-sensitive components (CUDA in llm/embed)
-   - Decouple IDE integration from core logic
+2. **Hybrid Vector/Graph Architecture**:
+   - CozoDB HNSW vector index integration:
+     ```cozo
+     ::hnsw create code_graph:embeddings {
+         dim: 384,
+         dtype: F32,
+         fields: [embedding],
+         distance: Cosine
+     }
+     ```
+   - Graph storage schema:
+     ```cozo
+     ::create code_graph {
+         content_hash: Bytes, 
+         type_stamp: Uuid,
+         embedding: <F32; 384>,
+         relations: [{target: Bytes, kind: String}]
+     }
+     ```
+   - Test vectors:
+     ```rust
+     #[test]
+     fn test_embedding_dim() {
+         let node = sample_node();
+         assert_eq!(node.embedding.len(), 384);
+     }
+     ```
 
-2. **Crate Structure Rationale**:
+3. **Crate Structure Rationale**:
    - `core/`: Shared data structures (AST representations, embedding types)
    - `ingest/`: Parallelizable pipeline stages (parse→embed→store)
    - `context/`: Hybrid ranking using VectorGraphDB + Core embeddings
@@ -98,8 +121,23 @@ rust-rag/
 **Concurrency Strategy**:
 ```markdown
 ### Concurrency Policy
-- Thread Safety: All public types must be `Send + Sync` by default
-- Async Boundaries: LLM/DB ops use async/await; CPU-bound work uses rayon
+- Thread Safety: All public types must be `Send + Sync` by default (C-SEND-SYNC)
+- Runtime Aqueduct: Explicit runtime segregation for Tokio/Rayon
+  ```rust
+  #[tokio::main(flavor = "multi_thread")]
+  async fn parse_and_ingest() {
+      rayon::scope(|s| {
+          s.spawn(|| process_file(recorder.clone()));
+      });
+  }
+  ```
+- Batch Writers: Thread-safe HNSW batch inserter
+  ```rust
+  pub struct GraphRecorder {
+      hnsw_writer: Arc<Mutex<HnswWriter>>,
+      graph_writer: cozo::DbWriter,
+  }
+  ```
 - Channel Types: 
   - Intra-crate: `std::sync::mpsc` 
   - Cross-crate: `flume` (bounded, async-sync bridging)
