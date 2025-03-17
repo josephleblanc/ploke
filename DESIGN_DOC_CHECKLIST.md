@@ -11,6 +11,14 @@
 - [ ] Outline decision tracking methodology
 - [ ] Create ADR (Architecture Decision Record) template
 - [ ] Define version control strategy for design docs
+- [ ] AI/Human Interface Patterns
+  - [ ] Develop feedback loop protocol
+  - [ ] Define explainability requirements
+  - [ ] Create cognitive load management plan
+- [ ] Document Index Infrastructure
+  - [ ] Create AI-assisted workflow taxonomy
+  - [ ] Define cross-document linking standards
+  - [ ] Establish automated index generation
 
 ### Phase 2: Core Content Development
 - [ ] Knowledge Retention Section
@@ -54,3 +62,44 @@
 - All decisions must reference IDIOMATIC_RUST.md guidelines
 - Document structure must align with PROPOSED_FILE_ARCH1.md
 - Error handling follows CONVENTIONS.md zero-copy principles
+
+### Phase 5: AI/Human Symbiosis
+- [ ] Develop Common Ground Notation System
+- [ ] Define Dual-Purpose Documentation Templates
+- [ ] Create AI-Readable Contract Specifications
+
+### Phase 6: Knowledge Graph Integration
+- [ ] CozoDB Schema Versioning Strategy
+- [ ] Cross-Artifact Traceability Matrix
+- [ ] Embedding Provenance Tracking
+
+### Phase 7: Security Amplification
+- [ ] Adversarial Example Resistance Plan
+- [ ] Model Output Validation Layers
+- [ ] Prompt Injection Defense Strategy
+
+### Phase 8: Performance Envelope
+- [ ] Embedding Dimension Rationale (Why 384D?)
+- [ ] HNSW Index Tuning Strategy
+- [ ] Batch Processing Thresholds
+
+### Phase 9: Rust-Specific Safeguards
+- [ ] `Send + Sync` Audit Trail Documentation
+- [ ] Lifetime Propagation Strategy
+- [ ] Unsafe Usage Gates
+- [ ] Macro Hygiene Checks
+
+### Phase 10: Validation Framework
+- [ ] Fuzz Testing Requirements
+- [ ] Differential Testing Plan
+- [ ] Cargo Geiger Audit Schedule
+
+## Appendix A: Hardware & Integrity
+- [ ] CUDA Fallback Strategy
+- [ ] Hash Tree Update Protocol
+- [ ] Memory Hierarchy Mapping
+
+## Appendix B: Stream Processing
+- [ ] Backpressure Thresholds
+- [ ] Buffer Sizing Formula
+- [ ] Priority Channel Definitions
