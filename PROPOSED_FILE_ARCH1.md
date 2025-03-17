@@ -209,5 +209,92 @@ pub enum RAGError {
 3. What's the first user-facing outcome? (Code completion vs documentation gen)
 4. Will you need proc macros for AST transformations?
 
-Would you like to refine any part of this structure or discuss implementation priorities?
-```
+**Critical Unasked Questions**
+
+**1. Model Provenance Verification**
+- **Problem:** Local models could be tampered with
+- **Solution:** XChaCha20-Poly1305 signatures
+  ```rust
+  // llm/security.rs
+  pub fn verify_model(path: &Path, key: &[u8]) -> Result<()> {
+      let sig = read_signature(path);
+      let data = read_model_bytes(path);
+      chacha20poly1305::verify(key, data, sig)
+  }
+  ```
+- **Risk Elimination:** Prevents prompt injection via corrupted models
+- **Validation Test:**
+  ```rust
+  #[test]
+  fn test_model_tampering() {
+      let temp_model = TempFile::with_bad_data();
+      assert!(verify_model(temp_model.path(), KEY).is_err());
+  }
+  ```
+
+**2. Stream Processing Architecture**
+- **Problem:** IDE events need real-time response
+- **Solution:** Async streams with backpressure
+  ```rust
+  // ide/watcher.rs
+  pub async fn watch_events() -> impl Stream<Item = FileEvent> {
+      let (tx, rx) = flume::bounded(100);
+      tokio::spawn(async move {
+          while let Some(event) = ide_stream.next().await {
+              tx.send_async(event).await?;
+          }
+      });
+      rx.into_stream()
+  }
+  ```
+- **Why Cozo:** Handles hybrid batch/stream via `::subscribe`
+
+**3. Embedded Source Validation**
+- **Problem:** Code dependencies could tamper with embeddings
+- **Solution:** Hierarchical Merkle trees
+  ```rust
+  // ingest/security.rs
+  pub fn validate_source(path: &Path) -> Result<()> {
+      let mut hasher = blake3::Hasher::new();
+      hash_directory(path, &mut hasher)?;
+      // Compare with pinned root hash
+  }
+  ```
+- **Security Impact:** Ensures code provenance integrity
+
+**Final Recommendations**
+
+1. **Architecture Changes**
+   - Merge `ingest/graph` into new `crates/graph_db`
+   - Add `crates/schema_registry` for shared types
+   - Create `crates/security` for cryptographic verification
+   - Add `crates/provenance` for source validation
+
+2. **Priority Order**
+   ```text
+   1. AST → CozoDB schema mapping
+   2. Model/Code provenance validation
+   3. Stream processing backpressure
+   4. CUDA feature flags split
+   ```
+
+3. **Testing Critical Path**
+   ```rust
+   #[tokio::test]
+   async fn test_rag_e2e() {
+       let (code, _) = parse_file("test.rs");
+       let verified = verify_model("model.bin", SECRET_KEY).unwrap();
+       validate_source("src/").unwrap();
+       let db = mock_db();
+       db.store(code).await;
+       let ctx = query_db("test query").await;
+       let llm_res = generate(ctx, verified).await;
+       assert!(!llm_res.is_empty());
+   }
+   ```
+
+4. **Deployment Checklist**
+   - [ ] Hardware-accelerated crypto for model verification
+   - [ ] Stream buffer size calibration tool
+   - [ ] CozoDB schema migration scripts
+   - [ ] Merkle tree root hash pinning
