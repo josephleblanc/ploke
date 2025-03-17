@@ -203,11 +203,83 @@ Flume channels | Unbounded queues risk OOM | Add pressure-aware backpressure:<br
 
 ### **Critical Missing Components**
 
-**Component** | **Why Missing?** | **Consequence**
----|---|---
-AST Differential Updater | File watcher → incremental updates | Full reparse on every change → slow at scale
-Embedding Versioning | Model updates require re-embed | Silent degradation of RAG quality
-LLM Context Window Manager | Token limits vary by model | Hardcoded limits → crashes with local models
+**1. AST Differential Updater**
+- **Problem:** Full re-parsing wastes resources on small changes
+- **Solution:** 
+  ```rust
+  // ingest/parser/diff.rs
+  pub struct AstDiffHandler {
+      previous_hashes: DashMap<PathBuf, blake3::Hash>,
+      cozo: cozo::DbInstance,
+  }
+  
+  impl AstDiffHandler {
+      pub fn calculate_delta(&self, path: &Path, new_ast: &Ast) -> Vec<ContentHash> {
+          let new_hash = blake3::hash(new_ast);
+          let old_hash = self.previous_hashes.get(path).copied();
+          
+          // Cozo query to find changed relationships
+          cozo::run_script!("
+              ?[changed] := 
+                *nodes{content_hash: old, ...},
+                new_hash = $new_hash,
+                changed <- if old != new_hash then [old] else []
+            ", old_hash)
+      }
+  }
+  ```
+- **Architecture Impact:** Add to `ingest` pipeline diagram
+- **Validation Test:**
+  ```rust
+  #[test]
+  fn test_diff_calculation() {
+      let ast_v1 = parse("fn old() {}");
+      let ast_v2 = parse("fn new() {}");
+      let diffs = diff_handler.calculate_delta("test.rs", &ast_v2);
+      assert!(!diffs.is_empty());
+  }
+  ```
+
+**2. Embedding Versioning**
+- **Silent Failure Risk:** Model updates invalidate old vectors
+- **Solution:** Content-addressed version tags
+  ```cozo
+  ::create embeddings {
+      content_hash: Bytes,
+      model_version: String,  // "all-mpnet-base-v2-2024Q2"
+      vector: <F32; 384>,
+      =>
+  }
+  ```
+- **Validation Test** (Critical for Safety):
+  ```rust
+  #[test]
+  fn test_embedding_version_divergence() {
+      let v1 = embed("fn foo() {}", "model-v1");
+      let v2 = embed("fn foo() {}", "model-v2");
+      assert!(cosine_similarity(v1, v2) < 0.95);
+  }
+  ```
+
+**3. LLM Context Window Manager**
+- **Problem:** Token limits vary by local models
+- **Solution:** CozoDB-backed token accounting
+  ```cozo
+  ?[total_tokens] := 
+    *llm_context{chunk: c, tokens: t},
+    total_tokens = sum(t),
+    total_tokens < $max_tokens  // From model config
+  ```
+- **Implementation:**
+  ```rust
+  impl ContextManager {
+      pub fn add_context(&self, chunk: Json) -> Result<()> {
+          let tokens = token_count(chunk);
+          self.cozo.run("?[total] := ..."); // Token sum check
+          Ok(())
+      }
+  }
+  ```
 
 ---
 
@@ -219,34 +291,62 @@ Cross-crate error enum | Cozo's Rust errors are unstable | Wrap Cozo errors in `
 `thiserror` derive | No backtrace capture | Add `error-stack` crate integration
 Async boundaries | Error type non-`Send` | Enforce `#[derive(Clone)]` for thread safety
 
----
-
-### **Technical Debt Hotspots**
-
-1. **`syn` vs Custom Parser**
-   - Debt: Tight `syn` coupling limits WASM targets
-   - Prevention: Add abstraction layer in `ingest/parser`
-
-2. **Monolithic CodeGraph**
-   - Debt: Stores entire AST in memory → 8GB RAM limit
-   - Solution: Stream AST to CozoDB during parsing
-
-3. **Static Hardware Targets**
-   - Debt: Hardcoded CUDA arch for 3060 Ti
-   - Mitigation: Runtime compute capability detection
 
 ---
 
 ### **Critical Unasked Questions**
 
-1. **"How do we version stored embeddings when code changes?"**
-   - Required: Content-addressed storage via BLAKE3
+**1. Embedding Versioning Strategy**
+- **Problem:** Code changes make existing embeddings stale
+- **Solution:** BLAKE3 content hashing + Cozo validity tracking
+- **Implementation:**
+  ```rust
+  // Generate versioned embedding ID
+  let embed_id = format!("{}-{}", 
+      blake3::hash(code_snippet), 
+      model_version
+  );
+  ```
+- **Why Best:** Combines content addressing with model versioning
+- **Risk Mitigation:** Automatic garbage collection of stale vectors
 
-2. **"What's our batch vs streaming strategy?"**
-   - MVP Needs: Async stream processing from file watcher
+**2. Stream Processing Architecture**
+- **Problem:** IDE events need real-time response
+- **Solution:** Async streams with backpressure
+  ```rust
+  // ide/watcher.rs
+  pub async fn watch_events() -> impl Stream<Item = FileEvent> {
+      let (tx, rx) = flume::bounded(100);
+      tokio::spawn(async move {
+          while let Some(event) = ide_stream.next().await {
+              tx.send_async(event).await?;
+          }
+      });
+      rx.into_stream()
+  }
+  ```
+- **Why Cozo:** Handles hybrid batch/stream via `::subscribe`
 
-3. **"How verify offline model provenance?"**
-   - Security: Use XChaCha20-Poly1305-signed models
+**3. Model Provenance Verification**
+- **Problem:** Local models could be tampered with
+- **Solution:** XChaCha20-Poly1305 signatures
+  ```rust
+  // llm/security.rs
+  pub fn verify_model(path: &Path, key: &[u8]) -> Result<()> {
+      let sig = read_signature(path);
+      let data = read_model_bytes(path);
+      chacha20poly1305::verify(key, data, sig)
+  }
+  ```
+- **Risk Elimination:** Prevents prompt injection via corrupted models
+- **Validation Test:**
+  ```rust
+  #[test]
+  fn test_model_tampering() {
+      let temp_model = TempFile::with_bad_data();
+      assert!(verify_model(temp_model.path(), KEY).is_err());
+  }
+  ```
 
 ---
 
