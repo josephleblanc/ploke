@@ -15,8 +15,8 @@ book/*.js
 
 ## AI stuff
 .aider*
-ai_workflow/
-!ai_workflow/experiments/active/
+# ai_workflow/
+# !ai_workflow/experiments/active/
 
 # Test ouput file
 tests/data/code_graph.ron
