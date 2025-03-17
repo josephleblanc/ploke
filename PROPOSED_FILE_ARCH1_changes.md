@@ -135,22 +135,59 @@ impl From<ast::Function> for CozoNode {
 2. Benchmark hybrid queries with `cozo-rs` mock
 3. Stress test concurrent writes (10k req/s")
 
-**3. CUDA Feature Granularity**
-- **Current Proposal:** `cuda` flag enables GPU for `llm` and `embed`
-- **Hidden Debt Risk:** Blocks mixed CPU/GPU pipelines
-- **Better Approach**:
-  ```toml
-  [features]
-  cuda-llm = ["llm/cuda"] 
-  cuda-emb = ["embed/cuda"]
-  ```
+**3. GPU Acceleration Strategy** *(Deferred)*
 
-**4. CodeGraph ↔ CozoDB Mapping**
-- **Missing Piece:** No schema definition for vector-colocated graph
-- **MVP Risk:** Will need heavy refactoring later
-- **Urgent Action Needed**:
-  - Add `crates/graph_db/schema` module
-  - Define how AST nodes map to graph edges + vector dimensions
+**Decision:** Postpone CUDA optimizations until post-MVP 
+
+**Rationale:**
+- Initial user hardware targets (RTX 3060 Ti) can leverage CUDA automatically via Metal on macOS
+- Complex shader compilation would delay MVP (concludes cozo_db_release_07.txt recommendations)
+
+**Mitigation Plan:**
+1. Retain feature flags for discovery:
+   ```toml
+   [features]
+   cuda-llm = ["llm/cuda"]  # Unused until 2025Q1
+   ```
+2. Track debt via GitHub Project Board
+3. Validate via periodic Metal/Vulkan benchmarks
+
+**4. Graph Schema Definition** *(Open Questions)*
+
+**Key Mappings Requiring Resolution:**
+
+| AST Element         | CozoDB Entity | Example from cozo_db_hnsw.txt | Decision Needed |
+|---------------------|---------------|-------------------------------|-----------------|
+| Function signature  | Vector node   | `vec: <F32; 384>`             | Dimension count |
+| Trait implementation| Edge          | `relations: "IMPLEMENTS"`     | Edge properties |
+| Module hierarchy    | Edge + Node   | `*code_graph{...}`            | Containment vs namespacing |
+| Generic parameters   | Edge labels   | N/A                           | Parametric vs concrete types |
+| Macro expansions     | Subgraph      | N/A                           | Expansion depth tracking |
+
+**Resolution Process:**
+1. Cross-reference with cozodb_docs_types.txt type system
+2. Prototype edge types using sample crate analysis
+3. Validate via incremental schema migrations:
+   ```cozo
+   ::alter code_graph add_edge_type {
+       edge_type: "MACRO_EXPANDS",
+       properties: {depth: Int}
+   }
+   ```
+
+**Temporary Schema** (For MVP):
+```cozo
+::create temp_graph {
+    id: Bytes =>        // Blake3 of AST content
+    ast_type: String,   // "Function", "Struct" etc
+    vec: <F32; 384>,
+    relations: [{       // Flat relationship model
+        target: Bytes,
+        kind: String,   // CALLS, CONTAINS, IMPLEMENTS
+        locus: Int?     // Source code span
+    }]
+}
+```
 
 ---
 
