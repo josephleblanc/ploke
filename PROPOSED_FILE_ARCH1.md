@@ -38,9 +38,18 @@ rust-rag/
 **Key Architectural Decisions**:
 
 1. **Type System Design**:
-   - ID Types: Evaluate `NonZeroUsize`, `AtomicUsize`, and Blake3 hashing
-   - Concurrency-safe primitives: `Send`/`Sync` traits required
-   - Newtype patterns for semantic validation (C-NEWTYPE)
+   - Content Addressing: `ContentHash(blake3::Hash)` for AST nodes
+   - Temporal Versioning: `TypeStamp(uuid::Uuid)` using UUIDv7
+   - CozoDB Schema Integration:
+     ```cozo
+     :create nodes {
+         content_hash: Bytes,     // Blake3 hash (32 bytes)
+         type_versions: [Uuid],   // Temporal versions
+         relations: [{target: Bytes, kind: String}],
+         vec: <F32; 384>          // HNSW-compatible dimension
+     }
+     ```
+   - Concurrency: `DashMap` for thread-safe content caching
 
 2. **Domain-Driven Separation**:
    - Isolate code parsing (ingest) from reasoning (context/llm)
@@ -95,7 +104,8 @@ rust-rag/
   - Intra-crate: `std::sync::mpsc` 
   - Cross-crate: `flume` (bounded, async-sync bridging)
 - Connection Pooling: VectorGraphDB (Cozo) access uses `deadpool` with LRU cache
-- Atomic ID Generation: Use `AtomicUsize` for all graph node IDs
+- Atomic ID Generation: Hybrid content hashing (Blake3) + UUIDv7 timestamps
+- Thread-safe Caching: `DashMap<ContentHash, TypeStamp>` for parallel parsing
 
 ### Testable Verification
 ```rust
