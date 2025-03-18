@@ -6,6 +6,7 @@ A document to set and track immediate goals for both human and AI pair programme
 
 ### **TASKS:**
 
+- [ ] test new CI/CD pipeline
 - [ ] **Prioritize Detailed Type System Design:** Define how concrete types will be represented and managed in the `CodeGraph`.
 - [ ] **Investigate `crossbeam`:** Evaluate `crossbeam` for implementing the producer-consumer pattern and replacing some of the `std::sync` primitives.
 - [ ] **Define a High-Level Error Taxonomy:** Establish a clear error taxonomy before diving into implementation.
