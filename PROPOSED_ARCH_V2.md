@@ -1,3 +1,4 @@
+
 # PROPOSED_FILE_ARCHITECTURE
 
 **Proposed Workspace Structure**:
