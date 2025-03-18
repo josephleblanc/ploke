@@ -10,3 +10,6 @@ exclude = ["ai_workflow"]
 # Shared dependencies with versions
 syn = "2.0"
 # Other shared dependencies
+
+[features]
+aider-experiment = []
