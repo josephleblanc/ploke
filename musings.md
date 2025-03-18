@@ -1,7 +1,46 @@
+**Historical chat with gemma-3-27b-it:free on 17-03-2025**
+
+## *Question:*
+
+So I would like your help thinking through hoe I can effectively collaborate with an LLM on code projects. I know there are a lot of different factors to take into account when doing pair programming with an LLM, and want to start using a more systematic approwch than the simple approach I have taken so far.  
+  
+I would like to start integrating git CI/CD to my AI-assisted workflow. So far I have just been interacting with the AI in the following ways:  
+1. Question and answering about desogn documents  
+2. Requesting changes to specific files or lines within files   
+3. Brainstorming about larger questions on project acrchitecture  
+4. Requesting inplementation of a feature or larger change,  
+- I request the LLM to break the task into smaller chunks, and it shows me its response  
+- I tell the LLM to write the tasks to a file I keep for trscking progress on immediate tasks.  
+- I tell the LLM to work through the first task on the list and show me the proposed change for that one smaller task.  
+  - If I like the proposal, I ask the LLM to make the change and check the box on the task list for that task.  
+  - If i do not like the change, I clarify the task or request additional refinements until I like the proposed solution.  
+  
+Tasks I have worked on with AI assistance in this manner include:  
+- project design: going from brainstorming to nailing down specifics of types used in different places in the code.  
+- Generating code: Adding new files or modifying files to add new code.  
+- Debugging: Finding and correcting errors in the code tgat prevent it from compiling  
+- Writing tests: Ensuring code worjs as intended. Validation and testing edge cases.  
+Refafactoring: Improving logic or function approach in one file or in various files for larfer efforts using task-basedbapproach eith checkboxes.  
+  
+Some difficulties I have encountered are:  
+1. LLM begins making changes counter to my desired overall strategy  
+- Solution (in progress): Construct a comprehebsive design document for the scope of this large project (80% done)  
+2. LLM makes changes that seem to be improvements, but result in errors when I test later.  
+- Solution: (in progress 10%) Use CI/CD automated testing to verify correctness before moving on to next task.  
+- possible challenge: some refactors might require multiple tasks to be completed before program can compile.  
+  - how to verify improvements in incremental steps?  
+  - cfg flags may help, but could become tedious  
+3. Knowledge preservation: currently there are no mechanisms to automatically track LLM reasoning for making changes.  
+- Solution: not started.  
+- possible tools: CD/CI, cargo checks for docs, formatted prompts with instructions to add rustdoc comments, others?  
+
 This is a great start, and you've already identified some key challenges and
 are proactively thinking about solutions. Integrating CI/CD is a *very* smart
 move. Let's break down your points and brainstorm further, focusing on a more
 systematic approach.
+
+
+## *Answer:*
 
 **Overall Assessment:** Your current workflow is a good iterative approach,
 especially the task breakdown and checkbox system. It's a solid foundation. The
