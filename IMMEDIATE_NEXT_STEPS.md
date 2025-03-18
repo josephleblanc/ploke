@@ -1,17 +1,28 @@
+## IMMEDIATE_NEXT_STEPS
+
+A document to set and track immediate goals for both human and AI pair programmer.
 
 -----
 
-**NOTE: This is a foundational design document currently under review**
-This file is speculative and actively being edited as the proposed
-structure for the project. It will continue to be edited as we work on the
-proposed project structure and does not accurately reflect the current state of
-the project.
+### **TASKS:**
 
-This is a planning document **only*** and will be archived once a design
-decision is chosen. The only part of this project that is at MVP status so far
-is the `syn_parser`, which is the parser for the project.
+- [ ] **Prioritize Detailed Type System Design:** Define how concrete types will be represented and managed in the `CodeGraph`.
+- [ ] **Investigate `crossbeam`:** Evaluate `crossbeam` for implementing the producer-consumer pattern and replacing some of the `std::sync` primitives.
+- [ ] **Define a High-Level Error Taxonomy:** Establish a clear error taxonomy before diving into implementation.
+- [ ] **Defer Lock-Free Structures:** Defer the decision on lock-free data structures until performance profiling reveals contention as a bottleneck.
+- [ ] **Detailed Design of Producer-Consumer:** Flesh out the design of the producer-consumer pattern, including data flow, error handling, and resource management.
+- [ ] **Apply patch message to core_design_document.**
+    - We are currently on a branch I made specifically to nail down a core design document to facilitate AI assistance.
+    - I should have a workable version of the core design before closing branch
+    - It will help avoid confusion with AI assistance to have a document I can quickly reference with project design.
+      - For now, add a section that LOUDLY says the `syn_parser` is undergoing active revision.
+      - Later we can stabilize the design doc V2 with what we've covered, and it can stay stable for a while.
+
 
 -----
+
+
+### REASONING:
 
 **Here's a refined plan based on your suggestion:**
 
