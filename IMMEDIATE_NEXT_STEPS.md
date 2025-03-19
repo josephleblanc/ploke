@@ -6,18 +6,37 @@ A document to set and track immediate goals for both human and AI pair programme
 
 ### **TASKS:**
 
-- [x] test new CI/CD pipeline
-- [ ] **Prioritize Detailed Type System Design:** Define how concrete types will be represented and managed in the `CodeGraph`.
-- [ ] **Investigate `crossbeam`:** Evaluate `crossbeam` for implementing the producer-consumer pattern and replacing some of the `std::sync` primitives.
-- [ ] **Define a High-Level Error Taxonomy:** Establish a clear error taxonomy before diving into implementation.
-- [ ] **Defer Lock-Free Structures:** Defer the decision on lock-free data structures until performance profiling reveals contention as a bottleneck.
-- [ ] **Detailed Design of Producer-Consumer:** Flesh out the design of the producer-consumer pattern, including data flow, error handling, and resource management.
+- [ ] **Minimal `syn_parser` Rework:** Focus on adapting the existing `syn_parser` to output data directly compatible with CozoDB, *without* fundamentally altering its data flow or concurrency model. This means:
+    - [ ] **Type Alignment:** See `deepseek_tasks/type_alignment.md` for tracking and progress of intermediate steps.
+      - [ ] Started
+      - [ ] Finished
+    - [ ] **Send + Sync:** See See `deepseek_tasks/send_sync.md` for tracking and progress of intermediate steps.
+      - [ ] Started
+      - [ ] Finished
+    * [ ] **Remove `CodeGraph` (or significantly reduce its scope):** See `deepseek_tasks/remove_code_graph_intermediary.md` for tracking and progress of intermediate steps.
+      * [ ] Started
+      * [ ] Finished
 - [ ] **Apply patch message to core_design_document.**
     - We are currently on a branch I made specifically to nail down a core design document to facilitate AI assistance.
     - I should have a workable version of the core design before closing branch
     - It will help avoid confusion with AI assistance to have a document I can quickly reference with project design.
       - For now, add a section that LOUDLY says the `syn_parser` is undergoing active revision.
       - Later we can stabilize the design doc V2 with what we've covered, and it can stay stable for a while.
+- [ ] **Prioritize Detailed Type System Design:** Define how concrete types will be represented and managed in the `CodeGraph`.
+  - [ ] Start new design doc in docs/active/ directory to track reasoning.
+  - [ ] More steps tbd.
+- [ ] **Investigate `crossbeam`:** Evaluate `crossbeam` for implementing the producer-consumer pattern and replacing some of the `std::sync` primitives.
+  - [ ] Start new design doc in docs/active/ directory to track reasoning.
+  - [ ] More steps tbd.
+- [ ] **Define a High-Level Error Taxonomy:** Establish a clear error taxonomy before diving into implementation.
+  - [ ] Start new design doc in docs/active/ directory to track reasoning.
+  - [ ] More steps tbd.
+- [ ] **Defer Lock-Free Structures:** Defer the decision on lock-free data structures until performance profiling reveals contention as a bottleneck.
+  - [ ] Start new design doc in docs/active/ directory to track reasoning.
+  - [ ] More steps tbd.
+- [ ] **Detailed Design of Producer-Consumer:** Flesh out the design of the producer-consumer pattern, including data flow, error handling, and resource management.
+  - [ ] Start new design doc in docs/active/ directory to track reasoning.
+  - [ ] More steps tbd.
 
 
 -----
