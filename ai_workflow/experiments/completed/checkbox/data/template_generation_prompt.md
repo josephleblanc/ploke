@@ -1,4 +1,4 @@
-I would like you to create templates that can be used to prompt an LLM to break down a requested task into a set of subtasks that can be tracked as they are completed, and possibly includes using a cfg flag while making the changes. The use of the cfg flag would only be for changes that would cause the code base to break. For example, a refactor of the `syn_parser` crate to use   
+I would like you to create templates that can be used to prompt an LLM to break down a requested task into a set of subtasks that can be tracked as they are completed, and possibly includes using a cfg flag while making the changes. The use of the cfg flag would only be for changes that would cause the code base to break. For example, a refactor of the `syn_parser` crate to use
 
 **In your response:**  
 - Use a different feature name for the cfg to reflect set of tasks the LLM is working on.  

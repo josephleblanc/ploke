@@ -51,5 +51,9 @@ Task Name: Type Alignment
 
 
 ### Phase 2 Results
+The results of the experiment are included in the `data` directory, with the following naming schema and structure:
+- Model, generated templates version, prompt number
+- c = Claude, d = Deepseek, g = Gemma
 
-
+- For example, `c00_1/`
+  - Claude model, generated prompts version 00, prompt 1

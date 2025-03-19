@@ -1,4 +1,4 @@
-use crate::parser::graph::CodeGraph;  // Update the import path
+use crate::parser::graph::CodeGraph; // Update the import path
 use ron::ser::{to_string_pretty, PrettyConfig};
 use std::fs::File;
 use std::io::Write;

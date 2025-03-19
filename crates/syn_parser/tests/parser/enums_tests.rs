@@ -5,8 +5,7 @@ use syn_parser::parser::types::VisibilityKind;
 fn test_enum_parsing() {
     let graph = parse_fixture("enums.rs");
 
-    let sample_enum = find_enum_by_name(&graph, "SampleEnum")
-        .expect("SampleEnum not found");
+    let sample_enum = find_enum_by_name(&graph, "SampleEnum").expect("SampleEnum not found");
 
     assert_eq!(sample_enum.name, "SampleEnum");
     assert_eq!(sample_enum.visibility, VisibilityKind::Public);
