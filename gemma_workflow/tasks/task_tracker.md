@@ -7,7 +7,7 @@ This file tracks the progress of tasks and subtasks related to type alignment in
 | Task ID | Description | Finished | Tests Created | Tests Pass |
 |---|---|---|---|---|
 | **1 - Analyze and Map Types** | Analyze `syn_parser`'s existing types and map them to CozoDB types. | ☐ | ☐ | ☐ |
-| 1.1 | Review `TypeKind` enum and document CozoDB mapping. | ☐ | ☐ | ☐ |
+| 1.1 | Review `TypeKind` enum and document CozoDB mapping. | ☑ | ☑ | ☐ |
 | 1.2 | Analyze usage of `TypeId` and `TypeKind` in AST nodes. | ☐ | ☐ | ☐ |
 | 1.3 | Investigate implications of using `Bytes` for identifiers. | ☐ | ☐ | ☐ |
 | 1.4 | Create detailed mapping table (gemma_workflow/type_mappings.md). | ☐ | ☐ | ☐ |
