@@ -2,6 +2,8 @@
 
 ---
 
+**Parent Task:** [Type Alignment Tasks](gemma_workflow/tasks/type_alignment_tasks.md)
+
 *   **Subtask ID: 1.1**
     *   Description: Review the `TypeKind` enum in `syn_parser/src/parser/types.rs`. Document each variant and its potential mapping to CozoDB types (Null, Bool, Number, String, Bytes, Uuid, Json, Vector).
     *   Estimated Time: 2 hours

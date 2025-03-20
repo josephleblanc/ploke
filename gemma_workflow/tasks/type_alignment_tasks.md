@@ -1,3 +1,20 @@
+# Type Alignment Tasks
+
+---
+
+**Linked Subtask List:**
+
+*   [Subtask ID: 1 - Analyze and Map Types](gemma_workflow/tasks/type_alignment_tasks_subtask1.md)
+*   Subtask ID: 2
+*   Subtask ID: 3
+*   Subtask ID: 4
+*   Subtask ID: 5
+*   Subtask ID: 6
+*   Subtask ID: 7
+*   Subtask ID: 8
+
+---
+
 *   **Subtask ID: 1**
     *   Description: Analyze `syn_parser`'s existing types (e.g., `FunctionNode`, `StructNode`, `TypeId`) and map them to corresponding CozoDB types (Null, Bool, Number, String, Bytes, Uuid, Json, Vector). Document the mapping decisions, specifically focusing on how to best represent each `TypeKind` variant in CozoDB. Consider the implications of using `Bytes` for identifiers (function names, struct names, etc.) – potential performance impacts and the need for efficient string comparisons.
     *   Estimated Time: 6 hours
