@@ -7,7 +7,7 @@
 *   [Subtask ID: 1 - Analyze and Map Types](gemma_workflow/tasks/type_alignment_tasks_subtask1.md)
 *   Subtask ID: 2
 *   Subtask ID: 3
-*   Subtask ID: 4
+*   [Subtask ID: 4 - Replace TypeId with CozoDbType](gemma_workflow/tasks/type_alignment_tasks_subtask4.md)
 *   Subtask ID: 5
 *   Subtask ID: 6
 *   Subtask ID: 7
