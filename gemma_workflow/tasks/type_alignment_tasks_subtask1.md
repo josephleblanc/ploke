@@ -40,5 +40,11 @@
     *   Cfg Flag Required?: No
     *   Dependencies: Subtask ID: 1.4
     *   Potential Issues: Discovering inconsistencies between the proposed mappings and the existing documentation.
+*   **Subtask ID: 1.7**
+    *   Description: Document CozoDB Type Limitations: Explicitly document any limitations or potential data loss when mapping Rust types to CozoDB types.
+    *   Estimated Time: 1 hour
+    *   Cfg Flag Required?: No
+    *   Dependencies: Subtask ID: 1.4
+    *   Potential Issues: Identifying subtle type conversion issues.
 
 ---
