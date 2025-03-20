@@ -17,3 +17,6 @@ petgraph = "0.7.1"
 indradb-lib = "*"
 
 [dev-dependencies]
+
+[features]
+cozo_type_refactor = []
