@@ -28,14 +28,29 @@
 **Workflow:**
 
 1.  **Implement a Subtask:** Make the necessary code changes.
-2.  **Write Unit Tests:** Write unit tests to verify the correctness of the changes.
-3.  **Run Tests with Feature Flag:** `cargo test --features cozo_type_refactor`.
-4.  **Update Regression Tests:** If the changes break existing tests, mark the affected code as `#[deprecated]` and update the tests to use the deprecated code.
-5.  **Run Regression Tests:** `cargo test`.
-6.  **Commit Changes:** Commit the code and tests.
+2.  **Identify Relevant Test Category:** Determine which existing test category (e.g., `parser`, `serialization`) is most appropriate for the changes.
+3.  **Add Tests to Existing Category:** Add new tests to the relevant test file, using fixtures from the `fixtures` directory as input.
+4.  **Run Tests with Feature Flag:** `cargo test --features cozo_type_refactor`.
+5.  **Update Regression Tests:** If the changes break existing tests, mark the affected code as `#[deprecated]` and update the tests to use the deprecated code.
+6.  **Run Regression Tests:** `cargo test`.
+7.  **Commit Changes:** Commit the code and tests.
 
 **Key Principles:**
 
 *   **Prioritize Unit Tests:** They provide the fastest and most focused feedback.
 *   **Manage Regression Tests with `deprecated`:** This allows us to continue testing while gradually migrating to the new code.
 *   **Minimize Effort on `CodeGraph`:** Focus on ensuring the parser produces valid output, not on refining the `CodeGraph`.
+
+## Test Directory Structure
+
+The tests for the `syn_parser` crate are organized into the following directories:
+
+*   `common`: Contains common test utilities and helper functions.
+*   `integration`: Contains integration tests that verify the interaction between different parts of the system.
+*   `parser`: Contains unit tests for the parser, with separate files for different language features (e.g., enums, functions, structs).
+*   `serialization`: Contains tests for the serialization logic (JSON and RON).
+*   `refactor`: Contains tests that are specifically related to the current refactor (e.g., tests for the `CozoDbType` enum).
+*   `fixtures`: Contains example Rust code that can be used as input for our tests.
+*   `data`: Contains example RON files for testing the serialization logic.
+
+Our refactor tests will primarily be integrated into the existing test categories, with the `refactor` directory reserved for tests that are specific to the refactor itself. We will leverage the fixtures in the `fixtures` directory to provide realistic test input.
