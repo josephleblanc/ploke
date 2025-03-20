@@ -7,15 +7,9 @@ A document to set and track immediate goals for both human and AI pair programme
 ### **TASKS:**
 
 - [ ] **Minimal `syn_parser` Rework:** Focus on adapting the existing `syn_parser` to output data directly compatible with CozoDB, *without* fundamentally altering its data flow or concurrency model. This means:
-    - [ ] **Type Alignment:** See `deepseek_tasks/type_alignment.md` for tracking and progress of intermediate steps.
-      - [ ] Started
-      - [ ] Finished
-    - [ ] **Send + Sync:** See See `deepseek_tasks/send_sync.md` for tracking and progress of intermediate steps.
-      - [ ] Started
-      - [ ] Finished
-    * [ ] **Remove `CodeGraph` (or significantly reduce its scope):** See `deepseek_tasks/remove_code_graph_intermediary.md` for tracking and progress of intermediate steps.
-      * [ ] Started
-      * [ ] Finished
+    - [ ] **Type Alignment:** Change the types used within `syn_parser` to align with the CozoDB schema (e.g., using `Bytes` for content hashes, appropriate numeric types for embeddings).
+    - [ ] **Send + Sync:** Ensure all publicly exposed types are `Send + Sync`. This is a good practice regardless and will prepare the codebase for future concurrency improvements.
+    - [ ] **Remove `CodeGraph` (or significantly reduce its scope):** You're right to question the value of the `CodeGraph` as an intermediary. It adds complexity without necessarily providing significant benefits. We can likely stream data directly from the `syn` AST to CozoDB.
 - [ ] **Apply patch message to core_design_document.**
     - We are currently on a branch I made specifically to nail down a core design document to facilitate AI assistance.
     - I should have a workable version of the core design before closing branch
