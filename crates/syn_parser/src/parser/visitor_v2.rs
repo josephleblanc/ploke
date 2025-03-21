@@ -114,9 +114,15 @@ impl<'a> CodeVisitorV2<'a> {
             // ??? What should this be?
             // Actually, I have no idea what this field even is supposed to represent. Can you tell
             // me about it?
-            current_scope: todo!(),
-            // Does the following look right?
-            batches: BTreeMap::from([("data", Vec::with_capacity(DEFAULT_BATCH_SIZE))]),
+            current_scope: vec![Uuid::new_v5(
+                &Uuid::NAMESPACE_OID,
+                "ROOT_SCOPE".as_bytes()
+            )], // Initialize with root scope
+            batches: BTreeMap::from([
+                ("nodes", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
+                ("relations", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
+                ("types", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
+            ]),
             batch_size: DEFAULT_BATCH_SIZE,
         }
     }
