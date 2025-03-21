@@ -204,8 +204,8 @@ impl<'a> CodeVisitorV2<'a> {
 
     // TODO: AI fill out this function. We are using it in tests/refactor/code_visitor but it
     // hasn't been written yet.
-    fn flush_all(&self) -> _ {
-        //
+    fn flush_all(&mut self) -> _ {
+        // Should flush to db
         todo!()
     }
 }
