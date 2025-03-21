@@ -54,13 +54,42 @@ pub struct CodeVisitorV2<'a> {
     pub db: &'a Db<MemStorage>,
 
     /// Hierarchical context stack using UUID identifiers
-    /// -- AI-generated docs, placeholder --
+    /// 
+    /// # Scope Lifetime Management
+    /// - Maintained as a stack structure throughout AST traversal
+    /// - Pushed when entering a new scope (module, function, block)
+    /// - Popped when exiting a scope
+    /// - Root scope is initialized with deterministic UUIDv5("ROOT_SCOPE")
     ///
-    /// Represents the current lexical scope as a stack where:
-    /// - Last element: Immediate parent entity
-    /// - First element: Root module/namespace
+    /// # Invariants
+    /// 1. Always contains at least the root scope UUID
+    /// 2. Parent-child relationships are stored in `relations` table with:
+    ///    - Edge type "contains"
+    /// 3. Scopes form a directed acyclic graph (DAG) through:
+    ///    - Imports (cross-scope references)
+    ///    - Type implementations
     ///
-    /// Example: [crate_id, mod_id, fn_id] for a nested function
+    /// # Example Traversal
+    /// ```rust
+    /// // Entering crate root
+    /// current_scope: [root]
+    ///
+    /// mod outer {
+    ///     // Pushed to scope stack
+    ///     current_scope: [root, outer_mod_id]
+    ///     
+    ///     fn inner() {
+    ///         // Pushed to scope stack  
+    ///         current_scope: [root, outer_mod_id, inner_fn_id]
+    ///     } // Popped
+    /// } // Popped
+    /// ```
+    ///
+    /// # Deterministic IDs
+    /// Child entries inherit parent's scope UUIDv5 namespace for consistent:
+    /// - Cross-session identifiers
+    /// - Diff detection
+    /// - Cache utilization
     pub current_scope: Vec<Uuid>,
 
     /// Batched database operations ready for insertion
