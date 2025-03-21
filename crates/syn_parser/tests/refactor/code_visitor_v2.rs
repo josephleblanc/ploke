@@ -89,12 +89,14 @@ mod tests {
     }
 }
 
-// **Critical Test Additions Needed:**
-//
-// 1. **Temporal Version Rollback**
+    // **Critical Test Additions Needed:**
+    //
+    // 1. **Temporal Version Rollback**
+    use std::collections::BTreeMap;
+    use cozo::ScriptMutability;
 
-#[test]
-fn temporal_query_isolates_versions() {
+    #[test]
+    fn temporal_query_isolates_versions() {
     let db = test_db();
 
     // Initial version
@@ -123,8 +125,8 @@ fn temporal_query_isolates_versions() {
 }
 
 // 2. **JSON Metadata Validation**
-#[test]
-fn captures_fn_metadata() {
+    #[test]
+    fn captures_fn_metadata() {
     let db = test_db();
     let mut visitor = CodeVisitorV2::new(&db);
 
@@ -147,8 +149,8 @@ fn captures_fn_metadata() {
 }
 
 // 3. **Batch Flush Thresholds**
-#[test]
-fn auto_flush_on_batch_limit() {
+    #[test]
+    fn auto_flush_on_batch_limit() {
     let db = test_db();
     let mut visitor = CodeVisitorV2 {
         db: &db,
