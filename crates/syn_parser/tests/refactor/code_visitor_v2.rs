@@ -1,12 +1,13 @@
 #[cfg(test)]
 #[cfg(feature = "cozo_visitor")]
 mod tests {
-    use crate::parser::visitor_v2::CodeVisitorV2;
     use cozo::ScriptMutability;
     use cozo::{Db, MemStorage};
     use syn::parse_quote;
+    use syn::visit::Visit;
     use syn::File;
     use syn::ItemFn;
+    use syn_parser::parser::visitor_v2::CodeVisitorV2;
 
     fn test_db() -> Db<MemStorage> {
         let db = Db::new(MemStorage::default()).unwrap();

@@ -201,6 +201,13 @@ impl<'a> CodeVisitorV2<'a> {
                 .unwrap_or_else(|_| panic!("Failed to flush {}", table));
         }
     }
+
+    // TODO: AI fill out this function. We are using it in tests/refactor/code_visitor but it
+    // hasn't been written yet.
+    fn flush_all(&self) -> _ {
+        //
+        todo!()
+    }
 }
 
 #[cfg(feature = "cozo_visitor")]
@@ -287,26 +294,6 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
             }
         }
     }
-}
-
-#[test]
-pub fn test_mutable_param() {
-    let db = Db::new(MemStorage::default()).expect("DB init failed");
-    db.initialize().expect("DB init failed");
-    db.run_script(
-        ":create ast_functions {name, params, is_async}",
-        BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )
-    .expect("Adding a relation failed");
-    let code = r#"fn example(mut x: u32, y: &mut str)"#;
-    let syntax = syn::parse_file(code).unwrap();
-
-    let mut visitor = CodeVisitorV2::new(&db);
-    visitor.visit_file(&syntax);
-    // visitor.flush_all();
-
-    // Verify relations have correct mutable flags
 }
 
 // TODO: Move this function where it belongs (tbd)
