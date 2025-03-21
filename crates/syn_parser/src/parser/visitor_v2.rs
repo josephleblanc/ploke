@@ -54,7 +54,7 @@ pub struct CodeVisitorV2<'a> {
     pub db: &'a Db<MemStorage>,
 
     /// Hierarchical context stack using UUID identifiers
-    /// 
+    ///
     /// # Scope Lifetime Management
     /// - Maintained as a stack structure throughout AST traversal
     /// - Pushed when entering a new scope (module, function, block)
@@ -143,10 +143,7 @@ impl<'a> CodeVisitorV2<'a> {
             // ??? What should this be?
             // Actually, I have no idea what this field even is supposed to represent. Can you tell
             // me about it?
-            current_scope: vec![Uuid::new_v5(
-                &Uuid::NAMESPACE_OID,
-                "ROOT_SCOPE".as_bytes()
-            )], // Initialize with root scope
+            current_scope: vec![Uuid::new_v5(&Uuid::NAMESPACE_OID, "ROOT_SCOPE".as_bytes())], // Initialize with root scope
             batches: BTreeMap::from([
                 ("nodes", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
                 ("relations", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
@@ -239,7 +236,7 @@ impl<'a> CodeVisitorV2<'a> {
     }
 
     /// Flushes all remaining batches to the database
-    fn flush_all(&mut self) {
+    pub fn flush_all(&mut self) {
         // Flush each table individually
         let tables: Vec<&str> = self.batches.keys().copied().collect();
         for table in tables {

@@ -308,7 +308,8 @@ So, expanding the visitor state to include a stack of node_ids representing the
 current scope:
 
 
-struct VisitorState { node_id_counter: usize, type_map: HashMap<String, TypeId>,
+struct VisitorState { 
+node_id_counter: usize, type_map: HashMap<String, TypeId>,
 current_scope: Vec, // Stack of parent IDs (modules) // batches and other fields
 }
 
@@ -367,8 +368,11 @@ Let me draft the structure:
 
 
 
-struct CodeVisitorV2<'a> { db: &'a Db, current_scope: Vec, // Stack of parent
-module IDs state: VisitorState, batches: BTreeMap<&'static str, Vec>, // Key is 
+struct CodeVisitorV2<'a> { 
+db: &'a Db, current_scope: 
+Vec, // Stack of parent
+module IDs state: VisitorState, 
+batches: BTreeMap<&'static str, Vec>,
 relation name batch_size: usize, }
 
 struct VisitorState { node_id_counter: NodeId, type_map: HashMap<String,

@@ -9,7 +9,7 @@ mod tests {
     use syn::ItemFn;
     use syn_parser::parser::visitor_v2::CodeVisitorV2;
 
-    fn test_db() -> Db<MemStorage> {
+    pub fn test_db() -> Db<MemStorage> {
         let db = Db::new(MemStorage::default()).unwrap();
         db.run_script(
             r#"
@@ -55,9 +55,7 @@ mod tests {
     #[test]
     fn uuid_determinism() {
         let func1: ItemFn = parse_quote! { fn foo() {} };
-        let func2: ItemFn = parse_quote! { fn foo() {} };
 
-        let id1 = generate_fn_uuid(&func1);
         let id2 = generate_fn_uuid(&func2);
 
         assert_eq!(id1, id2, "UUIDs differ for identical functions");
@@ -89,14 +87,13 @@ mod tests {
     }
 }
 
-    // **Critical Test Additions Needed:**
-    //
-    // 1. **Temporal Version Rollback**
-    use std::collections::BTreeMap;
-    use cozo::ScriptMutability;
+// **Critical Test Additions Needed:**
+//
+// 1. **Temporal Version Rollback**
+use cozo::ScriptMutability;
+use std::collections::BTreeMap;
 
-    #[test]
-    fn temporal_query_isolates_versions() {
+fn temporal_query_isolates_versions() {
     let db = test_db();
 
     // Initial version
@@ -125,8 +122,8 @@ mod tests {
 }
 
 // 2. **JSON Metadata Validation**
-    #[test]
-    fn captures_fn_metadata() {
+#[test]
+fn captures_fn_metadata() {
     let db = test_db();
     let mut visitor = CodeVisitorV2::new(&db);
 
@@ -149,8 +146,8 @@ mod tests {
 }
 
 // 3. **Batch Flush Thresholds**
-    #[test]
-    fn auto_flush_on_batch_limit() {
+#[test]
+fn auto_flush_on_batch_limit() {
     let db = test_db();
     let mut visitor = CodeVisitorV2 {
         db: &db,
