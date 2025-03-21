@@ -18,5 +18,9 @@ indradb-lib = "*"
 
 [dev-dependencies]
 
+# Change default to have rust-analyzer/linter on or off for cfg flags
 [features]
+default = ["cozo_visitor"]
+# cozo_refactor_full = ["cozo_visitor, cozo_type_refactor"]
+cozo_visitor = []
 cozo_type_refactor = []

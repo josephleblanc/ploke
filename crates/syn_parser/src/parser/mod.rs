@@ -4,6 +4,8 @@ pub mod relations;
 pub mod types;
 pub mod visitor;
 
+pub mod visitor_v2;
+
 // Re-export key items
 pub use self::graph::CodeGraph;
 pub use self::types::TypeId;

@@ -51,8 +51,8 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
 }
 
 // State for the visitor
-struct VisitorState {
-    code_graph: CodeGraph,
+pub(crate) struct VisitorState {
+    pub(crate) code_graph: CodeGraph,
     next_node_id: NodeId,
     next_type_id: TypeId,
     // Maps existing types to their IDs to avoid duplication
@@ -80,7 +80,7 @@ impl VisitorState {
         }
     }
 
-    fn next_node_id(&mut self) -> NodeId {
+    pub(crate) fn next_node_id(&mut self) -> NodeId {
         let id = self.next_node_id;
         self.next_node_id += 1;
         id
@@ -93,7 +93,7 @@ impl VisitorState {
     }
 
     // Get or create a type ID
-    fn get_or_create_type(&mut self, ty: &Type) -> TypeId {
+    pub(crate) fn get_or_create_type(&mut self, ty: &Type) -> TypeId {
         // Convert type to a string representation for caching
         let type_str = ty.to_token_stream().to_string();
 
@@ -320,7 +320,7 @@ impl VisitorState {
     }
 
     // Convert syn::Visibility to our VisibilityKind
-    fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
+    pub(crate) fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
             Visibility::Restricted(restricted) => {
@@ -339,7 +339,7 @@ impl VisitorState {
     }
 
     // Process a function parameter
-    fn process_fn_arg(&mut self, arg: &FnArg) -> Option<ParameterNode> {
+    pub(crate) fn process_fn_arg(&mut self, arg: &FnArg) -> Option<ParameterNode> {
         match arg {
             FnArg::Typed(PatType { pat, ty, .. }) => {
                 let type_id = self.get_or_create_type(ty);
@@ -393,7 +393,7 @@ impl VisitorState {
     }
 
     // Process generic parameters
-    fn process_generics(&mut self, generics: &Generics) -> Vec<GenericParamNode> {
+    pub(crate) fn process_generics(&mut self, generics: &Generics) -> Vec<GenericParamNode> {
         let mut params = Vec::new();
 
         for param in &generics.params {
@@ -491,7 +491,7 @@ impl VisitorState {
     }
 
     // Extract doc comments from attributes
-    fn extract_docstring(&self, attrs: &[syn::Attribute]) -> Option<String> {
+    pub(crate) fn extract_docstring(&self, attrs: &[syn::Attribute]) -> Option<String> {
         let doc_lines: Vec<String> = attrs
             .iter()
             .filter(|attr| attr.path().is_ident("doc"))
@@ -546,7 +546,7 @@ impl VisitorState {
             value: Some(attr.to_token_stream().to_string()),
         }
     }
-    fn extract_attributes(&self, attrs: &[syn::Attribute]) -> Vec<Attribute> {
+    pub(crate) fn extract_attributes(&self, attrs: &[syn::Attribute]) -> Vec<Attribute> {
         attrs
             .iter()
             .filter(|attr| !attr.path().is_ident("doc")) // Skip doc comments
