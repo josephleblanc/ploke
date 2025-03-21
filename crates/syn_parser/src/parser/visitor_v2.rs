@@ -33,10 +33,9 @@ use std::collections::BTreeMap;
 use syn::{visit::Visit, ItemFn, ReturnType};
 use uuid::Uuid;
 
+#[cfg(feature = "cozo_visitor")]
 /// Configuration for batch insertion performance tuning
 /// -- AI-generated docs, placeholder --
-
-#[cfg(cozo_visitor)]
 const DEFAULT_BATCH_SIZE: usize = 100;
 
 /// AST Visitor that maintains parsing state and batches database operations
@@ -47,7 +46,7 @@ const DEFAULT_BATCH_SIZE: usize = 100;
 /// - Batch vectors contain homogeneous entries per table
 /// - UUIDs are generated deterministically using SHA-1 hashing (UUIDv5)
 ///
-#[cfg(cozo_visitor)]
+#[cfg(feature = "cozo_visitor")]
 pub struct CodeVisitorV2<'a> {
     /// Database handle for batch insertion
     /// -- AI-generated docs, placeholder --
@@ -78,7 +77,7 @@ pub struct CodeVisitorV2<'a> {
     pub batch_size: usize,
 }
 
-#[cfg(cozo_visitor)]
+#[cfg(feature = "cozo_visitor")]
 impl<'a> CodeVisitorV2<'a> {
     /// Creates a new visitor instance with initialized state
     /// -- AI-generated docs, placeholder --
@@ -204,7 +203,7 @@ impl<'a> CodeVisitorV2<'a> {
     }
 }
 
-#[cfg(cozo_visitor)]
+#[cfg(feature = "cozo_visitor")]
 impl<'a> Visit<'a> for CodeVisitorV2<'a> {
     /// Processes function definitions and their relationships
     /// -- AI-generated, placeholder --

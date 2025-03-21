@@ -1,26 +1,12 @@
-use cozo::ScriptMutability;
-use serde_json::Value;
-use std::collections::BTreeMap;
-use syn::parse_quote;
-
 #[cfg(test)]
+#[cfg(feature = "cozo_visitor")]
 mod tests {
-    // **Key Areas Needing Validation:**
-    //
-    // 1. **UUID Namespace Isolation**
-    //    - Test that different item types (struct vs fn) with same name get different UUIDs
-    //
-    // 2. **Relationship Transitivity**
-    //    - Verify indirect relationships via multiple hops (impl -> trait -> methods)
-    //
-    // 3. **Error Recovery**
-    //    - Test failed transactions don't leave partial state
-    //
-    // 4. **Concurrency**
-    //    - Multiple visitors writing to same tables (needs Mutex in test)
-    use super::*;
+    use crate::parser::visitor_v2::CodeVisitorV2;
+    use cozo::ScriptMutability;
     use cozo::{Db, MemStorage};
-    use syn::{parse_quote, ItemFn};
+    use syn::parse_quote;
+    use syn::File;
+    use syn::ItemFn;
 
     fn test_db() -> Db<MemStorage> {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -49,7 +35,7 @@ mod tests {
         visitor.flush_all();
 
         // Verify node creation
-        let nodes = db.export_relations(["nodes"]).unwrap();
+        let nodes = db.export_relations(["nodes"].iter()).unwrap();
         assert!(nodes.iter().any(|(name, rows)| name == "nodes"
             && rows
                 .rows
