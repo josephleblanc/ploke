@@ -110,6 +110,7 @@ impl<'a> CodeVisitorV2<'a> {
     pub fn new(db: &'a Db<MemStorage>) -> Self {
         Self {
             db,
+            // AI handle current_scope below.
             // ??? What should this be?
             // Actually, I have no idea what this field even is supposed to represent. Can you tell
             // me about it?
