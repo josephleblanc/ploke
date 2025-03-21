@@ -30,6 +30,7 @@ use serde_json;
 
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::default;
 use syn::{visit::Visit, ItemFn, ReturnType};
 use uuid::Uuid;
 
@@ -206,7 +207,7 @@ impl<'a> CodeVisitorV2<'a> {
     ///
     /// # Flush Triggers
     /// Automatically flushes when batch reaches `batch_size`
-    fn batch_push(&mut self, table: &'static str, row: Vec<DataValue>) {
+    pub fn batch_push(&mut self, table: &'static str, row: Vec<DataValue>) {
         let batch = self
             .batches
             .entry(table)
@@ -218,17 +219,16 @@ impl<'a> CodeVisitorV2<'a> {
         }
     }
 
-    fn flush_table(&mut self, table: &'static str) {
+    pub fn flush_table(&mut self, table: &'static str) {
         if let Some(rows) = self.batches.get_mut(table) {
             let query = format!(
-                "?[id, name, is_primitive, generic_params] <- $rows\n:put {}",
+                "?[id, name, is_primitive] <- $rows;
+                :put {}",
                 table
             );
 
-            let params = BTreeMap::from([(
-                "rows".to_string(),
-                DataValue::List(rows.drain(..).collect()),
-            )]);
+            let params =
+                BTreeMap::from([("rows".to_string(), DataValue::List(std::mem::take(rows)))]);
             self.db
                 .run_script(&query, params, ScriptMutability::Mutable)
                 .unwrap_or_else(|_| panic!("Failed to flush {}", table));
@@ -261,7 +261,7 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
     /// - Relation `foo -(RETURNS)-> bool`
     /// - Relation `foo -(HAS_PARAM)-> x`
     fn visit_item_fn(&mut self, item: &'a ItemFn) {
-        let fn_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, item.sig.ident.to_string().as_bytes());
+        let fn_id = generate_fn_uuid(item);
 
         // Process return type
         let return_type_id = match &item.sig.output {
@@ -330,6 +330,15 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
         }
     }
 }
+
+// AI: Is this safe? I don't have any idea how NAMESPACE_OID works. Tell me about it.
+// The name NAMESPACE_OID suggests to me that it has to do with the namespace it is in I guess?
+// Does that change when the Uuid::NAMESPACE_OID is called within a function?
+pub fn generate_fn_uuid(item: &ItemFn) -> Uuid {
+    let fn_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, item.sig.ident.to_string().as_bytes());
+    fn_id
+}
+// AI?
 
 // TODO: Move this function where it belongs (tbd)
 // utility function, should go in a more appropriate location once we've finished testing the

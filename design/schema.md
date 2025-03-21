@@ -127,3 +127,54 @@ fn visit_item_fn(&mut self, item: &ItemFn) {
 4. Temporal version hooks (git commit timestamps?)
 
 Would any component benefit from deeper implementation guidance?
+
+
+---
+
+### **Understanding `%debug`** (Per Request #4)
+
+From [stored.rst#L209-257](source/stored.rst):
+> "The `%debug` command prints the contents of ephemeral relations (tables starting with `_`) to stdout during script execution."
+
+**Key Characteristics:**
+- *Works Only in Chained Queries*: Requires transaction blocks (`{}` in scripts)
+- *Ephemeral Relations Only*: For tables named like `_temp_data`
+- *Atomic Printing*: Shows relation state at the debug point
+
+**Example Usage with Tests:**
+```rust
+db.run_script(
+    r#"{
+        ?[a] <- [[1], [2]]
+        :replace _test
+    }
+    %debug _test
+    {
+        :rm _test{a}
+    }
+    "#,
+    Default::default(),
+    ScriptMutability::Mutable,
+);
+// Prints _test contents between operations
+```
+
+---
+
+### Critical Areas Needing Validation
+
+1. **Epoch Handling**  
+Cozo's [timetravel docs](source/timetravel.rst) mention validity tracking - tests should verify that code version timestamps are recorded correctly.
+
+2. **Second-Axis Indexing**  
+If implementing scope stacks later:
+```rust
+{
+    parent[ancestor] := *relations[child, ancestor, 'contains']
+    parent[parent_id] := parent[child, parent_id],
+                        parent[parent_id, ancestor]
+    ?[depth] := parent['root_scope_id', 'current_fn_scope_id', depth]
+}
+```
+
+Let me know if you want deeper analysis on specific query patterns!

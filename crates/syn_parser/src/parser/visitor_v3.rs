@@ -168,7 +168,8 @@ impl TypeRegistry {
 
 struct CodeVisitorV2<'a> {
     db: &'a Db<MemStorage>,
-    current_scope: Vec<cozo::DataValuee::parser::visitor_v2::DataValueadb::util::Component>, // Module/block stack
+    // #MaybeSomeday
+    // current_scope: Vec<cozo::DataValuee::parser::visitor_v2::DataValueadb::util::Component>, // Module/block stack
     type_registry: TypeRegistry,
     batches: BTreeMap<&'static str, Vec<DataValue>>,
 }

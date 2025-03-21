@@ -14,7 +14,7 @@ This document details the mapping of Rust types (as used in the `syn_parser` cra
 | `Function` | N/A | Functions are represented as nodes with relationships to their parameters and return types. |
 | `Never` | `Null` | Represents a type that never evaluates to a value. |
 | `Inferred` | `String` |  Inferred types are often represented as strings for debugging and analysis. |
-| `RawPointer` | `Null` | Raw pointers don't have a direct CozoDB equivalent.  Representing them as `Null` might be appropriate, or they could be omitted. |
+| `RawPointer` | [Not Applicable] [alt_loc] | Raw pointers don't have a direct CozoDB equivalent.  Representing them as `Null` might be appropriate, or they could be omitted. |
 | `TraitObject` | `String` | Trait objects are represented as strings (trait name). |
 | `ImplTrait` | `String` | Impl traits are represented as strings (trait name). |
 | `Paren` | N/A | Parenthesized types are handled recursively. |
@@ -32,3 +32,7 @@ This document details the mapping of Rust types (as used in the `syn_parser` cra
 
 *   Investigate the use of custom CozoDB types to represent complex Rust types more accurately.
 *   Develop a comprehensive set of unit tests to verify the type mapping.
+
+
+[Not Applicable]:http://docs.cozodb.org/en/latest/execution.html#disjunctive-normal-form
+[alt_loc]:cozo-docs/source/execution.rs
