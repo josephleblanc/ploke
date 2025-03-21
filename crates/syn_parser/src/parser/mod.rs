@@ -4,6 +4,7 @@ pub mod relations;
 pub mod types;
 pub mod visitor;
 
+#[cfg(cozo_visitor)]
 pub mod visitor_v2;
 
 // Re-export key items

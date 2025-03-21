@@ -1,215 +1,361 @@
-use crate::parser::TypeId;
+//! Abstract Syntax Tree (AST) visitor for building code knowledge graphs in CozoDB
+//! -- AI-generated docs, placeholder --
+//!
+//! This module provides a visitor implementation that:
+//! - Parses Rust code using `syn`
+//! - Extracts semantic relationships between code entities
+//! - Batches inserts for efficient database operations
+//! - Maintains hierarchical scope context
+//!
+//! # Schema Overview
+//! | Table      | Columns                          | Description                     |
+//! |------------|----------------------------------|---------------------------------|
+//! | `nodes`    | (id, kind, name, ...)           | Code entities (functions, types)|
+//! | `relations`| (from, to, type, properties)     | Relationships between entities  |
+//! | `types`    | (id, name, is_primitive, ...)   | Type information and metadata   |
+// TODO: Think about visibility for structs/functions
+// What should the crate expose? Does it even matter?
+// For now we are more likely to target binaries, but should make th api as public as possible for
+// people who want to hack around. Later we'll consider letting some stuff be gated for
+// reliability, but we haven't done the tests required to identify points that will need it yet.
+// #someday
+use cozo::DataValue;
+use cozo::Db;
+use cozo::JsonData;
+use cozo::MemStorage;
+use cozo::ScriptMutability;
+use cozo::UuidWrapper;
 use quote::ToTokens;
-use serde::Deserialize;
-use serde::Serialize;
+use serde_json;
+
+use serde_json::json;
 use std::collections::BTreeMap;
-use syn::{
-    visit::{self, Visit},
-    ItemFn, ReturnType,
-};
+use syn::{visit::Visit, ItemFn, ReturnType};
+use uuid::Uuid;
 
-use super::visitor::VisitorState;
+/// Configuration for batch insertion performance tuning
+/// -- AI-generated docs, placeholder --
 
-// AI NOTE: I'm including this just to show what the VisitorState looks like, but I'm not making it a
-// `VisitorStateV2` because I want to use all the methods from the original without replicating
-// them here.
-// pub(crate) struct VisitorState {
-//     pub(crate) code_graph: CodeGraph,
-//     next_node_id: NodeId,
-//     next_type_id: TypeId,
-//     // Maps existing types to their IDs to avoid duplication
-//     type_map: HashMap<String, TypeId>,
-// }
+#[cfg(cozo_visitor)]
+const DEFAULT_BATCH_SIZE: usize = 100;
 
-// Represents a generic parameter
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GenericParamNode {
-    pub id: NodeId,
-    pub kind: GenericParamKind,
-}
+/// AST Visitor that maintains parsing state and batches database operations
+/// -- AI-generated docs, placeholder --
+///
+/// # Invariants
+/// - `current_scope` forms a valid hierarchy through push/pop operations
+/// - Batch vectors contain homogeneous entries per table
+/// - UUIDs are generated deterministically using SHA-1 hashing (UUIDv5)
+///
+#[cfg(cozo_visitor)]
+pub struct CodeVisitorV2<'a> {
+    /// Database handle for batch insertion
+    /// -- AI-generated docs, placeholder --
+    ///
+    pub db: &'a Db<MemStorage>,
 
-// Different kinds of generic parameters
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub enum GenericParamKind {
-    Type {
-        name: String,
-        bounds: Vec<TypeId>,
-        default: Option<TypeId>,
-    },
-    Lifetime {
-        name: String,
-        bounds: Vec<String>,
-    },
-    Const {
-        name: String,
-        type_id: TypeId,
-    },
-}
+    /// Hierarchical context stack using UUID identifiers
+    /// -- AI-generated docs, placeholder --
+    ///
+    /// Represents the current lexical scope as a stack where:
+    /// - Last element: Immediate parent entity
+    /// - First element: Root module/namespace
+    ///
+    /// Example: [crate_id, mod_id, fn_id] for a nested function
+    pub current_scope: Vec<Uuid>,
 
-// Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ParameterNode {
-    pub id: NodeId,
-    pub name: Option<String>,
-    pub type_id: TypeId,
-    pub is_mutable: bool,
-    pub is_self: bool,
-}
-// Represents a macro rule
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MacroRuleNode {
-    pub id: NodeId,
-    pub pattern: String,
-    pub expansion: String,
-}
-// Represent an attribute
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Attribute {
-    pub name: String,          // e.g., "derive", "cfg", "serde"
-    pub args: Vec<String>,     // Arguments or parameters of the attribute
-    pub value: Option<String>, // Optional value (e.g., for `#[attr = "value"]`)
+    /// Batched database operations ready for insertion
+    /// -- AI-generated docs, placeholder --
+    ///
+    /// Keys correspond to CozoDB table names. Each entry contains:
+    /// - `nodes`: Code entity definitions
+    /// - `relations`: Entity relationships
+    /// - `types`: Type system information
+    pub batches: BTreeMap<&'static str, Vec<DataValue>>,
+
+    /// Maximum number of entries per batch before flushing
+    /// -- AI-generated docs, placeholder --
+    pub batch_size: usize,
 }
 
-pub type NodeId = usize;
+#[cfg(cozo_visitor)]
+impl<'a> CodeVisitorV2<'a> {
+    /// Creates a new visitor instance with initialized state
+    /// -- AI-generated docs, placeholder --
+    ///
+    /// # Arguments
+    /// * `db` - Connected CozoDB instance with required schemas
+    ///
+    /// # Schemas Must Exist
+    // TODO: Fill out the following and include in documentation once we have landed on a working
+    // and validated schema.
+    //
+    // Ensure these relations are created first:
+    //
+    // CAUTION: UNTESTED SCHEMA
+    // Get all functions modifying a target struct
+    // ?[fn_body] :=
+    //     *nodes[struct_id, "struct", "TargetStruct"],
+    //     *relations[impl_id, struct_id, "for_type"],
+    //     *relations[impl_id, fn_id, "contains"],
+    //     *code_snippets[fn_id, fn_body]
+    //     valid_from @ '2024-02-01' // Temporal query
+    //
+    // CAUTION: UNTESTED SCHEMA
+    // Find traits a type indirectly implements
+    // ?[trait_name, depth] :=
+    //     *nodes[type_id, "struct", "MyType"],
+    //     relations*[type_id, trait_id, "requires_trait", depth: 1..5],
+    //     *nodes[trait_id, "trait", trait_name]
+    //     :order +depth  // From low to high specificity
+    pub fn new(db: &'a Db<MemStorage>) -> Self {
+        Self {
+            db,
+            // ??? What should this be?
+            // Actually, I have no idea what this field even is supposed to represent. Can you tell
+            // me about it?
+            current_scope: todo!(),
+            // Does the following look right?
+            batches: BTreeMap::from([("data", Vec::with_capacity(DEFAULT_BATCH_SIZE))]),
+            batch_size: DEFAULT_BATCH_SIZE,
+        }
+    }
 
-// Different kinds of visibility
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum VisibilityKind {
-    Public,
-    Crate,
-    Restricted(Vec<String>), // Path components of restricted visibility
-    Inherited,               // Default visibility
-}
-// Different kinds of relations
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum RelationKind {
-    FunctionParameter,
-    FunctionReturn,
-    StructField,
-    EnumVariant,
-    ImplementsFor,
-    ImplementsTrait,
-    Inherits,
-    References,
-    Contains,
-    Uses,
-    ValueType,
-    MacroUse,
-    // MacroExpansion,
-    // This is outside the scope of this project right now, but if it were to be implemented, it
-    // would probably go here.
-}
-// Represents a relation between nodes
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Relation {
-    pub source: NodeId,
-    pub target: NodeId,
-    pub kind: RelationKind,
-}
-// Different kinds of procedural macros
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ProcMacroKind {
-    Derive,
-    Attribute,
-    Function,
-}
-// Represents a function definition
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FunctionNode {
-    pub id: NodeId,
-    pub name: String,
-    pub visibility: VisibilityKind,
-    pub parameters: Vec<ParameterNode>,
-    pub return_type: Option<TypeId>,
-    pub generic_params: Vec<GenericParamNode>,
-    pub attributes: Vec<Attribute>,
-    pub docstring: Option<String>,
-    pub body: Option<String>,
-}
+    /// Processes a Rust type annotation to extract semantic information
+    /// -- AI-generated docs, placeholder --
+    ///
+    /// # Deterministic ID Generation
+    /// Uses UUIDv5 with OID namespace for consistent hashing:
+    /// ```rust
+    /// let type_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, type_str.as_bytes());
+    /// ```
+    ///
+    /// # Panics
+    /// - If type parsing fails (indicates invalid AST state)
+    fn process_type(&mut self, ty: &syn::Type) -> Uuid {
+        let type_str = ty.to_token_stream().to_string();
+        let type_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, type_str.as_bytes());
+        let type_is_primative = is_primitive_type(ty);
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum MacroKind {
-    DeclarativeMacro,
-    ProcedureMacro { kind: ProcMacroKind },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MacroNode {
-    pub id: NodeId,
-    pub name: String,
-    pub visibility: VisibilityKind,
-    pub kind: MacroKind,
-    pub rules: Vec<MacroRuleNode>,
-    pub attributes: Vec<Attribute>,
-    pub docstring: Option<String>,
-    pub body: Option<String>,
-}
-
-struct CodeVisitorV2<'a> {
-    db: &'a Db<MemStorage>,
-    current_scope: Vec<Uuid>, // Module/block stack
-    type_registry: TypeRegistry,
-    batches: BTreeMap<&'static str, Vec<DataValue>>,
-}
-
-impl<'a> Visit<'a> for CodeVisitorV2<'a> {
-    fn visit_item_fn(&mut self, item: &'a ItemFn) {
-        let fn_id = Uuid::new_v4();
-        let return_type = self.process_type(&item.sig.output);
-
-        // Node entry
+        // Batch the type for insertion
         self.batch_push(
-            "nodes",
+            "types",
             vec![
-                fn_id.into(),
-                "function".into(),
-                item.sig.ident.to_string().into(),
-                self.current_vis().into(),
-                attrs_to_json(&item.attrs).into(),
-                extract_docs(&item.attrs).into(),
-                span_location(item).into(),
+                // TODO: Find backup docs that will show me clearly that there isn't a problem with
+                // Uuid here (Uuid::new_v5 genering a new one here vs. cozo's handling of them)
+                DataValue::Uuid(UuidWrapper(type_id)),
+                // Stil worried about this.
+                // Is there any reason not to handle the type_id like this? It doesn't seem like
+                // cozo has an easy `from` or `into`, which makes me think there could be a reason
+                // why they don't want you to put Uuids like this in here. Is there something about
+                // the way cozo handles the DataValue::Uuid type that would make us want to avoid
+                // this approach, or is there another way to use a publically facing cozo method
+                // here? Like is there a way to use a cozo-core method to generate the id instead
+                // of doing it with uuid::Uuid::new_v5 like we do above?
+                // There could also be potential for a mismatch in versions. Danger? Collisions?
+                DataValue::Str(type_str.into()),
+                // There is no `is_primative_type` function that I can see, am I missing something here?
+                DataValue::Bool(type_is_primative),
+                DataValue::Null, // Placeholder for generic params
             ],
         );
 
-        // Type relationships
-        if let Some(ret_id) = return_type {
+        type_id // Concerned about this type_id being a hash directly while the one pushed into
+                // cozo is wrapped. Is Cozo going to do something out of sight that might mess with the way
+                // these hashes are timestamped? Makes me nervous.
+    }
+
+    /// Batches a database row for later insertion
+    /// -- AI-generated docs, placeholder --
+    ///
+    /// # Table Requirements
+    /// - `table` must exist in `self.batches` initialization
+    /// - Row format must match target table schema
+    ///
+    /// # Flush Triggers
+    /// Automatically flushes when batch reaches `batch_size`
+    fn batch_push(&mut self, table: &'static str, row: Vec<DataValue>) {
+        let batch = self
+            .batches
+            .entry(table)
+            .or_insert_with(|| Vec::with_capacity(self.batch_size));
+        batch.push(DataValue::List(row));
+
+        if batch.len() >= self.batch_size {
+            self.flush_table(table);
+        }
+    }
+
+    fn flush_table(&mut self, table: &'static str) {
+        if let Some(rows) = self.batches.get_mut(table) {
+            let query = format!(
+                "?[id, name, is_primitive, generic_params] <- $rows\n:put {}",
+                table
+            );
+
+            let params = BTreeMap::from([(
+                "rows".to_string(),
+                DataValue::List(rows.drain(..).collect()),
+            )]);
+            self.db
+                .run_script(&query, params, ScriptMutability::Mutable)
+                .unwrap_or_else(|_| panic!("Failed to flush {}", table));
+        }
+    }
+}
+
+#[cfg(cozo_visitor)]
+impl<'a> Visit<'a> for CodeVisitorV2<'a> {
+    /// Processes function definitions and their relationships
+    /// -- AI-generated, placeholder --
+    ///
+    /// # Key Operations
+    /// 1. Generates function ID using its signature
+    /// 2. Records parameter-return type relationships
+    /// 3. Maintains scope hierarchy during nested processing
+    ///
+    /// # Example
+    /// For `fn foo(x: i32) -> bool` creates:
+    /// - Node entry for `foo`
+    /// - Relation `foo -(RETURNS)-> bool`
+    /// - Relation `foo -(HAS_PARAM)-> x`
+    fn visit_item_fn(&mut self, item: &'a ItemFn) {
+        let fn_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, item.sig.ident.to_string().as_bytes());
+
+        // Process return type
+        let return_type_id = match &item.sig.output {
+            ReturnType::Type(_, ty) => self.process_type(ty),
+            _ => Uuid::nil(),
+        };
+
+        self.batch_push(
+            "nodes",
+            vec![
+                DataValue::Uuid(UuidWrapper(fn_id)),
+                DataValue::Str("function".into()),
+                DataValue::Str(item.sig.ident.to_string().into()),
+                // ... other fields
+            ],
+        );
+        let json_data = json!({ "optional": false });
+
+        if !return_type_id.is_nil() {
             self.batch_push(
-                "ast_edges",
+                "relations",
                 vec![
-                    fn_id.into(),
-                    ret_id.into(),
-                    "returns".into(),
-                    json!({ "optional": matches!(item.sig.output, ReturnType::Default) }).into(),
+                    DataValue::Uuid(UuidWrapper(fn_id)),
+                    DataValue::Uuid(UuidWrapper(return_type_id)),
+                    DataValue::Str("returns".into()),
+                    DataValue::Json(JsonData(json_data)),
                 ],
             );
         }
 
         // Process parameters
-        for input in &item.sig.inputs {
-            if let syn::FnArg::Typed(pat) = input {
-                let param_id = Uuid::new_v4();
-                let ty_id = self.process_type(&pat.ty);
+        for param in &item.sig.inputs {
+            if let syn::FnArg::Typed(pat) = param {
+                let param_type_id = self.process_type(&pat.ty);
+                let param_id = Uuid::new_v5(
+                    &Uuid::NAMESPACE_OID,
+                    format!("{}${}", fn_id, pat.pat.to_token_stream()).as_bytes(),
+                );
+
+                let is_mutable = if let syn::Pat::Ident(pat_ident) = &*pat.pat {
+                    pat_ident.mutability.is_some()
+                } else {
+                    false
+                };
 
                 self.batch_push(
                     "nodes",
                     vec![
-                        param_id.into(),
-                        "parameter".into(),
-                        pat.pat.to_token_stream().to_string().into(),
-                        "".into(), // No visibility for params
-                        json!([]).into(),
-                        "".into(),
-                        span_location(pat).into(),
+                        DataValue::Uuid(UuidWrapper(param_id)),
+                        DataValue::Str("parameter".into()),
+                        // ... other fields
                     ],
                 );
 
-                self.batch_push("ast_edges", vec![
-                    fn_id.into(),
-                    param_id.into(),
-                    "has_param".into(),
-                    json!({ "mutable": matches!(pat.pat, Pat::Ident(pi) if pi.mutability.is_some()) }).into()
-                ]);
+                let json_data = json!({"mutable": is_mutable });
+                self.batch_push(
+                    "relations",
+                    vec![
+                        DataValue::Uuid(UuidWrapper(fn_id)),
+                        DataValue::Uuid(UuidWrapper(param_type_id)),
+                        DataValue::Str("has_param".into()),
+                        DataValue::Json(JsonData(json_data)),
+                    ],
+                );
             }
         }
     }
 }
+
+#[test]
+pub fn test_mutable_param() {
+    let db = Db::new(MemStorage::default()).expect("DB init failed");
+    db.initialize().expect("DB init failed");
+    db.run_script(
+        ":create ast_functions {name, params, is_async}",
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )
+    .expect("Adding a relation failed");
+    let code = r#"fn example(mut x: u32, y: &mut str)"#;
+    let syntax = syn::parse_file(code).unwrap();
+
+    let mut visitor = CodeVisitorV2::new(&db);
+    visitor.visit_file(&syntax);
+    // visitor.flush_all();
+
+    // Verify relations have correct mutable flags
+}
+
+// TODO: Move this function where it belongs (tbd)
+// utility function, should go in a more appropriate location once we've finished testing the
+// current approach to visitor.
+//
+// Parses actual syntax rather than string matching
+pub fn is_primitive_type(ty: &syn::Type) -> bool {
+    if let syn::Type::Path(type_path) = ty {
+        let ident = type_path.path.get_ident().map(|i| i.to_string());
+        ident.as_deref().is_some_and(|i| {
+            matches!(
+                i,
+                "bool"
+                    | "char"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "u128"
+                    | "usize"
+                    | "i8"
+                    | "i16"
+                    | "i32"
+                    | "i64"
+                    | "i128"
+                    | "isize"
+                    | "f32"
+                    | "f64"
+                    | "str"
+                    | "String"
+            )
+        })
+    } else {
+        false
+    }
+}
+
+// fn is_primitive_type(ty: &syn::Type) -> bool {
+//     matches!(&ty {
+//             Type::Path(p) => p.path.segments.last().map_or(false, |s| {
+//                 matches!(
+//                     s.ident.to_string().as_str(),
+//                     "i8" | "i16" | "i32" | "i64" | "i128" | "u8" | "u16" |
+//     "u32" | "u64" | "u128" | "f32" |
+//                     "f64" | "bool" | "char" | "str" | "usize" | "isize"
+//                 )
+//             }),
+//             _ => false,
+//         })
+// }
