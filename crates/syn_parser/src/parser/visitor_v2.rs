@@ -102,12 +102,32 @@ pub struct CodeVisitorV2<'a> {
     /// - `nodes`: Code entity definitions
     /// - `relations`: Entity relationships
     /// - `types`: Type system information
-    pub batches: BTreeMap<Set<'static>, Vec<DataValue>>,
+    pub batches: BTreeMap<Set, Vec<DataValue>>,
 
     /// Maximum number of entries per batch before flushing
     /// -- AI-generated docs, placeholder --
     pub batch_size: usize,
 }
+
+#[derive(Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
+pub enum Set {
+    Nodes(&'static str),
+    Types(&'static str),
+    Relations(&'static str),
+}
+impl Set {
+    fn as_key(&self) -> &'static str {
+        match self {
+            Self::Nodes(key) => key,
+            Self::Types(key) => key,
+            Self::Relations(key) => key,
+        }
+    }
+}
+
+pub const NODES_KEY: &str = "nodes";
+pub const RELATIONS_KEY: &str = "relations";
+pub const TYPES_KEY: &str = "types";
 
 #[cfg(feature = "cozo_visitor")]
 impl<'a> CodeVisitorV2<'a> {
@@ -123,7 +143,7 @@ impl<'a> CodeVisitorV2<'a> {
     //
     // Ensure these relations are created first:
     //
-    // CAUTION: UNTESTED SCHEMA
+    // CAUTION: UNTESTED EXAMPLE SCHEMA
     // Get all functions modifying a target struct
     // ?[fn_body] :=
     //     *nodes[struct_id, "struct", "TargetStruct"],
@@ -132,7 +152,7 @@ impl<'a> CodeVisitorV2<'a> {
     //     *code_snippets[fn_id, fn_body]
     //     valid_from @ '2024-02-01' // Temporal query
     //
-    // CAUTION: UNTESTED SCHEMA
+    // CAUTION: UNTESTED EXAMPLE SCHEMA
     // Find traits a type indirectly implements
     // ?[trait_name, depth] :=
     //     *nodes[type_id, "struct", "MyType"],
@@ -148,9 +168,18 @@ impl<'a> CodeVisitorV2<'a> {
             // me about it?
             current_scope: vec![Uuid::new_v5(&Uuid::NAMESPACE_OID, "ROOT_SCOPE".as_bytes())], // Initialize with root scope
             batches: BTreeMap::from([
-                (Vec::with_capacity(DEFAULT_BATCH_SIZE),),
-                (Vec::with_capacity(DEFAULT_BATCH_SIZE),),
-                ("types", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
+                (
+                    Set::Types(TYPES_KEY),
+                    Vec::with_capacity(DEFAULT_BATCH_SIZE),
+                ),
+                (
+                    Set::Relations(RELATIONS_KEY),
+                    Vec::with_capacity(DEFAULT_BATCH_SIZE),
+                ),
+                (
+                    Set::Nodes(NODES_KEY),
+                    Vec::with_capacity(DEFAULT_BATCH_SIZE),
+                ),
             ]),
             batch_size: DEFAULT_BATCH_SIZE,
         }
@@ -209,31 +238,31 @@ impl<'a> CodeVisitorV2<'a> {
     ///
     /// # Flush Triggers
     /// Automatically flushes when batch reaches `batch_size`
-    pub fn batch_push(&mut self, table: &'static str, row: Vec<DataValue>) {
+    pub fn batch_push(&mut self, set: Set, row: Vec<DataValue>) {
         let batch = self
             .batches
-            .entry(table)
+            .entry(set)
             .or_insert_with(|| Vec::with_capacity(self.batch_size));
         batch.push(DataValue::List(row));
 
         if batch.len() >= self.batch_size {
-            self.flush_table(table);
+            self.flush_table(&set);
         }
     }
 
-    pub fn flush_table(&mut self, table: &'static str) {
-        if let Some(rows) = self.batches.get_mut(table) {
+    pub fn flush_table(&mut self, set: Set) {
+        if let Some(rows) = self.batches.get_mut(&set) {
             let query = format!(
                 "?[id, name, is_primitive] <- $rows;
                 :put {}",
-                table
+                set.as_key()
             );
 
             let params =
                 BTreeMap::from([("rows".to_string(), DataValue::List(std::mem::take(rows)))]);
             self.db
                 .run_script(&query, params, ScriptMutability::Mutable)
-                .unwrap_or_else(|_| panic!("Failed to flush {}", table));
+                .unwrap_or_else(|_| panic!("Failed to flush {}", set.as_key()));
         }
     }
 
@@ -243,83 +272,12 @@ impl<'a> CodeVisitorV2<'a> {
         // Flush each table individually
         // let tables: Vec<&str> = self.batches.keys().copied().collect();
 
-        for key in self.batches.iter_mut() {
-            match key {}
-            self.flush_table(table);
+        // AI: There is an immutable borrow, can you fix?
+        for set in self.batches.keys() {
+            self.flush_table(*set);
         }
+        // AI!
     }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Set {
-    Node {
-        id: Uuid,
-        name: String,
-        kind: NodeKind,
-    },
-    Relation {
-        source: Uuid,
-        target: Uuid,
-        rel_type: RelationKind,
-    },
-    Type {
-        id: Uuid,
-        name: String,
-        is_primitive: bool,
-    },
-}
-
-pub enum NodeKind {
-    Fn,
-    FnArg,
-
-    Named,
-    // Reference
-    Slice,
-    Array {
-        // Element type is in related_types[0]
-        size: Option<String>,
-    },
-    Tuple {
-        // Element types are in related_types
-    },
-    // ANCHOR: ExternCrate
-    Function {
-        // Parameter types are in related_types (except last one)
-        // Return type is in related_types[last]
-        is_unsafe: bool,
-        is_extern: bool,
-        abi: Option<String>,
-    },
-    //ANCHOR_END: ExternCrate
-    Never,
-    Inferred,
-    RawPointer {
-        is_mutable: bool,
-        // Pointee type is in related_types[0]
-    },
-    // ANCHOR: TraitObject
-    TraitObject {
-        // Trait bounds are in related_types
-        dyn_token: bool,
-    },
-    //ANCHOR_END: TraitObject
-    // ANCHOR: ImplTrait
-    ImplTrait {
-        // Trait bounds are in related_types
-    },
-    //ANCHOR_END: ImplTrait
-    // Paren,
-    // Inner type is in related_types[0]
-    // ANCHOR: ItemMacro
-    Macro {
-        name: String,
-        tokens: String,
-    },
-    //ANCHOR_END: ItemMacro
-    Unknown {
-        type_str: String,
-    },
 }
 
 #[cfg(feature = "cozo_visitor")]
