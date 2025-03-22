@@ -34,6 +34,8 @@ use std::default;
 use syn::{visit::Visit, ItemFn, ReturnType};
 use uuid::Uuid;
 
+use super::relations::RelationKind;
+
 #[cfg(feature = "cozo_visitor")]
 /// Configuration for batch insertion performance tuning
 /// -- AI-generated docs, placeholder --
@@ -100,7 +102,7 @@ pub struct CodeVisitorV2<'a> {
     /// - `nodes`: Code entity definitions
     /// - `relations`: Entity relationships
     /// - `types`: Type system information
-    pub batches: BTreeMap<&'static str, Vec<DataValue>>,
+    pub batches: BTreeMap<Set<'static>, Vec<DataValue>>,
 
     /// Maximum number of entries per batch before flushing
     /// -- AI-generated docs, placeholder --
@@ -146,8 +148,8 @@ impl<'a> CodeVisitorV2<'a> {
             // me about it?
             current_scope: vec![Uuid::new_v5(&Uuid::NAMESPACE_OID, "ROOT_SCOPE".as_bytes())], // Initialize with root scope
             batches: BTreeMap::from([
-                ("nodes", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
-                ("relations", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
+                (Vec::with_capacity(DEFAULT_BATCH_SIZE),),
+                (Vec::with_capacity(DEFAULT_BATCH_SIZE),),
                 ("types", Vec::with_capacity(DEFAULT_BATCH_SIZE)),
             ]),
             batch_size: DEFAULT_BATCH_SIZE,
@@ -237,12 +239,87 @@ impl<'a> CodeVisitorV2<'a> {
 
     /// Flushes all remaining batches to the database
     pub fn flush_all(&mut self) {
+        // let keys = ["node", "relation", "type"];
         // Flush each table individually
-        let tables: Vec<&str> = self.batches.keys().copied().collect();
-        for table in tables {
+        // let tables: Vec<&str> = self.batches.keys().copied().collect();
+
+        for key in self.batches.iter_mut() {
+            match key {}
             self.flush_table(table);
         }
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Set {
+    Node {
+        id: Uuid,
+        name: String,
+        kind: NodeKind,
+    },
+    Relation {
+        source: Uuid,
+        target: Uuid,
+        rel_type: RelationKind,
+    },
+    Type {
+        id: Uuid,
+        name: String,
+        is_primitive: bool,
+    },
+}
+
+pub enum NodeKind {
+    Fn,
+    FnArg,
+
+    Named,
+    // Reference
+    Slice,
+    Array {
+        // Element type is in related_types[0]
+        size: Option<String>,
+    },
+    Tuple {
+        // Element types are in related_types
+    },
+    // ANCHOR: ExternCrate
+    Function {
+        // Parameter types are in related_types (except last one)
+        // Return type is in related_types[last]
+        is_unsafe: bool,
+        is_extern: bool,
+        abi: Option<String>,
+    },
+    //ANCHOR_END: ExternCrate
+    Never,
+    Inferred,
+    RawPointer {
+        is_mutable: bool,
+        // Pointee type is in related_types[0]
+    },
+    // ANCHOR: TraitObject
+    TraitObject {
+        // Trait bounds are in related_types
+        dyn_token: bool,
+    },
+    //ANCHOR_END: TraitObject
+    // ANCHOR: ImplTrait
+    ImplTrait {
+        // Trait bounds are in related_types
+    },
+    //ANCHOR_END: ImplTrait
+    // Paren,
+    // Inner type is in related_types[0]
+    // ANCHOR: ItemMacro
+    Macro {
+        name: String,
+        tokens: String,
+    },
+    //ANCHOR_END: ItemMacro
+    Unknown {
+        type_str: String,
+    },
 }
 
 #[cfg(feature = "cozo_visitor")]

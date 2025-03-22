@@ -1,6 +1,6 @@
 ## Target Schema Design Framework
 **Key Entities (Per [datatypes.rst])**
-| Rust Item          | Cozo Node Type | Key Relations                  | Metadata Example                |
+| Rust Item          | Cozo Node Name | Key Relations                  | Metadata Example                |
 |--------------------|----------------|--------------------------------|----------------------------------|
 | Function           | `function`     | `has_param`, `returns`         | `{async: bool, unsafe: bool}`   |
 | Struct             | `struct`       | `has_field`, `impl_for`        | `{repr: Option<String>}`        |  
@@ -10,6 +10,151 @@
 | Module             | `module`       | `contains`                     | `{path: "..."}`                 |
 | Type Alias         | `type_alias`   | `aliases`                      | `{generics: [...]}`             |
 | Macro              | `macro`        | `expands_to`                   | `{hygiene: "..."}`              |
+
+
+```rust
+// syn::Item
+pub enum Item {
+    Const(ItemConst),
+    Enum(ItemEnum),
+    ExternCrate(ItemExternCrate),
+    Fn(ItemFn),
+    ForeignMod(ItemForeignMod),
+    Impl(ItemImpl),
+    Macro(ItemMacro),
+    Mod(ItemMod),
+    Static(ItemStatic),
+    Struct(ItemStruct),
+    Trait(ItemTrait),
+    TraitAlias(ItemTraitAlias),
+    Type(ItemType),
+    Union(ItemUnion),
+    Use(ItemUse),
+    Verbatim(TokenStream),
+}
+```
+
+```rust
+// syn::ItemConst
+pub struct ItemConst {
+    pub attrs: Vec<Attribute>,
+    pub vis: Visibility,
+    pub const_token: Const,
+    pub ident: Ident,
+    pub generics: Generics,
+    pub colon_token: Colon,
+    pub ty: Box<Type>,
+    pub eq_token: Eq,
+    pub expr: Box<Expr>,
+    pub semi_token: Semi,
+}
+  ```
+```rust
+// syn::ItemEnum
+pub struct ItemEnum {
+    pub attrs: Vec<Attribute>,
+    pub vis: Visibility,
+    pub enum_token: Enum,
+    pub ident: Ident,
+    pub generics: Generics,
+    pub brace_token: Brace,
+    pub variants: Punctuated<Variant, Comma>,
+}
+```
+```rust
+// syn::ItemExternCrate
+pub struct ItemExternCrate {
+  // fields
+}
+```
+We won't handle Extern for now, probably we won't handle it ever.
+
+### syn::ItemFn
+ ```rust
+pub struct ItemFn {
+    pub attrs: Vec<Attribute>,
+    pub vis: Visibility,
+    pub sig: Signature,
+    pub block: Box<Block>,
+}
+```
+
+```rust
+// syn::Attribute
+// Shared by most (all?) Item____ structs
+pub struct Attribute {
+    pub pound_token: Pound,
+    pub style: AttrStyle,
+    pub bracket_token: Bracket,
+    pub meta: Meta,
+}
+```
+
+```rust
+// syn::Meta
+pub enum Meta {
+    //A meta path is like the test in #[test]. 
+    Path(Path), 
+    // A name-value meta is like
+    // the path = "..." in #[path = "sys/windows.rs"]. 
+    List(MetaList), 
+    // A name-value pair within an attribute, like feature = "nightly".
+    NameValue(MetaNameValue),
+}
+```
+
+```rust
+// syn::Visibility
+// The visibility level of an item: inherited or pub or pub(restricted)
+pub enum Visibility {
+    Public(Pub),
+    Restricted(VisRestricted),
+    Inherited,
+}
+```
+
+```rust
+// syn::Stmt
+pub enum Stmt {
+    // A local (let) binding.
+    Local(Local),
+    // An item definition.
+    // !!! Recursive: Item(ItemFn) -> Block -> Stmt -> Item(_)
+    Item(Item),
+    Expr(Expr, Option<Semi>),
+    // We won't handle macros beyond tracking macro names
+    Macro(StmtMacro),
+}
+```
+
+```rust
+pub struct Block {
+    pub brace_token: Brace,
+    pub stmts: Vec<Stmt>,
+}
+```
+
+
+```rust
+// syn::Type
+pub enum Type {
+    Array(TypeArray),
+    BareFn(TypeBareFn),
+    Group(TypeGroup),
+    ImplTrait(TypeImplTrait),
+    Infer(TypeInfer),
+    Macro(TypeMacro),
+    Never(TypeNever),
+    Paren(TypeParen),
+    Path(TypePath),
+    Ptr(TypePtr),
+    Reference(TypeReference),
+    Slice(TypeSlice),
+    TraitObject(TypeTraitObject),
+    Tuple(TypeTuple),
+    Verbatim(TokenStream),
+}
+```
 
 ## CozoScript Schema Definition
 ```cozoscript

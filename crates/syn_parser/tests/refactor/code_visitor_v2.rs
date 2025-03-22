@@ -16,6 +16,8 @@ mod tests {
 
     pub fn test_db() -> Db<MemStorage> {
         let db = Db::new(MemStorage::default()).unwrap();
+        // Can't do multiple lines at once. I think we need to `multiple_transactions` method for
+        // that, which is streaming and I don't want to mess with it yet.
         db.run_script(
             r#"
             :create nodes {id: Uuid, kind: String, name: String}
