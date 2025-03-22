@@ -12,7 +12,7 @@ mod tests {
     use syn::visit::Visit;
     use syn::File;
     use syn::ItemFn;
-    use syn_parser::parser::visitor_v2::{generate_fn_uuid, CodeVisitorV2};
+    use syn_parser::parser::visitor_v2::{generate_fn_uuid, CodeVisitorV2, Set, NODES_KEY};
 
     pub fn test_db() -> Db<MemStorage> {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -163,20 +163,21 @@ mod tests {
     #[test]
     pub fn auto_flush_on_batch_limit() {
         let db = test_db();
+        let nodes = Set::Nodes(NODES_KEY);
         let mut visitor = CodeVisitorV2 {
             db: &db,
             current_scope: Vec::new(),
-            batches: BTreeMap::from([("nodes", Vec::with_capacity(2))]),
+            batches: BTreeMap::from([(nodes, Vec::with_capacity(2))]),
             batch_size: 2,
         };
 
         // Add 3 items - should flush twice
-        visitor.batch_push("nodes", vec!["id1".into()]);
-        visitor.batch_push("nodes", vec!["id2".into()]);
-        visitor.batch_push("nodes", vec!["id3".into()]);
+        visitor.batch_push(nodes, vec!["id1".into()]);
+        visitor.batch_push(nodes, vec!["id2".into()]);
+        visitor.batch_push(nodes, vec!["id3".into()]);
 
         assert_eq!(
-            visitor.batches["nodes"].len(),
+            visitor.batches[&nodes].len(),
             1,
             "Should auto-flush at 2, leaving 1 in buffer"
         );

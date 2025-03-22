@@ -30,11 +30,8 @@ use serde_json;
 
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::default;
 use syn::{visit::Visit, ItemFn, ReturnType};
 use uuid::Uuid;
-
-use super::relations::RelationKind;
 
 #[cfg(feature = "cozo_visitor")]
 /// Configuration for batch insertion performance tuning
@@ -203,7 +200,7 @@ impl<'a> CodeVisitorV2<'a> {
 
         // Batch the type for insertion
         self.batch_push(
-            "types",
+            Set::Types(TYPES_KEY),
             vec![
                 // TODO: Find backup docs that will show me clearly that there isn't a problem with
                 // Uuid here (Uuid::new_v5 genering a new one here vs. cozo's handling of them)
@@ -246,7 +243,7 @@ impl<'a> CodeVisitorV2<'a> {
         batch.push(DataValue::List(row));
 
         if batch.len() >= self.batch_size {
-            self.flush_table(&set);
+            self.flush_table(set);
         }
     }
 
@@ -268,13 +265,11 @@ impl<'a> CodeVisitorV2<'a> {
 
     /// Flushes all remaining batches to the database
     pub fn flush_all(&mut self) {
-        // let keys = ["node", "relation", "type"];
         // Flush each table individually
-        // let tables: Vec<&str> = self.batches.keys().copied().collect();
-
+        let sets: Vec<Set> = self.batches.keys().copied().collect();
         // AI: There is an immutable borrow, can you fix?
-        for set in self.batches.keys() {
-            self.flush_table(*set);
+        for set in sets {
+            self.flush_table(set);
         }
         // AI!
     }
@@ -305,7 +300,7 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
         };
 
         self.batch_push(
-            "nodes",
+            Set::Nodes(NODES_KEY),
             vec![
                 DataValue::Uuid(UuidWrapper(fn_id)),
                 DataValue::Str("function".into()),
@@ -317,7 +312,7 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
 
         if !return_type_id.is_nil() {
             self.batch_push(
-                "relations",
+                Set::Relations(RELATIONS_KEY),
                 vec![
                     DataValue::Uuid(UuidWrapper(fn_id)),
                     DataValue::Uuid(UuidWrapper(return_type_id)),
@@ -343,7 +338,7 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
                 };
 
                 self.batch_push(
-                    "nodes",
+                    Set::Nodes(NODES_KEY),
                     vec![
                         DataValue::Uuid(UuidWrapper(param_id)),
                         DataValue::Str("parameter".into()),
@@ -353,7 +348,7 @@ impl<'a> Visit<'a> for CodeVisitorV2<'a> {
 
                 let json_data = json!({"mutable": is_mutable });
                 self.batch_push(
-                    "relations",
+                    Set::Relations(RELATIONS_KEY),
                     vec![
                         DataValue::Uuid(UuidWrapper(fn_id)),
                         DataValue::Uuid(UuidWrapper(param_type_id)),
