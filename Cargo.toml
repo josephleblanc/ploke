@@ -8,5 +8,8 @@ exclude = ["ai_workflow"]
 
 [workspace.dependencies]
 # Shared dependencies with versions
-syn = "2.0"
+syn = "2.0.100"
+rayon = "1.10.0"
+flume = "0.11.1"
+tokio = "1.44.1"
 # Other shared dependencies
