@@ -248,19 +248,21 @@ impl<'a> CodeVisitorV2<'a> {
     }
 
     pub fn flush_table(&mut self, set: Set) {
-        if let Some(rows) = self.batches.get_mut(&set) {
-            let query = format!(
-                "?[id, name, is_primitive] <- $rows;
-                :put {}",
-                set.as_key()
-            );
+        let rows = match self.batches.get_mut(&set) {
+            Some(rows) if !rows.is_empty() => std::mem::take(rows),
+            _ => return, // No rows to flush
+        };
 
-            let params =
-                BTreeMap::from([("rows".to_string(), DataValue::List(std::mem::take(rows)))]);
-            self.db
-                .run_script(&query, params, ScriptMutability::Mutable)
-                .unwrap_or_else(|_| panic!("Failed to flush {}", set.as_key()));
-        }
+        let query = format!(
+            "?[id, name, is_primitive] <- $rows;
+            :put {}",
+            set.as_key()
+        );
+
+        let params = BTreeMap::from([("rows".to_string(), DataValue::List(rows))]);
+        self.db
+            .run_script(&query, params, ScriptMutability::Mutable)
+            .unwrap_or_else(|_| panic!("Failed to flush {} batch", set.as_key()));
     }
 
     /// Flushes all remaining batches to the database
