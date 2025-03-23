@@ -41,7 +41,7 @@ fn test_basic_vector_functionality() {
     ).expect("Failed to create HNSW index");
 
     // Query all vectors to verify insertion
-    let _result = db
+    let result = db
         .run_script(
             "?[id, vec_data] := *vector_test[id, vec_data]",
             BTreeMap::new(),
@@ -50,7 +50,7 @@ fn test_basic_vector_functionality() {
         .expect("Failed to query vectors");
 
     assert_eq!(
-        _result.rows.len(),
+        result.rows.len(),
         4,
         "Expected 4 vectors in the test relation"
     );
@@ -272,10 +272,10 @@ fn test_code_embeddings_hnsw_graph() {
         :limit 10
     "#;
 
-    let _result = db
+    let result = db
         .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to walk code embeddings HNSW graph");
 
     #[cfg(feature = "debug")]
-    test_helpers::print_debug("Code embeddings HNSW graph walking results", &_result);
+    test_helpers::print_debug("Code embeddings HNSW graph walking results", &result);
 }
