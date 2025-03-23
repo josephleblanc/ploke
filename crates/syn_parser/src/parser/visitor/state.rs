@@ -143,8 +143,8 @@ impl VisitorState {
 
                     let default_type = default.as_ref().map(|expr| {
                         let path = expr.to_token_stream().to_string();
-                        if let Some(&id) = self.type_map.get(&path) {
-                            id
+                        if let Some(entry) = self.type_map.get(&path) {
+                            *entry.value()
                         } else {
                             let id = self.next_type_id();
                             super::type_processing::get_or_create_type(self, expr);

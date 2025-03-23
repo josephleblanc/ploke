@@ -12,7 +12,7 @@ pub struct Relation {
 
 // ANCHOR: Uses
 // Different kinds of relations
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum RelationKind {
     FunctionParameter,
     FunctionReturn,
