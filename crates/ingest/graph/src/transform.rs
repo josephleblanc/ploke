@@ -38,7 +38,6 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
             TypeKind::Slice { .. } => "Slice",
             TypeKind::Array { .. } => "Array",
             TypeKind::Tuple { .. } => "Tuple",
-            // TypeKind::FnPointer { .. } => "FnPointer", // This variant doesn't exist
             TypeKind::Never => "Never",
             TypeKind::Inferred => "Inferred",
             TypeKind::RawPointer { .. } => "RawPointer",
@@ -46,6 +45,12 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
             TypeKind::TraitObject { .. } => "TraitObject",
             TypeKind::Macro { .. } => "Macro",
             TypeKind::Unknown { .. } => "Unknown",
+            TypeKind::Function {
+                is_unsafe,
+                is_extern,
+                abi,
+            } => todo!(),
+            TypeKind::Paren {} => todo!(),
         };
 
         // Create a simplified string representation of the type
@@ -239,7 +244,10 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
                 let params = BTreeMap::from([
                     ("id".to_string(), DataValue::from(struct_node.id as i64)),
-                    ("name".to_string(), DataValue::from(struct_node.name.as_str())),
+                    (
+                        "name".to_string(),
+                        DataValue::from(struct_node.name.as_str()),
+                    ),
                     ("visibility".to_string(), DataValue::from(visibility)),
                     ("docstring".to_string(), docstring),
                 ]);
@@ -321,7 +329,10 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     let variant_params = BTreeMap::from([
                         ("enum_id".to_string(), DataValue::from(enum_node.id as i64)),
                         ("variant_index".to_string(), DataValue::from(i as i64)),
-                        ("variant_name".to_string(), DataValue::from(variant.name.as_str())),
+                        (
+                            "variant_name".to_string(),
+                            DataValue::from(variant.name.as_str()),
+                        ),
                         ("discriminant".to_string(), discriminant),
                     ]);
 
