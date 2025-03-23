@@ -383,7 +383,7 @@ fn create_indices(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
 
     // Create HNSW vector index for embeddings
     db.run_script(
-        "::hnsw create code_embeddings:vector {dim: 384, m: 16, ef_construction: 100, fields: [embedding]}",
+        "::hnsw create code_embeddings:vector {dim: 384, m: 16, ef_construction: 100, fields: [embedding], distance: L2}",
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;

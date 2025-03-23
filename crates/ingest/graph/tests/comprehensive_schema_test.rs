@@ -24,6 +24,7 @@ fn test_comprehensive_schema() {
     test_find_type_usages(&db).expect("Failed to test find type usages");
     test_module_hierarchy(&db).expect("Failed to test module hierarchy");
     test_advanced_graph_traversal(&db).expect("Failed to test advanced graph traversal");
+    test_basic_vector_functionality(&db).expect("Failed to test basic vector functionality");
     test_vector_similarity_search(&db).expect("Failed to test vector similarity search");
     test_hnsw_graph_walking(&db).expect("Failed to test HNSW graph walking");
 }
@@ -125,6 +126,88 @@ fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<cozo::NamedRows, co
         params,
         ScriptMutability::Mutable,
     )
+}
+
+/// Test basic vector data type functionality in CozoDB
+fn test_basic_vector_functionality(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+    // Create a simple relation with vector field
+    db.run_script(
+        ":create vector_test {id: Int => vec_data: <F32; 3>}",
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )?;
+
+    // Insert a few vectors
+    db.run_script(
+        r#"
+        ?[id, vec_data] <- [
+            [1, vec([1.0, 0.0, 0.0])],
+            [2, vec([0.0, 1.0, 0.0])],
+            [3, vec([0.0, 0.0, 1.0])],
+            [4, vec([0.5, 0.5, 0.5])]
+        ] :put vector_test
+        "#,
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )?;
+
+    // Create HNSW index on the vector field
+    db.run_script(
+        "::hnsw create vector_test:vector_idx {dim: 3, m: 10, ef_construction: 20, fields: [vec_data]}",
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )?;
+
+    // Query all vectors to verify insertion
+    let result = db.run_script(
+        "?[id, vec_data] := *vector_test[id, vec_data]",
+        BTreeMap::new(),
+        ScriptMutability::Immutable,
+    )?;
+
+    assert_eq!(result.rows.len(), 4, "Expected 4 vectors in the test relation");
+
+    // Test vector similarity search
+    let result = db.run_script(
+        r#"
+        ?[id, dist] := 
+            ~vector_test:vector_idx{id | 
+                query: vec([1.0, 0.0, 0.0]), 
+                k: 2, 
+                ef: 10,
+                bind_distance: dist
+            }
+        :order dist
+        "#,
+        BTreeMap::new(),
+        ScriptMutability::Immutable,
+    )?;
+
+    assert!(result.rows.len() >= 1, "Expected at least one result from vector search");
+    
+    // The first result should be id 1 (exact match) with distance close to 0
+    let first_id = result.rows[0][0].get_int().unwrap_or(-1);
+    let first_dist = result.rows[0][1].get_float().unwrap_or(1.0);
+    
+    assert_eq!(first_id, 1, "First result should be id 1 (exact match)");
+    assert!(first_dist < 0.01, "Distance for exact match should be close to 0");
+
+    // Test walking the HNSW graph directly
+    let result = db.run_script(
+        r#"
+        ?[fr_id, to_id, dist] := 
+            *vector_test:vector_idx{layer: 0, fr_id, to_id, dist}
+        :limit 10
+        "#,
+        BTreeMap::new(),
+        ScriptMutability::Immutable,
+    )?;
+
+    // The graph should have some connections
+    #[cfg(feature = "debug")]
+    println!("HNSW graph connections: {:?}", result);
+
+    Ok(())
 }
 
 fn insert_sample_embeddings(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
@@ -325,14 +408,15 @@ fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error>
     // Query to find similar code snippets using HNSW index
     let query = format!(
         r#"
-        ?[node_type, text_snippet, dist] := 
+        ?[node_id, node_type, text_snippet, dist] := 
             ~code_embeddings:vector{{
-                node_type, text_snippet | 
+                node_id, node_type, text_snippet | 
                 query: vec([{}]), 
                 k: 5, 
                 ef: 50,
                 bind_distance: dist
             }}
+        :order dist
         "#,
         embedding_values
     );
@@ -347,7 +431,7 @@ fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error>
     
     // The first result should have a very low distance (close to 0.0)
     // Since we're using the same vector, it should be almost exactly 0.0
-    let distance = result.rows[0][2].get_float().unwrap_or(1.0);
+    let distance = result.rows[0][3].get_float().unwrap_or(1.0);
     assert!(distance < 0.01, "Expected low distance score, got {}", distance);
     
     Ok(())
@@ -360,11 +444,11 @@ fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     
     // Query to walk the HNSW graph at layer 0
     let query = r#"
-        ?[fr_node_type, to_node_type, dist] := 
+        ?[fr_node_id, to_node_id, dist] := 
             *code_embeddings:vector{
                 layer: 0, 
-                fr_node_type: "Function", 
-                to_node_type, 
+                fr_k: fr_node_id, 
+                to_k: to_node_id, 
                 dist
             }
         :limit 10
