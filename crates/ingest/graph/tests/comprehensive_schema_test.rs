@@ -193,7 +193,7 @@ fn test_basic_vector_functionality(db: &Db<MemStorage>) -> Result<(), cozo::Erro
     assert!(first_dist < 0.01, "Distance for exact match should be close to 0");
 
     // Test walking the HNSW graph directly
-    let result = db.run_script(
+    let _result = db.run_script(
         r#"
         ?[fr_id, to_id, dist] := 
             *vector_test:vector_idx{layer: 0, fr_id, to_id, dist}
@@ -454,10 +454,10 @@ fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
         :limit 10
     "#;
     
-    let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)?;
+    let _result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)?;
     
     #[cfg(feature = "debug")]
-    println!("HNSW graph walking results: {:?}", result);
+    println!("HNSW graph walking results: {:?}", _result);
     
     // The graph might be empty if there's only one node, but the query should succeed
     
