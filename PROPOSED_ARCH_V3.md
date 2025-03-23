@@ -35,25 +35,25 @@
 
  ```
  ploke/
- ├── Cargo.toml             # Workspace configuration
+ ├── Cargo.toml                # Workspace configuration
  ├── crates/
- │   ├── core/         󱃜    # Core types and traits (NodeId ..)
- │   ├── error/        󱃜    # Cross-crate error types
- │   ├── ingest/            # Core processing Pipeline
- │   │   ├── parser/   🚀   # core traversal + parsing logic....syn
- │   │   ├── lsp/      💤   # LSP data processing
- │   │   ├── embed/    💤   # Vector embeddings.................cozo
- │   │   └── graph/    💤   # AST ➔ CozoDB transformations......cozo
- │   ├── io/           💤   # Input/Output pipeline
- │   │   ├── watcher/  💤   # watches for events (ide, file, lsp)
- │   │   └── writer/   💤   # write code, message ide, commands
- │   ├── database/     💤   # Query processing & ranking........cozo
- │   ├── context/      💤   # aggregate data for llm
- │   ├── llm/          💤   # Local LLM integration
- │   ├── ui/           💤   # CLI/GUI entrypoints...............egui
- │   └── analyze/      🚀   # Static analysis of parsed data
- ├── examples/              # Documentation examples
- └── benches/               # Performance benchmarks
+ │   ├── core/            󱃜    # Core types and traits (NodeId ..)
+ │   ├── error/           󱃜    # Cross-crate error types
+ │   ├── ingest/               # Core processing Pipeline
+ │   │   ├── syn_parser/  🚀   # core traversal + parsing logic....syn
+ │   │   ├── lsp/         💤   # LSP data processing
+ │   │   ├── embed/       💤   # Vector embeddings.................cozo
+ │   │   └── graph/       💤   # AST ➔ CozoDB transformations......cozo
+ │   ├── io/              💤   # Input/Output pipeline
+ │   │   ├── watcher/     💤   # watches for events (ide, file, lsp)
+ │   │   └── writer/      💤   # write code, message ide, commands
+ │   ├── database/        💤   # Query processing & ranking........cozo
+ │   ├── context/         💤   # aggregate data for llm
+ │   ├── llm/             💤   # Local LLM integration
+ │   ├── ui/              💤   # CLI/GUI entrypoints...............egui
+ │   └── analyze/         🚀   # Static analysis of parsed data
+ ├── examples/                 # Documentation examples
+ └── benches/                  # Performance benchmarks
 
  💤 Asynchronous (tokio)
  🚀 Multithreaded (rayon)
