@@ -326,7 +326,8 @@ fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error>
     let query = format!(
         r#"
         ?[node_type, text_snippet, dist] := 
-            ~code_embeddings:vector{{node_type, text_snippet | 
+            ~code_embeddings:vector{{
+                node_type, text_snippet | 
                 query: vec([{}]), 
                 k: 5, 
                 ef: 50,
