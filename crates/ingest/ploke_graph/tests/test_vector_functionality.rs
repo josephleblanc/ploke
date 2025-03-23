@@ -198,7 +198,7 @@ fn insert_sample_embeddings(
     let result = db.run_script(
         r#"
         ?[id, node_id, node_type, embedding, text_snippet] <- 
-            [[$id, $node_id, $node_type, $embedding, $snippet]] 
+            [[$id, $node_id, $node_type, $embedding, $snippet]]
         :put code_embeddings
         "#,
         params,
@@ -208,6 +208,7 @@ fn insert_sample_embeddings(
     // Create the HNSW index on the embeddings
     db.run_script(
         r#"
+        ?[] <- []
         ::hnsw create code_embeddings:vector {
             dim: 384,
             m: 16,

@@ -42,6 +42,7 @@ This document provides a systematic analysis of CozoDB features and how they app
 - Operations include `:put`, `:rm`, `:insert`, `:update`, `:delete`
 - Transactions allow for atomic operations across multiple queries
 - Indices can be created for performance: `::index create r:idx {b, a}`
+- System operations (starting with `::`) must appear alone in a script
 - Triggers can be attached to relations for automatic actions
 
 ### Application to Our Code:
@@ -56,6 +57,7 @@ This document provides a systematic analysis of CozoDB features and how they app
 - CozoDB supports vector embeddings and similarity search through HNSW indices
 - Vector fields are defined with syntax like `<F32; 384>` where 384 is the dimension
 - HNSW indices are created with `::hnsw create <REL_NAME>:<INDEX_NAME> {...}`
+  - Important: System operations like `::hnsw create` must appear alone in a script without any query rules
 - Vector search uses the `~` operator: `~relation:index{bindings | parameters}`
 - Parameters include `query:` (the query vector), `k:` (number of results), and `ef:` (search depth)
 - The HNSW graph can be directly queried as a relation
