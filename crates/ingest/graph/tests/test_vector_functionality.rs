@@ -2,7 +2,6 @@
 
 use cozo::{DataValue, ScriptMutability};
 use std::collections::BTreeMap;
-use std::collections::BTreeMap;
 use crate::test_helpers::setup_test_db;
 
 mod test_helpers;
@@ -47,7 +46,7 @@ fn test_basic_vector_functionality() {
     ).expect("Failed to query vectors");
 
     assert_eq!(
-        result.rows.len(),
+        _result.rows.len(),
         4,
         "Expected 4 vectors in the test relation"
     );
@@ -259,5 +258,5 @@ fn test_code_embeddings_hnsw_graph() {
         .expect("Failed to walk code embeddings HNSW graph");
     
     #[cfg(feature = "debug")]
-    test_helpers::print_debug("Code embeddings HNSW graph walking results", &result);
+    test_helpers::print_debug("Code embeddings HNSW graph walking results", &_result);
 }
