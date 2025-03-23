@@ -18,6 +18,11 @@ cozo = "0.7.6"
 uuid = { version = "1.16.0", features = ["v5", "atomic"] }
 serde_json = "1"
 
+rayon = { workspace = true }
+flume = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+
 [dev-dependencies]
 
 # Change default to have rust-analyzer/linter on or off for cfg flags
