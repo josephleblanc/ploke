@@ -1,5 +1,5 @@
 [package]
-name = "graph"
+name = "ploke_graph"
 version = "0.1.0"
 edition = "2021"
 
