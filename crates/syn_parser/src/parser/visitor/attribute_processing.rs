@@ -1,7 +1,6 @@
 use quote::ToTokens;
 use syn::parse::Parser;
 
-use super::state::VisitorState;
 use crate::parser::nodes::Attribute;
 
 // Extract doc comments from attributes

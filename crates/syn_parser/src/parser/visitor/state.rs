@@ -1,10 +1,8 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::nodes::*;
-use crate::parser::relations::*;
 use crate::parser::types::*;
 use quote::ToTokens;
-use std::collections::HashMap;
-use syn::{FnArg, Generics, Pat, PatIdent, PatType, ReturnType, Type, TypeParam, Visibility};
+use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use std::sync::Arc;
 use dashmap::DashMap;
@@ -143,10 +141,19 @@ impl VisitorState {
 
                     let default_type = default.as_ref().map(|expr| {
                         let path = expr.to_token_stream().to_string();
-                        if let Some(entry) = self.type_map.get(&path) {
-                            *entry.value()
+                        // Clone the path to avoid borrowing issues
+                        let path_clone = path.clone();
+                    
+                        // Check if the type exists in the map
+                        if let Some(entry) = self.type_map.get(&path_clone) {
+                            let id = *entry.value();
+                            drop(entry); // Explicitly drop the reference to release the borrow
+                            id
                         } else {
                             let id = self.next_type_id();
+                            // Insert the new type ID before processing the type
+                            self.type_map.insert(path_clone, id);
+                            // Now we can process the type without borrow conflicts
                             super::type_processing::get_or_create_type(self, expr);
                             id
                         }

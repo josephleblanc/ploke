@@ -11,17 +11,23 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     // Convert type to a string representation for caching
     let type_str = ty.to_token_stream().to_string();
 
-    // Use DashMap's entry API for thread-safe access
+    // First check if the type already exists
     if let Some(entry) = state.type_map.get(&type_str) {
         let id = *entry.value();
+        drop(entry); // Explicitly drop the reference to release the borrow
         return id;
     }
 
+    // Process the type to get its kind and related types
     let (type_kind, related_types) = process_type(state, ty);
 
+    // Create a new type ID
     let id = state.next_type_id();
-    state.type_map.insert(type_str, id);
+    
+    // Insert the new type ID into the map
+    state.type_map.insert(type_str.clone(), id);
 
+    // Add the type to the graph
     state.code_graph.type_graph.push(TypeNode {
         id,
         kind: type_kind,

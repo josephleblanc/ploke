@@ -1,8 +1,6 @@
-use super::attribute_processing;
 use super::attribute_processing::extract_attributes;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
-use super::type_processing;
 use super::type_processing::get_or_create_type;
 use crate::parser::nodes::*;
 use crate::parser::relations::*;
