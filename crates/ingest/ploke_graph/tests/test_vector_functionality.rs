@@ -207,17 +207,7 @@ fn insert_sample_embeddings(
 
     // Create the HNSW index on the embeddings
     db.run_script(
-        r#"
-        ?[] <- []
-        ::hnsw create code_embeddings:vector {
-            dim: 384,
-            m: 16,
-            dtype: F32,
-            fields: [embedding],
-            distance: Cosine,
-            ef_construction: 50
-        }
-        "#,
+        "::hnsw create code_embeddings:vector {dim: 384, m: 16, dtype: F32, fields: [embedding], distance: Cosine, ef_construction: 50}",
         BTreeMap::new(),
         ScriptMutability::Mutable,
     )?;
