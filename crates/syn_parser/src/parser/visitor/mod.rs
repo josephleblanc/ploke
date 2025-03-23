@@ -7,9 +7,12 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::parser::graph::CodeGraph;
-use std::path::Path;
+use crate::parser::{channel::ParserMessage, graph::CodeGraph};
+use flume::{Receiver, Sender};
+use std::path::{Path, PathBuf};
+use std::thread;
 
+/// Analyze a single file and return the code graph
 pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     let file = syn::parse_file(&std::fs::read_to_string(file_path).unwrap())?;
     let mut visitor_state = state::VisitorState::new();
@@ -49,4 +52,44 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     }
 
     Ok(visitor_state.code_graph)
+}
+
+/// Start a background parser worker that processes files from a channel
+pub fn start_parser_worker(
+    receiver: Receiver<ParserMessage>,
+    sender: Sender<ParserMessage>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        for message in receiver.iter() {
+            match message {
+                ParserMessage::ParseFile(path) => {
+                    let result = analyze_code(&path);
+                    if sender.send(ParserMessage::ParseResult(result)).is_err() {
+                        // Channel closed, exit the worker
+                        break;
+                    }
+                }
+                ParserMessage::Shutdown => {
+                    // Received shutdown signal, exit the worker
+                    break;
+                }
+                _ => {
+                    // Ignore other message types
+                }
+            }
+        }
+    })
+}
+
+/// Process multiple files in parallel using rayon
+pub fn analyze_files_parallel(
+    file_paths: Vec<PathBuf>,
+    num_workers: usize,
+) -> Vec<Result<CodeGraph, syn::Error>> {
+    use rayon::prelude::*;
+    
+    file_paths
+        .par_iter()
+        .map(|path| analyze_code(path))
+        .collect()
 }
