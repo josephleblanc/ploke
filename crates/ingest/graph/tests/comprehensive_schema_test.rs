@@ -1,33 +1,9 @@
-use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use graph::schema::{create_schema, insert_sample_data};
-use std::collections::BTreeMap;
-
+// This file is now just a placeholder to avoid breaking existing imports
+// The tests have been moved to separate files for better organization and debugging
 #[test]
-fn test_comprehensive_schema() {
-    // Create an in-memory database
-    let db = Db::new(MemStorage::default()).expect("Failed to create database");
-    db.initialize().expect("Failed to initialize database");
-
-    // Create the schema
-    create_schema(&db).expect("Failed to create schema");
-
-    // Insert sample data for new relations
-    insert_sample_type_alias(&db).expect("Failed to insert type alias");
-    insert_sample_union(&db).expect("Failed to insert union");
-    insert_sample_value(&db).expect("Failed to insert value");
-    insert_sample_macro(&db).expect("Failed to insert macro");
-    insert_sample_type_details(&db).expect("Failed to insert type details");
-    insert_sample_module_relationship(&db).expect("Failed to insert module relationship");
-
-    // Test complex queries
-    test_find_implementations(&db).expect("Failed to test find implementations");
-    test_find_type_usages(&db).expect("Failed to test find type usages");
-    test_module_hierarchy(&db).expect("Failed to test module hierarchy");
-    test_advanced_graph_traversal(&db).expect("Failed to test advanced graph traversal");
-    test_basic_vector_functionality(&db).expect("Failed to test basic vector functionality");
-    test_vector_similarity_search_ones(&db).expect("Failed to test vector similarity search");
-    test_vector_similarity_search(&db).expect("Failed to test vector similarity search");
-    test_hnsw_graph_walking(&db).expect("Failed to test HNSW graph walking");
+fn test_comprehensive_schema_placeholder() {
+    // This test is now a placeholder
+    // See individual test files for specific tests
 }
 
 fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
