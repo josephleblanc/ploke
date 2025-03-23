@@ -12,4 +12,5 @@ syn = "2.0.100"
 rayon = "1.10.0"
 flume = "0.11.1"
 tokio = "1.44.1"
+dashmap = "6.1.0"
 # Other shared dependencies

@@ -9,4 +9,4 @@ pub mod visitor;
 pub use self::channel::{create_parser_channel, ParserMessage};
 pub use self::graph::CodeGraph;
 pub use self::types::TypeId;
-pub use self::visitor::analyze_code;
+pub use self::visitor::{analyze_code, analyze_files_parallel};
