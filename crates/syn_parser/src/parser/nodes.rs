@@ -7,7 +7,7 @@ pub type NodeId = usize;
 
 // ANCHOR: ItemFn
 // Represents a function definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionNode {
     pub id: NodeId,
     pub name: String,
@@ -22,7 +22,7 @@ pub struct FunctionNode {
 //ANCHOR_END: ItemFn
 
 // Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParameterNode {
     pub id: NodeId,
     pub name: Option<String>,
@@ -32,7 +32,7 @@ pub struct ParameterNode {
 }
 
 // Represents a type definition (struct, enum, type alias, or union)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum TypeDefNode {
     Struct(StructNode),
     Enum(EnumNode),
@@ -42,7 +42,7 @@ pub enum TypeDefNode {
 
 // ANCHOR: StructNode
 // Represents a struct definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct StructNode {
     pub id: NodeId,
     pub name: String,
@@ -55,7 +55,7 @@ pub struct StructNode {
 //ANCHOR_END: StructNode
 
 // Represents an enum definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EnumNode {
     pub id: NodeId,
     pub name: String,
@@ -68,7 +68,7 @@ pub struct EnumNode {
 
 // ANCHOR: field_node
 // Represents a field in a struct
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FieldNode {
     pub id: NodeId,
     pub name: Option<String>,
@@ -79,7 +79,7 @@ pub struct FieldNode {
 //ANCHOR_END: field_node
 
 // Represents a variant in an enum
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VariantNode {
     pub id: NodeId,
     pub name: String,
@@ -89,7 +89,7 @@ pub struct VariantNode {
 }
 
 // Represents a type alias (type NewType = OldType)
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TypeAliasNode {
     pub id: NodeId,
     pub name: String,
@@ -101,7 +101,7 @@ pub struct TypeAliasNode {
 }
 
 // Represents a union definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UnionNode {
     pub id: NodeId,
     pub name: String,
@@ -114,7 +114,7 @@ pub struct UnionNode {
 
 // ANCHOR: ImplNode
 // Represents an implementation block
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImplNode {
     pub id: NodeId,
     pub self_type: TypeId,
@@ -126,7 +126,7 @@ pub struct ImplNode {
 
 // ANCHOR: TraitNode
 // Represents a trait definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TraitNode {
     pub id: NodeId,
     pub name: String,
@@ -139,7 +139,7 @@ pub struct TraitNode {
 }
 //ANCHOR_END: TraitNode
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
@@ -153,7 +153,7 @@ pub struct ModuleNode {
 }
 
 // Represents a constant or static variable
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ValueNode {
     pub id: NodeId,
     pub name: String,
@@ -166,7 +166,7 @@ pub struct ValueNode {
 }
 
 // Represents a macro definition
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
@@ -179,7 +179,7 @@ pub struct MacroNode {
 }
 
 // Represents a macro rule
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MacroRuleNode {
     pub id: NodeId,
     pub pattern: String,
@@ -187,42 +187,42 @@ pub struct MacroRuleNode {
 }
 
 // Different kinds of macros
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum MacroKind {
     DeclarativeMacro,
     ProcedureMacro { kind: ProcMacroKind },
 }
 
 // Different kinds of procedural macros
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum ProcMacroKind {
     Derive,
     Attribute,
     Function,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum ValueKind {
     Constant,
     Static { is_mutable: bool },
 }
 
 // Represents a module
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImportNode {
     pub id: NodeId,
     pub path: Vec<String>,
     pub kind: ImportKind,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ImportKind {
     UseStatement,
     ExternCrate,
 }
 
 // Represent an attribute
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Attribute {
     pub name: String,          // e.g., "derive", "cfg", "serde"
     pub args: Vec<String>,     // Arguments or parameters of the attribute

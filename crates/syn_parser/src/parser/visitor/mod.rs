@@ -88,8 +88,17 @@ pub fn analyze_files_parallel(
 ) -> Vec<Result<CodeGraph, syn::Error>> {
     use rayon::prelude::*;
     
-    file_paths
-        .par_iter()
-        .map(|path| analyze_code(path))
-        .collect()
+    // Create a thread pool with the specified number of workers
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_workers)
+        .build()
+        .unwrap();
+    
+    // Use the thread pool to process files in parallel
+    pool.install(|| {
+        file_paths
+            .par_iter()
+            .map(|path| analyze_code(path))
+            .collect()
+    })
 }

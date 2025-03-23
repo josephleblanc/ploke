@@ -5,10 +5,10 @@ use crate::parser::{
 };
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 // Main structure representing the entire code graph
-#[derive(Debug, Serialize, Deserialize)]
+// Derive Send and Sync automatically since all component types implement them
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CodeGraph {
     // Functions defined in the code
     pub functions: Vec<FunctionNode>,
@@ -31,8 +31,3 @@ pub struct CodeGraph {
     // Macros defined in the code
     pub macros: Vec<MacroNode>,
 }
-
-// Explicitly implement Send and Sync for CodeGraph
-// This is safe because all contained types are Send + Sync
-unsafe impl Send for CodeGraph {}
-unsafe impl Sync for CodeGraph {}

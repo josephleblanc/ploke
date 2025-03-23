@@ -11,8 +11,9 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     // Convert type to a string representation for caching
     let type_str = ty.to_token_stream().to_string();
 
-    if let Some(&id) = state.type_map.get(&type_str) {
-        return id;
+    // Use DashMap's entry API for thread-safe access
+    if let Some(entry) = state.type_map.get(&type_str) {
+        return *entry;
     }
 
     let (type_kind, related_types) = process_type(state, ty);

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 // ANCHOR: Relation
 // Represents a relation between nodes
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Relation {
     pub source: NodeId,
     pub target: NodeId,

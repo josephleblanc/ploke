@@ -6,12 +6,15 @@ use quote::ToTokens;
 use std::collections::HashMap;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, ReturnType, Type, TypeParam, Visibility};
 
+use std::sync::Arc;
+use dashmap::DashMap;
+
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
     next_node_id: NodeId,
     next_type_id: TypeId,
-    // Maps existing types to their IDs to avoid duplication
-    pub(crate) type_map: HashMap<String, TypeId>,
+    // Use DashMap for thread-safe concurrent access
+    pub(crate) type_map: Arc<DashMap<String, TypeId>>,
 }
 
 impl VisitorState {
@@ -31,7 +34,7 @@ impl VisitorState {
             },
             next_node_id: 0,
             next_type_id: 0,
-            type_map: HashMap::new(),
+            type_map: Arc::new(DashMap::new()),
         }
     }
 

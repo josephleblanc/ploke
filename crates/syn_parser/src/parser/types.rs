@@ -6,7 +6,7 @@ pub type TypeId = usize;
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TypeNode {
     pub id: TypeId,
     pub kind: TypeKind,
@@ -80,7 +80,7 @@ pub enum TypeKind {
 }
 
 // Represents a generic parameter
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GenericParamNode {
     pub id: NodeId,
     pub kind: GenericParamKind,
@@ -88,7 +88,7 @@ pub struct GenericParamNode {
 
 // ANCHOR: generic_param_kind
 // Different kinds of generic parameters
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub enum GenericParamKind {
     Type {
         name: String,
@@ -107,7 +107,7 @@ pub enum GenericParamKind {
 //ANCHOR_END: generic_param_kind
 
 // Different kinds of visibility
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum VisibilityKind {
     Public,
     Crate,
