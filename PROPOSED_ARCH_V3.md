@@ -1,3 +1,14 @@
+# ploke Project Architecture (WIP)
+This document serves as the working design document for the `ploke` project workspace.
+
+The ploke project is an RAG for code generation and refactoring. The project
+should parse a user's repository and (optionally) dependencies into a hybrid
+vector-graph database. The RAG processes user requests for code generation and
+refactoring, querying the database for relevant code snippets to include as
+context for the augmented query sent to the LLM. 
+
+## File System
+
 You're touching on an important architectural consideration. Let me help clarify the distinction between Tokio and Rayon and suggest how to structure your system.
 
 
@@ -7,7 +18,7 @@ ploke/
 ├── crates/
 │   ├── core/         󱃜    # Core types and traits (NodeId ..)
 │   ├── error/        󱃜    # Cross-crate error types
-│   ├── ingest/            # parsed types, parser management
+│   ├── ingest/            # Core processing Pipeline
 │   │   ├── parser/   🚀   # core traversal + parsing logic....syn
 │   │   ├── lsp/      💤   # LSP data processing
 │   │   ├── embed/    💤   # Vector embeddings.................cozo
@@ -101,9 +112,9 @@ The conflict concerns come from their different concurrency models:
 - Tokio uses async/await (non-blocking concurrency)
 - Rayon uses threads (parallel execution)
 
-### Architectural Recommendation
+### Divided Architecture
 
-Here's how I'd structure the system:
+Here's how I structure the system:
 
 1. **Create a clear boundary between I/O and computation domains**
    - I/O domain: File watching, database operations (Tokio)

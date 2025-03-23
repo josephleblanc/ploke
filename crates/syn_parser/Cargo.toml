@@ -14,7 +14,6 @@ petgraph = "0.7.1"
 # This is not installing correctly, and I am getting errors related to rocksb,
 # so for now we will move ahead with in-memory storage from indradb and figure
 # out the errors for rocksdb later.
-indradb-lib = "*"
 cozo = "0.7.6"
 uuid = { version = "1.16.0", features = ["v5", "atomic"] }
 serde_json = "1"

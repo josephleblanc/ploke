@@ -57,12 +57,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "allocator-api2"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
-
-[[package]]
 name = "android-tzdata"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,10 +640,6 @@ name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash 0.8.11",
- "allocator-api2",
-]
 
 [[package]]
 name = "hashbrown"
@@ -716,32 +706,6 @@ checksum = "3954d50fe15b02142bf25d3b8bdadb634ec3948f103d04ffe3031bc8fe9d7058"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
-]
-
-[[package]]
-name = "indradb-lib"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de3614d240e0668db511181bc7f29a92cc18f413c4afd7fb71e623ee5eb46b64"
-dependencies = [
- "byteorder",
- "internment",
- "once_cell",
- "rmp-serde",
- "serde",
- "serde_json",
- "tempfile",
- "uuid",
-]
-
-[[package]]
-name = "internment"
-version = "0.7.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04e8e537b529b8674e97e9fb82c10ff168a290ac3867a0295f112061ffbca1ef"
-dependencies = [
- "hashbrown 0.14.5",
- "parking_lot",
 ]
 
 [[package]]
@@ -1717,7 +1681,6 @@ name = "syn_parser"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "indradb-lib",
  "petgraph",
  "proc-macro2",
  "quote",

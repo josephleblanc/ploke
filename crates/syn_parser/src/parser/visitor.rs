@@ -1679,6 +1679,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Very basic parsing of macro rules - in a real implementation,
         // you would want to use a more sophisticated approach
+        // However, for our purposes this will do fine for the MVP
         for (_i, rule) in tokens_str.split(";").enumerate() {
             if rule.trim().is_empty() {
                 continue;
