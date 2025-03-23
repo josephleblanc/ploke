@@ -103,7 +103,7 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         :create relations {
             source_id: Int,
             target_id: Int,
-            kind: String => 
+            kind: String =>
         }
         "#,
         BTreeMap::new(),
@@ -268,7 +268,10 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         ("name".to_string(), DataValue::from("sample_function")),
         ("visibility".to_string(), DataValue::from("Public")),
         ("return_type_id".to_string(), DataValue::from(1)),
-        ("docstring".to_string(), DataValue::from("A sample function")),
+        (
+            "docstring".to_string(),
+            DataValue::from("A sample function"),
+        ),
         ("body".to_string(), DataValue::from("println!(\"Hello\");")),
     ]);
 
@@ -310,46 +313,76 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
 
 /// Queries the database to verify the schema is working correctly
 pub fn verify_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
-    // Query all functions
-    let functions = db.run_script(
-        "?[id, name, visibility] := *functions[id, name, visibility, _, _, _]",
-        BTreeMap::new(),
-        cozo::ScriptMutability::Immutable,
-    )?;
-
-    println!("Functions: {:?}", functions);
-
-    // Query all structs
-    let structs = db.run_script(
-        "?[id, name, visibility] := *structs[id, name, visibility, _]",
-        BTreeMap::new(),
-        cozo::ScriptMutability::Immutable,
-    )?;
-
-    println!("Structs: {:?}", structs);
-
-    // Query relations
-    let relations = db.run_script(
-        "?[source_id, target_id, kind] := *relations[source_id, target_id, kind]",
-        BTreeMap::new(),
-        cozo::ScriptMutability::Immutable,
-    )?;
-
-    println!("Relations: {:?}", relations);
-
-    // Query with a join
-    let joined = db.run_script(
-        r#"
+    let function_query = "?[id, name, visibility] := *functions[id, name, visibility, _, _, _]";
+    let struct_query = "?[id, name, visibility] := *structs[id, name, visibility, _]";
+    let relations_query = "?[source_id, target_id, kind] := *relations[source_id, target_id, kind]";
+    let joined_query = r#"
         ?[fn_name, struct_name] := 
             *functions[fn_id, fn_name, _, _, _, _],
             *relations[fn_id, struct_id, "References"],
-            *structs[struct_id, struct_name, _]
-        "#,
+            *structs[struct_id, struct_name, _, _]
+        "#;
+
+    // Query all functions
+    #[cfg(feature = "debug")]
+    pre_test_message(function_query, "Functions");
+
+    #[allow(unused_variables)]
+    let functions = db.run_script(
+        function_query,
         BTreeMap::new(),
         cozo::ScriptMutability::Immutable,
     )?;
+    #[cfg(feature = "debug")]
+    post_test_message(functions, "Functions");
 
-    println!("Joined query: {:?}", joined);
+    // Query all structs
+    #[cfg(feature = "debug")]
+    pre_test_message(struct_query, "Structs");
+    #[allow(unused_variables)]
+    let structs = db.run_script(
+        struct_query,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Immutable,
+    )?;
+    #[cfg(feature = "debug")]
+    post_test_message(structs, "Structs");
+
+    // Query relations
+    #[cfg(feature = "debug")]
+    pre_test_message(relations_query, "Relations");
+    #[allow(unused_variables)]
+    let relations = db.run_script(
+        relations_query,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Immutable,
+    )?;
+    #[cfg(feature = "debug")]
+    post_test_message(relations, "Relations");
+
+    // Query with a join
+    #[cfg(feature = "debug")]
+    pre_test_message(joined_query, "Joined");
+    #[allow(unused_variables)]
+    let joined = db.run_script(
+        joined_query,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Immutable,
+    )?;
+    #[cfg(feature = "debug")]
+    post_test_message(joined, "Joined");
 
     Ok(())
+}
+
+#[cfg(feature = "debug")]
+fn post_test_message(named_rows: cozo::NamedRows, column: &str) {
+    println!("success!");
+    println!("{:-<10}  \n{column}: {:?}\n{:->10}", "", named_rows, "");
+}
+
+#[cfg(feature = "debug")]
+fn pre_test_message(query: &str, column: &str) {
+    println!("\n{:-<3}> {column} Query: \"{}\"", "", query);
+    print!("{:->5}> Attempting to query {:.<60}", "", column);
 }

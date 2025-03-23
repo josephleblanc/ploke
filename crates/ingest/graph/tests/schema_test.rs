@@ -16,6 +16,7 @@ fn test_schema_creation() {
         .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to list relations");
 
+    #[cfg(feature = "debug")]
     println!("Relations: {:?}", result);
 
     // Check that we have the expected number of relations
@@ -59,8 +60,12 @@ fn test_indices() {
         )
         .expect("Failed to list indices");
 
+    #[cfg(feature = "debug")]
     println!("Indices for functions: {:?}", result);
-    assert!(!result.rows.is_empty(), "Expected at least one index for functions");
+    assert!(
+        !result.rows.is_empty(),
+        "Expected at least one index for functions"
+    );
 
     // Check relations indices
     let result = db
@@ -71,6 +76,10 @@ fn test_indices() {
         )
         .expect("Failed to list indices");
 
+    #[cfg(feature = "debug")]
     println!("Indices for relations: {:?}", result);
-    assert!(!result.rows.is_empty(), "Expected at least one index for relations");
+    assert!(
+        !result.rows.is_empty(),
+        "Expected at least one index for relations"
+    );
 }
