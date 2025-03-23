@@ -341,7 +341,7 @@ pub fn verify_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
     let joined = db.run_script(
         r#"
         ?[fn_name, struct_name] := 
-            *functions[fn_id, fn_name, _],
+            *functions[fn_id, fn_name, _, _, _, _],
             *relations[fn_id, struct_id, "References"],
             *structs[struct_id, struct_name, _]
         "#,
