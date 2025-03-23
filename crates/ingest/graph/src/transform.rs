@@ -4,9 +4,9 @@ use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use std::collections::BTreeMap;
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{TypeDefNode, VisibilityKind},
+    nodes::TypeDefNode,
     relations::RelationKind,
-    types::TypeKind,
+    types::{TypeKind, VisibilityKind},
 };
 
 /// Transforms a CodeGraph into CozoDB relations
@@ -38,14 +38,14 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
             TypeKind::Slice { .. } => "Slice",
             TypeKind::Array { .. } => "Array",
             TypeKind::Tuple { .. } => "Tuple",
-            TypeKind::FnPointer { .. } => "FnPointer",
+            // TypeKind::FnPointer { .. } => "FnPointer", // This variant doesn't exist
             TypeKind::Never => "Never",
             TypeKind::Inferred => "Inferred",
             TypeKind::RawPointer { .. } => "RawPointer",
-            TypeKind::ImplTrait => "ImplTrait",
+            TypeKind::ImplTrait { .. } => "ImplTrait",
             TypeKind::TraitObject { .. } => "TraitObject",
-            TypeKind::Macro => "Macro",
-            TypeKind::Unknown => "Unknown",
+            TypeKind::Macro { .. } => "Macro",
+            TypeKind::Unknown { .. } => "Unknown",
         };
 
         // Create a simplified string representation of the type
@@ -114,7 +114,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
 
         let params = BTreeMap::from([
             ("id".to_string(), DataValue::from(function.id as i64)),
-            ("name".to_string(), DataValue::from(&function.name)),
+            ("name".to_string(), DataValue::from(function.name.as_str())),
             ("visibility".to_string(), DataValue::from(visibility)),
             ("return_type_id".to_string(), return_type_id),
             ("docstring".to_string(), docstring),
@@ -172,8 +172,8 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
                 syn_parser::parser::types::GenericParamKind::Type { default, .. } => default
                     .map(|id| DataValue::from(id as i64))
                     .unwrap_or(DataValue::Null),
-                syn_parser::parser::types::GenericParamKind::Const { ty, .. } => {
-                    DataValue::from(*ty as i64)
+                syn_parser::parser::types::GenericParamKind::Const { type_id, .. } => {
+                    DataValue::from(*type_id as i64)
                 }
                 _ => DataValue::Null,
             };
@@ -182,7 +182,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
                 ("owner_id".to_string(), DataValue::from(function.id as i64)),
                 ("param_index".to_string(), DataValue::from(i as i64)),
                 ("kind".to_string(), DataValue::from(kind)),
-                ("name".to_string(), DataValue::from(name)),
+                ("name".to_string(), DataValue::from(name.as_str())),
                 ("type_id".to_string(), type_id),
             ]);
 
@@ -204,7 +204,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             let attr_params = BTreeMap::from([
                 ("owner_id".to_string(), DataValue::from(function.id as i64)),
                 ("attr_index".to_string(), DataValue::from(i as i64)),
-                ("name".to_string(), DataValue::from(&attr.name)),
+                ("name".to_string(), DataValue::from(attr.name.as_str())),
                 ("value".to_string(), value),
             ]);
 
@@ -239,7 +239,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
                 let params = BTreeMap::from([
                     ("id".to_string(), DataValue::from(struct_node.id as i64)),
-                    ("name".to_string(), DataValue::from(&struct_node.name)),
+                    ("name".to_string(), DataValue::from(struct_node.name.as_str())),
                     ("visibility".to_string(), DataValue::from(visibility)),
                     ("docstring".to_string(), docstring),
                 ]);
@@ -299,7 +299,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
                 let params = BTreeMap::from([
                     ("id".to_string(), DataValue::from(enum_node.id as i64)),
-                    ("name".to_string(), DataValue::from(&enum_node.name)),
+                    ("name".to_string(), DataValue::from(enum_node.name.as_str())),
                     ("visibility".to_string(), DataValue::from(visibility)),
                     ("docstring".to_string(), docstring),
                 ]);
@@ -321,7 +321,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     let variant_params = BTreeMap::from([
                         ("enum_id".to_string(), DataValue::from(enum_node.id as i64)),
                         ("variant_index".to_string(), DataValue::from(i as i64)),
-                        ("variant_name".to_string(), DataValue::from(&variant.name)),
+                        ("variant_name".to_string(), DataValue::from(variant.name.as_str())),
                         ("discriminant".to_string(), discriminant),
                     ]);
 
@@ -353,10 +353,11 @@ fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             RelationKind::Inherits => "Inherits",
             RelationKind::References => "References",
             RelationKind::Contains => "Contains",
-            RelationKind::ModuleItem => "ModuleItem",
-            RelationKind::ModuleSubmodule => "ModuleSubmodule",
-            RelationKind::ModuleImport => "ModuleImport",
-            RelationKind::ModuleExport => "ModuleExport",
+            // These variants don't exist in the RelationKind enum
+            // RelationKind::ModuleItem => "ModuleItem",
+            // RelationKind::ModuleSubmodule => "ModuleSubmodule",
+            // RelationKind::ModuleImport => "ModuleImport",
+            // RelationKind::ModuleExport => "ModuleExport",
         };
 
         let params = BTreeMap::from([
