@@ -22,6 +22,6 @@ workspace.
   - See example of using [`flume` across boundaries].
 
 
-[ `flume` across boundaries ]:/home/brasides/code/second_aider_dir/ploke/docs/design/concurrency/boundary_flume_example.md
+[`flume` across boundaries]:/home/brasides/code/second_aider_dir/ploke/docs/design/concurrency/boundary_flume_example.md
 
 

@@ -39,6 +39,7 @@ ploke/
 🚀 <--> flume <--> 💤
 󱃜  Send + Sync (Not tied to tokio or rayon runtime) 
 ```
+Flume example: [`flume` across boundaries]
 
 1. **Clear boundary between I/O and computation domains**
    - I/O domain: File watching, database operations (Tokio), ..
@@ -138,3 +139,5 @@ Here's how I structure the system:
 This approach gives you the best of both worlds: Tokio for watching files and database I/O, Rayon for parallel parsing work. The key is creating clear boundaries and using channels to communicate between the different concurrency domains.
 
 Does this approach make sense for your project structure?
+
+[`flume` across boundaries]:/home/brasides/code/second_aider_dir/ploke/docs/design/concurrency/boundary_flume_example.md
