@@ -403,6 +403,22 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         cozo::ScriptMutability::Mutable,
     )?;
 
+    // Insert a function parameter
+    let param_params = BTreeMap::from([
+        ("function_id".to_string(), DataValue::from(1)),
+        ("param_index".to_string(), DataValue::from(0)),
+        ("param_name".to_string(), DataValue::from("input")),
+        ("type_id".to_string(), DataValue::from(1)),
+        ("is_mutable".to_string(), DataValue::from(false)),
+        ("is_self".to_string(), DataValue::from(false)),
+    ]);
+
+    db.run_script(
+        "?[function_id, param_index, param_name, type_id, is_mutable, is_self] <- [[$function_id, $param_index, $param_name, $type_id, $is_mutable, $is_self]] :put function_params",
+        param_params,
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     // Insert a sample struct
     let struct_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(2)),
