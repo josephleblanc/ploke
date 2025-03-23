@@ -1,5 +1,5 @@
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use graph::schema::create_schema;
+use graph::schema::{create_schema, insert_sample_data};
 use std::collections::BTreeMap;
 
 #[test]
@@ -213,8 +213,11 @@ fn test_find_implementations(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
 
     assert_eq!(result.rows.len(), 1, "Expected 1 implementation");
     assert_eq!(
-        result.rows[0][0].to_string(),
-        "SampleStruct",
+        // AI: Apply this pattern to the other tests that take strings,
+        // e.g. SampleTrait, which are failing tests because the output of
+        // result.rows[0][0].to_string() for SampleStruct is actually "\"SampleStruct"\"
+        result.rows[0][0].get_str(),
+        Some("SampleStruct"),
         "Expected struct name to be 'SampleStruct'"
     );
     assert_eq!(
