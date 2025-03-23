@@ -136,14 +136,14 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
                 .unwrap_or(DataValue::Null);
 
             let param_params = BTreeMap::from([
-                ("function_id".to_string(), DataValue::from(function.id as i64)),
+                (
+                    "function_id".to_string(),
+                    DataValue::from(function.id as i64),
+                ),
                 ("param_index".to_string(), DataValue::from(i as i64)),
                 ("param_name".to_string(), param_name),
                 ("type_id".to_string(), DataValue::from(param.type_id as i64)),
-                (
-                    "is_mutable".to_string(),
-                    DataValue::from(param.is_mutable),
-                ),
+                ("is_mutable".to_string(), DataValue::from(param.is_mutable)),
                 ("is_self".to_string(), DataValue::from(param.is_self)),
             ]);
 
@@ -169,9 +169,9 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             };
 
             let type_id = match &generic_param.kind {
-                syn_parser::parser::types::GenericParamKind::Type { default, .. } => {
-                    default.map(|id| DataValue::from(id as i64)).unwrap_or(DataValue::Null)
-                }
+                syn_parser::parser::types::GenericParamKind::Type { default, .. } => default
+                    .map(|id| DataValue::from(id as i64))
+                    .unwrap_or(DataValue::Null),
                 syn_parser::parser::types::GenericParamKind::Const { ty, .. } => {
                     DataValue::from(*ty as i64)
                 }
@@ -360,8 +360,14 @@ fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
         };
 
         let params = BTreeMap::from([
-            ("source_id".to_string(), DataValue::from(relation.source as i64)),
-            ("target_id".to_string(), DataValue::from(relation.target as i64)),
+            (
+                "source_id".to_string(),
+                DataValue::from(relation.source as i64),
+            ),
+            (
+                "target_id".to_string(),
+                DataValue::from(relation.target as i64),
+            ),
             ("kind".to_string(), DataValue::from(kind)),
         ]);
 
