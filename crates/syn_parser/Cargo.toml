@@ -2,29 +2,38 @@
 name = "syn_parser"
 version = "0.1.0"
 edition = "2021"
+description = "A Rust code parser and analyzer using syn"
+authors = ["Your Name <your.email@example.com>"]
 
 [dependencies]
-syn = { version = "2", features = ["full", "visit"] }
-quote = "1"
-proc-macro2 = "1"
-serde = { version = "1", features = ["derive"] }
-ron = "0.8"
-petgraph = "0.7.1"
+# Parsing and code generation
+syn = { workspace = true }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+ron = { workspace = true }
+
+# Concurrency and parallelism
+rayon = { workspace = true }
+flume = { workspace = true }
+tokio = { workspace = true }
+dashmap = { workspace = true }
+
+# Data structures and algorithms
+petgraph = { workspace = true }
+cozo = { workspace = true }
+uuid = { workspace = true }
+
+# Note: indradb-lib integration postponed due to rocksdb issues
 # indradb-lib = { version = "*", features = ["rocksdb-datastore"] }
-# This is not installing correctly, and I am getting errors related to rocksb,
-# so for now we will move ahead with in-memory storage from indradb and figure
-# out the errors for rocksdb later.
-cozo = "0.7.6"
-uuid = { version = "1.16.0", features = ["v5", "atomic"] }
-serde_json = "1"
-rayon = "1.10.0"
-flume = "0.11.1"
-tokio = { version = "1.44.1", features = ["full"] }
-dashmap = "6.1.0"
 
 [dev-dependencies]
+# Add test-specific dependencies here
 
-# Change default to have rust-analyzer/linter on or off for cfg flags
+# Feature flags
 [features]
 default = ["visitor_refactor"]
 cozo_visitor = []

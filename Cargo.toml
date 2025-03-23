@@ -7,10 +7,23 @@ members = [
 exclude = ["ai_workflow"]
 
 [workspace.dependencies]
-# Shared dependencies with versions
-syn = "2.0.100"
+# Parsing and code generation
+syn = { version = "2.0.100", features = ["full", "visit"] }
+quote = "1"
+proc-macro2 = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ron = "0.8"
+
+# Concurrency and parallelism
 rayon = "1.10.0"
 flume = "0.11.1"
-tokio = "1.44.1"
+tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
-# Other shared dependencies
+
+# Data structures and algorithms
+petgraph = "0.7.1"
+cozo = "0.7.6"
+uuid = { version = "1.16.0", features = ["v5", "atomic"] }
