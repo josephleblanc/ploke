@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/*",
+    "crates/ingest/syn_parser",
+    "crates/ingest/graph",
     # Add more modules as needed
 ]
 exclude = ["ai_workflow"]
