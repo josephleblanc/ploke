@@ -48,9 +48,9 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
             TypeKind::Function {
                 is_unsafe,
                 is_extern,
-                abi,
-            } => todo!(),
-            TypeKind::Paren {} => todo!(),
+                abi: _,
+            } => "Function",
+            TypeKind::Paren { .. } => "Paren",
         };
 
         // Create a simplified string representation of the type
@@ -364,6 +364,9 @@ fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             RelationKind::Inherits => "Inherits",
             RelationKind::References => "References",
             RelationKind::Contains => "Contains",
+            RelationKind::Uses => "Uses",
+            RelationKind::ValueType => "ValueType",
+            RelationKind::MacroUse => "MacroUse",
             // These variants don't exist in the RelationKind enum
             // RelationKind::ModuleItem => "ModuleItem",
             // RelationKind::ModuleSubmodule => "ModuleSubmodule",
