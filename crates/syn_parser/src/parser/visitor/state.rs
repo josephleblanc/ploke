@@ -145,19 +145,28 @@ impl VisitorState {
                         let path_clone = path.clone();
                     
                         // Check if the type exists in the map
-                        let id = if let Some(entry) = self.type_map.get(&path_clone) {
+                        if let Some(entry) = self.type_map.get(&path_clone) {
                             let id = *entry.value();
                             drop(entry); // Explicitly drop the reference to release the borrow
                             id
                         } else {
+                            // Create a new type ID
                             let id = self.next_type_id();
                             // Insert the new type ID before processing the type
                             self.type_map.insert(path_clone, id);
-                            // Now we can process the type without borrow conflicts
-                            super::type_processing::get_or_create_type(self, expr);
+                            // Process the type separately to avoid borrow conflicts
+                            let type_str = expr.to_token_stream().to_string();
+                            let (type_kind, related_types) = super::type_processing::process_type(self, expr);
+                            
+                            // Add the type to the graph
+                            self.code_graph.type_graph.push(TypeNode {
+                                id,
+                                kind: type_kind,
+                                related_types,
+                            });
+                            
                             id
-                        };
-                        id
+                        }
                     });
 
                     params.push(GenericParamNode {
