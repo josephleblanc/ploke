@@ -106,7 +106,7 @@ llm -> ui
 
 ### Understanding Tokio vs Rayon
 
-You're right about the general use cases:
+**Understanding the Conflict**
 
 - **Tokio** is an asynchronous runtime for I/O-bound tasks. It excels at handling many concurrent operations that spend time waiting (file I/O, network requests, etc.).
 
