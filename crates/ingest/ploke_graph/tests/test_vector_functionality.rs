@@ -50,7 +50,7 @@ fn test_basic_vector_functionality() {
     ).expect("Failed to create HNSW index");
 
     // Query all vectors to verify insertion
-    let _result = db
+    let result = db
         .run_script(
             "?[id, vec_data] := *vector_test[id, vec_data]",
             BTreeMap::new(),
@@ -65,7 +65,7 @@ fn test_basic_vector_functionality() {
     );
 
     // Test vector similarity search
-    let _result = db
+    let result = db
         .run_script(
             r#"
         ?[id, dist] := 
@@ -131,6 +131,7 @@ fn test_hnsw_graph_walking() {
     ).expect("Failed to create HNSW index");
 
     // Test walking the HNSW graph directly
+    #[allow(unused_variables)]
     let result = db
         .run_script(
             r#"
@@ -158,6 +159,9 @@ fn insert_sample_embeddings(
         ScriptMutability::Immutable,
     )?;
     
+    // We don't need to check if the relation exists since we're using :replace
+    // but we'll keep this code for documentation purposes
+    #[allow(unused_variables)]
     let relation_exists = relations.rows.iter().any(|row| {
         row[0].get_str().map_or(false, |name| name == "code_embeddings")
     });
@@ -293,6 +297,7 @@ fn test_code_embeddings_hnsw_graph() {
         :limit 10
     "#;
 
+    #[allow(unused_variables)]
     let result = db
         .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to walk code embeddings HNSW graph");
