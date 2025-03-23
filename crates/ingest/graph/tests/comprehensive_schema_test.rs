@@ -360,7 +360,12 @@ fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     // Query to walk the HNSW graph at layer 0
     let query = r#"
         ?[fr_node_type, to_node_type, dist] := 
-            *code_embeddings:vector{layer: 0, fr_node_type: "Function", to_node_type, dist}
+            *code_embeddings:vector{
+                layer: 0, 
+                fr_node_type: "Function", 
+                to_node_type, 
+                dist
+            }
         :limit 10
     "#;
     
