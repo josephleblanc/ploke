@@ -145,7 +145,7 @@ impl VisitorState {
                         let path_clone = path.clone();
                     
                         // Check if the type exists in the map
-                        if let Some(entry) = self.type_map.get(&path_clone) {
+                        let id = if let Some(entry) = self.type_map.get(&path_clone) {
                             let id = *entry.value();
                             drop(entry); // Explicitly drop the reference to release the borrow
                             id
@@ -156,7 +156,8 @@ impl VisitorState {
                             // Now we can process the type without borrow conflicts
                             super::type_processing::get_or_create_type(self, expr);
                             id
-                        }
+                        };
+                        id
                     });
 
                     params.push(GenericParamNode {
