@@ -144,18 +144,22 @@ impl VisitorState {
                         // Clone the path to avoid borrowing issues
                         let path_clone = path.clone();
                     
-                        // Check if the type exists in the map
-                        if let Some(entry) = self.type_map.get(&path_clone) {
+                        // First check if we already have this type
+                        let existing_id = self.type_map.get(&path_clone).map(|entry| {
                             let id = *entry.value();
                             drop(entry); // Explicitly drop the reference to release the borrow
+                            id
+                        });
+                        
+                        if let Some(id) = existing_id {
                             id
                         } else {
                             // Create a new type ID
                             let id = self.next_type_id();
                             // Insert the new type ID before processing the type
                             self.type_map.insert(path_clone, id);
+                            
                             // Process the type separately to avoid borrow conflicts
-                            let type_str = expr.to_token_stream().to_string();
                             let (type_kind, related_types) = super::type_processing::process_type(self, expr);
                             
                             // Add the type to the graph
