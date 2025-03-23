@@ -1,12 +1,13 @@
 //! Tests for graph queries and traversals
 
-use cozo::{DataValue, ScriptMutability};
-use graph::schema::insert_sample_data;
-use std::collections::BTreeMap;
 use crate::test_helpers::setup_test_db;
+use cozo::{DataValue, ScriptMutability};
+use ploke_graph::schema::insert_sample_data;
+use std::collections::BTreeMap;
 
 mod test_helpers;
 
+#[allow(dead_code)]
 fn insert_sample_union(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(11)),
@@ -25,6 +26,7 @@ fn insert_sample_union(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRow
     )
 }
 
+#[allow(dead_code)]
 fn insert_sample_value(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(12)),
@@ -46,6 +48,7 @@ fn insert_sample_value(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRow
     )
 }
 
+#[allow(dead_code)]
 fn insert_sample_macro(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(13)),
@@ -69,7 +72,10 @@ fn insert_sample_macro(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRow
     )
 }
 
-fn insert_sample_type_details(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+#[allow(dead_code)]
+fn insert_sample_type_details(
+    db: &cozo::Db<cozo::MemStorage>,
+) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("type_id".to_string(), DataValue::from(1)),
         ("is_mutable".to_string(), DataValue::from(false)),
@@ -87,7 +93,10 @@ fn insert_sample_type_details(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::N
     )
 }
 
-fn insert_sample_module_relationship(db: &cozo::Db<cozo::MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+#[allow(dead_code)]
+fn insert_sample_module_relationship(
+    db: &cozo::Db<cozo::MemStorage>,
+) -> Result<cozo::NamedRows, cozo::Error> {
     // First, insert a module
     let module_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(20)),
@@ -133,10 +142,10 @@ fn insert_sample_module_relationship(db: &cozo::Db<cozo::MemStorage>) -> Result<
 #[test]
 fn test_find_implementations() {
     let db = setup_test_db();
-    
+
     // Insert sample data
     insert_sample_data(&db).expect("Failed to insert sample data");
-    
+
     // Insert a trait
     let trait_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(30)),
@@ -149,7 +158,8 @@ fn test_find_implementations() {
         "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put traits",
         trait_params,
         ScriptMutability::Mutable,
-    ).expect("Failed to insert trait");
+    )
+    .expect("Failed to insert trait");
 
     // Insert an impl
     let impl_params = BTreeMap::from([
@@ -162,7 +172,8 @@ fn test_find_implementations() {
         "?[id, self_type_id, trait_type_id] <- [[$id, $self_type_id, $trait_type_id]] :put impls",
         impl_params,
         ScriptMutability::Mutable,
-    ).expect("Failed to insert impl");
+    )
+    .expect("Failed to insert impl");
 
     // Query to find all implementations of a trait
     let query = r#"
@@ -172,7 +183,8 @@ fn test_find_implementations() {
             *structs[struct_id, struct_name, _, _]
     "#;
 
-    let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
+    let result = db
+        .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to query implementations");
 
     #[cfg(feature = "debug")]
@@ -194,10 +206,10 @@ fn test_find_implementations() {
 #[test]
 fn test_find_type_usages() {
     let db = setup_test_db();
-    
+
     // Insert sample data
     insert_sample_data(&db).expect("Failed to insert sample data");
-    
+
     // Query to find all functions that use a specific type
     let query = r#"
         ?[fn_name, type_str] := 
@@ -206,7 +218,8 @@ fn test_find_type_usages() {
             *types[type_id, _, type_str]
     "#;
 
-    let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
+    let result = db
+        .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to query type usages");
 
     #[cfg(feature = "debug")]
@@ -219,10 +232,10 @@ fn test_find_type_usages() {
 #[test]
 fn test_module_hierarchy() {
     let db = setup_test_db();
-    
+
     // Insert module relationship
     insert_sample_module_relationship(&db).expect("Failed to insert module relationship");
-    
+
     // Query to find all submodules
     let query = r#"
         ?[parent_name, child_name] := 
@@ -231,7 +244,8 @@ fn test_module_hierarchy() {
             *modules[child_id, child_name, _, _]
     "#;
 
-    let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
+    let result = db
+        .run_script(query, BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to query module hierarchy");
 
     #[cfg(feature = "debug")]
@@ -253,10 +267,10 @@ fn test_module_hierarchy() {
 #[test]
 fn test_advanced_graph_traversal() {
     let db = setup_test_db();
-    
+
     // Insert module relationships
     insert_sample_module_relationship(&db).expect("Failed to insert module relationship");
-    
+
     // Create a more complex module hierarchy
     // grandparent -> parent -> child
     let grandparent_params = BTreeMap::from([
@@ -309,7 +323,8 @@ fn test_advanced_graph_traversal() {
         DataValue::from("grandparent_module"),
     )]);
 
-    let result = db.run_script(recursive_query, params, ScriptMutability::Immutable)
+    let result = db
+        .run_script(recursive_query, params, ScriptMutability::Immutable)
         .expect("Failed to execute recursive query");
 
     #[cfg(feature = "debug")]

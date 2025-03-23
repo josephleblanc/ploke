@@ -1,5 +1,5 @@
 use cozo::{Db, MemStorage, ScriptMutability};
-use graph::schema::{create_schema, insert_sample_data, verify_schema};
+use ploke_graph::schema::{create_schema, insert_sample_data, verify_schema};
 use std::collections::BTreeMap;
 
 #[test]
