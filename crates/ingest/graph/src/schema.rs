@@ -97,12 +97,82 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         cozo::ScriptMutability::Mutable,
     )?;
 
+    db.run_script(
+        r#"
+        :create type_aliases {
+            id: Int =>
+            name: String,
+            visibility: String,
+            type_id: Int,
+            docstring: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create unions {
+            id: Int =>
+            name: String,
+            visibility: String,
+            docstring: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create values {
+            id: Int =>
+            name: String,
+            visibility: String,
+            type_id: Int,
+            kind: String,
+            value: String?,
+            docstring: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create macros {
+            id: Int =>
+            name: String,
+            visibility: String,
+            kind: String,
+            docstring: String?,
+            body: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     // Relationship Relations
     db.run_script(
         r#"
         :create relations {
             source_id: Int,
             target_id: Int,
+            kind: String =>
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create module_relationships {
+            module_id: Int,
+            related_id: Int,
             kind: String =>
         }
         "#,
@@ -192,6 +262,22 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         cozo::ScriptMutability::Mutable,
     )?;
 
+    db.run_script(
+        r#"
+        :create type_details {
+            type_id: Int =>
+            is_mutable: Bool?,
+            lifetime: String?,
+            abi: String?,
+            is_unsafe: Bool?,
+            is_extern: Bool?,
+            dyn_token: Bool?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     // Create indices for performance
     create_indices(db)?;
 
@@ -203,6 +289,30 @@ fn create_indices(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
     // Indices for core node relations
     db.run_script(
         "::index create functions:by_name {name, id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create type_aliases:by_name {name, id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create unions:by_name {name, id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create values:by_name {name, id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create macros:by_name {name, id}",
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;
@@ -240,6 +350,18 @@ fn create_indices(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
 
     db.run_script(
         "::index create relations:by_kind {kind, source_id, target_id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create module_relationships:by_kind {kind, module_id, related_id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        "::index create type_details:by_type {type_id}",
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;
