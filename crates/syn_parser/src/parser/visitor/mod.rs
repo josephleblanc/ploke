@@ -1,9 +1,9 @@
+use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
 mod state;
 mod type_processing;
 
-pub use self::analyze_code;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 

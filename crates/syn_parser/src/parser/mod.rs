@@ -4,9 +4,6 @@ pub mod relations;
 pub mod types;
 pub mod visitor;
 
-#[cfg(feature = "visitor_refactor")]
-pub mod visitor_refactor;
-
 // Re-export key items
 pub use self::graph::CodeGraph;
 pub use self::types::TypeId;
