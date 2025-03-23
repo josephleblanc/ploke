@@ -25,6 +25,7 @@ fn test_comprehensive_schema() {
     test_module_hierarchy(&db).expect("Failed to test module hierarchy");
     test_advanced_graph_traversal(&db).expect("Failed to test advanced graph traversal");
     test_vector_similarity_search(&db).expect("Failed to test vector similarity search");
+    test_hnsw_graph_walking(&db).expect("Failed to test HNSW graph walking");
 }
 
 fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
@@ -127,26 +128,30 @@ fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<cozo::NamedRows, co
 }
 
 fn insert_sample_embeddings(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
-    // Insert a sample embedding for a function
-    let embedding_params = BTreeMap::from([
-        ("id".to_string(), DataValue::from(1)),
-        ("node_id".to_string(), DataValue::from(1)), // sample_function
-        ("node_type".to_string(), DataValue::from("Function")),
-        (
-            "embedding".to_string(), 
-            DataValue::Vector(
-                (0..384).map(|i| DataValue::from(i as f32 / 384.0)).collect()
-            )
-        ),
-        (
-            "text_snippet".to_string(),
-            DataValue::from("fn sample_function(input: String) -> String { println!(\"Hello\"); input }"),
-        ),
-    ]);
+    // Create a sample embedding vector (384 dimensions)
+    // We'll use a simple pattern for the vector values
+    let embedding_values = (0..384)
+        .map(|i| format!("{:.6}", i as f64 / 384.0))
+        .collect::<Vec<String>>()
+        .join(", ");
+    
+    // Insert a sample embedding for a function using raw script
+    let script = format!(
+        r#"
+        ?[id, node_id, node_type, embedding, text_snippet] <- [[
+            1, 
+            1, 
+            "Function", 
+            vec([{}]), 
+            "fn sample_function(input: String) -> String {{ println!(\"Hello\"); input }}"
+        ]] :put code_embeddings
+        "#,
+        embedding_values
+    );
 
     db.run_script(
-        "?[id, node_id, node_type, embedding, text_snippet] <- [[$id, $node_id, $node_type, $embedding, $text_snippet]] :put code_embeddings",
-        embedding_params,
+        &script,
+        BTreeMap::new(),
         ScriptMutability::Mutable,
     )
 }
@@ -305,40 +310,66 @@ fn test_module_hierarchy(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     Ok(())
 }
 
-// Test vector similarity search
+// Test vector similarity search using HNSW
 fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     // Insert sample embeddings if not already done
     insert_sample_embeddings(db)?;
     
-    // Create a query vector (this would normally come from an embedding model)
-    let query_vector: Vec<DataValue> = (0..384).map(|i| DataValue::from(i as f32 / 384.0)).collect();
+    // Create a query vector using the vec function in CozoScript
+    // We'll use the same vector as in our sample data for perfect similarity
+    let embedding_values = (0..384)
+        .map(|i| format!("{:.6}", i as f64 / 384.0))
+        .collect::<Vec<String>>()
+        .join(", ");
     
-    // Query to find similar code snippets
-    let params = BTreeMap::from([
-        ("query_vec".to_string(), DataValue::Vector(query_vector)),
-        ("limit".to_string(), DataValue::from(5)),
-    ]);
+    // Query to find similar code snippets using HNSW index
+    let query = format!(
+        r#"
+        ?[node_type, text_snippet, dist] := 
+            ~code_embeddings:vector{{node_type, text_snippet | 
+                query: vec([{}]), 
+                k: 5, 
+                ef: 50,
+                bind_distance: dist
+            }}
+        "#,
+        embedding_values
+    );
     
-    let query = r#"
-        ?[node_type, text_snippet, score] := 
-            *code_embeddings[_, _, node_type, embedding, text_snippet],
-            score = cosine_similarity(embedding, $query_vec)
-        :limit $limit
-        :sort -score
-    "#;
-    
-    let result = db.run_script(query, params, ScriptMutability::Immutable)?;
+    let result = db.run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)?;
     
     #[cfg(feature = "debug")]
     println!("Vector search results: {:?}", result);
     
-    // We should have at least one result with a high similarity score
+    // We should have at least one result
     assert!(!result.rows.is_empty(), "Expected at least one vector search result");
     
-    // The first result should have a very high similarity score (close to 1.0)
-    // Since we're using the same vector, it should be almost exactly 1.0
-    let score = result.rows[0][2].get_float().unwrap_or(0.0);
-    assert!(score > 0.99, "Expected high similarity score, got {}", score);
+    // The first result should have a very low distance (close to 0.0)
+    // Since we're using the same vector, it should be almost exactly 0.0
+    let distance = result.rows[0][2].get_float().unwrap_or(1.0);
+    assert!(distance < 0.01, "Expected low distance score, got {}", distance);
+    
+    Ok(())
+}
+
+// Test walking the HNSW graph directly
+fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+    // Insert sample embeddings if not already done
+    insert_sample_embeddings(db)?;
+    
+    // Query to walk the HNSW graph at layer 0
+    let query = r#"
+        ?[fr_node_type, to_node_type, dist] := 
+            *code_embeddings:vector{layer: 0, fr_node_type: "Function", to_node_type, dist}
+        :limit 10
+    "#;
+    
+    let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)?;
+    
+    #[cfg(feature = "debug")]
+    println!("HNSW graph walking results: {:?}", result);
+    
+    // The graph might be empty if there's only one node, but the query should succeed
     
     Ok(())
 }

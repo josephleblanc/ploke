@@ -285,7 +285,7 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
             id: Int =>
             node_id: Int,
             node_type: String,
-            embedding: Vector[f32, 384],
+            embedding: <F32; 384>,
             text_snippet: String?
         }
         "#,
@@ -381,9 +381,9 @@ fn create_indices(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
         cozo::ScriptMutability::Mutable,
     )?;
 
-    // Create vector index for embeddings
+    // Create HNSW vector index for embeddings
     db.run_script(
-        "::index create code_embeddings:vector {embedding}",
+        "::hnsw create code_embeddings:vector {dim: 384, m: 16, ef_construction: 100, fields: [embedding]}",
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;
