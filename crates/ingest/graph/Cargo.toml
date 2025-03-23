@@ -4,3 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+cozo = { workspace = true }
+syn_parser = { path = "../syn_parser" }
+serde = { workspace = true }
+
+[dev-dependencies]
