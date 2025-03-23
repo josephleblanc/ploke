@@ -312,7 +312,7 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
 pub fn verify_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
     // Query all functions
     let functions = db.run_script(
-        "?[id, name, visibility] := *functions[id, name, visibility]",
+        "?[id, name, visibility] := *functions[id, name, visibility, _, _, _]",
         BTreeMap::new(),
         cozo::ScriptMutability::Immutable,
     )?;
@@ -321,7 +321,7 @@ pub fn verify_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
 
     // Query all structs
     let structs = db.run_script(
-        "?[id, name, visibility] := *structs[id, name, visibility]",
+        "?[id, name, visibility] := *structs[id, name, visibility, _]",
         BTreeMap::new(),
         cozo::ScriptMutability::Immutable,
     )?;

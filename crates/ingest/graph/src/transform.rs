@@ -46,8 +46,8 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
             TypeKind::Macro { .. } => "Macro",
             TypeKind::Unknown { .. } => "Unknown",
             TypeKind::Function {
-                is_unsafe,
-                is_extern,
+                is_unsafe: _,
+                is_extern: _,
                 abi: _,
             } => "Function",
             TypeKind::Paren { .. } => "Paren",
