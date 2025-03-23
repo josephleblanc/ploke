@@ -1,5 +1,5 @@
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use graph::schema::{create_schema, insert_sample_data};
+use graph::schema::create_schema;
 use std::collections::BTreeMap;
 
 #[test]
@@ -202,6 +202,9 @@ fn test_find_implementations(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
             *impls[_, struct_id, trait_id],
             *structs[struct_id, struct_name, _, _]
     "#;
+
+    // Insert sample data for testing
+    insert_sample_data(db)?;
 
     let result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)?;
 

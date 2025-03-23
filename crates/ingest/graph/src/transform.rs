@@ -97,7 +97,7 @@ fn transform_single_trait(
     // We just need to add relations between the trait and its methods
 
     // Add super traits
-    for (i, super_trait_id) in trait_node.super_traits.iter().enumerate() {
+    for (_i, super_trait_id) in trait_node.super_traits.iter().enumerate() {
         let relation_params = BTreeMap::from([
             (
                 "source_id".to_string(),
