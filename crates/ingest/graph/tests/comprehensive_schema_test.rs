@@ -23,6 +23,8 @@ fn test_comprehensive_schema() {
     test_find_implementations(&db).expect("Failed to test find implementations");
     test_find_type_usages(&db).expect("Failed to test find type usages");
     test_module_hierarchy(&db).expect("Failed to test module hierarchy");
+    test_advanced_graph_traversal(&db).expect("Failed to test advanced graph traversal");
+    test_vector_similarity_search(&db).expect("Failed to test vector similarity search");
 }
 
 fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
@@ -120,6 +122,31 @@ fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<cozo::NamedRows, co
     db.run_script(
         "?[type_id, is_mutable, lifetime, abi, is_unsafe, is_extern, dyn_token] <- [[$type_id, $is_mutable, $lifetime, $abi, $is_unsafe, $is_extern, $dyn_token]] :put type_details",
         params,
+        ScriptMutability::Mutable,
+    )
+}
+
+fn insert_sample_embeddings(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+    // Insert a sample embedding for a function
+    let embedding_params = BTreeMap::from([
+        ("id".to_string(), DataValue::from(1)),
+        ("node_id".to_string(), DataValue::from(1)), // sample_function
+        ("node_type".to_string(), DataValue::from("Function")),
+        (
+            "embedding".to_string(), 
+            DataValue::Vector(
+                (0..384).map(|i| DataValue::from(i as f32 / 384.0)).collect()
+            )
+        ),
+        (
+            "text_snippet".to_string(),
+            DataValue::from("fn sample_function(input: String) -> String { println!(\"Hello\"); input }"),
+        ),
+    ]);
+
+    db.run_script(
+        "?[id, node_id, node_type, embedding, text_snippet] <- [[$id, $node_id, $node_type, $embedding, $text_snippet]] :put code_embeddings",
+        embedding_params,
         ScriptMutability::Mutable,
     )
 }
@@ -274,6 +301,121 @@ fn test_module_hierarchy(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
         Some("child_module"),
         "Expected child module name to be 'child_module'"
     );
+
+    Ok(())
+}
+
+// Test vector similarity search
+fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+    // Insert sample embeddings if not already done
+    insert_sample_embeddings(db)?;
+    
+    // Create a query vector (this would normally come from an embedding model)
+    let query_vector: Vec<DataValue> = (0..384).map(|i| DataValue::from(i as f32 / 384.0)).collect();
+    
+    // Query to find similar code snippets
+    let params = BTreeMap::from([
+        ("query_vec".to_string(), DataValue::Vector(query_vector)),
+        ("limit".to_string(), DataValue::from(5)),
+    ]);
+    
+    let query = r#"
+        ?[node_type, text_snippet, score] := 
+            *code_embeddings[_, _, node_type, embedding, text_snippet],
+            score = cosine_similarity(embedding, $query_vec)
+        :limit $limit
+        :sort -score
+    "#;
+    
+    let result = db.run_script(query, params, ScriptMutability::Immutable)?;
+    
+    #[cfg(feature = "debug")]
+    println!("Vector search results: {:?}", result);
+    
+    // We should have at least one result with a high similarity score
+    assert!(!result.rows.is_empty(), "Expected at least one vector search result");
+    
+    // The first result should have a very high similarity score (close to 1.0)
+    // Since we're using the same vector, it should be almost exactly 1.0
+    let score = result.rows[0][2].get_float().unwrap_or(0.0);
+    assert!(score > 0.99, "Expected high similarity score, got {}", score);
+    
+    Ok(())
+}
+
+// Test advanced graph traversal with recursive queries
+fn test_advanced_graph_traversal(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+    // First, create a more complex module hierarchy
+    // grandparent -> parent -> child
+    let grandparent_params = BTreeMap::from([
+        ("id".to_string(), DataValue::from(22)),
+        ("name".to_string(), DataValue::from("grandparent_module")),
+        ("visibility".to_string(), DataValue::from("Public")),
+        ("docstring".to_string(), DataValue::from("Grandparent module")),
+    ]);
+
+    db.run_script(
+        "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put modules",
+        grandparent_params,
+        ScriptMutability::Mutable,
+    )?;
+
+    // Create relationship: grandparent contains parent
+    let relation_params = BTreeMap::from([
+        ("module_id".to_string(), DataValue::from(22)),
+        ("related_id".to_string(), DataValue::from(20)), // parent_module
+        ("kind".to_string(), DataValue::from("Contains")),
+    ]);
+
+    db.run_script(
+        "?[module_id, related_id, kind] <- [[$module_id, $related_id, $kind]] :put module_relationships",
+        relation_params,
+        ScriptMutability::Mutable,
+    )?;
+
+    // Recursive query to find all descendants of a module
+    let recursive_query = r#"
+        descendants[ancestor, descendant] := 
+            *modules[ancestor_id, ancestor, _, _],
+            *module_relationships[ancestor_id, descendant_id, "Contains"],
+            *modules[descendant_id, descendant, _, _]
+        
+        descendants[ancestor, descendant] := 
+            descendants[ancestor, intermediate],
+            *modules[intermediate_id, intermediate, _, _],
+            *module_relationships[intermediate_id, descendant_id, "Contains"],
+            *modules[descendant_id, descendant, _, _]
+        
+        ?[ancestor, descendant] := descendants[ancestor, descendant]
+    "#;
+
+    let params = BTreeMap::from([
+        ("ancestor".to_string(), DataValue::from("grandparent_module")),
+    ]);
+
+    let result = db.run_script(recursive_query, params, ScriptMutability::Immutable)?;
+
+    #[cfg(feature = "debug")]
+    println!("Module descendants: {:?}", result);
+
+    // Should find both parent_module and child_module as descendants
+    assert!(result.rows.len() >= 2, "Expected at least 2 descendants");
+    
+    // Check that both parent and child modules are found
+    let mut found_parent = false;
+    let mut found_child = false;
+    
+    for row in &result.rows {
+        if row[1].get_str() == Some("parent_module") {
+            found_parent = true;
+        }
+        if row[1].get_str() == Some("child_module") {
+            found_child = true;
+        }
+    }
+    
+    assert!(found_parent, "Should find parent_module as descendant");
+    assert!(found_child, "Should find child_module as descendant");
 
     Ok(())
 }

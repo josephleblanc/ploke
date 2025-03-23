@@ -278,6 +278,21 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         cozo::ScriptMutability::Mutable,
     )?;
 
+    // Add vector embedding support
+    db.run_script(
+        r#"
+        :create code_embeddings {
+            id: Int =>
+            node_id: Int,
+            node_type: String,
+            embedding: Vector[f32, 384],
+            text_snippet: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     // Create indices for performance
     create_indices(db)?;
 
@@ -362,6 +377,13 @@ fn create_indices(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
 
     db.run_script(
         "::index create type_details:by_type {type_id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    // Create vector index for embeddings
+    db.run_script(
+        "::index create code_embeddings:vector {embedding}",
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;
