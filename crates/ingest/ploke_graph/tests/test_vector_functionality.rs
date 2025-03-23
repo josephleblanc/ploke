@@ -41,7 +41,7 @@ fn test_basic_vector_functionality() {
     ).expect("Failed to create HNSW index");
 
     // Query all vectors to verify insertion
-    let result = db
+    let _result = db
         .run_script(
             "?[id, vec_data] := *vector_test[id, vec_data]",
             BTreeMap::new(),
@@ -122,7 +122,7 @@ fn test_hnsw_graph_walking() {
     ).expect("Failed to create HNSW index");
 
     // Test walking the HNSW graph directly
-    let result = db
+    let _result = db
         .run_script(
             r#"
         ?[fr_id, to_id, dist] := 
@@ -142,7 +142,14 @@ fn test_hnsw_graph_walking() {
 fn insert_sample_embeddings(
     db: &cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::NamedRows, cozo::Error> {
-    // First create the relation
+    // First drop the relation if it exists
+    db.run_script(
+        ":drop code_embeddings",
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    ).ok(); // Ignore error if relation doesn't exist
+    
+    // Then create the relation
     db.run_script(
         ":create code_embeddings {id: Int, node_id: Int, node_type: String, embedding: <F32; 384>, text_snippet: String}",
         BTreeMap::new(),
