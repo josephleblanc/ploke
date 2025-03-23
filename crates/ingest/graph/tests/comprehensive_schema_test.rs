@@ -25,7 +25,7 @@ fn test_comprehensive_schema() {
     test_module_hierarchy(&db).expect("Failed to test module hierarchy");
 }
 
-fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(10)),
         ("name".to_string(), DataValue::from("StringVec")),
@@ -44,7 +44,7 @@ fn insert_sample_type_alias(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     )
 }
 
-fn insert_sample_union(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_union(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(11)),
         ("name".to_string(), DataValue::from("IntOrFloat")),
@@ -62,7 +62,7 @@ fn insert_sample_union(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     )
 }
 
-fn insert_sample_value(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_value(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(12)),
         ("name".to_string(), DataValue::from("MAX_SIZE")),
@@ -83,7 +83,7 @@ fn insert_sample_value(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     )
 }
 
-fn insert_sample_macro(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_macro(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(13)),
         ("name".to_string(), DataValue::from("debug_print")),
@@ -106,7 +106,7 @@ fn insert_sample_macro(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     )
 }
 
-fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     let params = BTreeMap::from([
         ("type_id".to_string(), DataValue::from(1)),
         ("is_mutable".to_string(), DataValue::from(false)),
@@ -124,16 +124,13 @@ fn insert_sample_type_details(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     )
 }
 
-fn insert_sample_module_relationship(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn insert_sample_module_relationship(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
     // First, insert a module
     let module_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(20)),
         ("name".to_string(), DataValue::from("parent_module")),
         ("visibility".to_string(), DataValue::from("Public")),
-        (
-            "docstring".to_string(),
-            DataValue::from("Parent module"),
-        ),
+        ("docstring".to_string(), DataValue::from("Parent module")),
     ]);
 
     db.run_script(
@@ -147,10 +144,7 @@ fn insert_sample_module_relationship(db: &Db<MemStorage>) -> Result<(), cozo::Er
         ("id".to_string(), DataValue::from(21)),
         ("name".to_string(), DataValue::from("child_module")),
         ("visibility".to_string(), DataValue::from("Public")),
-        (
-            "docstring".to_string(),
-            DataValue::from("Child module"),
-        ),
+        ("docstring".to_string(), DataValue::from("Child module")),
     ]);
 
     db.run_script(
@@ -179,10 +173,7 @@ fn test_find_implementations(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
         ("id".to_string(), DataValue::from(30)),
         ("name".to_string(), DataValue::from("SampleTrait")),
         ("visibility".to_string(), DataValue::from("Public")),
-        (
-            "docstring".to_string(),
-            DataValue::from("A sample trait"),
-        ),
+        ("docstring".to_string(), DataValue::from("A sample trait")),
     ]);
 
     db.run_script(

@@ -79,7 +79,10 @@ fn transform_single_trait(
 
     let params = BTreeMap::from([
         ("id".to_string(), DataValue::from(trait_node.id as i64)),
-        ("name".to_string(), DataValue::from(trait_node.name.as_str())),
+        (
+            "name".to_string(),
+            DataValue::from(trait_node.name.as_str()),
+        ),
         ("visibility".to_string(), DataValue::from(visibility)),
         ("docstring".to_string(), docstring),
     ]);
@@ -96,8 +99,14 @@ fn transform_single_trait(
     // Add super traits
     for (i, super_trait_id) in trait_node.super_traits.iter().enumerate() {
         let relation_params = BTreeMap::from([
-            ("source_id".to_string(), DataValue::from(trait_node.id as i64)),
-            ("target_id".to_string(), DataValue::from(*super_trait_id as i64)),
+            (
+                "source_id".to_string(),
+                DataValue::from(trait_node.id as i64),
+            ),
+            (
+                "target_id".to_string(),
+                DataValue::from(*super_trait_id as i64),
+            ),
             ("kind".to_string(), DataValue::from("Inherits")),
         ]);
 
@@ -174,7 +183,10 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
         for submodule_id in &module.submodules {
             let relation_params = BTreeMap::from([
                 ("module_id".to_string(), DataValue::from(module.id as i64)),
-                ("related_id".to_string(), DataValue::from(*submodule_id as i64)),
+                (
+                    "related_id".to_string(),
+                    DataValue::from(*submodule_id as i64),
+                ),
                 ("kind".to_string(), DataValue::from("Contains")),
             ]);
 
@@ -282,7 +294,7 @@ fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
             VisibilityKind::Inherited => "Inherited",
         };
 
-        let kind = match macro_node.kind {
+        let kind = match &macro_node.kind {
             syn_parser::parser::nodes::MacroKind::DeclarativeMacro => "DeclarativeMacro",
             syn_parser::parser::nodes::MacroKind::ProcedureMacro { kind } => match kind {
                 syn_parser::parser::nodes::ProcMacroKind::Derive => "DeriveProcMacro",
@@ -305,7 +317,10 @@ fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 
         let params = BTreeMap::from([
             ("id".to_string(), DataValue::from(macro_node.id as i64)),
-            ("name".to_string(), DataValue::from(macro_node.name.as_str())),
+            (
+                "name".to_string(),
+                DataValue::from(macro_node.name.as_str()),
+            ),
             ("visibility".to_string(), DataValue::from(visibility)),
             ("kind".to_string(), DataValue::from(kind)),
             ("docstring".to_string(), docstring),
@@ -744,9 +759,15 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
                 let params = BTreeMap::from([
                     ("id".to_string(), DataValue::from(type_alias.id as i64)),
-                    ("name".to_string(), DataValue::from(type_alias.name.as_str())),
+                    (
+                        "name".to_string(),
+                        DataValue::from(type_alias.name.as_str()),
+                    ),
                     ("visibility".to_string(), DataValue::from(visibility)),
-                    ("type_id".to_string(), DataValue::from(type_alias.type_id as i64)),
+                    (
+                        "type_id".to_string(),
+                        DataValue::from(type_alias.type_id as i64),
+                    ),
                     ("docstring".to_string(), docstring),
                 ]);
 
@@ -772,7 +793,10 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
                 let params = BTreeMap::from([
                     ("id".to_string(), DataValue::from(union_node.id as i64)),
-                    ("name".to_string(), DataValue::from(union_node.name.as_str())),
+                    (
+                        "name".to_string(),
+                        DataValue::from(union_node.name.as_str()),
+                    ),
                     ("visibility".to_string(), DataValue::from(visibility)),
                     ("docstring".to_string(), docstring),
                 ]);
