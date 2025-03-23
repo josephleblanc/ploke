@@ -83,7 +83,7 @@ mod tests {
         ];
 
         // Send files to parse
-        for file in test_files {
+        for file in &test_files {
             let path = PathBuf::from(file);
             sender.send(ParserMessage::ParseFile(path)).unwrap();
         }
