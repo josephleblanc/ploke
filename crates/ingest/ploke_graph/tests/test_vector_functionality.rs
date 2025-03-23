@@ -1,4 +1,13 @@
 //! Tests for vector functionality in CozoDB
+//!
+//! This file tests CozoDB's vector storage and similarity search capabilities:
+//! 1. Basic vector storage and retrieval
+//! 2. HNSW index creation and vector similarity search
+//! 3. Direct HNSW graph traversal
+//! 4. Code embeddings with higher dimensionality
+//!
+//! Note: When creating relations in tests that may be run multiple times,
+//! we use `:replace` instead of `:create` to avoid "relation already exists" errors.
 
 use crate::test_helpers::setup_test_db;
 use cozo::{DataValue, ScriptMutability};
@@ -41,7 +50,7 @@ fn test_basic_vector_functionality() {
     ).expect("Failed to create HNSW index");
 
     // Query all vectors to verify insertion
-    let result = db
+    let _result = db
         .run_script(
             "?[id, vec_data] := *vector_test[id, vec_data]",
             BTreeMap::new(),
@@ -56,7 +65,7 @@ fn test_basic_vector_functionality() {
     );
 
     // Test vector similarity search
-    let result = db
+    let _result = db
         .run_script(
             r#"
         ?[id, dist] := 
@@ -142,17 +151,21 @@ fn test_hnsw_graph_walking() {
 fn insert_sample_embeddings(
     db: &cozo::Db<cozo::MemStorage>,
 ) -> Result<cozo::NamedRows, cozo::Error> {
-    // First drop the relation if it exists
-    db.run_script(
-        ":drop code_embeddings",
+    // Check if the relation exists first
+    let relations = db.run_script(
+        "::relations",
         BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )
-    .ok(); // Ignore error if relation doesn't exist
-
-    // Then create the relation
+        ScriptMutability::Immutable,
+    )?;
+    
+    let relation_exists = relations.rows.iter().any(|row| {
+        row[0].get_str().map_or(false, |name| name == "code_embeddings")
+    });
+    
+    // Use replace instead of create to handle both creation and updates
+    // This avoids the "relation already exists" error
     db.run_script(
-        ":create code_embeddings {id: Int, node_id: Int, node_type: String, embedding: <F32; 384>, text_snippet: String}",
+        ":replace code_embeddings {id: Int, node_id: Int, node_type: String, embedding: <F32; 384>, text_snippet: String}",
         BTreeMap::new(),
         ScriptMutability::Mutable,
     )?;
