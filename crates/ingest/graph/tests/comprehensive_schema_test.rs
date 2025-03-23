@@ -221,8 +221,8 @@ fn test_find_implementations(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
         "Expected struct name to be 'SampleStruct'"
     );
     assert_eq!(
-        result.rows[0][1].to_string(),
-        "SampleTrait",
+        result.rows[0][1].get_str(),
+        Some("SampleTrait"),
         "Expected trait name to be 'SampleTrait'"
     );
 
@@ -265,13 +265,13 @@ fn test_module_hierarchy(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
 
     assert_eq!(result.rows.len(), 1, "Expected 1 module relationship");
     assert_eq!(
-        result.rows[0][0].to_string(),
-        "parent_module",
+        result.rows[0][0].get_str(),
+        Some("parent_module"),
         "Expected parent module name to be 'parent_module'"
     );
     assert_eq!(
-        result.rows[0][1].to_string(),
-        "child_module",
+        result.rows[0][1].get_str(),
+        Some("child_module"),
         "Expected child module name to be 'child_module'"
     );
 
