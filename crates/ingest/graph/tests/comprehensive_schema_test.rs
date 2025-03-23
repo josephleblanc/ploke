@@ -25,6 +25,7 @@ fn test_comprehensive_schema() {
     test_module_hierarchy(&db).expect("Failed to test module hierarchy");
     test_advanced_graph_traversal(&db).expect("Failed to test advanced graph traversal");
     test_basic_vector_functionality(&db).expect("Failed to test basic vector functionality");
+    test_vector_similarity_search_ones(&db).expect("Failed to test vector similarity search");
     test_vector_similarity_search(&db).expect("Failed to test vector similarity search");
     test_hnsw_graph_walking(&db).expect("Failed to test HNSW graph walking");
 }
@@ -165,7 +166,11 @@ fn test_basic_vector_functionality(db: &Db<MemStorage>) -> Result<(), cozo::Erro
         ScriptMutability::Immutable,
     )?;
 
-    assert_eq!(result.rows.len(), 4, "Expected 4 vectors in the test relation");
+    assert_eq!(
+        result.rows.len(),
+        4,
+        "Expected 4 vectors in the test relation"
+    );
 
     // Test vector similarity search
     let result = db.run_script(
@@ -183,14 +188,20 @@ fn test_basic_vector_functionality(db: &Db<MemStorage>) -> Result<(), cozo::Erro
         ScriptMutability::Immutable,
     )?;
 
-    assert!(result.rows.len() >= 1, "Expected at least one result from vector search");
-    
+    assert!(
+        result.rows.len() >= 1,
+        "Expected at least one result from vector search"
+    );
+
     // The first result should be id 1 (exact match) with distance close to 0
     let first_id = result.rows[0][0].get_int().unwrap_or(-1);
     let first_dist = result.rows[0][1].get_float().unwrap_or(1.0);
-    
+
     assert_eq!(first_id, 1, "First result should be id 1 (exact match)");
-    assert!(first_dist < 0.01, "Distance for exact match should be close to 0");
+    assert!(
+        first_dist < 0.01,
+        "Distance for exact match should be close to 0"
+    );
 
     // Test walking the HNSW graph directly
     let _result = db.run_script(
@@ -217,7 +228,7 @@ fn insert_sample_embeddings(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo
         .map(|i| format!("{:.6}", i as f64 / 384.0))
         .collect::<Vec<String>>()
         .join(", ");
-    
+
     // Insert a sample embedding for a function using raw script
     let script = format!(
         r#"
@@ -232,11 +243,7 @@ fn insert_sample_embeddings(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo
         embedding_values
     );
 
-    db.run_script(
-        &script,
-        BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )
+    db.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)
 }
 
 fn insert_sample_module_relationship(db: &Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
@@ -393,18 +400,18 @@ fn test_module_hierarchy(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     Ok(())
 }
 
-// Test vector similarity search using HNSW
-fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+fn test_vector_similarity_search_ones(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     // Insert sample embeddings if not already done
     insert_sample_embeddings(db)?;
-    
+
     // Create a query vector using the vec function in CozoScript
     // We'll use the same vector as in our sample data for perfect similarity
     let embedding_values = (0..384)
-        .map(|i| format!("{:.6}", i as f64 / 384.0))
+        .map(|_| format!("{:.6}", 1.0))
         .collect::<Vec<String>>()
         .join(", ");
-    
+
+    print!("Attempting for graph vector similarity search ones query...");
     // Query to find similar code snippets using HNSW index
     let query = format!(
         r#"
@@ -420,20 +427,81 @@ fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error>
         "#,
         embedding_values
     );
-    
-    let result = db.run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)?;
-    
+    println!("success!");
+
+    let result = db
+        .run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)
+        .expect("Could not perform graph query.");
+
     #[cfg(feature = "debug")]
     println!("Vector search results: {:?}", result);
-    
+
     // We should have at least one result
-    assert!(!result.rows.is_empty(), "Expected at least one vector search result");
-    
+    assert!(
+        !result.rows.is_empty(),
+        "Expected at least one vector search result"
+    );
+
     // The first result should have a very low distance (close to 0.0)
     // Since we're using the same vector, it should be almost exactly 0.0
     let distance = result.rows[0][3].get_float().unwrap_or(1.0);
-    assert!(distance < 0.01, "Expected low distance score, got {}", distance);
-    
+    assert!(
+        distance < 0.01,
+        "Expected low distance score, got {}",
+        distance
+    );
+
+    Ok(())
+}
+
+// Test vector similarity search using HNSW
+fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
+    // Insert sample embeddings if not already done
+    insert_sample_embeddings(db)?;
+
+    // Create a query vector using the vec function in CozoScript
+    // We'll use the same vector as in our sample data for perfect similarity
+    let embedding_values = (0..384)
+        .map(|i| format!("{:.6}", i as f64 / 384.0))
+        .collect::<Vec<String>>()
+        .join(", ");
+
+    // Query to find similar code snippets using HNSW index
+    let query = format!(
+        r#"
+        ?[node_id, node_type, text_snippet, dist] := 
+            ~code_embeddings:vector{{
+                node_id, node_type, text_snippet | 
+                query: vec([{}]), 
+                k: 5, 
+                ef: 50,
+                bind_distance: dist
+            }}
+        :order dist
+        "#,
+        embedding_values
+    );
+
+    let result = db.run_script(&query, BTreeMap::new(), ScriptMutability::Immutable)?;
+
+    #[cfg(feature = "debug")]
+    println!("Vector search results: {:?}", result);
+
+    // We should have at least one result
+    assert!(
+        !result.rows.is_empty(),
+        "Expected at least one vector search result"
+    );
+
+    // The first result should have a very low distance (close to 0.0)
+    // Since we're using the same vector, it should be almost exactly 0.0
+    let distance = result.rows[0][3].get_float().unwrap_or(1.0);
+    assert!(
+        distance < 0.01,
+        "Expected low distance score, got {}",
+        distance
+    );
+
     Ok(())
 }
 
@@ -441,7 +509,7 @@ fn test_vector_similarity_search(db: &Db<MemStorage>) -> Result<(), cozo::Error>
 fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
     // Insert sample embeddings if not already done
     insert_sample_embeddings(db)?;
-    
+
     // Query to walk the HNSW graph at layer 0
     let query = r#"
         ?[fr_node_id, to_node_id, dist] := 
@@ -453,14 +521,14 @@ fn test_hnsw_graph_walking(db: &Db<MemStorage>) -> Result<(), cozo::Error> {
             }
         :limit 10
     "#;
-    
+
     let _result = db.run_script(query, BTreeMap::new(), ScriptMutability::Immutable)?;
-    
+
     #[cfg(feature = "debug")]
     println!("HNSW graph walking results: {:?}", _result);
-    
+
     // The graph might be empty if there's only one node, but the query should succeed
-    
+
     Ok(())
 }
 
@@ -472,7 +540,10 @@ fn test_advanced_graph_traversal(db: &Db<MemStorage>) -> Result<(), cozo::Error>
         ("id".to_string(), DataValue::from(22)),
         ("name".to_string(), DataValue::from("grandparent_module")),
         ("visibility".to_string(), DataValue::from("Public")),
-        ("docstring".to_string(), DataValue::from("Grandparent module")),
+        (
+            "docstring".to_string(),
+            DataValue::from("Grandparent module"),
+        ),
     ]);
 
     db.run_script(
@@ -510,9 +581,10 @@ fn test_advanced_graph_traversal(db: &Db<MemStorage>) -> Result<(), cozo::Error>
         ?[ancestor, descendant] := descendants[ancestor, descendant]
     "#;
 
-    let params = BTreeMap::from([
-        ("ancestor".to_string(), DataValue::from("grandparent_module")),
-    ]);
+    let params = BTreeMap::from([(
+        "ancestor".to_string(),
+        DataValue::from("grandparent_module"),
+    )]);
 
     let result = db.run_script(recursive_query, params, ScriptMutability::Immutable)?;
 
@@ -521,11 +593,11 @@ fn test_advanced_graph_traversal(db: &Db<MemStorage>) -> Result<(), cozo::Error>
 
     // Should find both parent_module and child_module as descendants
     assert!(result.rows.len() >= 2, "Expected at least 2 descendants");
-    
+
     // Check that both parent and child modules are found
     let mut found_parent = false;
     let mut found_child = false;
-    
+
     for row in &result.rows {
         if row[1].get_str() == Some("parent_module") {
             found_parent = true;
@@ -534,7 +606,7 @@ fn test_advanced_graph_traversal(db: &Db<MemStorage>) -> Result<(), cozo::Error>
             found_child = true;
         }
     }
-    
+
     assert!(found_parent, "Should find parent_module as descendant");
     assert!(found_child, "Should find child_module as descendant");
 
