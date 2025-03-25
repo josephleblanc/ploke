@@ -1,0 +1,110 @@
+cozo
+Struct DbCopy item path
+Settings
+Help
+
+Summary
+Source
+pub struct Db<S> { /* private fields */ }
+The database object of Cozo.
+
+Implementations
+Source
+impl<'s, S: Storage<'s>> Db<S>
+Source
+pub fn new(storage: S) -> Result<Self>
+Create a new database object with the given storage. You must call initialize immediately after creation. Due to lifetime restrictions we are not able to call that for you automatically.
+
+Source
+pub fn initialize(&'s self) -> Result<()>
+Must be called after creation of the database to initialize the runtime state.
+
+Source
+pub fn run_multi_transaction(
+    &'s self,
+    is_write: bool,
+    payloads: Receiver<TransactionPayload>,
+    results: Sender<Result<NamedRows>>,
+)
+Run a multi-transaction. A command should be sent to payloads, and the result should be retrieved from results. A transaction ends when it receives a Commit or Abort, or when a query is not successful. After a transaction ends, sending / receiving from the channels will fail.
+
+Write transactions may block other reads, but we guarantee that this does not happen for the RocksDB backend.
+
+Source
+pub fn run_script(
+    &'s self,
+    payload: &str,
+    params: BTreeMap<String, DataValue>,
+    mutability: ScriptMutability,
+) -> Result<NamedRows>
+Run the CozoScript passed in. The params argument is a map of parameters.
+
+Source
+pub fn run_script_read_only(
+    &'s self,
+    payload: &str,
+    params: BTreeMap<String, DataValue>,
+) -> Result<NamedRows>
+Run the CozoScript passed in. The params argument is a map of parameters.
+
+Source
+pub fn export_relations<I, T>(
+    &'s self,
+    relations: I,
+) -> Result<BTreeMap<String, NamedRows>>
+where
+    T: AsRef<str>,
+    I: Iterator<Item = T>,
+Export relations to JSON data.
+
+relations contains names of the stored relations to export.
+
+Source
+pub fn import_relations(
+    &'s self,
+    data: BTreeMap<String, NamedRows>,
+) -> Result<()>
+Import relations. The argument data accepts data in the shape of what was returned by Self::export_relations. The target stored relations must already exist in the database. Any associated indices will be updated.
+
+Note that triggers and callbacks are not run for the relations, if any exists. If you need to activate triggers or callbacks, use queries with parameters.
+
+Source
+pub fn backup_db(&'s self, out_file: impl AsRef<Path>) -> Result<()>
+Backup the running database into an Sqlite file
+
+Source
+pub fn restore_backup(&'s self, in_file: impl AsRef<Path>) -> Result<()>
+Restore from an Sqlite backup
+
+Source
+pub fn import_from_backup(
+    &'s self,
+    in_file: impl AsRef<Path>,
+    relations: &[String],
+) -> Result<()>
+Import data from relations in a backup file. The target stored relations must already exist in the database, and it must not have any associated indices. If you want to import into relations with indices, use Db::import_relations.
+
+Note that triggers and callbacks are not run for the relations, if any exists. If you need to activate triggers or callbacks, use queries with parameters.
+
+Source
+pub fn register_fixed_rule<R>(&self, name: String, rule_impl: R) -> Result<()>
+where
+    R: FixedRule + 'static,
+Register a custom fixed rule implementation.
+
+Source
+pub fn unregister_fixed_rule(&self, name: &str) -> Result<bool>
+Unregister a custom fixed rule implementation.
+
+Source
+pub fn register_callback(
+    &self,
+    relation: &str,
+    capacity: Option<usize>,
+) -> (u32, Receiver<(CallbackOp, NamedRows, NamedRows)>)
+Register callback channel to receive changes when the requested relation are successfully committed. The returned ID can be used to unregister the callback channel.
+
+Source
+pub fn unregister_callback(&self, id: u32) -> bool
+Unregister callbacks/channels to run when changes to relations are committed.
+
