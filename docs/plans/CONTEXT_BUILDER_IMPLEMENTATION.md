@@ -49,8 +49,8 @@ pub mod context {
         graph_weight: f32,
         recency_weight: f32,
         db: Arc<dyn KnowledgeGraph>,
-        // Uses existing CodeGraph from syn_parser
-        type_map: Arc<DashMap<String, TypeId>>, 
+        // Uses existing syn_parser::parser::nodes::TypeKind
+        type_map: Arc<syn_parser::parser::types::TypeMap>,
     }
     ```
   
