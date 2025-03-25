@@ -3,7 +3,8 @@ mod error;
 mod query;
 
 pub use error::Error;
-pub use query::{QueryBuilder, QueryResult};
+pub use query::builder::QueryBuilder;
+pub use query::QueryResult;
 
 /// Re-export common types for convenience
 // Re-export common types from syn_parser
