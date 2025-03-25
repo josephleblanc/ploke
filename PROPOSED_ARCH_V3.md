@@ -273,39 +273,49 @@ pub fn save_to_ron(code_graph: &CodeGraph, output_path: &Path) -> std::io::Resul
 
 ## 7. Concurrency Model
 
-### Understanding Tokio vs Rayon
+### Clear Separation of Concerns:
 
-**Understanding the Conflict**
+- **I/O Domain** (󰚩 Tokio/async):
+  - File watching
+  - Database operations
+  - Network requests
+  - UI interactions
+  - Uses non-blocking I/O
 
-- **Tokio** is an asynchronous runtime for I/O-bound tasks. It excels at handling many concurrent operations that spend time waiting (file I/O, network requests, etc.).
+- **Compute Domain** (󰆧 Rayon/parallel):
+  - Code parsing
+  - AST processing
+  - Graph transformations
+  - Vector embeddings
+  - CPU-bound workloads
 
-- **Rayon** is designed for CPU-bound parallelism. It provides work-stealing thread pools that efficiently distribute computational work across available cores.
+- **Core Data Structures** (󱃜 Thread-safe):
+  - `Send + Sync` types
+  - Runtime-agnostic (`parking_lot` or stdlib sync primitives)
+  - `DashMap` for concurrent collections
 
-The conflict concerns come from their different concurrency models:
-- Tokio uses async/await (non-blocking concurrency)
-- Rayon uses threads (parallel execution)
+### Crossing Boundaries:
 
-### Divided Architecture
+1. **Flume Channels**:
+   - Unbounded or bounded as needed
+   - All messages are `Send + Sync`
+   - Example flow:
+     ```
+     Tokio Domain → Flume → Rayon Domain → Flume → Tokio Domain
+     ```
 
-Here's how we structure the system:
-
-1. **Clear boundary between I/O and computation domains**
-   - I/O domain: File watching, database operations (Tokio)
-   - Computation domain: Code parsing, analysis (Rayon)
-
-2. **For core data structures**:
-   - Make them `Send + Sync` but don't tie them to either runtime
-   - Use `Arc<RwLock<_>>` from `parking_lot` or standard library (not Tokio's locks)
-   - Consider `dashmap` for concurrent hash maps
-
-3. **Processing pipeline architecture**:
+2. **Processing Pipeline**:
+   ```mermaid
+   flowchart LR
+       A[File Watcher\n󰚩 Tokio] -->|flume| B[Parser\n󰆧 Rayon]
+       B -->|flume| C[DB Writer\n󰚩 Tokio]
+       C --> D[(Database\n󰚩 Tokio)]
    ```
-   File Watcher (Tokio) → Parser Coordinator → Parallel Parsing (Rayon) → Database Writer (Tokio)
-   ```
 
-4. **Channel-based communication**:
-   - Use `flume` to communicate between domains
-   - This allows clean separation between the async and parallel components
+3. **Rules**:
+   - No shared locks across domains
+   - Minimal data copying between domains
+   - Prefer message passing over shared state
 
 ### Concurrency Model Implementation
 
