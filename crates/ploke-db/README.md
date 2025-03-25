@@ -1,18 +1,29 @@
 # ploke-db
 
-High-level query interface for ploke's code graph database.
+High-level query interface for retrieving contextual code snippets from ploke's code graph database.
 
-## Responsibilities
+## Primary Responsibility
+
+**Code Snippet Retrieval**:
+- Locate and return relevant, executable code examples
+- Preserve full context including:
+  - Surrounding module hierarchy
+  - Type definitions
+  - Documentation
+  - Usage patterns
+- Support both exact matches and fuzzy/contextual searches
+
+## Supporting Responsibilities
 
 1. **Query Construction**:
    - Builder pattern for constructing complex graph queries
    - Type-safe query building with compile-time validation
    - Support for both exact and semantic searches
 
-2. **Result Processing**:
-   - Conversion of raw database results to typed Rust structures
-   - Result ranking and filtering
-   - Pagination and batching support
+2. **Context Enrichment**:
+   - Augment snippets with related type definitions
+   - Include documentation and usage examples
+   - Show calling patterns and trait implementations
 
 3. **Database Abstraction**:
    - Unified interface over CozoDB's hybrid vector-graph storage
