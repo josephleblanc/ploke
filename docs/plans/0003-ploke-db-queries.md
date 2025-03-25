@@ -147,7 +147,50 @@ Key Requirements:
 
 **Warning**: These queries are proposed for MVP but haven't been tested yet. CozoScript syntax can be tricky and may need adjustment.
 
-1. **Docstring Retrieval**  
+1. **Type Context Expansion**  
+   Get all types used in a function's signature with docs:
+   ```cozo
+   ?[type_name, kind, docstring] :=
+       *types[type_id, kind, type_name],
+       *functions[fn_id, $target_fn, _, _, _, _],
+       *function_params[fn_id, _, _, type_id, _, _],
+       or(
+           *structs[type_id, _, _, docstring],
+           *enums[type_id, _, _, docstring]
+       )
+   ```
+   **Purpose**: Provides minimal but complete type context without pulling entire files.
+
+2. **Method Signature Retrieval**  
+   Get signatures of methods called in a function:
+   ```cozo
+   ?[method_name, params, return_type] :=
+       *functions[fn_id, method_name, _, return_type_id, _, _],
+       *types[return_type_id, _, return_type],
+       *relations[$target_fn, fn_id, "Calls"],
+       *function_params[fn_id, _, param_name, param_type_id, _, _],
+       *types[param_type_id, _, param_type],
+       group_concat([param_name, param_type], ", ", params)
+   ```
+   **Purpose**: Shows how types are actually used in practice.
+
+3. **Breaking Change Protection**  
+   Validate methods against versioned registry:
+   ```cozo
+   :create version_checks {
+       crate: String,
+       version: String,
+       item: String,
+       replacement: String? =>
+   }
+   ```
+   **Implementation Notes**:
+   - High manual maintenance cost (requires tracking breaking changes)
+   - Only feasible for select high-value crates
+   - Would need UI for managing version constraints
+   **Someday/Maybe**: Requires "supports breaking changes" feature flag per crate.
+
+4. **Docstring Retrieval**  
    Find relevant documentation for structs/functions:
    ```cozo
    ?[name, docstring, score] := 
@@ -182,6 +225,22 @@ Key Requirements:
        *code_usages[type_id, file, line, context],
        *types[type_id, _, $target_type]
    ```
+
+## Open Questions
+
+1. **Context Weighting**:
+   How to balance project-specific vs dependency patterns?
+   - Potential solutions to test:
+     - Priority scoring based on usage frequency
+     - Explicit user preferences
+     - Machine learning on past accept/reject decisions
+
+2. **Breaking Change Coverage**:
+   Which crates justify the maintenance cost of version tracking?
+   - Criteria might include:
+     - Popularity in Rust ecosystem
+     - Frequency of breaking changes
+     - Impact radius of changes
 
 ## Implementation Plan
 
