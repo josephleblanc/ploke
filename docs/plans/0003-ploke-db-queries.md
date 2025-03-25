@@ -143,6 +143,46 @@ Key Requirements:
 - Precise tracking of dependency item usage
 - Version-aware type system mapping
 
+## Proposed Additional MVP Queries (Untested)
+
+**Warning**: These queries are proposed for MVP but haven't been tested yet. CozoScript syntax can be tricky and may need adjustment.
+
+1. **Docstring Retrieval**  
+   Find relevant documentation for structs/functions:
+   ```cozo
+   ?[name, docstring, score] := 
+       *structs[id, name, _, docstring],
+       ~text_search:search{query: $query, bind_distance: score},
+       docstring != null
+   ```
+
+2. **Method Pattern Search**  
+   Find construction patterns for types:
+   ```cozo
+   ?[struct, method, params] :=
+       *structs[sid, struct, _, _],
+       *relations[sid, mid, "Contains"],
+       *functions[mid, method, _, _, _, _],
+       *function_params[mid, _, param, _, _],
+       group_concat(param, ", ", params)
+   ```
+
+3. **Attribute Search**  
+   Find types with specific attributes:
+   ```cozo
+   ?[name, attr] :=
+       *structs[id, name, _, _],
+       *attributes[id, _, attr, _]
+   ```
+
+4. **Type Usage Examples**  
+   Find where types are used in code:
+   ```cozo
+   ?[file, line, context] :=
+       *code_usages[type_id, file, line, context],
+       *types[type_id, _, $target_type]
+   ```
+
 ## Implementation Plan
 
 1. First implement the basic query interface in `ploke-db`:
