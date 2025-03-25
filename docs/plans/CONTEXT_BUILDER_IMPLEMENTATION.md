@@ -13,17 +13,17 @@
 **Feature Name**: `context_builder_v1`  
 **Implementation Guide**:
 ```rust
-// Feature-gated context module within ploke_graph
+// Feature-gated context crate integration
 #[cfg(feature = "context_builder_v1")]
 pub mod context {
-    pub use crate::hybrid_scorer::*;
-    pub use crate::token_alloc::*;
+    pub use ploke_context::hybrid_scorer::*;
+    pub use ploke_context::token_alloc::*;
 }
 
-// Legacy fallback uses syn_parser's existing graph
+// Legacy fallback to basic graph traversal 
 #[cfg(not(feature = "context_builder_v1"))]
 pub mod context {
-    pub use crate::graph::legacy_context::*;
+    pub use syn_parser::parser::legacy::LegacyContextFinder;
 }
 ```
 
@@ -60,8 +60,10 @@ pub mod context {
     ```rust
     pub struct TokenAllocator {
         budget: usize,
-        // Leverages existing TypeKind from syn_parser
+        // Uses existing TypeKind from syn_parser
         reserved_types: HashSet<syn_parser::parser::nodes::TypeKind>,
+        // Shares dashmap with parser context
+        type_cache: Arc<syn_parser::parser::visitor::state::VisitorState>,
     }
     ```
 
@@ -96,9 +98,10 @@ pub mod context {
 - Conforms to crate structure:
   ```mermaid
   flowchart LR
-    syn_parser-->ploke_graph
-    ploke_graph-->context[Context Builder]
-    context-->llm
+    db[(Database)] --> context[Context Crate]
+    syn_parser --> context
+    context --> llm[LLM Interface]
+    ploke_graph -. optional .-> context
   ```
 
 ```bash
@@ -114,9 +117,12 @@ Need to implement hybrid context retrieval while maintaining:
 3. Concurrency model using flume channels
 
 **Decisions**:
-1. **Co-locate with ploke_graph**
-   - Why: Leverages existing CozoDB integration
-   - Alternative: New crate rejected due to circular deps
+1. **New Context Crate**
+   - Why: Matches PROPOSED_ARCH_V3 separation of concerns
+   - Required Dependencies:
+     - syn_parser 0.2.0+ for AST types
+     - ploke_graph for DB access
+   - Alternative: Embedded module rejected due to CONVENTIONS.md §2
 
 2. **Reuse syn_parser Types**
    - Why: Avoid type duplication through `syn_parser::parser::nodes`
