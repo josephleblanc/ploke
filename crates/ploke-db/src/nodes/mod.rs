@@ -1,12 +1,6 @@
-//! Typed query results
+//! Query result utilities
 //!
-//! Strongly-typed representations of database nodes with:
-//! - Conversion from DataValue
-//! - Validation
-//! - Helper methods
-
-pub mod function;
-pub mod r#struct;
-pub mod r#enum;
-pub mod r#trait;
-pub mod module;
+//! Helpers for working with query results including:
+//! - Conversion from DataValue to syn_parser types
+//! - Result validation
+//! - Pagination utilities

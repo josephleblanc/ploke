@@ -6,11 +6,15 @@ pub use error::Error;
 pub use query::builder::QueryBuilder;
 pub use query::QueryResult;
 
-/// Re-export common types for convenience
-// Re-export common types from syn_parser
-pub use syn_parser::parser::nodes::{EnumNode, FunctionNode, StructNode, TraitNode};
-pub use syn_parser::parser::relations::RelationKind;
-pub use syn_parser::parser::types::TypeNode;
+/// Re-export all relevant syn_parser types
+pub use syn_parser::parser::{
+    nodes::{
+        EnumNode, FunctionNode, ImplNode, MacroNode, ModuleNode, StructNode, TraitNode, TypeDefNode,
+        UnionNode, ValueNode,
+    },
+    relations::{Relation, RelationKind},
+    types::{TypeId, TypeKind, TypeNode, VisibilityKind},
+};
 
 #[derive(Debug)]
 pub struct Database {
