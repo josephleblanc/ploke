@@ -41,9 +41,9 @@
  │   ├── error/                󱃜    # Cross-crate error types
  │   ├── ingest/                    # Core processing Pipeline
  │   │   ├── syn_parser/       🚀   # core traversal + parsing logic....syn
- │   │   ├── ploke_lsp/        💤   # LSP data processing
- │   │   ├── ploke_embed/      💤   # Vector embeddings.................cozo
- │   │   └── ploke_graph/      💤   # AST ➔ CozoDB transformations......cozo
+ │   │   ├── ploke-lsp/        💤   # LSP data processing
+ │   │   ├── ploke-embed/      💤   # Vector embeddings.................cozo
+ │   │   └── ploke-graph/      💤   # AST ➔ CozoDB transformations......cozo
  │   ├── io/                   💤   # Input/Output pipeline
  │   │   ├── watcher/          💤   # watches for events (ide, file, lsp)
  │   │   └── writer/           💤   # write code, message ide, commands
