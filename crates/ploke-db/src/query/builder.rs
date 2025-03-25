@@ -13,15 +13,13 @@ pub struct QueryBuilder {
     limit: Option<usize>,
 }
 
-use syn_parser::parser::nodes::{FunctionNode, StructNode, EnumNode, TraitNode, ModuleNode};
-
 #[derive(Debug, Clone)]
 enum NodeType {
-    Function(FunctionNode),
-    Struct(StructNode),
-    Enum(EnumNode),
-    Trait(TraitNode),
-    Module(ModuleNode),
+    Function,
+    Struct,
+    Enum,
+    Trait,
+    Module,
 }
 
 impl QueryBuilder {
