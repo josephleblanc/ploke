@@ -4,14 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-[package]
-name = "ploke-db"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
 cozo = { workspace = true }
-ploke_graph = { path = "../ploke_graph" }
+ploke-graph = { path = "../ploke-graph" }
 serde = { workspace = true }
 thiserror = "1.0"
 
