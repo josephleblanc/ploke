@@ -147,7 +147,28 @@ Key Requirements:
 
 **Warning**: These queries are proposed for MVP but haven't been tested yet. CozoScript syntax can be tricky and may need adjustment.
 
-1. **Type Context Expansion**  
+1. **Longest Docstrings**  
+   Find items with the most detailed documentation:
+   ```cozo
+   ?[name, kind, doc_length] :=
+       or(
+           *functions[id, name, _, _, docstring, _],
+           *structs[id, name, _, docstring],
+           *enums[id, name, _, docstring],
+           *traits[id, name, _, docstring]
+       ),
+       docstring != null,
+       doc_length := len(docstring),
+       kind := if(*functions[id, _, _, _, _, _], "function",
+               if(*structs[id, _, _, _], "struct",
+               if(*enums[id, _, _, _], "enum",
+               if(*traits[id, _, _, _], "trait", "unknown")))),
+       :order -doc_length
+       :limit 10
+   ```
+   **Purpose**: Identifies core concepts and well-documented patterns in dependencies.
+
+2. **Type Context Expansion**  
    Get all types used in a function's signature with docs:
    ```cozo
    ?[type_name, kind, docstring] :=
