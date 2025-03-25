@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 cozo = { workspace = true }
-ploke-graph = { path = "../ploke-graph" }
+ploke-graph = { path = "../ingest/ploke-graph" }
 serde = { workspace = true }
 thiserror = "1.0"
 

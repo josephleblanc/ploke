@@ -8,5 +8,7 @@ cozo = { workspace = true }
 syn_parser = { path = "../syn_parser" }
 serde = { workspace = true }
 
+[dev-dependencies]
+
 [features]
 debug = []

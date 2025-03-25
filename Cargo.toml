@@ -2,7 +2,9 @@
 resolver = "2"
 members = [
     "crates/ingest/syn_parser",
-    "crates/ingest/ploke_graph", "crates/ingest/ploke-embed", "crates/ploke-database",
+    "crates/ingest/ploke-graph",
+    "crates/ingest/ploke-embed",
+    "crates/ploke-db",
     # Add more modules as needed
 ]
 exclude = ["ai_workflow"]
