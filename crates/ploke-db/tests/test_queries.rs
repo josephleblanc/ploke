@@ -1,32 +1,45 @@
 //! Tests for database queries
 
-use ploke_db::Database;
+use ploke_db::{Database, QueryBuilder};
 use ploke_db::Error;
 use ploke_graph::schema::{create_schema, insert_sample_data};
 
 mod test_helpers;
 
 #[test]
-fn test_find_type_usages() -> Result<(), Error> {
-    // Setup test database
+fn test_basic_function_query() -> Result<(), Error> {
     let db = test_helpers::setup_test_db();
     insert_sample_data(&db).expect("Failed to insert sample data");
-
-    // Create our database wrapper
     let ploke_db = Database::new(db);
 
-    // Execute the query
-    let query = r#"
-        ?[fn_name, type_str] := 
-            *functions[fn_id, fn_name, _, _, _, _],
-            *function_params[fn_id, _, _, type_id, _, _],
-            *types[type_id, _, type_str]
-    "#;
+    // Find sample_function by name
+    let result = QueryBuilder::new(ploke_db.db.clone())
+        .functions()
+        .with_name("sample_function")
+        .execute()?;
 
-    let result = ploke_db.raw_query(query)?;
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.headers, vec!["id", "name", "visibility", "docstring"]);
+    assert_eq!(result.rows[0][1].get_str(), Some("sample_function"));
 
-    // We should have at least one function using a type
-    assert!(!result.rows.is_empty(), "Expected at least one type usage");
+    Ok(())
+}
+
+#[test]
+fn test_basic_struct_query() -> Result<(), Error> {
+    let db = test_helpers::setup_test_db();
+    insert_sample_data(&db).expect("Failed to insert sample data");
+    let ploke_db = Database::new(db);
+
+    // Find SampleStruct by name
+    let result = QueryBuilder::new(ploke_db.db.clone())
+        .structs()
+        .with_name("SampleStruct")
+        .execute()?;
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.headers, vec!["id", "name", "visibility", "docstring"]);
+    assert_eq!(result.rows[0][1].get_str(), Some("SampleStruct"));
 
     Ok(())
 }

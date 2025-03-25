@@ -35,4 +35,9 @@ impl Database {
             .map_err(|e| Error::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))
     }
+
+    /// Create a new query builder
+    pub fn query(&self) -> QueryBuilder {
+        QueryBuilder::new(self.db.clone())
+    }
 }
