@@ -12,7 +12,7 @@ mod tests {
         assert_eq!(result, 4);
     }
 }
-//! High-level query interface for ploke database
+/// High-level query interface for ploke database
 
 mod error;
 mod query;
@@ -21,8 +21,9 @@ pub use error::Error;
 pub use query::{QueryBuilder, QueryResult};
 
 /// Re-export common types for convenience
-pub use ploke_graph::schema::{
-    FunctionNode, StructNode, EnumNode, TraitNode, 
+// Re-export common types from syn_parser
+pub use syn_parser::parser::nodes::{
+    FunctionNode, StructNode, EnumNode, TraitNode,
     TypeNode, RelationKind
 };
 
@@ -43,7 +44,7 @@ impl Database {
             script,
             std::collections::BTreeMap::new(),
             cozo::ScriptMutability::Immutable,
-        )?;
+        ).map_err(|e| Error::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))
     }
 }

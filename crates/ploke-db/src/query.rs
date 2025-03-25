@@ -1,8 +1,6 @@
 //! Query building and execution
 
-use crate::Error;
 use cozo::NamedRows;
-use std::collections::BTreeMap;
 
 /// Result of a database query
 #[derive(Debug)]
