@@ -91,6 +91,45 @@ mod new_graph {
     }
     ```
 
+- [ ] 3.2.4. Split test helpers
+  - **Files**:
+    - Move embedding test helpers ➔ `ploke_embed/tests/test_helpers.rs`
+    - Preserve core DB helpers ➔ `ploke_graph/tests/test_helpers.rs`
+  - **Code Changes**:
+    ```rust
+    // ploke_embed/tests/test_helpers.rs
+    pub fn setup_embed_db() -> cozo::Db {
+        // Migrated from ploke_graph's vector setup
+    }
+    ```
+
+- [ ] 3.2.5. Update existing test dependencies
+  - **Files**: Cargo.toml
+  - **Changes**:
+    ```toml
+    [dependencies]
+    error = { path = "../../error" }
+    io = { path = "../../io" }
+    
+    [dev-dependencies]
+    ploke_embed = { path = "../ploke_embed" }
+    ```
+  - **Files**:
+    - Create error/src/graph_error.rs
+    - Update error conversions
+  - **Code Changes**:
+    ```rust
+    // error/src/graph_error.rs
+    #[derive(Debug, thiserror::Error)]
+    pub enum GraphError {
+        #[error("Transformation failed: {0}")]
+        Transformation(#[from] cozo::Error),
+        
+        #[error("Validation error: {0}")]
+        Validation(String)
+    }
+    ```
+
 ### 3.3 Testing & Integration
 - [ ] 3.3.1. Migration tests
   - **Files**: tests/migration_test.rs
@@ -105,6 +144,46 @@ mod new_graph {
     - Channel throughput
 
 - [ ] 3.3.3. Cross-crate integration
+  - **Files**: tests/integration/graph_embed.rs
+  - **Verify**:
+    - ploke_graph ↔ ploke_embed data flow
+    - Error propagation across crates
+
+- [ ] 3.3.4. Migrate vector tests
+  - **Files**:
+    - Move `test_vector_functionality.rs` ➔ `ploke_embed/tests/vector_tests.rs`
+    - Keep schema tests ➔ `ploke_graph/tests/schema_test.rs`
+    - **Preserve Test Cases**:
+      ```rust
+      #[test]
+      fn test_code_embeddings_search() {
+          // Now in ploke_embed tests
+      }
+      ```
+
+- [ ] 3.3.5. Add boundary validation tests
+  - **Files**: `tests/integration/channel_boundaries.rs`
+  - **Test Cases**:
+    ```rust
+    #[test]
+    fn test_graph_to_embed_channel_flow() {
+        // Verify message passing matches proto
+    }
+    ```
+
+- [ ] 3.3.6. Update schema verification
+  - **Files**: `test_basic_schema.rs`
+  - **Adaptations**:
+    ```rust
+    // Original
+    assert!(result.rows.len() >= 12, "Expected at least 12 relations");
+    
+    // Modify to account for moved schema
+    #[cfg(feature = "transitional_graph_layout")]
+    assert!(result.rows.len() >= 12, "Legacy relations count");
+    #[cfg(not(feature = "transitional_graph_layout"))] 
+    assert!(result.rows.len() >= 8, "New relations count");
+    ```
   - **Files**: tests/integration/graph_embed.rs
   - **Verify**:
     - ploke_graph ↔ ploke_embed data flow
@@ -135,8 +214,11 @@ mod new_graph {
 
 ## 5. Progress Tracking
 - [ ] Analysis Phase: 0/2 complete
-- [ ] Implementation Phase: 0/3 complete
-- [ ] Testing Phase: 0/3 complete
+- [ ] Implementation Phase: 0/5 complete
+- [ ] Testing Phase: 0/6 complete
+  - [ ] Vector tests migrated
+  - [ ] Schema tests adapted  
+  - [ ] Boundary tests implemented
 - [ ] Documentation Phase: 0/3 complete
 
 **Rationale**: This plan addresses architectural drift while maintaining system stability through:
