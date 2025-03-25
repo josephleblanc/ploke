@@ -56,9 +56,9 @@
  ├── examples/                      # Documentation examples
  └── benches/                       # Performance benchmarks
 
- 💤 Asynchronous (tokio)
- 🚀 Multithreaded (rayon)
- 🚀 <--> flume <--> 💤
+ 󰚩    Asynchronous (tokio)
+ 󰆧    Multithreaded (rayon)
+ Rayon Domain (󰆧 ) ↔ Flume Channel ↔ Tokio Domain (󰚩 )
  󱃜  Send + Sync (Not tied to tokio or rayon runtime)
  ```
 
@@ -463,15 +463,15 @@ fn main() {
 
 ## 10. Next Steps
 
-1. **Database Integration**: Implement CozoDB integration for storing and querying the code graph.
+ 1. **Database Integration**: Implement CozoDB integration for storing and querying the code graph.
 
-2. **Embedding Generation**: Develop the embedding component to generate vector representations of code snippets.
+ 2. **Context Builder**: Create the context builder to prepare relevant code snippets for LLM prompts.
 
-3. **File Watcher**: Implement the file watcher component to detect code changes.
+ 3. **File Watcher**: Implement the file watcher component to detect code changes.
 
-4. **Context Builder**: Create the context builder to prepare relevant code snippets for LLM prompts.
+ 4. **Basic UI**: Develop a minimal CLI interface for interacting with the system.
 
-5. **Basic UI**: Develop a minimal CLI interface for interacting with the system.
+ 5. **Embedding Generation**: Develop the embedding component to generate vector representations of code snippets.
 
 ## 11. Decision Records
 <!-- TODO: Document key architectural decisions, alternatives considered, and rationale for choices made -->
