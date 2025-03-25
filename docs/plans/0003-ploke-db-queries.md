@@ -111,6 +111,38 @@
        *struct_fields[struct_id, _, _, related_id, _]
    ```
 
+## Dependency and Breaking Change Queries (Future Work)
+
+These queries would support dependency management and upgrade assistance:
+
+1. **Dependency Usage Tracking**
+   ```cozo
+   ?[crate, version, usage_type, count] := 
+       *dependency_usages[crate, version, usage_type, locations],
+       count := len(locations)
+   ```
+
+2. **Breaking Change Impact Analysis**  
+   Cross-references project code with known breaking changes:
+   ```cozo
+   ?[file, line, change_desc, mitigation] :=
+       *code_usages[item, file, line],
+       *breaking_changes[item, change_desc, mitigation]
+   ```
+
+3. **Version Migration Mapping**  
+   Finds replacement patterns for deprecated items:
+   ```cozo
+   ?[old_item, new_item, example] :=
+       *version_mappings[old_item, new_item, _],
+       *migration_examples[old_item, example]
+   ```
+
+Key Requirements:
+- Database of breaking changes (potentially community-maintained)
+- Precise tracking of dependency item usage
+- Version-aware type system mapping
+
 ## Implementation Plan
 
 1. First implement the basic query interface in `ploke-db`:
