@@ -12,3 +12,4 @@ thiserror = "1.0"
 
 [dev-dependencies]
 tokio = { workspace = true }
+ploke-graph = { path = "../ingest/ploke-graph" }
