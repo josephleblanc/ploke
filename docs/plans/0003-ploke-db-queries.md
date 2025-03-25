@@ -3,34 +3,45 @@
 ## Existing Queries from ploke-graph
 
 1. **Find Implementations**  
-   Finds all implementations of a trait  
    ```cozo
    ?[struct_name, trait_name] := 
        *traits[trait_id, trait_name, _, _],
        *impls[_, struct_id, trait_id],
        *structs[struct_id, struct_name, _, _]
    ```
+   **Purpose**: Maps trait implementations to their concrete types  
+   **Rationale**:
+   - Essential for understanding polymorphism in code
+   - Helps find all types that satisfy a trait interface
+   - Used when suggesting implementations or refactoring trait bounds
 
 2. **Find Type Usages**  
-   Finds all functions that use a specific type  
    ```cozo
    ?[fn_name, type_str] := 
        *functions[fn_id, fn_name, _, _, _, _],
        *function_params[fn_id, _, _, type_id, _, _],
        *types[type_id, _, type_str]
    ```
+   **Purpose**: Identifies where specific types are used in function signatures  
+   **Rationale**:
+   - Critical for impact analysis when changing types
+   - Helps find all functions that need updating during refactoring
+   - Shows how types flow through the codebase
 
 3. **Module Hierarchy**  
-   Finds parent-child module relationships  
    ```cozo
    ?[parent_name, child_name] := 
        *modules[parent_id, parent_name, _, _],
        *module_relationships[parent_id, child_id, "Contains"],
        *modules[child_id, child_name, _, _]
    ```
+   **Purpose**: Shows direct module containment relationships  
+   **Rationale**:
+   - Helps understand code organization
+   - Useful for navigation and refactoring module structure
+   - Basis for more complex module analysis
 
 4. **Recursive Module Traversal**  
-   Finds all descendants of a module recursively  
    ```cozo
    descendants[ancestor, descendant] := 
        *modules[ancestor_id, ancestor, _, _],
@@ -43,19 +54,27 @@
        *module_relationships[intermediate_id, descendant_id, "Contains"],
        *modules[descendant_id, descendant, _, _]
    ```
+   **Purpose**: Finds all modules nested within a parent module  
+   **Rationale**:
+   - Essential for comprehensive module restructuring
+   - Helps analyze visibility and access patterns
+   - Basis for package-level refactoring operations
 
 ## Proposed Additional Queries for RAG
 
 1. **Semantic Code Search**  
-   Find code snippets similar to natural language query  
    ```cozo
    ?[id, node_type, text_snippet, score] := 
        *code_embeddings[id, node_id, node_type, embedding, text_snippet],
        ~text_search:search{query: $query, k: 5, ef: 100, bind_distance: score}
    ```
+   **Purpose**: Finds code semantically similar to natural language queries  
+   **Rationale**:
+   - Core RAG functionality for natural language search
+   - Uses vector embeddings for fuzzy matching
+   - Returns ranked results by similarity score
 
 2. **Contextual Code Retrieval**  
-   Get relevant code context for a given function  
    ```cozo
    ?[fn_name, called_fn, called_struct, used_trait] := 
        *functions[fn_id, fn_name, _, _, _, _],
@@ -66,9 +85,13 @@
        *impls[_, struct_id, trait_id],
        *traits[trait_id, used_trait, _, _]
    ```
+   **Purpose**: Builds complete call graph context for a function  
+   **Rationale**:
+   - Shows how functions fit into larger patterns
+   - Reveals indirect dependencies
+   - Helps understand architectural relationships
 
 3. **Type Dependency Graph**  
-   Find all types used by a function and their relationships  
    ```cozo
    ?[type_name, related_type, relation_kind] := 
        *functions[fn_id, _, _, _, _, _],
@@ -78,18 +101,26 @@
        *types[related_type_id, _, related_type],
        *relations[type_id, related_type_id, relation_kind]
    ```
+   **Purpose**: Maps all type relationships used by a function  
+   **Rationale**:
+   - Essential for understanding complex type systems
+   - Shows generics, references, and nested types
+   - Helps prevent type-related refactoring errors
 
 4. **Documentation Retrieval**  
-   Find relevant documentation for code elements  
    ```cozo
    ?[name, docstring, score] := 
        *functions[id, name, _, _, docstring, _],
        ~text_search:search{query: $query, k: 3, bind_distance: score}
        docstring != null
    ```
+   **Purpose**: Finds relevant documentation for code elements  
+   **Rationale**:
+   - Provides LLM with API usage context
+   - Helps explain patterns and conventions
+   - Complements code examples with explanations
 
 5. **Pattern Matching**  
-   Find code patterns matching structural criteria  
    ```cozo
    ?[fn_name, struct_name] := 
        *functions[fn_id, fn_name, _, _, _, _],
@@ -98,9 +129,13 @@
        *structs[struct_id, struct_name, _, _],
        *struct_fields[struct_id, _, "name", _, _]
    ```
+   **Purpose**: Identifies structural code patterns  
+   **Rationale**:
+   - Finds common implementation patterns
+   - Helps maintain consistent style
+   - Useful for boilerplate generation
 
 6. **Change Impact Analysis**  
-   Find code that would be affected by changing a type  
    ```cozo
    ?[fn_name, struct_name, relation_kind] := 
        *types[type_id, _, $target_type],
@@ -110,6 +145,11 @@
        *structs[struct_id, struct_name, _, _],
        *struct_fields[struct_id, _, _, related_id, _]
    ```
+   **Purpose**: Predicts effects of type changes  
+   **Rationale**:
+   - Critical for safe refactoring
+   - Shows direct and indirect dependencies
+   - Helps estimate refactoring scope
 
 ## Dependency and Breaking Change Queries (Future Work)
 
@@ -121,27 +161,40 @@ These queries would support dependency management and upgrade assistance:
        *dependency_usages[crate, version, usage_type, locations],
        count := len(locations)
    ```
+   **Purpose**: Tracks where and how dependencies are used  
+   **Rationale**:
+   - Essential for dependency impact analysis
+   - Helps identify unused dependencies
+   - Basis for version migration planning
 
 2. **Breaking Change Impact Analysis**  
-   Cross-references project code with known breaking changes:
    ```cozo
    ?[file, line, change_desc, mitigation] :=
        *code_usages[item, file, line],
        *breaking_changes[item, change_desc, mitigation]
    ```
+   **Purpose**: Identifies code affected by dependency changes  
+   **Rationale**:
+   - Critical for safe dependency upgrades
+   - Pinpoints exact locations needing changes
+   - Provides mitigation strategies
 
 3. **Version Migration Mapping**  
-   Finds replacement patterns for deprecated items:
    ```cozo
    ?[old_item, new_item, example] :=
        *version_mappings[old_item, new_item, _],
        *migration_examples[old_item, example]
    ```
+   **Purpose**: Provides upgrade paths for deprecated items  
+   **Rationale**:
+   - Automates common migration patterns
+   - Reduces upgrade research time
+   - Helps maintain compatibility
 
 Key Requirements:
-- Database of breaking changes (potentially community-maintained)
-- Precise tracking of dependency item usage
-- Version-aware type system mapping
+- **Breaking Change Database**: Community-maintained registry of breaking changes
+- **Precise Usage Tracking**: Fine-grained dependency usage monitoring
+- **Version-Aware Types**: Type system that understands version differences
 
 ## Proposed Additional MVP Queries (Untested)
 
