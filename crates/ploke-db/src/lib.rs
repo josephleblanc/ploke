@@ -23,9 +23,10 @@ pub use query::{QueryBuilder, QueryResult};
 /// Re-export common types for convenience
 // Re-export common types from syn_parser
 pub use syn_parser::parser::nodes::{
-    FunctionNode, StructNode, EnumNode, TraitNode,
-    TypeNode, RelationKind
+    FunctionNode, StructNode, EnumNode, TraitNode
 };
+pub use syn_parser::parser::types::TypeNode;
+pub use syn_parser::parser::relations::RelationKind;
 
 #[derive(Debug)]
 pub struct Database {

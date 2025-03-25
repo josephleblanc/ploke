@@ -1,6 +1,5 @@
 //! Error types for ploke-db
 
-use std::fmt;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
