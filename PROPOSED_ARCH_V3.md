@@ -37,22 +37,22 @@
  ploke/
  ├── Cargo.toml                     # Workspace configuration
  ├── crates/
- │   ├── core/                 󱃜    # Core types and traits (NodeId ..)
+ │   ├── core/                 󱃜    # Core types and traits (NodeId..)
  │   ├── error/                󱃜    # Cross-crate error types
  │   ├── ingest/                    # Core processing Pipeline
- │   │   ├── syn_parser/       🚀   # core traversal + parsing logic....syn
- │   │   ├── ploke-lsp/        💤   # LSP data processing
- │   │   ├── ploke-embed/      💤   # Vector embeddings.................cozo
- │   │   └── ploke-graph/      💤   # AST ➔ CozoDB transformations......cozo
- │   ├── io/                   💤   # Input/Output pipeline
- │   │   ├── watcher/          💤   # watches for events (ide, file, lsp)
- │   │   └── writer/           💤   # write code, message ide, commands
- │   ├── ploke-db/             💤   # Query processing & ranking........cozo
- │   ├── context/              💤   # aggregate data for llm
- │   ├── llm/                  💤   # Local LLM integration
- │   ├── prompt/               💤   # prompt engineering
- │   ├── ui/                   💤   # CLI/GUI entrypoints...............egui
- │   └── analyze/              🚀   # Static analysis of parsed data
+ │   │   ├── syn_parser/       󰆧    # AST traversal + parsing (Rayon)
+ │   │   ├── ploke-lsp/        󰚩    # LSP data processing (Tokio)
+ │   │   ├── ploke-embed/      󰆧    # Vector embeddings (Rayon)
+ │   │   └── ploke-graph/      󰆧    # AST ➔ CozoDB (Rayon)
+ │   ├── io/                   󰚩    # Input/Output pipeline (Tokio)
+ │   │   ├── watcher/          󰚩    # File watching (Tokio)
+ │   │   └── writer/           󰚩    # Code writing (Tokio)
+ │   ├── ploke-db/             󰚩    # Query processing (Tokio)
+ │   ├── context/              󰚩    # LLM context (Tokio)
+ │   ├── llm/                  󰚩    # Local LLM integration (Tokio)
+ │   ├── prompt/               󰚩    # Prompt engineering (Tokio)
+ │   ├── ui/                   󰚩    # CLI/GUI (Tokio/EGUI)
+ │   └── analyze/              󰆧    # Static analysis (Rayon)
  ├── examples/                      # Documentation examples
  └── benches/                       # Performance benchmarks
 
