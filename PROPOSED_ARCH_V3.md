@@ -47,7 +47,7 @@
  │   ├── io/                   💤   # Input/Output pipeline
  │   │   ├── watcher/          💤   # watches for events (ide, file, lsp)
  │   │   └── writer/           💤   # write code, message ide, commands
- │   ├── database/             💤   # Query processing & ranking........cozo
+ │   ├── ploke-db/             💤   # Query processing & ranking........cozo
  │   ├── context/              💤   # aggregate data for llm
  │   ├── llm/                  💤   # Local LLM integration
  │   ├── prompt/               💤   # prompt engineering
@@ -77,12 +77,13 @@ flowchart TD
     graphT -->|write| db
     db -->|read| analyze[Analyzer]
     analyze -->|write| db
-    db --> context[Context Builder]
+    db -->|Query Results| context[Context Builder]
     lsp --> context
     ui --> prompt
     context --> llm[LLM]
     llm --> ui
     prompt[Prompt<br>Engineering] --> db
+    ploke_graph -->|Schema Management| db
 ```
 
 
@@ -170,7 +171,53 @@ flowchart TD
 - `TypeNode`: Represents type information with relationships to other types
 - `Relation`: Represents relationships between nodes in the code graph
 
-### 5.2 Serialization Component
+### 5.2 ploke-db Component
+
+**Responsibilities**:
+- Provides high-level query interface to CozoDB
+- Manages query building and optimization
+- Handles result ranking and filtering
+- Maintains query performance characteristics
+
+**Implementation Plan**:
+```rust
+// Example query builder interface
+pub struct QueryBuilder {
+    base_query: String,
+    filters: Vec<String>,
+    limits: Option<usize>
+}
+
+impl QueryBuilder {
+    /// Create new query for specific node type
+    pub fn new(node_type: NodeType) -> Self;
+    
+    /// Add relationship filter
+    pub fn with_relation(self, kind: RelationKind) -> Self;
+    
+    /// Add semantic search constraint
+    pub fn with_semantic_search(self, query: &str) -> Self;
+    
+    /// Finalize query into executable CozoScript
+    pub fn build(self) -> String;
+}
+```
+
+### 5.3 ploke_graph Component
+
+**Responsibilities**:
+- Transforms CodeGraph into database relations
+- Manages direct database insertions
+- Handles schema versioning/migrations
+- Provides embedding interface abstraction
+
+**Key Features**:
+- Complete schema definition for code elements
+- Efficient bulk insertion operations
+- Schema migration support
+- Integration with embedding services
+
+### 5.4 Serialization Component
 
 **Responsibilities**:
 - Serialize the `CodeGraph` to persistent storage formats
@@ -273,7 +320,30 @@ The project currently implements the following aspects of the concurrency model:
 4. **Clear Domain Boundaries**: The architecture maintains separation between async I/O operations and parallel computation.
 
 
-## 8. Cross-Cutting Concerns
+## 8. Potential Risks and Mitigations
+
+### 8.1 Transaction Management
+**Risk**: Failed inserts could leave database in inconsistent state  
+**Mitigation**:
+- Implement transactional inserts in ploke_graph
+- Add batch operations with rollback capability
+- Design idempotent insertion operations
+
+### 8.2 Schema Evolution
+**Risk**: Database schema changes may break existing installations  
+**Mitigation**:
+- Version all schema definitions
+- Implement migration system in ploke_graph
+- Maintain backward compatibility where possible
+
+### 8.3 Performance Bottlenecks
+**Risk**: Large codebases may experience slow inserts/queries  
+**Mitigation**:
+- Design batched insert operations
+- Implement query performance monitoring
+- Add caching layer for frequent queries
+
+## 9. Cross-Cutting Concerns
 
 ### 8.1 Error Handling Strategy
 <!-- TODO: Document the project-wide approach to error handling -->
