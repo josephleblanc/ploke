@@ -69,21 +69,21 @@
  Current flow notes:
 ```mermaid
 flowchart TD
- watcher[File Watcher] --> parser
-    ui[UI] --> parser[Parser]
-    parser -->|flume| embed[Embeddings]
-    parser -->|flume| graphT[Graph Transformer]
-    embed -->|write| db[(Database)]
+    watcher[File Watcher<br>󰚩 Tokio] --> parser
+    ui[UI<br>󰚩 Tokio] --> parser[Parser<br>󰆧 Rayon]
+    parser -->|flume| embed[Embeddings<br>󰆧 Rayon]
+    parser -->|flume| graphT[Graph Transformer<br>󰆧 Rayon]
+    embed -->|write| db[(Database<br>󰚩 Tokio)]
     graphT -->|write| db
-    db -->|read| analyze[Analyzer]
+    db -->|read| analyze[Analyzer<br>󰆧 Rayon]
     analyze -->|write| db
-    db -->|Query Results| context[Context Builder]
-    lsp --> context
-    ui --> prompt
-    context --> llm[LLM]
+    db -->|Query Results| context[Context Builder<br>󰚩 Tokio]
+    lsp[LSP<br>󰚩 Tokio] --> context
+    ui --> prompt[Prompt<br>󰚩 Tokio]
+    context --> llm[LLM<br>󰚩 Tokio]
     llm --> ui
-    prompt[Prompt<br>Engineering] --> db
-    ploke_graph -->|Schema Management| db
+    prompt --> db
+    ploke_graph[Schema<br>󱃜 Thread-safe] -->|Schema| db
 ```
 
 
