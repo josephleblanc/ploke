@@ -1,7 +1,7 @@
 //! Tests for database queries
 
 use ploke_db::Database;
-use ploke_db::error::Error;
+use ploke_db::Error;
 use ploke_graph::schema::{create_schema, insert_sample_data};
 
 mod test_helpers;
@@ -27,6 +27,6 @@ fn test_find_type_usages() -> Result<(), Error> {
 
     // We should have at least one function using a type
     assert!(!result.rows.is_empty(), "Expected at least one type usage");
-    
+
     Ok(())
 }

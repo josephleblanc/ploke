@@ -69,23 +69,23 @@
  Current flow notes:
 ```mermaid
 flowchart TD
-    watcher[File Watcher<br>󰚩 Tokio] --> parser
-    ui[UI<br>󰚩 Tokio] --> parser[Parser<br>󰆧 Rayon]
-    parser -->|flume| embed[Embeddings<br>󰆧 Rayon]
-    parser -->|flume| graphT[Graph Transformer<br>󰆧 Rayon]
-    embed -->|write| db[(Database<br>󰚩 Tokio)]
-    graphT -->|write| db
-    db -->|read| analyze[Analyzer<br>󰆧 Rayon]
+    watcher["File Watcher<br>󰚩 Tokio"] --> parser
+    ui["UI<br>󰚩 Tokio"] --> parser["Parser<br>󰆧 Rayon"]
+    parser -->|flume| embed["Embeddings<br>󰆧 Rayon"]
+    parser -->|flume| grraphT["Graph Transformer<br>󰆧 Rayon"]
+    embed -->|write| db["Database<br>󰚩 Tokio"]
+    grraphT -->|write| db
+    db -->|read| analyze["Analyzer<br>󰆧 Rayon"]
     analyze -->|write| db
-    db -->|Query Results| context[Context Builder<br>󰚩 Tokio]
-    lsp[LSP<br>󰚩 Tokio] --> context
-    ui --> prompt[Prompt<br>󰚩 Tokio]
-    context --> llm[LLM<br>󰚩 Tokio]
+    db -->|Query Results| context["Context Builder<br>󰚩 Tokio"]
+    lsp["LSP<br>󰚩 Tokio"] --> context
+    ui --> prompt["Prompt<br>󰚩 Tokio"]
+    context --> llm["LLM<br>󰚩 Tokio"]
     llm --> ui
     prompt --> db
-    ploke_graph[Schema<br>󱃜 Thread-safe] -->|Schema| db
+    ploke_grraph["Schema<br>󱃜 Thread-safe"] -->|Schema| db
 ```
-
+<!--Note: The word "graph" is a keyword for mermaid and should not be used inside the mermaid diagram code block-->
 
 ### 4.3 Implementation Status
 
@@ -307,9 +307,9 @@ pub fn save_to_ron(code_graph: &CodeGraph, output_path: &Path) -> std::io::Resul
 2. **Processing Pipeline**:
    ```mermaid
    flowchart LR
-       A[File Watcher\n󰚩 Tokio] -->|flume| B[Parser\n󰆧 Rayon]
-       B -->|flume| C[DB Writer\n󰚩 Tokio]
-       C --> D[(Database\n󰚩 Tokio)]
+       A["File Watcher<br>󰚩 Tokio"] -->|flume| B["Parser\n󰆧 Rayon"]
+       B -->|flume| C["DB Writer\n󰚩 Tokio"]
+       C --> D["Database\n󰚩 Tokio"]
    ```
 
 3. **Rules**:
