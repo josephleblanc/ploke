@@ -96,7 +96,7 @@ flowchart TD
 | channel | ✅ Implemented | Flume-based communication between components |
 | parallel processing | ✅ Implemented | Rayon-based parallel file processing |
 | embed | 🚧 Planned | Vector embeddings for code snippets |
-| graph | 🚧 Planned | Transformation of AST to graph database format |
+| graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
 | database | 🚧 Planned | CozoDB integration for hybrid vector-graph storage |
 | watcher | 🚧 Planned | File system watcher for code changes |
 | writer | 🚧 Planned | Code generation and modification |
@@ -211,11 +211,25 @@ impl QueryBuilder {
 - Handles schema versioning/migrations
 - Provides embedding interface abstraction
 
+**Current Implementation**:
+- Comprehensive schema covering all major Rust code elements
+- Efficient transformation of syn_parser types to database relations
+- Support for functions, structs, enums, traits, impls, modules, types, values and macros
+- Detailed type system representation
+
 **Key Features**:
 - Complete schema definition for code elements
-- Efficient bulk insertion operations
+- Efficient bulk insertion operations  
 - Schema migration support
 - Integration with embedding services
+- Thread-safe transformation pipeline
+
+**Remaining Work**:
+- Improved generic parameter handling
+- Enhanced attribute processing
+- Better import/export relationship tracking
+- Advanced type feature support
+(See current_progress/ploke_graph_coverage.md for details)
 
 ### 5.4 Serialization Component
 
