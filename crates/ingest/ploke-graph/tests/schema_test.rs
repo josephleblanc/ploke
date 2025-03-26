@@ -140,7 +140,7 @@ fn test_schema_creation() {
                 "Visibility verification failed for {} {}\n\
                 Expected: kind={}, path={:?}\n\
                 Actual visibility records:\n{:?}",
-                id, kind, expected_kind, expected_path, result
+                id, kind, kind, path, result
             );
         }
     }
