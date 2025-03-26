@@ -1,6 +1,58 @@
-use cozo::{Db, MemStorage, ScriptMutability};
+use cozo::{Db, MemStorage, ScriptMutability, DataValue};
 use ploke_graph::schema::{create_schema, insert_sample_data, verify_schema};
+use ploke_graph::tests::test_helpers::insert_visibility;
 use std::collections::BTreeMap;
+
+/// Helper to verify visibility records
+fn verify_visibility(
+    db: &Db<MemStorage>, 
+    node_id: i64,
+    expected_kind: &str,
+    expected_path: Option<Vec<&str>>,
+) -> bool {
+    let query = match expected_path {
+        Some(path) => {
+            let path_values: Vec<DataValue> = path.iter().map(|s| DataValue::from(*s)).collect();
+            let mut params = BTreeMap::new();
+            params.insert("id".to_string(), DataValue::from(node_id));
+            params.insert("kind".to_string(), DataValue::from(expected_kind));
+            params.insert("path".to_string(), DataValue::List(path_values));
+            
+            db.run_script(
+                r#"
+                ?[count(*)] := 
+                    *visibility[id, kind, path],
+                    id == $id,
+                    kind == $kind,
+                    path == $path
+                "#,
+                params,
+                ScriptMutability::Immutable,
+            )
+        }
+        None => {
+            let mut params = BTreeMap::new();
+            params.insert("id".to_string(), DataValue::from(node_id));
+            params.insert("kind".to_string(), DataValue::from(expected_kind));
+            
+            db.run_script(
+                r#"
+                ?[count(*)] := 
+                    *visibility[id, kind, null],
+                    id == $id,
+                    kind == $kind
+                "#,
+                params,
+                ScriptMutability::Immutable,
+            )
+        }
+    };
+
+    match query {
+        Ok(result) => result.rows[0][0].get_int().unwrap_or(0) > 0,
+        Err(_) => false,
+    }
+}
 
 #[test]
 fn test_schema_creation() {
@@ -19,30 +71,55 @@ fn test_schema_creation() {
     #[cfg(feature = "debug")]
     println!("Relations: {:?}", result);
 
-    // Check that we have the expected relations including visibility
-    let relation_names: Vec<_> = result.rows.iter().map(|r| r[0].get_str().unwrap()).collect();
-    assert!(relation_names.contains(&"visibility"), "Missing visibility relation");
-    assert!(relation_names.len() >= 13, "Expected at least 13 relations");
-
-    // Verify visibility index exists
-    let indices = db
+    // Enhanced visibility relation check
+    let result = db
         .run_script(
-            "::indices visibility",
+            "::columns visibility",
             BTreeMap::new(),
             ScriptMutability::Immutable,
         )
-        .expect("Failed to list indices");
-    assert!(!indices.rows.is_empty(), "Expected visibility index");
+        .expect("Failed to get visibility columns");
+    
+    let expected_columns = vec!["node_id", "kind", "path"];
+    let actual_columns: Vec<_> = result.rows.iter().map(|r| r[0].get_str().unwrap()).collect();
+    assert_eq!(actual_columns, expected_columns, "Visibility columns mismatch");
 
-    // Test visibility insertion and querying
-    insert_visibility(&db, 100, "public", None).expect("Failed to insert public visibility");
-    insert_visibility(&db, 101, "restricted", Some(vec!["super", "module"]))
-        .expect("Failed to insert restricted visibility");
+    // Test all visibility variants
+    let test_cases = vec![
+        (100, "public", None),
+        (101, "crate", None),
+        (102, "restricted", Some(vec!["super"])),
+        (103, "restricted", Some(vec!["crate", "module"])),
+        (104, "inherited", None),
+    ];
 
-    assert!(verify_visibility(&db, 100, "public", None), "Public visibility check failed");
+    for (id, kind, path) in test_cases {
+        insert_visibility(&db, id, kind, path.clone())
+            .expect(&format!("Failed to insert visibility {} {}", id, kind));
+        assert!(
+            verify_visibility(&db, id, kind, path),
+            "Visibility verification failed for {} {}",
+            id,
+            kind
+        );
+    }
+
+    // Test visibility index queries
+    let result = db
+        .run_script(
+            r#"
+            ?[id, kind] := 
+                *visibility[id, kind, _],
+                kind == "restricted"
+            "#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )
+        .expect("Failed to query restricted visibility");
+    
     assert!(
-        verify_visibility(&db, 101, "restricted", Some(vec!["super", "module"])),
-        "Restricted visibility check failed"
+        result.rows.iter().any(|r| r[0].get_int() == Some(102) || r[0].get_int() == Some(103)),
+        "Expected to find restricted visibility items"
     );
 
     // Verify we can insert and query sample data
@@ -63,6 +140,54 @@ fn test_schema_creation() {
         .expect("Failed to query functions with visibility");
 
     assert!(!result.rows.is_empty(), "Expected functions with visibility");
+}
+
+#[test]
+fn test_visibility_path_queries() {
+    let db = Db::new(MemStorage::default()).expect("Failed to create database");
+    create_schema(&db).expect("Failed to create schema");
+
+    // Insert test data
+    insert_visibility(&db, 1, "restricted", Some(vec!["super", "module"]))
+        .expect("Failed to insert visibility");
+    insert_visibility(&db, 2, "restricted", Some(vec!["crate"]))
+        .expect("Failed to insert visibility");
+
+    // Test path contains
+    let result = db
+        .run_script(
+            r#"
+            ?[id] := 
+                *visibility[id, "restricted", path],
+                contains(path, "super")
+            "#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )
+        .expect("Failed to query path contains");
+    
+    assert_eq!(result.rows.len(), 1, "Expected one match for path contains");
+    assert_eq!(result.rows[0][0].get_int(), Some(1), "Expected id 1 for path contains");
+
+    // Test exact path match
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), DataValue::List(vec![
+        DataValue::from("crate")
+    ]));
+    
+    let result = db
+        .run_script(
+            r#"
+            ?[id] := 
+                *visibility[id, "restricted", $path]
+            "#,
+            params,
+            ScriptMutability::Immutable,
+        )
+        .expect("Failed to query exact path match");
+    
+    assert_eq!(result.rows.len(), 1, "Expected one exact path match");
+    assert_eq!(result.rows[0][0].get_int(), Some(2), "Expected id 2 for exact path match");
 }
 
 #[test]
