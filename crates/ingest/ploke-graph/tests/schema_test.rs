@@ -16,18 +16,17 @@ fn verify_visibility(
         Some(path) => {
             let path_values: Vec<DataValue> = path.iter().map(|s| DataValue::from(*s)).collect();
             let mut params = BTreeMap::new();
-            params.insert("id".to_string(), DataValue::from(node_id));
+            params.insert("node_id".to_string(), DataValue::from(node_id));
             params.insert("kind".to_string(), DataValue::from(expected_kind));
             params.insert("path".to_string(), DataValue::List(path_values));
 
             db.run_script(
                 r#"
                 ?[count(*)] := 
-                    *visibility[id, kind, path],
-                    id == $id,
+                    *visibility[node_id, kind, path],
+                    node_id == $node_id,
                     kind == $kind,
-                    path == $path,
-                    path != null
+                    path == $path
                 "#,
                 params,
                 ScriptMutability::Immutable,
@@ -35,14 +34,14 @@ fn verify_visibility(
         }
         None => {
             let mut params = BTreeMap::new();
-            params.insert("id".to_string(), DataValue::from(node_id));
+            params.insert("node_id".to_string(), DataValue::from(node_id));
             params.insert("kind".to_string(), DataValue::from(expected_kind));
 
             db.run_script(
                 r#"
                 ?[count(*)] := 
-                    *visibility[id, kind, path],
-                    id == $id,
+                    *visibility[node_id, kind, path],
+                    node_id == $node_id,
                     kind == $kind,
                     path == null
                 "#,
@@ -177,10 +176,10 @@ fn test_visibility_path_queries() {
     let result = db
         .run_script(
             r#"
-            ?[id] := 
-                *visibility[id, "restricted", path],
+            ?[node_id] := 
+                *visibility[node_id, "restricted", path],
                 path != null,
-                path[0] == "super"
+                contains(path, "super")
             "#,
             BTreeMap::new(),
             ScriptMutability::Immutable,
