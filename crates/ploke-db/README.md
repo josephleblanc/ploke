@@ -1,33 +1,69 @@
 # ploke-db
 
-High-performance query interface for retrieving code context from ploke's hybrid vector-graph database.
+High-performance text retrieval system for ploke's RAG pipeline, optimized for LLM code generation and refactoring.
 
-## Primary Responsibility
+## Core Purpose
 
-**Text-Based Context Retrieval**:
-- Locate and return relevant code snippets as text
-- Preserve surrounding context including:
-  - Source file locations (file + span)
-  - Documentation and comments
-  - Type signatures (as text)
-  - Usage examples
+**Retrieve relevant code snippets as text** from ploke's hybrid vector-graph database to:
+- Provide context for LLM prompts
+- Enable semantic code search
+- Track changes across code versions
 
-## Key Characteristics
+## Design Principles
 
-1. **Text-First Interface**:
-   - All results returned as strings with location metadata
-   - No AST reconstruction required
-   - Optimized for LLM consumption
+1. **LLM-Optimized Output**:
+   - Returns raw code strings with surrounding context
+   - Preserves formatting, comments and documentation
+   - Never converts back to Rust types (text-only interface)
 
-2. **Hybrid Search**:
-   - Combined exact graph queries and vector similarity
-   - Configurable result ranking
-   - Location-aware filtering
+2. **Hybrid Retrieval**:
+   - **Exact queries**: "Find all public functions calling parse_json()"
+   - **Semantic search**: "Find code similar to error handling examples"
+   - Combined ranking of graph and vector results
 
-3. **Change Tracking Support**:
-   - Query by source spans for change detection
-   - Incremental update capabilities
-   - Version-aware result filtering
+3. **Location-Aware**:
+   - Tracks exact file locations (path + byte spans)
+   - Maintains version history for change detection
+   - Provides surrounding context (3-5 lines around snippets)
+
+## Key Features
+
+```rust
+// 1. Exact graph pattern matching
+db.query()
+   .functions()
+   .called_by("main")
+   .with_docs()
+   .execute()?; // → Vec<CodeSnippet>
+
+// 2. Semantic/vector search  
+db.semantic_search("async database client")
+   .in_files("src/db/")
+   .limit(3) // → Vec<CodeSnippet>
+
+// 3. Change detection
+db.query()
+   .modified_since("a1b2c3d")
+   .execute()?;
+```
+
+## Architecture Position
+
+```mermaid
+flowchart LR
+    parser["Parser (AST)"] --> graph["ploke-graph\n(Schema)"]
+    graph --> db[(CozoDB)]
+    ploke_db --> db
+    ploke_db --> context["Context Builder"]
+    context --> llm[(LLM)]
+    
+    style ploke_db stroke:#f66,stroke-width:2px
+```
+
+**Role**: Sole interface between:
+- Database storage (ploke-graph)
+- LLM context building
+- Never handles ASTs or type information directly
 
 ## Performance Considerations
 
