@@ -27,4 +27,4 @@ impl ExtractSpan for ImplItemFn {}
 impl ExtractSpan for ItemTrait {}
 impl ExtractSpan for TraitItemFn {}
 impl ExtractSpan for ItemType {}
-// impl ExtractSpan for ItemMod {}
+impl ExtractSpan for ItemMod {}

@@ -46,6 +46,132 @@ fn test_function_spans() {
 }
 
 #[test]
+fn test_struct_spans() {
+    let path = Path::new("tests/fixtures/structs.rs");
+    let ast = parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
+
+    for item in ast.items {
+        if let Item::Struct(item_struct) = item {
+            let (start, end) = item_struct.extract_span_bytes();
+            let span_text = read_byte_range(path, start, end);
+            let ident = item_struct.ident.to_string();
+
+            // Verify the span contains the struct definition
+            assert!(
+                span_text.contains(&format!("struct {}", ident)),
+                "Struct span for '{}' should contain 'struct {}' in:\n{}",
+                ident,
+                ident,
+                span_text
+            );
+
+            // For specific structs, verify exact spans
+            match ident.as_str() {
+                "SampleStruct" => {
+                    verify_span(
+                        &item_struct,
+                        path,
+                        "pub struct SampleStruct {\n    pub field: String,\n}",
+                    );
+                }
+                "TupleStruct" => {
+                    verify_span(
+                        &item_struct,
+                        path,
+                        "pub struct TupleStruct(pub i32, pub i32);",
+                    );
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+#[test]
+fn test_trait_spans() {
+    let path = Path::new("tests/fixtures/traits.rs");
+    let ast = parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
+
+    for item in ast.items {
+        if let Item::Trait(item_trait) = item {
+            let (start, end) = item_trait.extract_span_bytes();
+            let span_text = read_byte_range(path, start, end);
+            let ident = item_trait.ident.to_string();
+
+            // Verify the span contains the trait definition
+            assert!(
+                span_text.contains(&format!("trait {}", ident)),
+                "Trait span for '{}' should contain 'trait {}' in:\n{}",
+                ident,
+                ident,
+                span_text
+            );
+
+            // For specific traits, verify exact spans
+            match ident.as_str() {
+                "SampleTrait" => {
+                    verify_span(
+                        &item_trait,
+                        path,
+                        "pub trait SampleTrait {\n    fn sample_method(&self) -> String;\n}",
+                    );
+                }
+                "DefaultTrait" => {
+                    verify_span(
+                        &item_trait,
+                        path,
+                        "pub trait DefaultTrait {\n    fn default_method(&self) -> String {\n        \"Default implementation\".to_string()\n    }\n}",
+                    );
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+#[test]
+fn test_type_alias_spans() {
+    let path = Path::new("tests/fixtures/structs.rs");
+    let ast = parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
+
+    for item in ast.items {
+        if let Item::Type(item_type) = item {
+            let (start, end) = item_type.extract_span_bytes();
+            let span_text = read_byte_range(path, start, end);
+            let ident = item_type.ident.to_string();
+
+            // Verify the span contains the type alias definition
+            assert!(
+                span_text.contains(&format!("type {}", ident)),
+                "Type alias span for '{}' should contain 'type {}' in:\n{}",
+                ident,
+                ident,
+                span_text
+            );
+
+            // For specific type aliases, verify exact spans
+            match ident.as_str() {
+                "StringVec" => {
+                    verify_span(
+                        &item_type,
+                        path,
+                        "pub type StringVec = Vec<String>;",
+                    );
+                }
+                "Result" => {
+                    verify_span(
+                        &item_type,
+                        path,
+                        "pub type Result<T> = std::result::Result<T, String>;",
+                    );
+                }
+                _ => continue,
+            }
+        }
+    }
+}
+
+#[test]
 fn test_enum_spans() {
     let path = Path::new("tests/fixtures/enums.rs");
     let ast = parse_file(&std::fs::read_to_string(path).unwrap()).unwrap();
