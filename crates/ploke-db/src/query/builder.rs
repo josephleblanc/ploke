@@ -64,10 +64,17 @@ impl QueryBuilder {
             _ => return Err(Error::QueryConstruction("No node type selected".into())),
         };
 
-        let mut query = format!(
-            "?[id, name, visibility, docstring] := *{}[id, name, visibility, docstring]",
-            relation
-        );
+        let mut query = match relation {
+            "functions" => format!(
+                "?[id, name, visibility, return_type_id, docstring, body] := *{}[id, name, visibility, return_type_id, docstring, body]",
+                relation
+            ),
+            "structs" => format!(
+                "?[id, name, visibility, docstring] := *{}[id, name, visibility, docstring]",
+                relation
+            ),
+            _ => return Err(Error::QueryConstruction(format!("Unsupported relation: {}", relation))),
+        };
 
         if !self.filters.is_empty() {
             query.push_str(", ");

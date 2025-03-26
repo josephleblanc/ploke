@@ -17,11 +17,11 @@ fn test_basic_function_query() -> Result<(), Error> {
     let ploke_db = Database::new(db);
 
     // Find sample_function by name
-    let result = ploke_db
-        .query()
-        .functions()
-        .with_name("sample_function")
-        .execute()?;
+    let result = ploke_db.raw_query(
+        r#"?[id, name, visibility, return_type_id, docstring, body] := 
+            *functions[id, name, visibility, return_type_id, docstring, body],
+            name = 'sample_function'"#
+    )?;
 
     let snippets: Vec<CodeSnippet> = result.into_snippets()?;
     assert_eq!(snippets.len(), 1);
