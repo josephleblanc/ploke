@@ -106,6 +106,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let fn_id = self.state.next_node_id();
         let fn_name = func.sig.ident.to_string();
+        let span = (
+            func.span().start().byte,
+            func.span().end().byte,
+        );
 
         // Process function parameters
         let mut parameters = Vec::new();
@@ -150,6 +154,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.functions.push(FunctionNode {
             id: fn_id,
             name: fn_name,
+            span,
             visibility: self.state.convert_visibility(&func.vis),
             parameters,
             return_type,
@@ -167,6 +172,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_id = self.state.next_node_id();
         let struct_name = item_struct.ident.to_string();
+        let span = (
+            item_struct.span().start().byte,
+            item_struct.span().end().byte,
+        );
 
         // Process fields
         let mut fields = Vec::new();

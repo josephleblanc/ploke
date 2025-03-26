@@ -11,6 +11,7 @@ pub type NodeId = usize;
 pub struct FunctionNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParameterNode>,
     pub return_type: Option<TypeId>,
@@ -46,6 +47,7 @@ pub enum TypeDefNode {
 pub struct StructNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub fields: Vec<FieldNode>,
     pub generic_params: Vec<GenericParamNode>,
