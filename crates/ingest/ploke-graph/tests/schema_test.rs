@@ -123,12 +123,26 @@ fn test_schema_creation() {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(
-            verified,
-            "Visibility verification failed for {} {}",
-            id,
-            kind
-        );
+        if !verified {
+            // Print debug info on failure
+            let result = db.run_script(
+                r#"
+                ?[id, kind, path] := *visibility[id, kind, path],
+                    id == $node_id
+                "#,
+                BTreeMap::from([
+                    ("node_id".into(), DataValue::from(id))
+                ]),
+                ScriptMutability::Immutable,
+            ).expect("Failed to query visibility for debugging");
+            
+            panic!(
+                "Visibility verification failed for {} {}\n\
+                Expected: kind={}, path={:?}\n\
+                Actual visibility records:\n{:?}",
+                id, kind, expected_kind, expected_path, result
+            );
+        }
     }
 
     // Test visibility index queries

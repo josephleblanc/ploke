@@ -424,11 +424,23 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         cozo::ScriptMutability::Mutable,
     )?;
 
+    // First insert visibility (must come before function)
+    let visibility_params = BTreeMap::from([
+        ("node_id".to_string(), DataValue::from(1)),
+        ("kind".to_string(), DataValue::from("public")),
+        ("path".to_string(), DataValue::Null),
+    ]);
+    db.run_script(
+        "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+        visibility_params,
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     // Insert a sample function
     let function_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(1)),
         ("name".to_string(), DataValue::from("sample_function")),
-        ("visibility".to_string(), DataValue::from("Public")),
+<<<<<<< SEARCH
         ("return_type_id".to_string(), DataValue::from(1)),
         (
             "docstring".to_string(),
