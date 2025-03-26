@@ -1294,6 +1294,7 @@ name = "ploke-graph"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "itertools",
  "serde",
  "syn_parser",
 ]
