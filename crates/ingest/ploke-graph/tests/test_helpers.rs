@@ -1,13 +1,15 @@
 //! Common test helpers for graph tests
 
-use cozo::{Db, MemStorage, DataValue};
+use cozo::NamedRows;
+use cozo::{DataValue, Db, MemStorage};
 use ploke_graph::schema::create_schema;
+use std::collections::BTreeMap;
 use std::path::Path;
 use syn_parser::analyze_code;
 use syn_parser::CodeGraph;
-use std::collections::BTreeMap;
 
 /// Creates a new in-memory database with the schema initialized
+#[allow(dead_code)]
 pub fn setup_test_db() -> Db<MemStorage> {
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
     db.initialize().expect("Failed to initialize database");
@@ -19,15 +21,14 @@ pub fn setup_test_db() -> Db<MemStorage> {
 }
 
 /// Helper to insert a visibility record
+#[allow(dead_code)]
 pub fn insert_visibility(
     db: &Db<MemStorage>,
     node_id: i64,
     kind: &str,
     path: Option<Vec<&str>>,
-) -> Result<(), cozo::Error> {
-    let path_value = path.map(|p| {
-        DataValue::List(p.iter().map(|s| DataValue::from(*s)).collect())
-    });
+) -> Result<NamedRows, cozo::Error> {
+    let path_value = path.map(|p| DataValue::List(p.iter().map(|s| DataValue::from(*s)).collect()));
 
     let params = BTreeMap::from([
         ("node_id".to_string(), DataValue::from(node_id)),
@@ -43,6 +44,7 @@ pub fn insert_visibility(
 }
 
 /// Helper to verify a visibility record exists
+#[allow(dead_code)]
 pub fn verify_visibility(
     db: &Db<MemStorage>,
     node_id: i64,
@@ -71,6 +73,7 @@ pub fn verify_visibility(
 }
 
 #[cfg(feature = "debug")]
+#[allow(dead_code)]
 pub fn print_debug(message: &str, result: &cozo::NamedRows) {
     println!("\n{:-<50}", "");
     println!("DEBUG: {}", message);
@@ -79,6 +82,7 @@ pub fn print_debug(message: &str, result: &cozo::NamedRows) {
 }
 
 /// Parse a fixture file and return the resulting CodeGraph
+#[allow(dead_code)]
 pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
     let path = Path::new("../syn_parser/tests/fixtures").join(fixture_name);
     analyze_code(&path).expect("Failed to parse fixture")

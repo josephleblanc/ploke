@@ -2,8 +2,8 @@ use super::state::VisitorState;
 use crate::parser::types::*;
 use quote::ToTokens;
 use syn::{
-    spanned::Spanned, AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType,
-    Type, TypePath, TypeReference,
+    AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType, Type, TypePath,
+    TypeReference,
 };
 
 // Get or create a type ID

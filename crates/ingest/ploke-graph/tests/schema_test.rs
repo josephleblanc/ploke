@@ -1,11 +1,13 @@
-use cozo::{Db, MemStorage, ScriptMutability, DataValue};
+use crate::test_helpers::insert_visibility;
+use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_graph::schema::{create_schema, insert_sample_data, verify_schema};
-use ploke_graph::tests::test_helpers::insert_visibility;
 use std::collections::BTreeMap;
+
+mod test_helpers;
 
 /// Helper to verify visibility records
 fn verify_visibility(
-    db: &Db<MemStorage>, 
+    db: &Db<MemStorage>,
     node_id: i64,
     expected_kind: &str,
     expected_path: Option<Vec<&str>>,
@@ -17,7 +19,7 @@ fn verify_visibility(
             params.insert("id".to_string(), DataValue::from(node_id));
             params.insert("kind".to_string(), DataValue::from(expected_kind));
             params.insert("path".to_string(), DataValue::List(path_values));
-            
+
             db.run_script(
                 r#"
                 ?[count(*)] := 
@@ -34,7 +36,7 @@ fn verify_visibility(
             let mut params = BTreeMap::new();
             params.insert("id".to_string(), DataValue::from(node_id));
             params.insert("kind".to_string(), DataValue::from(expected_kind));
-            
+
             db.run_script(
                 r#"
                 ?[count(*)] := 
@@ -64,6 +66,9 @@ fn test_schema_creation() {
     create_schema(&db).expect("Failed to create schema");
 
     // Verify the schema was created by listing relations
+    // Clippy is setting off false warnings due to the cfg flag that prints the results, so we have
+    // to use this flag
+    #[allow(unused_variables)]
     let result = db
         .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
         .expect("Failed to list relations");
@@ -79,10 +84,17 @@ fn test_schema_creation() {
             ScriptMutability::Immutable,
         )
         .expect("Failed to get visibility columns");
-    
+
     let expected_columns = vec!["node_id", "kind", "path"];
-    let actual_columns: Vec<_> = result.rows.iter().map(|r| r[0].get_str().unwrap()).collect();
-    assert_eq!(actual_columns, expected_columns, "Visibility columns mismatch");
+    let actual_columns: Vec<_> = result
+        .rows
+        .iter()
+        .map(|r| r[0].get_str().unwrap())
+        .collect();
+    assert_eq!(
+        actual_columns, expected_columns,
+        "Visibility columns mismatch"
+    );
 
     // Test all visibility variants
     let test_cases = vec![
@@ -95,7 +107,7 @@ fn test_schema_creation() {
 
     for (id, kind, path) in test_cases {
         insert_visibility(&db, id, kind, path.clone())
-            .expect(&format!("Failed to insert visibility {} {}", id, kind));
+            .unwrap_or_else(|_| panic!("Failed to insert visibility {} {}", id, kind));
         assert!(
             verify_visibility(&db, id, kind, path),
             "Visibility verification failed for {} {}",
@@ -116,9 +128,12 @@ fn test_schema_creation() {
             ScriptMutability::Immutable,
         )
         .expect("Failed to query restricted visibility");
-    
+
     assert!(
-        result.rows.iter().any(|r| r[0].get_int() == Some(102) || r[0].get_int() == Some(103)),
+        result
+            .rows
+            .iter()
+            .any(|r| r[0].get_int() == Some(102) || r[0].get_int() == Some(103)),
         "Expected to find restricted visibility items"
     );
 
@@ -139,7 +154,10 @@ fn test_schema_creation() {
         )
         .expect("Failed to query functions with visibility");
 
-    assert!(!result.rows.is_empty(), "Expected functions with visibility");
+    assert!(
+        !result.rows.is_empty(),
+        "Expected functions with visibility"
+    );
 }
 
 #[test]
@@ -165,16 +183,21 @@ fn test_visibility_path_queries() {
             ScriptMutability::Immutable,
         )
         .expect("Failed to query path contains");
-    
+
     assert_eq!(result.rows.len(), 1, "Expected one match for path contains");
-    assert_eq!(result.rows[0][0].get_int(), Some(1), "Expected id 1 for path contains");
+    assert_eq!(
+        result.rows[0][0].get_int(),
+        Some(1),
+        "Expected id 1 for path contains"
+    );
 
     // Test exact path match
     let mut params = BTreeMap::new();
-    params.insert("path".to_string(), DataValue::List(vec![
-        DataValue::from("crate")
-    ]));
-    
+    params.insert(
+        "path".to_string(),
+        DataValue::List(vec![DataValue::from("crate")]),
+    );
+
     let result = db
         .run_script(
             r#"
@@ -185,9 +208,13 @@ fn test_visibility_path_queries() {
             ScriptMutability::Immutable,
         )
         .expect("Failed to query exact path match");
-    
+
     assert_eq!(result.rows.len(), 1, "Expected one exact path match");
-    assert_eq!(result.rows[0][0].get_int(), Some(2), "Expected id 2 for exact path match");
+    assert_eq!(
+        result.rows[0][0].get_int(),
+        Some(2),
+        "Expected id 2 for exact path match"
+    );
 }
 
 #[test]

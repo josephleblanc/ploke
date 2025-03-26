@@ -1,6 +1,5 @@
 use cozo::DataValue;
 use ploke_graph::traits::{BatchIntoCozo, IntoCozo};
-use std::path::Path;
 use syn_parser::parser::nodes::*;
 use test_helpers::parse_fixture;
 
@@ -25,7 +24,6 @@ fn test_visibility_conversions() {
 
 #[test]
 fn test_function_node_conversion() {
-    let path = Path::new("tests/fixtures/functions.rs");
     let graph = parse_fixture("functions.rs");
     let func = graph
         .functions
