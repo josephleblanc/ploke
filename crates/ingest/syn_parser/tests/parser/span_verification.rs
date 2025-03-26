@@ -1,7 +1,7 @@
+use crate::common::parse_fixture;
 use std::fs;
 use std::path::Path;
 use syn::{parse_file, Item};
-use crate::common::parse_fixture;
 
 #[test]
 fn test_function_spans() {
@@ -13,11 +13,11 @@ fn test_function_spans() {
         if let Item::Fn(item_fn) = item {
             let (start, end) = item_fn.extract_span_bytes();
             let span_text = &source[start..end];
-            
+
             // Verify the span contains the function signature
             assert!(span_text.starts_with("fn "));
             assert!(span_text.contains(&item_fn.sig.ident.to_string()));
-            
+
             // For specific functions, verify exact spans
             match item_fn.sig.ident.to_string().as_str() {
                 "regular_function" => {
@@ -25,13 +25,13 @@ fn test_function_spans() {
                         span_text.trim(),
                         "pub fn regular_function() {\n    println!(\"Regular function\");\n}"
                     );
-                },
+                }
                 "function_with_params" => {
                     assert_eq!(
                         span_text.trim(),
                         "pub fn function_with_params(x: i32, y: i32) -> i32 {\n    x + y\n}"
                     );
-                },
+                }
                 _ => continue,
             }
         }
@@ -48,11 +48,11 @@ fn test_enum_spans() {
         if let Item::Enum(item_enum) = item {
             let (start, end) = item_enum.extract_span_bytes();
             let span_text = &source[start..end];
-            
+
             // Verify the span contains the enum definition
             assert!(span_text.starts_with("pub enum "));
             assert!(span_text.contains(&item_enum.ident.to_string()));
-            
+
             // For specific enums, verify exact spans
             match item_enum.ident.to_string().as_str() {
                 "SampleEnum" => {
@@ -60,13 +60,13 @@ fn test_enum_spans() {
                         span_text.trim(),
                         "pub enum SampleEnum {\n    Variant1,\n    Variant2 { value: i32 },\n    Variant3,\n}"
                     );
-                },
+                }
                 "EnumWithData" => {
                     assert_eq!(
                         span_text.trim(),
                         "pub enum EnumWithData {\n    Variant1(i32),\n    Variant2(String),\n}"
                     );
-                },
+                }
                 _ => continue,
             }
         }
