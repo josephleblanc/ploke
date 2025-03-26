@@ -1,14 +1,12 @@
 //! Common test helpers for graph tests
 
-use cozo::{Db, MemStorage};
+use cozo::{Db, MemStorage, DataValue};
 use ploke_graph::schema::create_schema;
 use std::path::Path;
 use syn_parser::analyze_code;
 use syn_parser::CodeGraph;
+use std::collections::BTreeMap;
 
-// Allow this as it is used in tests and we get warnings otherwise.
-// Is there a better way to indicate that it is actually being used?
-#[allow(dead_code)]
 /// Creates a new in-memory database with the schema initialized
 pub fn setup_test_db() -> Db<MemStorage> {
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
@@ -20,6 +18,58 @@ pub fn setup_test_db() -> Db<MemStorage> {
     db
 }
 
+/// Helper to insert a visibility record
+pub fn insert_visibility(
+    db: &Db<MemStorage>,
+    node_id: i64,
+    kind: &str,
+    path: Option<Vec<&str>>,
+) -> Result<(), cozo::Error> {
+    let path_value = path.map(|p| {
+        DataValue::List(p.iter().map(|s| DataValue::from(*s)).collect())
+    });
+
+    let params = BTreeMap::from([
+        ("node_id".to_string(), DataValue::from(node_id)),
+        ("kind".to_string(), DataValue::from(kind)),
+        ("path".to_string(), path_value.unwrap_or(DataValue::Null)),
+    ]);
+
+    db.run_script(
+        "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+        params,
+        cozo::ScriptMutability::Mutable,
+    )
+}
+
+/// Helper to verify a visibility record exists
+pub fn verify_visibility(
+    db: &Db<MemStorage>,
+    node_id: i64,
+    expected_kind: &str,
+    expected_path: Option<Vec<&str>>,
+) -> bool {
+    let query = "?[kind, path] := *visibility[node_id, kind, path]";
+    let params = BTreeMap::from([("node_id".to_string(), DataValue::from(node_id))]);
+
+    let result = db
+        .run_script(query, params, cozo::ScriptMutability::Immutable)
+        .expect("Query failed");
+
+    if result.rows.is_empty() {
+        return false;
+    }
+
+    let row = &result.rows[0];
+    let kind = row[0].get_str().unwrap();
+    let path = match &row[1] {
+        DataValue::List(p) => Some(p.iter().map(|v| v.get_str().unwrap()).collect::<Vec<_>>()),
+        _ => None,
+    };
+
+    kind == expected_kind && path == expected_path.map(|p| p.iter().map(|s| *s).collect())
+}
+
 #[cfg(feature = "debug")]
 pub fn print_debug(message: &str, result: &cozo::NamedRows) {
     println!("\n{:-<50}", "");
@@ -28,9 +78,6 @@ pub fn print_debug(message: &str, result: &cozo::NamedRows) {
     println!("{:-<50}\n", "");
 }
 
-// Allow this as it is used in tests and we get warnings otherwise.
-// Is there a better way to indicate that it is actually being used?
-#[allow(dead_code)]
 /// Parse a fixture file and return the resulting CodeGraph
 pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
     let path = Path::new("../syn_parser/tests/fixtures").join(fixture_name);
