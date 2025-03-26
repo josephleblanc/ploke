@@ -64,11 +64,14 @@ fn transform_single_trait(
     db: &Db<MemStorage>,
     trait_node: &syn_parser::parser::nodes::TraitNode,
 ) -> Result<(), cozo::Error> {
-    let visibility = match trait_node.visibility {
-        VisibilityKind::Public => "Public",
-        VisibilityKind::Crate => "Crate",
-        VisibilityKind::Restricted(_) => "Restricted",
-        VisibilityKind::Inherited => "Inherited",
+    let (vis_kind, vis_path) = match trait_node.visibility {
+        VisibilityKind::Public => ("public".into(), None),
+        VisibilityKind::Crate => ("crate".into(), None),
+        VisibilityKind::Restricted(path) => {
+            let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+            ("restricted".into(), Some(list))
+        }
+        VisibilityKind::Inherited => ("inherited".into(), None),
     };
 
     let docstring = trait_node
@@ -77,19 +80,29 @@ fn transform_single_trait(
         .map(|s| DataValue::from(s.as_str()))
         .unwrap_or(DataValue::Null);
 
-    let params = BTreeMap::from([
+    // Insert into traits table
+    let trait_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(trait_node.id as i64)),
-        (
-            "name".to_string(),
-            DataValue::from(trait_node.name.as_str()),
-        ),
-        ("visibility".to_string(), DataValue::from(visibility)),
+        ("name".to_string(), DataValue::from(trait_node.name.as_str())),
         ("docstring".to_string(), docstring),
     ]);
 
     db.run_script(
-        "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put traits",
-        params,
+        "?[id, name, docstring] <- [[$id, $name, $docstring]] :put traits",
+        trait_params,
+        ScriptMutability::Mutable,
+    )?;
+
+    // Insert into visibility table
+    let vis_params = BTreeMap::from([
+        ("node_id".to_string(), DataValue::from(trait_node.id as i64)),
+        ("kind".to_string(), DataValue::from(vis_kind)),
+        ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
+    ]);
+
+    db.run_script(
+        "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+        vis_params,
         ScriptMutability::Mutable,
     )?;
 
@@ -153,11 +166,14 @@ fn transform_impls(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 /// Transforms module nodes into the modules relation
 fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for module in &code_graph.modules {
-        let visibility = match module.visibility {
-            VisibilityKind::Public => "Public",
-            VisibilityKind::Crate => "Crate",
-            VisibilityKind::Restricted(_) => "Restricted",
-            VisibilityKind::Inherited => "Inherited",
+        let (vis_kind, vis_path) = match module.visibility {
+            VisibilityKind::Public => ("public".into(), None),
+            VisibilityKind::Crate => ("crate".into(), None),
+            VisibilityKind::Restricted(path) => {
+                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                ("restricted".into(), Some(list))
+            }
+            VisibilityKind::Inherited => ("inherited".into(), None),
         };
 
         let docstring = module
@@ -166,16 +182,29 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
             .map(|s| DataValue::from(s.as_str()))
             .unwrap_or(DataValue::Null);
 
-        let params = BTreeMap::from([
+        // Insert into modules table
+        let module_params = BTreeMap::from([
             ("id".to_string(), DataValue::from(module.id as i64)),
             ("name".to_string(), DataValue::from(module.name.as_str())),
-            ("visibility".to_string(), DataValue::from(visibility)),
             ("docstring".to_string(), docstring),
         ]);
 
         db.run_script(
-            "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put modules",
-            params,
+            "?[id, name, docstring] <- [[$id, $name, $docstring]] :put modules",
+            module_params,
+            ScriptMutability::Mutable,
+        )?;
+
+        // Insert into visibility table
+        let vis_params = BTreeMap::from([
+            ("node_id".to_string(), DataValue::from(module.id as i64)),
+            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
+        ]);
+
+        db.run_script(
+            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+            vis_params,
             ScriptMutability::Mutable,
         )?;
 
@@ -234,11 +263,14 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 /// Transforms value nodes into the values relation
 fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for value in &code_graph.values {
-        let visibility = match value.visibility {
-            VisibilityKind::Public => "Public",
-            VisibilityKind::Crate => "Crate",
-            VisibilityKind::Restricted(_) => "Restricted",
-            VisibilityKind::Inherited => "Inherited",
+        let (vis_kind, vis_path) = match value.visibility {
+            VisibilityKind::Public => ("public".into(), None),
+            VisibilityKind::Crate => ("crate".into(), None),
+            VisibilityKind::Restricted(path) => {
+                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                ("restricted".into(), Some(list))
+            }
+            VisibilityKind::Inherited => ("inherited".into(), None),
         };
 
         let kind = match value.kind {
@@ -264,10 +296,10 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
             .map(|s| DataValue::from(s.as_str()))
             .unwrap_or(DataValue::Null);
 
-        let params = BTreeMap::from([
+        // Insert into values table
+        let value_params = BTreeMap::from([
             ("id".to_string(), DataValue::from(value.id as i64)),
             ("name".to_string(), DataValue::from(value.name.as_str())),
-            ("visibility".to_string(), DataValue::from(visibility)),
             ("type_id".to_string(), DataValue::from(value.type_id as i64)),
             ("kind".to_string(), DataValue::from(kind)),
             ("value".to_string(), value_str),
@@ -275,8 +307,21 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
         ]);
 
         db.run_script(
-            "?[id, name, visibility, type_id, kind, value, docstring] <- [[$id, $name, $visibility, $type_id, $kind, $value, $docstring]] :put values",
-            params,
+            "?[id, name, type_id, kind, value, docstring] <- [[$id, $name, $type_id, $kind, $value, $docstring]] :put values",
+            value_params,
+            ScriptMutability::Mutable,
+        )?;
+
+        // Insert into visibility table
+        let vis_params = BTreeMap::from([
+            ("node_id".to_string(), DataValue::from(value.id as i64)),
+            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
+        ]);
+
+        db.run_script(
+            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+            vis_params,
             ScriptMutability::Mutable,
         )?;
     }
@@ -493,11 +538,14 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 /// Transforms function nodes into the functions relation
 fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for function in &code_graph.functions {
-        let visibility = match function.visibility {
-            VisibilityKind::Public => "Public",
-            VisibilityKind::Crate => "Crate",
-            VisibilityKind::Restricted(_) => "Restricted",
-            VisibilityKind::Inherited => "Inherited",
+        let (vis_kind, vis_path) = match function.visibility {
+            VisibilityKind::Public => ("public".into(), None),
+            VisibilityKind::Crate => ("crate".into(), None),
+            VisibilityKind::Restricted(path) => {
+                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                ("restricted".into(), Some(list))
+            }
+            VisibilityKind::Inherited => ("inherited".into(), None),
         };
 
         let return_type_id = function
@@ -517,18 +565,31 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             .map(|s| DataValue::from(s.as_str()))
             .unwrap_or(DataValue::Null);
 
-        let params = BTreeMap::from([
+        // Insert into functions table
+        let func_params = BTreeMap::from([
             ("id".to_string(), DataValue::from(function.id as i64)),
             ("name".to_string(), DataValue::from(function.name.as_str())),
-            ("visibility".to_string(), DataValue::from(visibility)),
             ("return_type_id".to_string(), return_type_id),
             ("docstring".to_string(), docstring),
             ("body".to_string(), body),
         ]);
 
         db.run_script(
-            "?[id, name, visibility, return_type_id, docstring, body] <- [[$id, $name, $visibility, $return_type_id, $docstring, $body]] :put functions",
-            params,
+            "?[id, name, return_type_id, docstring, body] <- [[$id, $name, $return_type_id, $docstring, $body]] :put functions",
+            func_params,
+            ScriptMutability::Mutable,
+        )?;
+
+        // Insert into visibility table
+        let vis_params = BTreeMap::from([
+            ("node_id".to_string(), DataValue::from(function.id as i64)),
+            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
+        ]);
+
+        db.run_script(
+            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+            vis_params,
             ScriptMutability::Mutable,
         )?;
 
