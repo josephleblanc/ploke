@@ -1,7 +1,7 @@
-use crate::common::parse_fixture;
 use std::fs;
 use std::path::Path;
 use syn::{parse_file, Item};
+use syn_parser::parser::utils::ExtractSpan;
 
 #[test]
 fn test_function_spans() {
