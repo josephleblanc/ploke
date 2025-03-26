@@ -1,34 +1,17 @@
-//! High-performance text retrieval from code graph database
+use crate::error::Error;
+use crate::query::QueryResult;
+use cozo::Db;
+use cozo::MemStorage;
 
-mod database;
-mod error;
-
-pub use database::Database;
-pub use error::Error;
-
-/// Core query interface
-pub mod query {
-    pub use super::query::*;
-}
-
-/// Result handling and formatting  
-pub mod result {
-    pub use super::result::*;
-}
-
-/// Source location tracking
-pub mod span {
-    pub use super::span::*;
-}
-
+/// Main database connection and query interface
 #[derive(Debug)]
 pub struct Database {
-    db: cozo::Db<cozo::MemStorage>,
+    db: Db<MemStorage>,
 }
 
 impl Database {
     /// Create new database connection
-    pub fn new(db: cozo::Db<cozo::MemStorage>) -> Self {
+    pub fn new(db: Db<MemStorage>) -> Self {
         Self { db }
     }
 
@@ -46,7 +29,7 @@ impl Database {
     }
 
     /// Create a new query builder
-    pub fn query(&self) -> QueryBuilder {
-        QueryBuilder::new(self.db.clone())
+    pub fn query(&self) -> query::QueryBuilder {
+        query::QueryBuilder::new(self.db.clone())
     }
 }
