@@ -1,0 +1,14 @@
+[package]
+name = "ploke-embed"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cozo = { workspace = true }
+syn_parser = { path = "../syn_parser" }
+ploke_graph = { path = "../ploke_graph" }
+serde = { workspace = true }
+
+[features]
+default = ["debug"]
+debug = []
