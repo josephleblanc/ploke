@@ -52,8 +52,18 @@ fn verify_visibility(
     };
 
     match query {
-        Ok(result) => result.rows[0][0].get_int().unwrap_or(0) > 0,
-        Err(_) => false,
+        Ok(result) => {
+            if result.rows.is_empty() {
+                false
+            } else {
+                let count = result.rows[0][0].get_int().unwrap_or(0);
+                count > 0
+            }
+        }
+        Err(e) => {
+            eprintln!("Visibility query failed: {:?}", e);
+            false
+        }
     }
 }
 
@@ -136,11 +146,13 @@ fn test_schema_creation() {
                 ScriptMutability::Immutable,
             ).expect("Failed to query visibility for debugging");
             
+            let actual_count = result.rows[0][0].get_int().unwrap_or(0);
             panic!(
                 "Visibility verification failed for {} {}\n\
                 Expected: kind={}, path={:?}\n\
-                Actual visibility records:\n{:?}",
-                id, kind, kind, path, result
+                Actual count: {}\n\
+                Full records:\n{:?}",
+                id, kind, kind, path, actual_count, result
             );
         }
     }
