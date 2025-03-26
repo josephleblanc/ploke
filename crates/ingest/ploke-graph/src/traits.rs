@@ -1,10 +1,10 @@
 //! Defines conversion traits for CozoDB operations
 
 use cozo::DataValue;
+use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::FunctionNode;
-use syn_parser::parser::types::VisibilityKind;
-use itertools::Itertools; // For join() functionality
+use syn_parser::parser::types::VisibilityKind; // For join() functionality
 
 /// Types that can be converted to/from CozoDB representation
 pub trait IntoCozo {
@@ -104,7 +104,7 @@ pub trait BatchIntoCozo: IntoCozo {
 
         format!(
             "?[{}] <- [{}] :put {}",
-            columns.join(", "),
+            columns.into_iter().join(", "),
             values,
             Self::cozo_relation()
         )
