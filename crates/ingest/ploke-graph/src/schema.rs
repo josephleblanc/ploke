@@ -11,10 +11,21 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         :create functions {
             id: Int => 
             name: String,
-            visibility: String,
             return_type_id: Int?,
             docstring: String?,
             body: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create visibility {
+            node_id: Int =>
+            kind: String,
+            path: [String]?
         }
         "#,
         BTreeMap::new(),
@@ -295,6 +306,13 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
 
     // Create indices for performance
     create_indices(db)?;
+
+    // Create visibility index
+    db.run_script(
+        "::index create visibility:by_kind_path {kind, path, node_id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
 
     Ok(())
 }

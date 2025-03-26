@@ -39,10 +39,11 @@ impl IntoCozo for FunctionNode {
 
     fn into_cozo_map(self) -> BTreeMap<String, DataValue> {
         let mut map = BTreeMap::new();
+        let (vis_kind, vis_path) = visibility_to_cozo(self.visibility);
         map.insert("id".into(), DataValue::from(self.id as i64));
         map.insert("name".into(), self.name.into());
-        map.insert("visibility".into(), visibility_to_cozo(self.visibility));
-        map.insert(
+        map.insert("visibility_kind".into(), vis_kind.into());
+        map.insert("visibility_path".into(), vis_path.unwrap_or(DataValue::Null));
             "return_type_id".into(),
             self.return_type
                 .map_or(DataValue::Null, |id| DataValue::from(id as i64)),
@@ -59,19 +60,15 @@ impl IntoCozo for FunctionNode {
     }
 }
 
-fn visibility_to_cozo(v: VisibilityKind) -> DataValue {
+fn visibility_to_cozo(v: VisibilityKind) -> (String, Option<DataValue>) {
     match v {
-        VisibilityKind::Public => "Public".into(),
-        VisibilityKind::Crate => "Crate".into(),
+        VisibilityKind::Public => ("public".into(), None),
+        VisibilityKind::Crate => ("crate".into(), None),
         VisibilityKind::Restricted(path) => {
-            let path_str = path
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join("::");
-            format!("Restricted({path_str})").into()
-        }
-        VisibilityKind::Inherited => "Inherited".into(),
+            let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+            ("restricted".into(), Some(list))
+        },
+        VisibilityKind::Inherited => ("inherited".into(), None),
     }
 }
 
