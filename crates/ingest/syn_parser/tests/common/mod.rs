@@ -1,8 +1,8 @@
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
-use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
 use syn_parser::parser::visitor::analyze_code;
+use syn_parser::parser::{nodes::*, ExtractSpan};
 
 /// Parse a fixture file and return the resulting CodeGraph
 pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
@@ -46,6 +46,19 @@ pub fn find_trait_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a Tr
 /// Find a function by name in the code graph
 pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a FunctionNode> {
     graph.functions.iter().find(|f| f.name == name)
+}
+
+/// Verifies that a parsed item's span matches the expected text in the source
+pub fn verify_span(item: &impl ExtractSpan, source: &str, expected: &str) {
+    let (start, end) = item.extract_span_bytes();
+    let actual = &source[start..end];
+    assert_eq!(
+        actual.trim(),
+        expected.trim(),
+        "Span mismatch:\nExpected: {}\nActual: {}",
+        expected,
+        actual
+    );
 }
 
 /// Find an impl block for a specific type
