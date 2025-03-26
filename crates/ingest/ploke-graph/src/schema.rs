@@ -440,6 +440,8 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
     let function_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(1)),
         ("name".to_string(), DataValue::from("sample_function")),
+        ("visibility_kind".to_string(), DataValue::from("public")),
+        ("visibility_path".to_string(), DataValue::Null),
 <<<<<<< SEARCH
         ("return_type_id".to_string(), DataValue::from(1)),
         (
@@ -450,7 +452,7 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
     ]);
 
     db.run_script(
-        "?[id, name, visibility, return_type_id, docstring, body] <- [[$id, $name, $visibility, $return_type_id, $docstring, $body]] :put functions",
+        "?[id, name, visibility_kind, visibility_path, return_type_id, docstring, body] <- [[$id, $name, $visibility_kind, $visibility_path, $return_type_id, $docstring, $body]] :put functions",
         function_params,
         cozo::ScriptMutability::Mutable,
     )?;
@@ -475,7 +477,7 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
     let struct_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(2)),
         ("name".to_string(), DataValue::from("SampleStruct")),
-        ("visibility".to_string(), DataValue::from("Public")),
+        ("visibility".to_string(), DataValue::from("public")),
         ("docstring".to_string(), DataValue::from("A sample struct")),
     ]);
 
