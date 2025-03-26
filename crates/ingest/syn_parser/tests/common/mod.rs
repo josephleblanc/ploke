@@ -48,16 +48,29 @@ pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a
     graph.functions.iter().find(|f| f.name == name)
 }
 
-/// Verifies that a parsed item's span matches the expected text in the source
-pub fn verify_span(item: &impl ExtractSpan, source: &str, expected: &str) {
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
+
+/// Reads bytes from a file at given positions
+pub fn read_byte_range(path: &Path, start: usize, end: usize) -> String {
+    let mut file = File::open(path).expect("Failed to open file");
+    let mut buffer = vec![0; end - start];
+    file.seek(std::io::SeekFrom::Start(start as u64))
+        .expect("Failed to seek");
+    file.read_exact(&mut buffer).expect("Failed to read bytes");
+    String::from_utf8(buffer).expect("Invalid UTF-8 in span")
+}
+
+/// Verifies that a parsed item's span matches the expected text
+pub fn verify_span(item: &impl ExtractSpan, path: &Path, expected: &str) {
     let (start, end) = item.extract_span_bytes();
-    let actual = &source[start..end];
+    let actual = read_byte_range(path, start, end);
+    
     assert_eq!(
-        actual.trim(),
-        expected.trim(),
-        "Span mismatch:\nExpected: {}\nActual: {}",
-        expected,
-        actual
+        actual, expected,
+        "\nSpan mismatch in {}:\nExpected:\n{}\nActual:\n{}\n",
+        path.display(), expected, actual
     );
 }
 
