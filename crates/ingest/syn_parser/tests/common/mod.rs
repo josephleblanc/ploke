@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::Read;
+use std::io::Seek;
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
@@ -48,10 +51,6 @@ pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a
     graph.functions.iter().find(|f| f.name == name)
 }
 
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
-
 /// Reads bytes from a file at given positions
 pub fn read_byte_range(path: &Path, start: usize, end: usize) -> String {
     let mut file = File::open(path).expect("Failed to open file");
@@ -66,11 +65,14 @@ pub fn read_byte_range(path: &Path, start: usize, end: usize) -> String {
 pub fn verify_span(item: &impl ExtractSpan, path: &Path, expected: &str) {
     let (start, end) = item.extract_span_bytes();
     let actual = read_byte_range(path, start, end);
-    
+
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "\nSpan mismatch in {}:\nExpected:\n{}\nActual:\n{}\n",
-        path.display(), expected, actual
+        path.display(),
+        expected,
+        actual
     );
 }
 

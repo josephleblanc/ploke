@@ -254,6 +254,7 @@
         TypeAlias((
             id: 99,
             name: "StringVec",
+            span: (4009, 4065),
             visibility: Public,
             type_id: 31,
             generic_params: [],
@@ -263,6 +264,7 @@
         TypeAlias((
             id: 100,
             name: "Result",
+            span: (4067, 4142),
             visibility: Public,
             type_id: 32,
             generic_params: [
