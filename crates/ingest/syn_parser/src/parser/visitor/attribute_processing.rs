@@ -52,7 +52,9 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
         }
     }
 
+    let byte_range = attr.span().byte_range();
     Attribute {
+        span: (byte_range.start, byte_range.end),
         name,
         args,
         value: Some(attr.to_token_stream().to_string()),
