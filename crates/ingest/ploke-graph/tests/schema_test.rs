@@ -19,27 +19,50 @@ fn test_schema_creation() {
     #[cfg(feature = "debug")]
     println!("Relations: {:?}", result);
 
-    // Check that we have the expected number of relations
-    assert!(result.rows.len() >= 12, "Expected at least 12 relations");
+    // Check that we have the expected relations including visibility
+    let relation_names: Vec<_> = result.rows.iter().map(|r| r[0].get_str().unwrap()).collect();
+    assert!(relation_names.contains(&"visibility"), "Missing visibility relation");
+    assert!(relation_names.len() >= 13, "Expected at least 13 relations");
 
-    // Verify we can insert and query data
-    insert_sample_data(&db).expect("Failed to insert sample data");
-    verify_schema(&db).expect("Failed to verify schema");
-
-    // Test a specific query to ensure data was inserted correctly
-    let result = db
+    // Verify visibility index exists
+    let indices = db
         .run_script(
-            "?[name] := *functions[_, name, _, _, _, _]",
+            "::indices visibility",
             BTreeMap::new(),
             ScriptMutability::Immutable,
         )
-        .expect("Failed to query functions");
+        .expect("Failed to list indices");
+    assert!(!indices.rows.is_empty(), "Expected visibility index");
 
-    assert_eq!(result.rows.len(), 1, "Expected 1 function");
+    // Test visibility insertion and querying
+    insert_visibility(&db, 100, "public", None).expect("Failed to insert public visibility");
+    insert_visibility(&db, 101, "restricted", Some(vec!["super", "module"]))
+        .expect("Failed to insert restricted visibility");
+
+    assert!(verify_visibility(&db, 100, "public", None), "Public visibility check failed");
     assert!(
-        result.rows[0][0].to_string().contains("sample_function"),
-        "Expected function name to be 'sample_function'"
+        verify_visibility(&db, 101, "restricted", Some(vec!["super", "module"])),
+        "Restricted visibility check failed"
     );
+
+    // Verify we can insert and query sample data
+    insert_sample_data(&db).expect("Failed to insert sample data");
+    verify_schema(&db).expect("Failed to verify schema");
+
+    // Test a query joining functions and visibility
+    let result = db
+        .run_script(
+            r#"
+            ?[fn_name, vis_kind] := 
+                *functions[fn_id, fn_name, _, _, _, _],
+                *visibility[fn_id, vis_kind, _]
+            "#,
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )
+        .expect("Failed to query functions with visibility");
+
+    assert!(!result.rows.is_empty(), "Expected functions with visibility");
 }
 
 #[test]
