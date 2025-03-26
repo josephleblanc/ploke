@@ -43,7 +43,11 @@ impl IntoCozo for FunctionNode {
         map.insert("id".into(), DataValue::from(self.id as i64));
         map.insert("name".into(), self.name.into());
         map.insert("visibility_kind".into(), vis_kind.into());
-        map.insert("visibility_path".into(), vis_path.unwrap_or(DataValue::Null));
+        map.insert(
+            "visibility_path".into(),
+            vis_path.unwrap_or(DataValue::Null),
+        );
+        map.insert(
             "return_type_id".into(),
             self.return_type
                 .map_or(DataValue::Null, |id| DataValue::from(id as i64)),
@@ -67,7 +71,7 @@ fn visibility_to_cozo(v: VisibilityKind) -> (String, Option<DataValue>) {
         VisibilityKind::Restricted(path) => {
             let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
             ("restricted".into(), Some(list))
-        },
+        }
         VisibilityKind::Inherited => ("inherited".into(), None),
     }
 }

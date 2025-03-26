@@ -1,9 +1,9 @@
 //! Tests for basic schema functionality
 
-use crate::test_helpers::setup_test_db;
 use cozo::{DataValue, ScriptMutability};
 use ploke_graph::schema::{insert_sample_data, verify_schema};
 use std::collections::BTreeMap;
+use test_helpers::setup_test_db;
 
 mod test_helpers;
 

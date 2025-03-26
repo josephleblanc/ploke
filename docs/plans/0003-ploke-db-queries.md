@@ -151,6 +151,19 @@
    - Shows direct and indirect dependencies
    - Helps estimate refactoring scope
 
+## Additional Queries (rough)
+ // Find all items visible to current module's parent
+ ?[id] := *visibility[id, 'restricted', path],
+path matches ['super', ..]
+
+ // Find crate-local items
+ ?[id] := *visibility[id, $kind, _],
+kind in ['crate', 'public']
+
+ // Check specific visibility
+ ?[is_visible] := *visibility[$node_id, 'restricted', ['my', 'module']],
+is_visible = true
+
 ## Dependency and Breaking Change Queries (Future Work)
 
 These queries would support dependency management and upgrade assistance:
