@@ -138,7 +138,7 @@ fn test_schema_creation() {
             let result = db.run_script(
                 r#"
                 ?[id, kind, path] := *visibility[id, kind, path],
-                    id == $node_id
+                    id = $node_id
                 "#,
                 BTreeMap::from([
                     ("node_id".into(), DataValue::from(id))
@@ -146,14 +146,31 @@ fn test_schema_creation() {
                 ScriptMutability::Immutable,
             ).expect("Failed to query visibility for debugging");
             
-            let actual_count = result.rows[0][0].get_int().unwrap_or(0);
-            panic!(
-                "Visibility verification failed for {} {}\n\
-                Expected: kind={}, path={:?}\n\
-                Actual count: {}\n\
-                Full records:\n{:?}",
-                id, kind, kind, path, actual_count, result
-            );
+            if !result.rows.is_empty() {
+                let actual_kind = result.rows[0][1].get_str().unwrap_or("");
+                let actual_path = if result.rows[0][2].is_null() {
+                    None
+                } else {
+                    Some(result.rows[0][2].get_list().unwrap().iter()
+                        .map(|v| v.get_str().unwrap_or(""))
+                        .collect::<Vec<_>>())
+                };
+                
+                panic!(
+                    "Visibility verification failed for {} {}\n\
+                    Expected: kind={}, path={:?}\n\
+                    Actual: kind={}, path={:?}\n\
+                    Full records:\n{:?}",
+                    id, kind, kind, path, actual_kind, actual_path, result
+                );
+            } else {
+                panic!(
+                    "Visibility verification failed for {} {}\n\
+                    Expected: kind={}, path={:?}\n\
+                    No matching records found",
+                    id, kind, kind, path
+                );
+            }
         }
     }
 
