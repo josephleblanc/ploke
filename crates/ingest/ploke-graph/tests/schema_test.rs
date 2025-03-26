@@ -26,7 +26,8 @@ fn verify_visibility(
                     *visibility[id, kind, path],
                     id == $id,
                     kind == $kind,
-                    path == $path
+                    path == $path,
+                    path != null
                 "#,
                 params,
                 ScriptMutability::Immutable,
@@ -40,9 +41,10 @@ fn verify_visibility(
             db.run_script(
                 r#"
                 ?[count(*)] := 
-                    *visibility[id, kind, null],
+                    *visibility[id, kind, path],
                     id == $id,
-                    kind == $kind
+                    kind == $kind,
+                    path == null
                 "#,
                 params,
                 ScriptMutability::Immutable,
@@ -171,24 +173,25 @@ fn test_visibility_path_queries() {
     insert_visibility(&db, 2, "restricted", Some(vec!["crate"]))
         .expect("Failed to insert visibility");
 
-    // Test path contains
+    // Test path membership using list indexing
     let result = db
         .run_script(
             r#"
             ?[id] := 
                 *visibility[id, "restricted", path],
-                contains(path, "super")
+                path != null,
+                path[0] == "super"
             "#,
             BTreeMap::new(),
             ScriptMutability::Immutable,
         )
-        .expect("Failed to query path contains");
+        .expect("Failed to query path membership");
 
-    assert_eq!(result.rows.len(), 1, "Expected one match for path contains");
+    assert_eq!(result.rows.len(), 1, "Expected one match for path membership");
     assert_eq!(
         result.rows[0][0].get_int(),
         Some(1),
-        "Expected id 1 for path contains"
+        "Expected id 1 for path membership"
     );
 
     // Test exact path match
