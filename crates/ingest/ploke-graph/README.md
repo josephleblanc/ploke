@@ -74,12 +74,20 @@ The trait will be crucial for `ploke-db` to:
 
 ## Visibility and Span Handling
 
-The recent improvements to visibility handling are critical because:
+Our visibility system uses a two-part representation in the database:
+1. A `kind` string (public/crate/restricted/inherited)
+2. An optional `path` list for restricted visibility
 
-1. **Accurate Code Generation**: Visibility determines what can be referenced/used
-2. **Privacy Enforcement**: Ensures generated code respects Rust's privacy rules  
-3. **API Surface Analysis**: Helps identify public interfaces for documentation
-4. **Dependency Tracking**: Enables precise impact analysis of changes
+This design allows for:
+1. **Efficient Queries**: Simple equality checks for public/crate/inherited
+2. **Path Analysis**: List operations for restricted visibility paths
+3. **Flexible Storage**: Null path for non-restricted visibilities
+
+Key benefits:
+1. **Precise Privacy Enforcement**: Matches Rust's visibility rules exactly
+2. **Hierarchical Visibility**: Supports nested module paths via list operations
+3. **Optimized Storage**: Minimizes storage for common visibility cases
+4. **Query Flexibility**: Enables both exact and pattern-matched visibility checks
 
 Span tracking provides:
 1. **Precise Code Locations**: For error reporting and code modification
@@ -107,29 +115,34 @@ From the Cozo documentation (`datatypes.rst`, `queries.rst`), we can improve:
 
 Specific improvements to `IntoCozo`:
 
-1. **Enhanced Visibility Handling**:
+1. **Visibility Handling**:
 ```rust
-// Current
+// Current implementation (correct)
 fn visibility_to_cozo(v: VisibilityKind) -> (String, Option<DataValue>) {
     match v {
         VisibilityKind::Public => ("public".into(), None),
-        // ...
+        VisibilityKind::Crate => ("crate".into(), None),
+        VisibilityKind::Restricted(path) => {
+            let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+            ("restricted".into(), Some(list))
+        }
+        VisibilityKind::Inherited => ("inherited".into(), None),
     }
 }
 
-// Improved with CozoScript patterns
-fn visibility_to_cozo(v: VisibilityKind) -> DataValue {
-    match v {
-        VisibilityKind::Public => DataValue::from("public"),
-        VisibilityKind::Restricted(path) => DataValue::from(
-            path.into_iter()
-                .map(|s| format!("restricted::{}", s))
-                .collect::<Vec<_>>()
-                .join("::")
-        ),
-        // ...
-    }
+// Database schema for visibility:
+:create visibility {
+    node_id: Int =>
+    kind: String,
+    path: [String]?
 }
+
+// Example query using visibility:
+?[id, name] := 
+    *functions[id, name, _, _, _, _],
+    *visibility[id, $kind, $path],
+    $kind = "restricted",
+    contains($path, "my_module")
 ```
 
 2. **Batch Operation Optimization**:
