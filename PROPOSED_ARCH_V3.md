@@ -174,32 +174,35 @@ flowchart TD
 ### 5.2 ploke-db Component
 
 **Responsibilities**:
-- Provides high-level query interface to CozoDB
-- Manages query building and optimization
-- Handles result ranking and filtering
-- Maintains query performance characteristics
+- Provides text-oriented query interface to CozoDB
+- Manages efficient retrieval of code snippets with location metadata
+- Handles hybrid (graph + vector) searches
+- Optimizes for bulk text context retrieval
 
-**Implementation Plan**:
+**Key Design Principles**:
+1. **Text-First Output**: All results returned as strings with source locations
+2. **Location Awareness**: Tracks and queries by source spans
+3. **Change Detection**: Supports incremental updates via span tracking
+
+**Implementation Focus**:
 ```rust
-// Example query builder interface
-pub struct QueryBuilder {
-    base_query: String,
-    filters: Vec<String>,
-    limits: Option<usize>
+pub struct CodeSnippet {
+    pub text: String,
+    pub file_path: PathBuf,
+    pub span: (usize, usize), // byte offsets
+    pub surrounding_context: String,
+    pub metadata: HashMap<String, String>,
 }
 
-impl QueryBuilder {
-    /// Create new query for specific node type
-    pub fn new(node_type: NodeType) -> Self;
+impl Database {
+    /// Retrieve snippets matching semantic query
+    pub fn semantic_search(&self, query: &str) -> Vec<CodeSnippet>;
     
-    /// Add relationship filter
-    pub fn with_relation(self, kind: RelationKind) -> Self;
+    /// Find all usages of a type (as text)
+    pub fn find_type_usages(&self, type_name: &str) -> Vec<CodeSnippet>;
     
-    /// Add semantic search constraint
-    pub fn with_semantic_search(self, query: &str) -> Self;
-    
-    /// Finalize query into executable CozoScript
-    pub fn build(self) -> String;
+    /// Get snippets by source location
+    pub fn get_by_location(&self, file: &Path, span: (usize, usize)) -> Option<CodeSnippet>;
 }
 ```
 

@@ -1,34 +1,39 @@
 # ploke-db
 
-High-level query interface for retrieving contextual code snippets from ploke's code graph database.
+High-performance query interface for retrieving code context from ploke's hybrid vector-graph database.
 
 ## Primary Responsibility
 
-**Code Snippet Retrieval**:
-- Locate and return relevant, executable code examples
-- Preserve full context including:
-  - Surrounding module hierarchy
-  - Type definitions
-  - Documentation
-  - Usage patterns
-- Support both exact matches and fuzzy/contextual searches
+**Text-Based Context Retrieval**:
+- Locate and return relevant code snippets as text
+- Preserve surrounding context including:
+  - Source file locations (file + span)
+  - Documentation and comments
+  - Type signatures (as text)
+  - Usage examples
 
-## Supporting Responsibilities
+## Key Characteristics
 
-1. **Query Construction**:
-   - Builder pattern for constructing complex graph queries
-   - Type-safe query building with compile-time validation
-   - Support for both exact and semantic searches
+1. **Text-First Interface**:
+   - All results returned as strings with location metadata
+   - No AST reconstruction required
+   - Optimized for LLM consumption
 
-2. **Context Enrichment**:
-   - Augment snippets with related type definitions
-   - Include documentation and usage examples
-   - Show calling patterns and trait implementations
+2. **Hybrid Search**:
+   - Combined exact graph queries and vector similarity
+   - Configurable result ranking
+   - Location-aware filtering
 
-3. **Database Abstraction**:
-   - Unified interface over CozoDB's hybrid vector-graph storage
-   - Schema versioning and migration support
-   - Connection pooling and performance optimization
+3. **Change Tracking Support**:
+   - Query by source spans for change detection
+   - Incremental update capabilities
+   - Version-aware result filtering
+
+## Performance Considerations
+
+- Optimized for bulk text retrieval
+- Efficient location-based queries
+- Caching of common snippet patterns
 
 ## Architecture Position
 
