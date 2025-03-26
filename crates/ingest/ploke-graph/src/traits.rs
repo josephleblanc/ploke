@@ -4,6 +4,7 @@ use cozo::DataValue;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::FunctionNode;
 use syn_parser::parser::types::VisibilityKind;
+use itertools::Itertools; // For join() functionality
 
 /// Types that can be converted to/from CozoDB representation
 pub trait IntoCozo {
@@ -24,8 +25,8 @@ pub trait IntoCozo {
 
         format!(
             "?[{}] <- [[{}]] :put {}",
-            columns.join(", "),
-            values.join(", "),
+            columns.iter().join(", "),
+            values.iter().join(", "),
             Self::cozo_relation()
         )
     }
