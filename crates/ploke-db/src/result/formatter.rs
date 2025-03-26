@@ -8,12 +8,17 @@ pub struct ResultFormatter;
 impl ResultFormatter {
     /// Format as plain text with locations
     pub fn plain_text(snippets: &[CodeSnippet]) -> String {
-        snippets.iter()
-            .map(|s| format!("{}:{}:{}\n{}\n---\n", 
-                s.file_path.display(),
-                s.span.0,
-                s.span.1,
-                s.text))
+        snippets
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}:{}:{}\n{}\n---\n",
+                    s.file_path.display(),
+                    s.span.0,
+                    s.span.1,
+                    s.text
+                )
+            })
             .collect()
     }
 
@@ -24,13 +29,17 @@ impl ResultFormatter {
 
     /// Format as markdown for documentation
     pub fn markdown(snippets: &[CodeSnippet]) -> String {
-        snippets.iter()
+        let unnamed = "unnamed".to_string();
+        snippets
+            .iter()
             .map(|s| {
-                let name = s.metadata.iter()
+                let name = s
+                    .metadata
+                    .iter()
                     .find(|(k, _)| k == "name")
                     .map(|(_, v)| v)
-                    .unwrap_or(&"unnamed".to_string());
-                
+                    .unwrap_or(&unnamed);
+
                 format!(
                     "### `{}`\n\n```rust\n{}\n```\n\n*Location*: `{}` ({}-{})\n",
                     name,

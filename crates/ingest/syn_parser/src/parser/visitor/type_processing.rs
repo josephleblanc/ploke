@@ -2,8 +2,8 @@ use super::state::VisitorState;
 use crate::parser::types::*;
 use quote::ToTokens;
 use syn::{
-    AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType, Type, TypePath,
-    TypeReference,
+    spanned::Spanned, AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType,
+    Type, TypePath, TypeReference,
 };
 
 // Get or create a type ID
@@ -23,7 +23,7 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
 
     // Create a new type ID
     let id = state.next_type_id();
-    
+
     // Insert the new type ID into the map
     state.type_map.insert(type_str.clone(), id);
 
@@ -32,6 +32,7 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
         id,
         kind: type_kind,
         related_types,
+        span: (ty.span().byte_range().start, ty.span().byte_range().end),
     });
 
     id

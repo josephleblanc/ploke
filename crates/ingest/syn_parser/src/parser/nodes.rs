@@ -61,6 +61,7 @@ pub struct StructNode {
 pub struct EnumNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub variants: Vec<VariantNode>,
     pub generic_params: Vec<GenericParamNode>,
@@ -120,6 +121,7 @@ pub struct UnionNode {
 pub struct ImplNode {
     pub id: NodeId,
     pub self_type: TypeId,
+    pub span: (usize, usize), // Byte start/end offsets
     pub trait_type: Option<TypeId>,
     pub methods: Vec<FunctionNode>,
     pub generic_params: Vec<GenericParamNode>,
@@ -132,6 +134,7 @@ pub struct ImplNode {
 pub struct TraitNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub methods: Vec<FunctionNode>,
     pub generic_params: Vec<GenericParamNode>,
@@ -145,6 +148,7 @@ pub struct TraitNode {
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
@@ -172,6 +176,7 @@ pub struct ValueNode {
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
     pub rules: Vec<MacroRuleNode>,
@@ -213,6 +218,7 @@ pub enum ValueKind {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImportNode {
     pub id: NodeId,
+    pub span: (usize, usize), // Byte start/end offsets
     pub path: Vec<String>,
     pub kind: ImportKind,
 }
@@ -226,6 +232,7 @@ pub enum ImportKind {
 // Represent an attribute
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Attribute {
+    pub span: (usize, usize),  // Byte start/end offsets
     pub name: String,          // e.g., "derive", "cfg", "serde"
     pub args: Vec<String>,     // Arguments or parameters of the attribute
     pub value: Option<String>, // Optional value (e.g., for `#[attr = "value"]`)

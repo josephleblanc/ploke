@@ -13,7 +13,7 @@ exclude = ["ai_workflow"]
 # Parsing and code generation
 syn = { version = "2.0.100", features = ["full", "visit"] }
 quote = "1"
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
