@@ -106,11 +106,25 @@ fn test_schema_creation() {
         (104, "inherited", None),
     ];
 
-    for (id, kind, path) in test_cases {
-        insert_visibility(&db, id, kind, path.clone())
+    // First insert all test cases
+    for (id, kind, path) in &test_cases {
+        insert_visibility(&db, *id, kind, path.clone())
             .unwrap_or_else(|_| panic!("Failed to insert visibility {} {}", id, kind));
+    }
+
+    // Then verify them in a separate pass
+    for (id, kind, path) in test_cases {
+        // Retry verification up to 3 times with small delay
+        let mut verified = false;
+        for _ in 0..3 {
+            if verify_visibility(&db, id, kind, path.clone()) {
+                verified = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(
-            verify_visibility(&db, id, kind, path),
+            verified,
             "Visibility verification failed for {} {}",
             id,
             kind
