@@ -1,10 +1,12 @@
 //! Source code location tracking and span management
 
-mod tracker;
 mod locator;
+mod tracker;
 
-pub use tracker::SpanTracker;
+use std::path::PathBuf;
+
 pub use locator::CodeLocation;
+pub use tracker::SpanTracker;
 
 /// Represents a span change between versions
 #[derive(Debug)]

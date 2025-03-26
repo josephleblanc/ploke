@@ -1,10 +1,12 @@
 //! Code snippet result type
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
 use crate::error::Error;
 
 /// A retrieved code snippet with context
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSnippet {
     /// The actual code text
     pub text: String,

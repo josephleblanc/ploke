@@ -8,6 +8,7 @@ cozo = { workspace = true }
 ploke-graph = { path = "../ingest/ploke-graph" }
 syn_parser = { path = "../ingest/syn_parser" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = "1.0"
 
 [dev-dependencies]

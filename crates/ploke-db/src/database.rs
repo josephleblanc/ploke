@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::result::QueryResult;
+use crate::QueryBuilder;
+use crate::QueryResult;
 use cozo::Db;
 use cozo::MemStorage;
 
