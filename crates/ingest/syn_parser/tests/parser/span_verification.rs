@@ -1,7 +1,7 @@
+use crate::common::{read_byte_range, verify_span};
 use std::path::Path;
 use syn::{parse_file, Item};
 use syn_parser::parser::utils::ExtractSpan;
-use crate::common::{read_byte_range, verify_span};
 
 #[test]
 fn test_function_spans() {
@@ -18,21 +18,23 @@ fn test_function_spans() {
             assert!(
                 span_text.contains(&format!("fn {}", ident)),
                 "Function span for '{}' should contain 'fn {}' in:\n{}",
-                ident, ident, span_text
+                ident,
+                ident,
+                span_text
             );
 
             // For specific functions, verify exact spans
             match ident.as_str() {
                 "regular_function" => {
                     verify_span(
-                        item_fn,
+                        &item_fn,
                         path,
                         "pub fn regular_function() {\n    println!(\"Regular function\");\n}",
                     );
                 }
                 "function_with_params" => {
                     verify_span(
-                        item_fn,
+                        &item_fn,
                         path,
                         "pub fn function_with_params(x: i32, y: i32) -> i32 {\n    x + y\n}",
                     );
@@ -58,21 +60,23 @@ fn test_enum_spans() {
             assert!(
                 span_text.contains(&format!("enum {}", ident)),
                 "Enum span for '{}' should contain 'enum {}' in:\n{}",
-                ident, ident, span_text
+                ident,
+                ident,
+                span_text
             );
 
             // For specific enums, verify exact spans
             match ident.as_str() {
                 "SampleEnum" => {
                     verify_span(
-                        item_enum,
+                        &item_enum,
                         path,
                         "pub enum SampleEnum {\n    Variant1,\n    Variant2 { value: i32 },\n    Variant3,\n}",
                     );
                 }
                 "EnumWithData" => {
                     verify_span(
-                        item_enum,
+                        &item_enum,
                         path,
                         "pub enum EnumWithData {\n    Variant1(i32),\n    Variant2(String),\n}",
                     );
