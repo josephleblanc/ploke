@@ -24,9 +24,9 @@ fn verify_visibility(
                 r#"
                 ?[count(*)] := 
                     *visibility[node_id, kind, path],
-                    node_id == $node_id,
-                    kind == $kind,
-                    path == $path
+                    node_id = $node_id,
+                    kind = $kind,
+                    path = $path
                 "#,
                 params,
                 ScriptMutability::Immutable,
@@ -41,9 +41,9 @@ fn verify_visibility(
                 r#"
                 ?[count(*)] := 
                     *visibility[node_id, kind, path],
-                    node_id == $node_id,
-                    kind == $kind,
-                    path == null
+                    node_id = $node_id,
+                    kind = $kind,
+                    path = null
                 "#,
                 params,
                 ScriptMutability::Immutable,
