@@ -43,9 +43,9 @@ impl SpanTracker {
     /// Get changed spans between versions
     pub fn get_changed_spans(
         &self,
-        file: &PathBuf,
-        old_hash: &str,
-        new_hash: &str
+        _file: &PathBuf,
+        _old_hash: &str,
+        _new_hash: &str
     ) -> Option<Vec<(usize, usize)>> {
         // TODO: Implement actual diff logic
         None

@@ -1,7 +1,6 @@
 //! Formats query results for different output types
 
 use crate::result::CodeSnippet;
-use crate::span::CodeLocation;
 
 /// Formats query results for different use cases
 pub struct ResultFormatter;
@@ -26,14 +25,21 @@ impl ResultFormatter {
     /// Format as markdown for documentation
     pub fn markdown(snippets: &[CodeSnippet]) -> String {
         snippets.iter()
-            .map(|s| format!(
-                "### `{}`\n\n```rust\n{}\n```\n\n*Location*: `{}` ({}-{})\n",
-                s.metadata.get("name").unwrap_or(&"unnamed".to_string()),
-                s.text,
-                s.file_path.display(),
-                s.span.0,
-                s.span.1
-            ))
+            .map(|s| {
+                let name = s.metadata.iter()
+                    .find(|(k, _)| k == "name")
+                    .map(|(_, v)| v)
+                    .unwrap_or(&"unnamed".to_string());
+                
+                format!(
+                    "### `{}`\n\n```rust\n{}\n```\n\n*Location*: `{}` ({}-{})\n",
+                    name,
+                    s.text,
+                    s.file_path.display(),
+                    s.span.0,
+                    s.span.1
+                )
+            })
             .collect()
     }
 }

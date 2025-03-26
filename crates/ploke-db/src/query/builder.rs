@@ -1,6 +1,5 @@
 //! Query builder implementation
 
-use super::{filters, joins};
 use crate::error::Error;
 use crate::QueryResult;
 use std::collections::BTreeMap;

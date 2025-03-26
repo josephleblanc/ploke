@@ -22,7 +22,7 @@ pub struct CodeSnippet {
 
 impl CodeSnippet {
     /// Create new snippet from database row
-    pub fn from_db_row(row: &[cozo::DataValue]) -> Result<Self, Error> {
+    pub fn from_db_row(_row: &[cozo::DataValue]) -> Result<Self, Error> {
         // TODO: Implement actual conversion
         Ok(Self {
             text: String::new(),
