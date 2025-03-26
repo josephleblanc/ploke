@@ -148,12 +148,14 @@ fn test_schema_creation() {
             
             if !result.rows.is_empty() {
                 let actual_kind = result.rows[0][1].get_str().unwrap_or("");
-                let actual_path = if result.rows[0][2].is_null() {
-                    None
-                } else {
-                    Some(result.rows[0][2].get_list().unwrap().iter()
-                        .map(|v| v.get_str().unwrap_or(""))
-                        .collect::<Vec<_>>())
+                let actual_path = match &result.rows[0][2] {
+                    DataValue::Null => None,
+                    DataValue::List(list) => {
+                        Some(list.iter()
+                            .map(|v| v.get_str().unwrap_or(""))
+                            .collect::<Vec<_>>())
+                    }
+                    _ => None,
                 };
                 
                 panic!(
