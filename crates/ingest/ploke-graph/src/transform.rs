@@ -64,11 +64,15 @@ fn transform_single_trait(
     db: &Db<MemStorage>,
     trait_node: &syn_parser::parser::nodes::TraitNode,
 ) -> Result<(), cozo::Error> {
-    let (vis_kind, vis_path) = match trait_node.visibility {
-        VisibilityKind::Public => ("public".into(), None),
+    let (vis_kind, vis_path) = match &trait_node.visibility {
+        VisibilityKind::Public => (DataValue::from("public".to_string()), None),
         VisibilityKind::Crate => ("crate".into(), None),
         VisibilityKind::Restricted(path) => {
-            let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+            let list = DataValue::List(
+                path.iter()
+                    .map(|p_string| DataValue::from(p_string.to_string()))
+                    .collect(),
+            );
             ("restricted".into(), Some(list))
         }
         VisibilityKind::Inherited => ("inherited".into(), None),
@@ -83,7 +87,10 @@ fn transform_single_trait(
     // Insert into traits table
     let trait_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(trait_node.id as i64)),
-        ("name".to_string(), DataValue::from(trait_node.name.as_str())),
+        (
+            "name".to_string(),
+            DataValue::from(trait_node.name.as_str()),
+        ),
         ("docstring".to_string(), docstring),
     ]);
 
@@ -96,7 +103,7 @@ fn transform_single_trait(
     // Insert into visibility table
     let vis_params = BTreeMap::from([
         ("node_id".to_string(), DataValue::from(trait_node.id as i64)),
-        ("kind".to_string(), DataValue::from(vis_kind)),
+        ("kind".to_string(), vis_kind),
         ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
     ]);
 
@@ -166,11 +173,15 @@ fn transform_impls(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 /// Transforms module nodes into the modules relation
 fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for module in &code_graph.modules {
-        let (vis_kind, vis_path) = match module.visibility {
-            VisibilityKind::Public => ("public".into(), None),
+        let (vis_kind, vis_path) = match &module.visibility {
+            VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
             VisibilityKind::Restricted(path) => {
-                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                let list = DataValue::List(
+                    path.iter()
+                        .map(|p_string| DataValue::from(p_string.to_string()))
+                        .collect(),
+                );
                 ("restricted".into(), Some(list))
             }
             VisibilityKind::Inherited => ("inherited".into(), None),
@@ -198,7 +209,7 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
         // Insert into visibility table
         let vis_params = BTreeMap::from([
             ("node_id".to_string(), DataValue::from(module.id as i64)),
-            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
 
@@ -263,11 +274,15 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 /// Transforms value nodes into the values relation
 fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for value in &code_graph.values {
-        let (vis_kind, vis_path) = match value.visibility {
-            VisibilityKind::Public => ("public".into(), None),
+        let (vis_kind, vis_path) = match &value.visibility {
+            VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
             VisibilityKind::Restricted(path) => {
-                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                let list = DataValue::List(
+                    path.iter()
+                        .map(|p_string| DataValue::from(p_string.to_string()))
+                        .collect(),
+                );
                 ("restricted".into(), Some(list))
             }
             VisibilityKind::Inherited => ("inherited".into(), None),
@@ -315,7 +330,7 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
         // Insert into visibility table
         let vis_params = BTreeMap::from([
             ("node_id".to_string(), DataValue::from(value.id as i64)),
-            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
 
@@ -538,11 +553,15 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 /// Transforms function nodes into the functions relation
 fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for function in &code_graph.functions {
-        let (vis_kind, vis_path) = match function.visibility {
-            VisibilityKind::Public => ("public".into(), None),
+        let (vis_kind, vis_path) = match &function.visibility {
+            VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
             VisibilityKind::Restricted(path) => {
-                let list = DataValue::List(path.into_iter().map(DataValue::from).collect());
+                let list = DataValue::List(
+                    path.iter()
+                        .map(|p_string| DataValue::from(p_string.to_string()))
+                        .collect(),
+                );
                 ("restricted".into(), Some(list))
             }
             VisibilityKind::Inherited => ("inherited".into(), None),
@@ -583,7 +602,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
         // Insert into visibility table
         let vis_params = BTreeMap::from([
             ("node_id".to_string(), DataValue::from(function.id as i64)),
-            ("kind".to_string(), DataValue::from(vis_kind)),
+            ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
 
