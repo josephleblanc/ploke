@@ -13,6 +13,15 @@ pub struct QueryResult {
     pub headers: Vec<String>,
 }
 
+impl QueryResult {
+    /// Convert query results into code snippets
+    pub fn into_snippets(self) -> Result<Vec<CodeSnippet>, crate::error::Error> {
+        self.rows.iter()
+            .map(|row| CodeSnippet::from_db_row(row))
+            .collect()
+    }
+}
+
 impl From<cozo::NamedRows> for QueryResult {
     fn from(named_rows: cozo::NamedRows) -> Self {
         Self {
