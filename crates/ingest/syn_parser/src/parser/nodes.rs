@@ -96,6 +96,7 @@ pub struct VariantNode {
 pub struct TypeAliasNode {
     pub id: NodeId,
     pub name: String,
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub type_id: TypeId,
     pub generic_params: Vec<GenericParamNode>,
@@ -148,7 +149,9 @@ pub struct TraitNode {
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
+    // This is a little tricky given how our visitor starts traversing the tree.
+    // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
+    // pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
@@ -176,7 +179,6 @@ pub struct ValueNode {
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
     pub rules: Vec<MacroRuleNode>,

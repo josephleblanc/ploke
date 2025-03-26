@@ -1,5 +1,5 @@
 use quote::ToTokens;
-use syn::parse::Parser;
+use syn::{parse::Parser, spanned::Spanned};
 
 use crate::parser::nodes::Attribute;
 

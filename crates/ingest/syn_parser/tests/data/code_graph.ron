@@ -3,6 +3,7 @@
         (
             id: 37,
             name: "sample_function",
+            span: (1681, 2000),
             visibility: Public,
             parameters: [
                 (
@@ -40,6 +41,7 @@
         (
             id: 55,
             name: "public_function_in_private_module",
+            span: (2372, 2483),
             visibility: Public,
             parameters: [],
             return_type: Some(24),
@@ -51,6 +53,7 @@
         (
             id: 57,
             name: "private_function",
+            span: (2513, 2560),
             visibility: Restricted([
                 "super",
             ]),
@@ -66,6 +69,7 @@
         Struct((
             id: 1,
             name: "SampleStruct",
+            span: (162, 322),
             visibility: Public,
             fields: [
                 (
@@ -88,6 +92,7 @@
             ],
             attributes: [
                 (
+                    span: (257, 273),
                     name: "derive",
                     args: [
                         "Debug",
@@ -100,6 +105,7 @@
         Struct((
             id: 35,
             name: "NestedStruct",
+            span: (1587, 1679),
             visibility: Public,
             fields: [
                 (
@@ -117,6 +123,7 @@
         Enum((
             id: 41,
             name: "SampleEnum",
+            span: (2002, 2121),
             visibility: Public,
             variants: [
                 (
@@ -156,6 +163,7 @@
             ],
             attributes: [
                 (
+                    span: (2047, 2063),
                     name: "derive",
                     args: [
                         "Debug",
@@ -168,6 +176,7 @@
         Struct((
             id: 84,
             name: "ModuleStruct",
+            span: (3473, 3576),
             visibility: Public,
             fields: [
                 (
@@ -185,6 +194,7 @@
         Enum((
             id: 92,
             name: "ModuleEnum",
+            span: (3806, 3904),
             visibility: Public,
             variants: [
                 (
@@ -209,6 +219,7 @@
         Struct((
             id: 95,
             name: "TupleStruct",
+            span: (3924, 3968),
             visibility: Public,
             fields: [
                 (
@@ -233,6 +244,7 @@
         Struct((
             id: 98,
             name: "UnitStruct",
+            span: (3985, 4007),
             visibility: Public,
             fields: [],
             generic_params: [],
@@ -289,6 +301,7 @@
             generic_params: [],
             attributes: [
                 (
+                    span: (4191, 4201),
                     name: "repr",
                     args: [
                         "C",
@@ -677,11 +690,13 @@
         (
             id: 17,
             self_type: 9,
+            span: (817, 1011),
             trait_type: Some(10),
             methods: [
                 (
                     id: 18,
                     name: "trait_method",
+                    span: (937, 1009),
                     visibility: Restricted([
                         "super",
                     ]),
@@ -722,11 +737,13 @@
         (
             id: 22,
             self_type: 9,
+            span: (1013, 1221),
             trait_type: Some(12),
             methods: [
                 (
                     id: 23,
                     name: "another_method",
+                    span: (1139, 1219),
                     visibility: Restricted([
                         "super",
                     ]),
@@ -767,6 +784,7 @@
         (
             id: 27,
             self_type: 9,
+            span: (1274, 1317),
             trait_type: Some(14),
             methods: [],
             generic_params: [
@@ -783,11 +801,13 @@
         (
             id: 29,
             self_type: 9,
+            span: (1361, 1585),
             trait_type: None,
             methods: [
                 (
                     id: 30,
                     name: "new",
+                    span: (1391, 1485),
                     visibility: Public,
                     parameters: [
                         (
@@ -807,6 +827,7 @@
                 (
                     id: 32,
                     name: "use_field",
+                    span: (1491, 1583),
                     visibility: Public,
                     parameters: [
                         (
@@ -838,11 +859,13 @@
         (
             id: 51,
             self_type: 20,
+            span: (2255, 2366),
             trait_type: None,
             methods: [
                 (
                     id: 52,
                     name: "private_method",
+                    span: (2284, 2360),
                     visibility: Restricted([
                         "super",
                     ]),
@@ -867,11 +890,13 @@
         (
             id: 87,
             self_type: 29,
+            span: (3582, 3800),
             trait_type: Some(14),
             methods: [
                 (
                     id: 88,
                     name: "default_method",
+                    span: (3680, 3794),
                     visibility: Restricted([
                         "super",
                     ]),
@@ -898,11 +923,13 @@
         (
             id: 4,
             name: "SampleTrait",
+            span: (324, 469),
             visibility: Public,
             methods: [
                 (
                     id: 5,
                     name: "trait_method",
+                    span: (405, 467),
                     visibility: Public,
                     parameters: [
                         (
@@ -944,11 +971,13 @@
         (
             id: 9,
             name: "AnotherTrait",
+            span: (471, 641),
             visibility: Public,
             methods: [
                 (
                     id: 10,
                     name: "another_method",
+                    span: (563, 639),
                     visibility: Public,
                     parameters: [
                         (
@@ -990,11 +1019,13 @@
         (
             id: 14,
             name: "DefaultTrait",
+            span: (643, 815),
             visibility: Public,
             methods: [
                 (
                     id: 15,
                     name: "default_method",
+                    span: (726, 813),
                     visibility: Public,
                     parameters: [
                         (
@@ -1020,6 +1051,7 @@
         (
             id: 72,
             name: "PrivateTrait",
+            span: (2903, 2970),
             visibility: Restricted([
                 "super",
             ]),
@@ -1027,6 +1059,7 @@
                 (
                     id: 73,
                     name: "private_method",
+                    span: (2932, 2964),
                     visibility: Public,
                     parameters: [
                         (
@@ -1505,6 +1538,7 @@
             ],
             attributes: [
                 (
+                    span: (4558, 4573),
                     name: "macro_export",
                     args: [
                         "macro_export",

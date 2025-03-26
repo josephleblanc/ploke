@@ -32,7 +32,7 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
         id,
         kind: type_kind,
         related_types,
-        span: (ty.span().byte_range().start, ty.span().byte_range().end),
+        // span: (ty.span().byte_range().start, ty.span().byte_range().end),
     });
 
     id

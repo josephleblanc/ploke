@@ -5,8 +5,10 @@ use super::type_processing::get_or_create_type;
 use crate::parser::nodes::*;
 use crate::parser::relations::*;
 use crate::parser::types::*;
+use crate::parser::ExtractSpan;
 
 use quote::ToTokens;
+use syn::spanned::Spanned;
 use syn::TypePath;
 use syn::{
     visit::{self, Visit},
@@ -106,10 +108,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let fn_id = self.state.next_node_id();
         let fn_name = func.sig.ident.to_string();
-        let span = (
-            func.span().start().byte,
-            func.span().end().byte,
-        );
+        let byte_range = func.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
 
         // Process function parameters
         let mut parameters = Vec::new();
@@ -172,10 +172,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_id = self.state.next_node_id();
         let struct_name = item_struct.ident.to_string();
-        let span = (
-            item_struct.span().start().byte,
-            item_struct.span().end().byte,
-        );
+        let byte_range = item_struct.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
 
         // Process fields
         let mut fields = Vec::new();
@@ -217,6 +215,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .push(TypeDefNode::Struct(StructNode {
                     id: struct_id,
                     name: struct_name,
+                    span,
                     visibility: self.state.convert_visibility(&item_struct.vis),
                     fields,
                     generic_params,
@@ -251,6 +250,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .push(TypeDefNode::TypeAlias(TypeAliasNode {
                     id: type_alias_id,
                     name: type_alias_name,
+                    span: item_type.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&item_type.vis),
                     type_id,
                     generic_params,
@@ -409,6 +409,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .push(TypeDefNode::Enum(EnumNode {
                     id: enum_id,
                     name: enum_name,
+                    span: item_enum.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&item_enum.vis),
                     variants,
                     generic_params,
@@ -518,6 +519,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let method_node = FunctionNode {
                     id: method_node_id,
                     name: method_name,
+                    span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&method.vis),
                     parameters,
                     return_type,
@@ -536,6 +538,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Store impl info
         let impl_node = ImplNode {
             id: impl_id,
+            span: item_impl.extract_span_bytes(),
             self_type: self_type_id,
             trait_type: trait_type_id,
             methods,
@@ -673,6 +676,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let method_node = FunctionNode {
                     id: method_node_id,
                     name: method_name,
+                    span: method.extract_span_bytes(),
                     visibility: VisibilityKind::Public, // Trait methods are always public
                     parameters,
                     return_type,
@@ -709,6 +713,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let trait_node = TraitNode {
             id: trait_id,
             name: trait_name.clone(),
+            span: item_trait.extract_span_bytes(),
             visibility: self.state.convert_visibility(&item_trait.vis),
             methods,
             generic_params,
@@ -806,6 +811,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.modules.push(ModuleNode {
             id: module_id,
             name: module_name,
+            // This is a little tricky given how our visitor starts traversing the tree.
+            // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
+            // span: module.extract_span_bytes(),
             visibility,
             attributes: extract_attributes(&module.attrs),
             docstring: extract_docstring(&module.attrs),

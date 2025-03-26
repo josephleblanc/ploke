@@ -9,7 +9,6 @@ pub type TypeId = usize;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TypeNode {
     pub id: TypeId,
-    pub span: (usize, usize), // Byte start/end offsets
     pub kind: TypeKind,
     // Reference to related types (e.g., generic arguments)
     pub related_types: Vec<TypeId>,

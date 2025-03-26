@@ -25,6 +25,8 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         .push(crate::parser::nodes::ModuleNode {
             id: root_module_id,
             name: "root".to_string(),
+            // TODO: Consider whether implementing this even makes sense.
+            // span: ???
             visibility: crate::parser::types::VisibilityKind::Inherited,
             attributes: Vec::new(),
             docstring: None,
@@ -87,13 +89,13 @@ pub fn analyze_files_parallel(
     num_workers: usize,
 ) -> Vec<Result<CodeGraph, syn::Error>> {
     use rayon::prelude::*;
-    
+
     // Create a thread pool with the specified number of workers
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
         .build()
         .unwrap();
-    
+
     // Use the thread pool to process files in parallel
     pool.install(|| {
         file_paths

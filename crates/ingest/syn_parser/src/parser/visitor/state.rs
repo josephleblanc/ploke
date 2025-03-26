@@ -4,8 +4,8 @@ use crate::parser::types::*;
 use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -143,14 +143,14 @@ impl VisitorState {
                         let path = expr.to_token_stream().to_string();
                         // Clone the path to avoid borrowing issues
                         let path_clone = path.clone();
-                    
+
                         // First check if we already have this type
                         let existing_id = self.type_map.get(&path_clone).map(|entry| {
                             let id = *entry.value();
                             drop(entry); // Explicitly drop the reference to release the borrow
                             id
                         });
-                        
+
                         if let Some(id) = existing_id {
                             id
                         } else {
@@ -158,17 +158,18 @@ impl VisitorState {
                             let id = self.next_type_id();
                             // Insert the new type ID before processing the type
                             self.type_map.insert(path_clone, id);
-                            
+
                             // Process the type separately to avoid borrow conflicts
-                            let (type_kind, related_types) = super::type_processing::process_type(self, expr);
-                            
+                            let (type_kind, related_types) =
+                                super::type_processing::process_type(self, expr);
+
                             // Add the type to the graph
                             self.code_graph.type_graph.push(TypeNode {
                                 id,
                                 kind: type_kind,
                                 related_types,
                             });
-                            
+
                             id
                         }
                     });
