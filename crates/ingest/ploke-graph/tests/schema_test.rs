@@ -179,7 +179,7 @@ fn test_visibility_path_queries() {
             ?[node_id] := 
                 *visibility[node_id, "restricted", path],
                 path != null,
-                contains(path, "super")
+                is_in("super", path)
             "#,
             BTreeMap::new(),
             ScriptMutability::Immutable,

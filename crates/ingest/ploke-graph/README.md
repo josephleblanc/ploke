@@ -140,9 +140,17 @@ fn visibility_to_cozo(v: VisibilityKind) -> (String, Option<DataValue>) {
 // Example query using visibility:
 ?[id, name] := 
     *functions[id, name, _, _, _, _],
-    *visibility[id, $kind, $path],
-    $kind = "restricted",
-    contains($path, "my_module")
+    *visibility[id, "restricted", path],
+    is_in("my_module", path)
+
+// Key CozoScript list operations:
+// - is_in(element, list) - membership test
+// - first(list) - get first element
+// - last(list) - get last element  
+// - length(list) - get length
+// - slice(list, start, end) - get sublist
+// - chunks(list, n) - split into chunks
+// - windows(list, n) - sliding windows
 ```
 
 2. **Batch Operation Optimization**:
