@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::query::QueryResult;
+use crate::result::QueryResult;
 use cozo::Db;
 use cozo::MemStorage;
 
@@ -29,7 +29,7 @@ impl Database {
     }
 
     /// Create a new query builder
-    pub fn query(&self) -> query::QueryBuilder {
-        query::QueryBuilder::new(self.db.clone())
+    pub fn query(&self) -> QueryBuilder {
+        QueryBuilder::new(self.db.clone())
     }
 }

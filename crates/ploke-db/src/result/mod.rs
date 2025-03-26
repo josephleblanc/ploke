@@ -6,6 +6,9 @@ mod formatter;
 pub use snippet::CodeSnippet;
 pub use formatter::ResultFormatter;
 
+use crate::error::Error;
+use cozo::NamedRows;
+
 /// Result of a database query
 #[derive(Debug)]
 pub struct QueryResult {
@@ -15,15 +18,15 @@ pub struct QueryResult {
 
 impl QueryResult {
     /// Convert query results into code snippets
-    pub fn into_snippets(self) -> Result<Vec<CodeSnippet>, crate::error::Error> {
+    pub fn into_snippets(self) -> Result<Vec<CodeSnippet>, Error> {
         self.rows.iter()
             .map(|row| CodeSnippet::from_db_row(row))
             .collect()
     }
 }
 
-impl From<cozo::NamedRows> for QueryResult {
-    fn from(named_rows: cozo::NamedRows) -> Self {
+impl From<NamedRows> for QueryResult {
+    fn from(named_rows: NamedRows) -> Self {
         Self {
             rows: named_rows.rows,
             headers: named_rows.headers,

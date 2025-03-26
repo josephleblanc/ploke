@@ -13,3 +13,6 @@ pub use joins::Join;
 pub use semantic::SemanticQuery;
 pub use location::LocationQuery;
 pub use context::ContextQuery;
+
+/// Re-export for query results
+pub use crate::result::QueryResult;
