@@ -740,6 +740,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Extract module information
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
+        
+        #[cfg(feature = "module_path_tracking")]
+        self.state.current_module_path.push(module_name.clone());
 
         // Process inner items if available
         let mut submodules = Vec::new();
@@ -959,8 +962,26 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             }
         }
 
-        // Continue visiting inner items (this is redundant now, remove it)
-        // visit::visit_item_mod(self, module);
+        #[cfg(feature = "module_path_tracking")]
+        let module_path = self.state.current_module_path.clone();
+        
+        // Add module to graph
+        self.state.code_graph.modules.push(ModuleNode {
+            id: module_id,
+            name: module_name,
+            #[cfg(feature = "module_path_tracking")]
+            path: module_path,
+            visibility,
+            attributes: extract_attributes(&module.attrs),
+            docstring: extract_docstring(&module.attrs),
+            submodules,
+            items,
+            imports: Vec::new(),
+            exports: Vec::new(),
+        });
+
+        #[cfg(feature = "module_path_tracking")]
+        self.state.current_module_path.pop();
     }
 
     // Visit use statements

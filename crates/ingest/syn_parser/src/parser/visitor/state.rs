@@ -17,6 +17,8 @@ pub struct VisitorState {
     next_type_id: TypeId,
     // Use DashMap for thread-safe concurrent access
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
+    #[cfg(feature = "module_path_tracking")]
+    current_module_path: Vec<String>,
 }
 
 impl VisitorState {
@@ -37,6 +39,8 @@ impl VisitorState {
             next_node_id: 0,
             next_type_id: 0,
             type_map: Arc::new(DashMap::new()),
+            #[cfg(feature = "module_path_tracking")]
+            current_module_path: Vec::new(),
         }
     }
 

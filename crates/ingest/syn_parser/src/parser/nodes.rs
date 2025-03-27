@@ -149,9 +149,8 @@ pub struct TraitNode {
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
-    // This is a little tricky given how our visitor starts traversing the tree.
-    // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
-    // pub span: (usize, usize), // Byte start/end offsets
+    #[cfg(feature = "module_path_tracking")]
+    pub path: Vec<String>,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
