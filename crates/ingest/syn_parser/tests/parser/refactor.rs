@@ -1,6 +1,6 @@
 #![cfg(feature = "module_path_tracking")]
 use crate::common::parse_fixture;
-use syn_parser::CodeGraph;
+use syn_parser::{parser::types::VisibilityKind, CodeGraph};
 
 #[test]
 fn test_module_path_tracking_basic() {
@@ -28,10 +28,22 @@ fn test_module_path_serialization() {
 }
 
 #[test]
+#[cfg(not(feature = "module_path_tracking"))]
 fn test_module_visibility() {
     let graph = parse_fixture("modules.rs");
     let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
     assert_eq!(outer.visibility, VisibilityKind::Public);
+}
+
+#[test]
+#[cfg(feature = "module_path_tracking")]
+fn test_module_visibility() {
+    let graph = parse_fixture("modules.rs");
+    let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
+    assert_eq!(
+        outer.visibility,
+        VisibilityKind::Restricted(vec!["super".to_string()])
+    );
 }
 
 #[test]
