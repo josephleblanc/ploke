@@ -4,7 +4,7 @@ use syn_parser::CodeGraph;
 
 #[test]
 fn test_module_path_tracking_basic() {
-    let graph = parse_fixture("../tests/fixtures/modules.rs");
+    let graph = parse_fixture("modules.rs");
 
     let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
     assert_eq!(outer.path, vec!["crate", "outer"]);
