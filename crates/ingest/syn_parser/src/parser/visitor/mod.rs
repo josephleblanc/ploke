@@ -21,11 +21,12 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
 
     // Create the root module first
     let root_module_id = visitor_state.next_node_id();
+    #[cfg(feature = "module_path_tracking")]
+    visitor_state.current_module_path = vec!["crate".to_string()];
+
     visitor_state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
         name: "root".to_string(),
-        // TODO: Consider whether implementing this even makes sense.
-        // span: ???
         visibility: crate::parser::types::VisibilityKind::Inherited,
         attributes: Vec::new(),
         docstring: None,
@@ -34,7 +35,7 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         imports: Vec::new(),
         exports: Vec::new(),
         #[cfg(feature = "module_path_tracking")]
-        path: todo!(),
+        path: vec!["crate".to_string()],
     });
 
     let mut visitor = code_visitor::CodeVisitor::new(&mut visitor_state);
