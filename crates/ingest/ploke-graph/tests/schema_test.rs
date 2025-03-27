@@ -22,11 +22,11 @@ fn verify_visibility(
 
             db.run_script(
                 r#"
-                ?[count(*)] := 
+                ?[node_id] := 
                     *visibility[node_id, kind, path],
                     node_id = $node_id,
                     kind = $kind,
-                    path = $path
+                    path = $path,
                 "#,
                 params,
                 ScriptMutability::Immutable,
@@ -39,7 +39,7 @@ fn verify_visibility(
 
             db.run_script(
                 r#"
-                ?[count(*)] := 
+                ?[node_id] := 
                     *visibility[node_id, kind, path],
                     node_id = $node_id,
                     kind = $kind,
@@ -61,7 +61,7 @@ fn verify_visibility(
             }
         }
         Err(e) => {
-            eprintln!("Visibility query failed: {:?}", e);
+            eprintln!("Visibility query failed for verification: {:?}", e);
             false
         }
     }
@@ -85,7 +85,19 @@ fn test_schema_creation() {
         .expect("Failed to list relations");
 
     #[cfg(feature = "debug")]
-    println!("Relations: {:?}", result);
+    test_helpers::print_debug("Relations", &result);
+
+    #[allow(unused_variables)]
+    let result = db
+        .run_script(
+            "::columns functions",
+            BTreeMap::new(),
+            ScriptMutability::Immutable,
+        )
+        .expect("Failed to list columns");
+
+    #[cfg(feature = "debug")]
+    test_helpers::print_debug("Columns", &result);
 
     // Enhanced visibility relation check
     let result = db
@@ -135,29 +147,30 @@ fn test_schema_creation() {
         }
         if !verified {
             // Print debug info on failure
-            let result = db.run_script(
-                r#"
+            let result = db
+                .run_script(
+                    r#"
                 ?[id, kind, path] := *visibility[id, kind, path],
                     id = $node_id
                 "#,
-                BTreeMap::from([
-                    ("node_id".into(), DataValue::from(id))
-                ]),
-                ScriptMutability::Immutable,
-            ).expect("Failed to query visibility for debugging");
-            
+                    BTreeMap::from([("node_id".into(), DataValue::from(id))]),
+                    ScriptMutability::Immutable,
+                )
+                .expect("Failed to query visibility for debugging");
+            test_helpers::print_debug("query for visibility ids", &result);
+
             if !result.rows.is_empty() {
                 let actual_kind = result.rows[0][1].get_str().unwrap_or("");
                 let actual_path = match &result.rows[0][2] {
                     DataValue::Null => None,
-                    DataValue::List(list) => {
-                        Some(list.iter()
+                    DataValue::List(list) => Some(
+                        list.iter()
                             .map(|v| v.get_str().unwrap_or(""))
-                            .collect::<Vec<_>>())
-                    }
+                            .collect::<Vec<_>>(),
+                    ),
                     _ => None,
                 };
-                
+
                 panic!(
                     "Visibility verification failed for {} {}\n\
                     Expected: kind={}, path={:?}\n\
@@ -245,7 +258,11 @@ fn test_visibility_path_queries() {
         )
         .expect("Failed to query path membership");
 
-    assert_eq!(result.rows.len(), 1, "Expected one match for path membership");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "Expected one match for path membership"
+    );
     assert_eq!(
         result.rows[0][0].get_int(),
         Some(1),

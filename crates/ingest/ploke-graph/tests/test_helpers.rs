@@ -69,7 +69,7 @@ pub fn verify_visibility(
         _ => None,
     };
 
-    kind == expected_kind && path == expected_path.map(|p| p.iter().map(|s| *s).collect())
+    kind == expected_kind && path == expected_path.map(|p| p.to_vec())
 }
 
 #[cfg(feature = "debug")]
@@ -77,7 +77,9 @@ pub fn verify_visibility(
 pub fn print_debug(message: &str, result: &cozo::NamedRows) {
     println!("\n{:-<50}", "");
     println!("DEBUG: {}", message);
-    println!("{:?}", result);
+    for row in result.clone().into_iter() {
+        println!("{:?}", row);
+    }
     println!("{:-<50}\n", "");
 }
 

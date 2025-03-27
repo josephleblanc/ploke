@@ -422,7 +422,8 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         "?[id, kind, type_str] <- [[$id, $kind, $type_str]] :put types",
         type_params,
         cozo::ScriptMutability::Mutable,
-    )?;
+    )
+    .expect("failed to put sample type");
 
     // First insert visibility (must come before function)
     let visibility_params = BTreeMap::from([
@@ -434,7 +435,8 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
         visibility_params,
         cozo::ScriptMutability::Mutable,
-    )?;
+    )
+    .expect("failed to put sample visibility");
 
     // Insert a sample function
     let function_params = BTreeMap::from([
@@ -442,7 +444,6 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         ("name".to_string(), DataValue::from("sample_function")),
         ("visibility_kind".to_string(), DataValue::from("public")),
         ("visibility_path".to_string(), DataValue::Null),
-<<<<<<< SEARCH
         ("return_type_id".to_string(), DataValue::from(1)),
         (
             "docstring".to_string(),
@@ -452,10 +453,21 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
     ]);
 
     db.run_script(
-        "?[id, name, visibility_kind, visibility_path, return_type_id, docstring, body] <- [[$id, $name, $visibility_kind, $visibility_path, $return_type_id, $docstring, $body]] :put functions",
+        "?[id, name, visibility_kind, visibility_path, return_type_id, docstring, body] <- 
+            [[
+                $id, 
+                $name, 
+                $visibility_kind, 
+                $visibility_path, 
+                $return_type_id, 
+                $docstring, 
+                $body
+            ]] 
+            :put functions",
         function_params,
         cozo::ScriptMutability::Mutable,
-    )?;
+    )
+    .expect("failed to put sample visibility");
 
     // Insert a function parameter
     let param_params = BTreeMap::from([
