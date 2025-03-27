@@ -28,6 +28,13 @@ fn test_module_path_serialization() {
 }
 
 #[test]
+fn test_module_visibility() {
+    let graph = parse_fixture("modules.rs");
+    let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
+    assert_eq!(outer.visibility, VisibilityKind::Public);
+}
+
+#[test]
 fn test_root_module_path() {
     let graph = parse_fixture("modules.rs");
     let root = graph.modules.first().unwrap();
