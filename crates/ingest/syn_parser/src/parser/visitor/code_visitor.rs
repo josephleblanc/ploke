@@ -350,7 +350,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     }
                 }
                 syn::Fields::Unnamed(fields_unnamed) => {
-                    for (_, field) in fields_unnamed.unnamed.iter().enumerate() {
+                    for field in fields_unnamed.unnamed.iter() {
                         let field_id = self.state.next_node_id();
                         let type_id = get_or_create_type(self.state, &field.ty);
 
@@ -434,8 +434,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 qself: None,
                 path: path.clone(),
             });
-            let trait_id = get_or_create_type(self.state, &ty);
-            trait_id
+
+            // Return TraitId
+            get_or_create_type(self.state, &ty)
         });
 
         // Skip impl blocks for non-public traits
@@ -740,7 +741,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Extract module information
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
-        
+
         #[cfg(feature = "module_path_tracking")]
         self.state.current_module_path.push(module_name.clone());
 
@@ -802,7 +803,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         self.visit_item_static(item_static);
                     }
                     syn::Item::Macro(item_macro) => {
-                        self.visit_item_macro(&item_macro);
+                        self.visit_item_macro(item_macro);
                     }
                     // Add other item types as needed
                     _ => {}
@@ -816,8 +817,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             name: module_name.clone(),
             #[cfg(feature = "module_path_tracking")]
             path: self.state.current_module_path.clone(),
-            #[cfg(not(feature = "module_path_tracking"))]
-            path: (),
             // This is a little tricky given how our visitor starts traversing the tree.
             // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
             // span: module.extract_span_bytes(),
@@ -840,7 +839,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .code_graph
                             .functions
                             .iter()
-                            .find(|f| f.name == func.sig.ident.to_string())
+                            .find(|f| func.sig.ident == f.name)
                             .map(|f| f.id)
                     }
                     syn::Item::Struct(strct) => {
@@ -850,7 +849,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .defined_types
                             .iter()
                             .find(|def| match def {
-                                TypeDefNode::Struct(s) => s.name == strct.ident.to_string(),
+                                TypeDefNode::Struct(s) => strct.ident == s.name,
                                 _ => false,
                             })
                             .map(|def| match def {
@@ -865,7 +864,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .defined_types
                             .iter()
                             .find(|def| match def {
-                                TypeDefNode::Enum(e) => e.name == enm.ident.to_string(),
+                                TypeDefNode::Enum(e) => enm.ident == e.name,
                                 _ => false,
                             })
                             .map(|def| match def {
@@ -880,9 +879,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .defined_types
                             .iter()
                             .find(|def| match def {
-                                TypeDefNode::TypeAlias(ta) => {
-                                    ta.name == type_alias.ident.to_string()
-                                }
+                                TypeDefNode::TypeAlias(ta) => type_alias.ident == ta.name,
                                 _ => false,
                             })
                             .map(|def| match def {
@@ -897,7 +894,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .defined_types
                             .iter()
                             .find(|def| match def {
-                                TypeDefNode::Union(u) => u.name == union_def.ident.to_string(),
+                                TypeDefNode::Union(u) => union_def.ident == u.name,
                                 _ => false,
                             })
                             .map(|def| match def {
@@ -911,7 +908,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .code_graph
                             .traits
                             .iter()
-                            .find(|t| t.name == trt.ident.to_string())
+                            .find(|t| trt.ident == t.name)
                             .map(|t| t.id)
                     }
                     syn::Item::Const(item_const) => {
@@ -920,10 +917,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .code_graph
                             .values
                             .iter()
-                            .find(|v| {
-                                v.name == item_const.ident.to_string()
-                                    && v.kind == ValueKind::Constant
-                            })
+                            .find(|v| item_const.ident == v.name && v.kind == ValueKind::Constant)
                             .map(|v| v.id)
                     }
                     syn::Item::Static(item_static) => {
@@ -933,7 +927,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .values
                             .iter()
                             .find(|v| {
-                                v.name == item_static.ident.to_string()
+                                item_static.ident == v.name
                                     && matches!(v.kind, ValueKind::Static { .. })
                             })
                             .map(|v| v.id)
@@ -968,7 +962,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         #[cfg(feature = "module_path_tracking")]
         let module_path = self.state.current_module_path.clone();
-        
+
         // Add module to graph
         self.state.code_graph.modules.push(ModuleNode {
             id: module_id,
@@ -1179,7 +1173,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Very basic parsing of macro rules - in a real implementation,
         // you would want to use a more sophisticated approach
         // However, for our purposes this will do fine for the MVP
-        for (_i, rule) in tokens_str.split(";").enumerate() {
+        for rule in tokens_str.split(";") {
             if rule.trim().is_empty() {
                 continue;
             }

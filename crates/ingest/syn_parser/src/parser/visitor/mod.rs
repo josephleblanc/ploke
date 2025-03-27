@@ -33,6 +33,7 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         items: Vec::new(),
         imports: Vec::new(),
         exports: Vec::new(),
+        #[cfg(feature = "module_path_tracking")]
         path: todo!(),
     });
 

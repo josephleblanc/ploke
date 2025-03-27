@@ -25,9 +25,9 @@ Let me analyze this systematically:
  • The cfg flag will be module_path_tracking for phase 1            
  • Test commands we'll use:                                         
                                                                     
-    cargo test --features module_path_tracking                      
-    cargo test --no-default-features                                
-    cargo test --workspace # to ensure no breakage                  
+    cargo test -p syn_parser --features module_path_tracking                      
+    cargo test -p syn_parser --no-default-features                                
+    // not this one cargo test -p syn_parser --workspace # to ensure no breakage                  
                                                                     
 
  4 Files Needed: To start phase 1, I'll need:                       
