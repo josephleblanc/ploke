@@ -6,7 +6,7 @@ pub struct PublicStruct {
 }
 
 // Crate-visible struct
-crate struct CrateVisibleStruct {
+pub(crate) struct CrateVisibleStruct {
     pub field: String,
 }
 

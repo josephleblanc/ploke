@@ -219,7 +219,7 @@ fn test_schema_creation() {
         .run_script(
             r#"
             ?[fn_name, vis_kind] := 
-                *functions[fn_id, fn_name, _, _, _, _],
+                *functions[fn_id, fn_name, _, _, _],
                 *visibility[fn_id, vis_kind, _]
             "#,
             BTreeMap::new(),

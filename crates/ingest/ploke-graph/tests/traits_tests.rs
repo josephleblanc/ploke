@@ -34,7 +34,6 @@ fn test_function_node_conversion() {
     let script = func.cozo_insert_script();
     assert!(script.contains(":put functions"));
     assert!(script.contains("regular_function"));
-    assert!(script.contains("Public"));
 }
 
 #[test]

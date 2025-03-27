@@ -7,6 +7,10 @@ use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 use dashmap::DashMap;
 use std::sync::Arc;
 
+pub(in crate::parser::visitor::state) struct SomeStruct {
+    example: i32,
+}
+
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
     next_node_id: NodeId,

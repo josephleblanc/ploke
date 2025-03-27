@@ -29,7 +29,7 @@ fn test_schema_creation() {
     // Test a specific query to ensure data was inserted correctly
     let result = db
         .run_script(
-            "?[name] := *functions[_, name, _, _, _, _]",
+            "?[name] := *functions[_, name, _, _, _]",
             BTreeMap::new(),
             ScriptMutability::Immutable,
         )
