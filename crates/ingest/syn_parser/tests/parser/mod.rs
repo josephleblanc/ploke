@@ -5,6 +5,7 @@ pub mod functions_tests;
 pub mod impls_tests;
 pub mod macros_tests;
 pub mod modules_tests;
+pub mod refactor;
 pub mod span_verification;
 pub mod structs_tests;
 pub mod traits_tests;

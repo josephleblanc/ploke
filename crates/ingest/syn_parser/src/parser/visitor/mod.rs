@@ -12,6 +12,8 @@ use flume::{Receiver, Sender};
 use std::path::{Path, PathBuf};
 use std::thread;
 
+use super::nodes::ModuleNode;
+
 /// Analyze a single file and return the code graph
 pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     let file = syn::parse_file(&std::fs::read_to_string(file_path).unwrap())?;
@@ -19,22 +21,20 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
 
     // Create the root module first
     let root_module_id = visitor_state.next_node_id();
-    visitor_state
-        .code_graph
-        .modules
-        .push(crate::parser::nodes::ModuleNode {
-            id: root_module_id,
-            name: "root".to_string(),
-            // TODO: Consider whether implementing this even makes sense.
-            // span: ???
-            visibility: crate::parser::types::VisibilityKind::Inherited,
-            attributes: Vec::new(),
-            docstring: None,
-            submodules: Vec::new(),
-            items: Vec::new(),
-            imports: Vec::new(),
-            exports: Vec::new(),
-        });
+    visitor_state.code_graph.modules.push(ModuleNode {
+        id: root_module_id,
+        name: "root".to_string(),
+        // TODO: Consider whether implementing this even makes sense.
+        // span: ???
+        visibility: crate::parser::types::VisibilityKind::Inherited,
+        attributes: Vec::new(),
+        docstring: None,
+        submodules: Vec::new(),
+        items: Vec::new(),
+        imports: Vec::new(),
+        exports: Vec::new(),
+        path: todo!(),
+    });
 
     let mut visitor = code_visitor::CodeVisitor::new(&mut visitor_state);
     visitor.visit_file(&file);
