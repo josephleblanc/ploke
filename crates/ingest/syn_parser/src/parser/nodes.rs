@@ -152,7 +152,7 @@ pub struct ModuleNode {
     #[cfg(feature = "module_path_tracking")]
     pub path: Vec<String>,
     #[cfg(not(feature = "module_path_tracking"))]
-    path: (),
+    pub path: (),
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
