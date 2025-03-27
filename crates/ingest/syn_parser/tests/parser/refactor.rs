@@ -1,5 +1,5 @@
 #![cfg(feature = "module_path_tracking")]
-use crate::common::parse_fixture;
+use crate::common::*;
 use syn_parser::{parser::types::VisibilityKind, CodeGraph};
 
 #[test]
@@ -55,7 +55,7 @@ fn test_root_module_path() {
 
 #[test]
 fn test_non_module_items_ignored() {
-    let graph = parse_fixture("sample.rs");
+    let graph = parse_fixture("mixed_sample.rs");
 
     // Should have root + private_module + public_module
     assert_eq!(graph.modules.len(), 3);
@@ -71,7 +71,7 @@ fn test_non_module_items_ignored() {
 
 #[test]
 fn test_private_module_handling() {
-    let graph = parse_fixture("sample.rs");
+    let graph = parse_fixture("mixed_sample.rs");
 
     let private_mod = graph.modules.iter().find(|m| m.name == "private_module");
     assert!(
@@ -97,7 +97,7 @@ fn test_private_module_handling() {
 
 #[test]
 fn test_public_module_handling() {
-    let graph = parse_fixture("sample.rs");
+    let graph = parse_fixture("mixed_sample.rs");
 
     let public_mod = graph.modules.iter().find(|m| m.name == "public_module");
     assert!(

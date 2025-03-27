@@ -27,9 +27,6 @@ petgraph = { workspace = true }
 cozo = { workspace = true }
 uuid = { workspace = true }
 
-# Note: indradb-lib integration postponed due to rocksdb issues
-# indradb-lib = { version = "*", features = ["rocksdb-datastore"] }
-
 [dev-dependencies]
 # Add test-specific dependencies here
 
