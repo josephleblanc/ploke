@@ -814,6 +814,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.modules.push(ModuleNode {
             id: module_id,
             name: module_name.clone(),
+            #[cfg(feature = "module_path_tracking")]
+            path: self.state.current_module_path.clone(),
+            #[cfg(not(feature = "module_path_tracking"))]
+            path: (),
             // This is a little tricky given how our visitor starts traversing the tree.
             // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
             // span: module.extract_span_bytes(),
