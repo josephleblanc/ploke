@@ -86,7 +86,8 @@ fn test_analyzer() {
     assert_eq!(
         code_graph.modules.len(),
         3,
-        "Expected 3 modules (root, private_module, public_module)"
+        "Expected 3 modules (root, private_module, public_module)\n---> Found: {:?}",
+        code_graph.modules
     );
 
     // Check constants and statics
