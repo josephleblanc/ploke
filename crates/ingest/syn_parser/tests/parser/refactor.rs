@@ -56,13 +56,13 @@ fn test_root_module_path() {
 #[test]
 fn test_non_module_items_ignored() {
     let graph = parse_fixture("sample.rs");
-    
+
     // Should have root + private_module + public_module
     assert_eq!(graph.modules.len(), 3);
-    
+
     let root = graph.modules.iter().find(|m| m.name == "root").unwrap();
     assert_eq!(root.path, vec!["crate"]);
-    
+
     // Verify non-module items were still parsed
     assert!(!graph.functions.is_empty(), "No functions found");
     assert!(!graph.defined_types.is_empty(), "No types found");
@@ -71,25 +71,25 @@ fn test_non_module_items_ignored() {
 
 #[test]
 fn test_private_module_handling() {
-    let graph = parse_fixture("../syn_parser/tests/fixtures/sample.rs");
-    
+    let graph = parse_fixture("sample.rs");
+
     let private_mod = graph.modules.iter().find(|m| m.name == "private_module");
     assert!(
-        private_mod.is_some(), 
-        "private_module not found. Found modules: {:?}", 
+        private_mod.is_some(),
+        "private_module not found. Found modules: {:?}",
         graph.modules.iter().map(|m| &m.name).collect::<Vec<_>>()
     );
-    
+
     let private_mod = private_mod.unwrap();
     assert_eq!(
         private_mod.visibility,
         VisibilityKind::Restricted(vec!["super".to_string()]),
         "private_module has wrong visibility"
     );
-    
+
     #[cfg(feature = "module_path_tracking")]
     assert_eq!(
-        private_mod.path, 
+        private_mod.path,
         vec!["crate", "private_module"],
         "private_module has wrong path"
     );
@@ -97,22 +97,22 @@ fn test_private_module_handling() {
 
 #[test]
 fn test_public_module_handling() {
-    let graph = parse_fixture("../syn_parser/tests/fixtures/sample.rs");
-    
+    let graph = parse_fixture("sample.rs");
+
     let public_mod = graph.modules.iter().find(|m| m.name == "public_module");
     assert!(
         public_mod.is_some(),
         "public_module not found. Found modules: {:?}",
         graph.modules.iter().map(|m| &m.name).collect::<Vec<_>>()
     );
-    
+
     let public_mod = public_mod.unwrap();
     assert_eq!(
-        public_mod.visibility, 
+        public_mod.visibility,
         VisibilityKind::Public,
         "public_module should be public"
     );
-    
+
     #[cfg(feature = "module_path_tracking")]
     assert_eq!(
         public_mod.path,

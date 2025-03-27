@@ -51,7 +51,7 @@ impl VisitorState {
     - Visibility correctly tracked
     - Helper methods working
 
-- [ ] 3.2.2. Modify module visitor to update path
+- [x] 3.2.2. Modify module visitor to update path
   - **Code Changes**:
     ```rust
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
