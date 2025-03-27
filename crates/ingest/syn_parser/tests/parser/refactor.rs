@@ -55,7 +55,7 @@ fn test_root_module_path() {
 
 #[test]
 fn test_non_module_items_ignored() {
-    let graph = parse_fixture("../syn_parser/tests/fixtures/sample.rs");
+    let graph = parse_fixture("sample.rs");
     
     // Should have root + private_module + public_module
     assert_eq!(graph.modules.len(), 3);
