@@ -1,9 +1,10 @@
-use super::common::parse_fixture;
+use crate::tests::common::parse_fixture;
+use crate::parser::visitor::analyze_code;
 use crate::parser::graph::CodeGraph;
 
 #[test]
 fn test_module_path_tracking_basic() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("../tests/fixtures/modules.rs");
     
     #[cfg(feature = "module_path_tracking")]
     {
