@@ -157,6 +157,7 @@ fn test_schema_creation() {
                     ScriptMutability::Immutable,
                 )
                 .expect("Failed to query visibility for debugging");
+            #[cfg(feature = "debug")]
             test_helpers::print_debug("query for visibility ids", &result);
 
             if !result.rows.is_empty() {
