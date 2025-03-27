@@ -18,7 +18,7 @@ pub struct VisitorState {
     // Use DashMap for thread-safe concurrent access
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
     #[cfg(feature = "module_path_tracking")]
-    current_module_path: Vec<String>,
+    pub(crate) current_module_path: Vec<String>,
 }
 
 impl VisitorState {

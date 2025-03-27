@@ -813,15 +813,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add module to graph
         self.state.code_graph.modules.push(ModuleNode {
             id: module_id,
-            name: module_name,
+            name: module_name.clone(),
             // This is a little tricky given how our visitor starts traversing the tree.
             // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
             // span: module.extract_span_bytes(),
-            visibility,
+            visibility: visibility.clone(),
             attributes: extract_attributes(&module.attrs),
             docstring: extract_docstring(&module.attrs),
-            submodules,
-            items,
+            submodules: submodules.clone(),
+            items: items.clone(),
             imports: Vec::new(),
             exports: Vec::new(),
         });
