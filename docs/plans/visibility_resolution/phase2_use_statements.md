@@ -22,6 +22,7 @@ impl VisitorState {
 impl VisitorState {
     pub use_statements: () = ();
 }
+```
 
 ## 3. Task Breakdown
 
@@ -48,6 +49,7 @@ impl VisitorState {
         pub is_glob: bool,
         pub span: (usize, usize),
     }
+    ```
 
 - [ ] 3.2.2. Enhance visit_item_use in CodeVisitor
   - **Files to Modify**: `code_visitor.rs`
