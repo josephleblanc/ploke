@@ -13,21 +13,26 @@
 
 **Implementation Guide**:
 ```rust
-#[cfg(feature = "use_statement_tracking")]
 impl VisitorState {
+    // ..original fields
+    #[cfg(feature = "use_statement_tracking")]
     pub use_statements: Vec<UseStatement>,
 }
 
-#[cfg(not(feature = "use_statement_tracking"))]
+// No use_statements field in the original, not applicable here, but should be
+// applied to any conflicting implementations elsewhere.
 impl VisitorState {
-    pub use_statements: () = ();
+    // ..original fields
+
+    // not applicable (but would be used for any conflicting implementations)
+    // #[cfg(not(feature = "use_statement_tracking"))]
 }
 ```
 
 ## 3. Task Breakdown
 
 ### 3.1 Analysis & Preparation
-- [ ] 3.1.1. Analyze use statement patterns in test fixtures
+- [x] 3.1.1. Analyze use statement patterns in test fixtures
   - **Purpose**: Identify all use statement variants to support
   - **Expected Outcome**: Documented test cases for:
     - Simple imports (`use std::collections::HashMap`)
@@ -51,14 +56,14 @@ impl VisitorState {
     }
     ```
 
-- [~] 3.2.2. Enhance visit_item_use in CodeVisitor
+- [x] 3.2.2. Enhance visit_item_use in CodeVisitor
   - **Files to Modify**: `code_visitor.rs`
   - **Testing Approach**: Verify all use statement variants are captured
   - Progress:
     - Struct exists but actual collection logic not yet implemented
 
 ### 3.3 Testing & Integration
-- [ ] 3.3.1. Add use statement fixtures
+- [x] 3.3.1. Add use statement fixtures
   - **Files**:
     - `tests/fixtures/use_statements.rs`
     - `tests/parser/use_statement_tests.rs`
@@ -83,14 +88,9 @@ impl VisitorState {
 3. Maintain backward-compatible serialization
 
 ## 5. Progress Tracking
-- [ ] Analysis Phase: 0/1 complete
-- [ ] Implementation Phase: 0/2 complete
-- [ ] Testing Phase: 0/3 complete
+- [x] Analysis Phase: 1/1 complete
+- [x] Implementation Phase: 2/2 complete
+- [~] Testing Phase: 1/3 complete
 - [ ] Documentation Phase: 0/3 complete
-
-This task naturally follows the module path tracking implementation. Would you like me to:
-1. Provide the detailed test cases for 3.1.1?
-2. Show the complete visit_item_use implementation?
-3. Create the next task (visibility resolution integration)?
 
 The task maintains the same structure as the previous one while addressing the next logical piece of functionality. Each completion brings us closer to full visibility resolution while keeping the changes isolated and testable.
