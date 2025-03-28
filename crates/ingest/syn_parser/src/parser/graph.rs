@@ -1,3 +1,11 @@
+#[cfg(feature = "visibility_resolution")]
+use crate::parser::nodes::NodeId;
+#[cfg(feature = "visibility_resolution")]
+use crate::parser::nodes::OutOfScopeReason;
+#[cfg(feature = "visibility_resolution")]
+use crate::parser::nodes::VisibilityResult;
+#[cfg(feature = "visibility_resolution")]
+use crate::parser::types::VisibilityKind;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
     relations::Relation,
@@ -12,11 +20,11 @@ use super::nodes::UseStatement;
 #[cfg(feature = "visibility_resolution")]
 impl CodeGraph {
     /// Resolve whether an item is visible in the given module context
-    /// 
+    ///
     /// # Arguments
     /// * `item_id` - ID of the item to check
     /// * `context_module` - Current module path (e.g. ["crate", "module", "submodule"])
-    /// 
+    ///
     /// # Returns
     /// Detailed visibility information including:
     /// - Direct visibility
@@ -29,9 +37,11 @@ impl CodeGraph {
     ) -> VisibilityResult {
         let item = match self.find_node(item_id) {
             Some(item) => item,
-            None => return VisibilityResult::OutOfScope {
-                reason: OutOfScopeReason::Private,
-                allowed_scopes: None
+            None => {
+                return VisibilityResult::OutOfScope {
+                    reason: OutOfScopeReason::Private,
+                    allowed_scopes: None,
+                }
             }
         };
 
@@ -40,25 +50,25 @@ impl CodeGraph {
             VisibilityKind::Inherited if context_module.is_empty() => VisibilityResult::Direct,
             VisibilityKind::Crate => {
                 if self.same_crate(context_module) {
-                    VisibilityResult::Direct  
+                    VisibilityResult::Direct
                 } else {
                     VisibilityResult::OutOfScope {
                         reason: OutOfScopeReason::CrateRestricted,
-                        allowed_scopes: None
+                        allowed_scopes: None,
                     }
                 }
-            },
+            }
             VisibilityKind::Restricted(path) => {
                 if self.is_path_visible(path, context_module) {
                     VisibilityResult::Direct
                 } else {
                     VisibilityResult::OutOfScope {
                         reason: OutOfScopeReason::SuperRestricted,
-                        allowed_scopes: Some(path.to_vec())
+                        allowed_scopes: Some(path.to_vec()),
                     }
                 }
-            },
-            _ => self.check_use_statements(item_id, context_module)
+            }
+            _ => self.check_use_statements(item_id, context_module),
         }
     }
 
@@ -78,7 +88,7 @@ impl CodeGraph {
     }
 }
 
-// Main structure representing the entire code graph  
+// Main structure representing the entire code graph
 // Derive Send and Sync automatically since all component types implement them
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CodeGraph {

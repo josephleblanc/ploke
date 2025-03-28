@@ -22,6 +22,16 @@ pub struct FunctionNode {
 }
 //ANCHOR_END: ItemFn
 
+impl Visible for FunctionNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
 // Represents a parameter in a function
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParameterNode {
@@ -231,7 +241,7 @@ pub enum ImportKind {
 }
 
 /// Represents a Rust `use` statement's semantic meaning in the graph.
-/// 
+///
 /// # Current Implementation Notes
 /// - Tracks raw path segments exactly as written in source
 /// - Preserves original spans for error reporting
@@ -283,6 +293,7 @@ pub struct UseStatement {
 }
 
 /// Result of visibility resolution with detailed scoping information
+#[cfg(feature = "visibility_resolution")]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum VisibilityResult {
     /// Directly usable without imports
@@ -294,18 +305,25 @@ pub enum VisibilityResult {
         /// Why the item isn't accessible
         reason: OutOfScopeReason,
         /// For pub(in path) cases, shows allowed scopes  
-        allowed_scopes: Option<Vec<String>>
-    }
+        allowed_scopes: Option<Vec<String>>,
+    },
+}
+/// Trait for nodes that have visibility information                   
+#[cfg(feature = "visibility_resolution")]
+pub trait Visible {
+    fn visibility(&self) -> VisibilityKind;
+    fn name(&self) -> &str;
 }
 
 /// Detailed reasons for out-of-scope items
+#[cfg(feature = "visibility_resolution")]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum OutOfScopeReason {
     Private,
     CrateRestricted,
     SuperRestricted,
     WorkspaceHidden, // Reserved for future workspace support
-    CfgGated,       // Reserved for cfg() attributes
+    CfgGated,        // Reserved for cfg() attributes
 }
 
 // Represent an attribute

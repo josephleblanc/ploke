@@ -1552,16 +1552,4 @@
             body: Some("() => { println ! (\"Hello from macro!\") ; } ; ($ expr : expr) => { println ! (\"Expression: {}\" , $ expr) ; } ; ($ name : ident , $ value : expr) => { println ! (\"{} = {}\" , stringify ! ($ name) , $ value) ; } ;"),
         ),
     ],
-    use_statements: [
-        (
-            path: [
-                "super",
-                "*",
-            ],
-            visible_name: "*",
-            original_name: None,
-            is_glob: true,
-            span: (3454, 3467),
-        ),
-    ],
 )

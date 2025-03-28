@@ -36,10 +36,21 @@ ploke-common = { path = "../../common" }
 
 # Feature flags
 [features]
-default = ["visitor_refactor", "use_statement_tracking"]
+default = [
+    "visitor_refactor",
+    "use_statement_tracking",
+    "visibility_resolution",
+]
 cozo_visitor = []
 cozo_type_refactor = []
 visitor_refactor = []
-module_path_tracking = []
-use_statement_tracking = []
 verbose_debug = []
+# Phase 1-3 of visitor resolution refactor
+# We will hold onto these for benchmarking for now, and leave them in `default`
+# after the refactor is complete, but we should probably think about how not to
+# clutter up the Cargo.toml file.
+# It would be cool to be able to provide a really good comprehensive breakdown
+# of how each component we add over time changes the performance of the parser.
+module_path_tracking = []   # phase 1 (done)
+use_statement_tracking = [] # phase 2 (done)
+visibility_resolution = []  #phase 3 (current)
