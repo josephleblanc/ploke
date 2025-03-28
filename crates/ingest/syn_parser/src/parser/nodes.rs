@@ -233,9 +233,20 @@ pub enum ImportKind {
 #[cfg(feature = "use_statement_tracking")]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UseStatement {
+    /// Full path segments in original order (e.g. ["std", "collections", "HashMap"])
     pub path: Vec<String>,
+
+    /// Final name as brought into scope (handles renames)
+    /// For `use foo::bar as baz` this would be "baz"
+    pub visible_name: String,
+
+    /// Hold on to the alias if it exists. Useful for debugging but also might come in handy
     pub alias: Option<String>,
+
+    /// Whether this is a glob import
     pub is_glob: bool,
+
+    /// Span of entire use statement for potential future reference
     pub span: (usize, usize),
 }
 

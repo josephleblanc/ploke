@@ -1,6 +1,6 @@
 use syn::{
     spanned::Spanned, ImplItemFn, ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ItemType,
-    TraitItemFn,
+    ItemUse, TraitItemFn, UseName, UseRename, UseTree,
 };
 
 // Note: From the proc_macro2 crate documentation on Span::byte_range()
@@ -27,4 +27,8 @@ impl ExtractSpan for ImplItemFn {}
 impl ExtractSpan for ItemTrait {}
 impl ExtractSpan for TraitItemFn {}
 impl ExtractSpan for ItemType {}
+impl ExtractSpan for ItemUse {}
+impl ExtractSpan for UseTree {}
+impl ExtractSpan for UseName {}
+impl ExtractSpan for UseRename {}
 // impl ExtractSpan for ItemMod {}

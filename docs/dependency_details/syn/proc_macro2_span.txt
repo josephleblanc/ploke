@@ -1,0 +1,111 @@
+Condensed from the `proc_macro2` official crate documentation on docs.rs:
+
+Span in proc_macro2
+A region of source code, along with macro expansion information.
+
+3 min. readView original
+Struct SpanCopy item path
+Source
+
+pub struct Span { /* private fields */ }
+Expand description
+A region of source code, along with macro expansion information.
+
+Implementations§
+Source
+§
+impl Span
+Source
+pub fn call_site() -> Self
+The span of the invocation of the current procedural macro.
+
+Identifiers created with this span will be resolved as if they were written directly at the macro call location (call-site hygiene) and other code at the macro call site will be able to refer to them as well.
+
+Source
+pub fn mixed_site() -> Self
+The span located at the invocation of the procedural macro, but with local variables, labels, and $crate resolved at the definition site of the macro. This is the same hygiene behavior as macro_rules.
+
+Source
+pub fn def_site() -> Self
+Available on procmacro2_semver_exempt only.
+
+A span that resolves at the macro definition site.
+
+This method is semver exempt and not exposed by default.
+
+Source
+pub fn resolved_at(&self, other: Span) -> Span
+Creates a new span with the same line/column information as self but that resolves symbols as though it were at other.
+
+Source
+pub fn located_at(&self, other: Span) -> Span
+Creates a new span with the same name resolution behavior as self but with the line/column information of other.
+
+Source
+pub fn unwrap(self) -> Span
+Convert proc_macro2::Span to proc_macro::Span.
+
+This method is available when building with a nightly compiler, or when building with rustc 1.29+ without semver exempt features.
+
+§Panics
+Panics if called from outside of a procedural macro. Unlike proc_macro2::Span, the proc_macro::Span type can only exist within the context of a procedural macro invocation.
+
+Source
+pub fn source_file(&self) -> SourceFile
+Available on procmacro2_semver_exempt only.
+
+The original source file into which this span points.
+
+This method is semver exempt and not exposed by default.
+
+Source
+pub fn byte_range(&self) -> Range<usize>
+Available on crate feature span-locations only.
+
+Returns the span’s byte position range in the source file.
+
+This method requires the "span-locations" feature to be enabled.
+
+When executing in a procedural macro context, the returned range is only accurate if compiled with a nightly toolchain. The stable toolchain does not have this information available. When executing outside of a procedural macro, such as main.rs or build.rs, the byte range is always accurate regardless of toolchain.
+
+Source
+pub fn start(&self) -> LineColumn
+Available on crate feature span-locations only.
+
+Get the starting line/column in the source file for this span.
+
+This method requires the "span-locations" feature to be enabled.
+
+When executing in a procedural macro context, the returned line/column are only meaningful if compiled with a nightly toolchain. The stable toolchain does not have this information available. When executing outside of a procedural macro, such as main.rs or build.rs, the line/column are always meaningful regardless of toolchain.
+
+Source
+pub fn end(&self) -> LineColumn
+Available on crate feature span-locations only.
+
+Get the ending line/column in the source file for this span.
+
+This method requires the "span-locations" feature to be enabled.
+
+When executing in a procedural macro context, the returned line/column are only meaningful if compiled with a nightly toolchain. The stable toolchain does not have this information available. When executing outside of a procedural macro, such as main.rs or build.rs, the line/column are always meaningful regardless of toolchain.
+
+Source
+pub fn join(&self, other: Span) -> Option<Span>
+Create a new span encompassing self and other.
+
+Returns None if self and other are from different files.
+
+Warning: the underlying proc_macro::Span::join method is nightly-only. When called from within a procedural macro not using a nightly compiler, this method will always return None.
+
+Source
+pub fn eq(&self, other: &Span) -> bool
+Available on procmacro2_semver_exempt only.
+
+Compares two spans to see if they’re equal.
+
+This method is semver exempt and not exposed by default.
+
+Source
+pub fn source_text(&self) -> Option<String>
+Returns the source text behind a span. This preserves the original source code, including spaces and comments. It only returns a result if the span corresponds to real source code.
+
+Note: The observable result of a macro should only rely on the tokens and not on this source text. The result of this function is a best effort to be used for diagnostics only.

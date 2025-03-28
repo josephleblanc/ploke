@@ -21,7 +21,7 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
 
     // Create the root module first
     let root_module_id = visitor_state.next_node_id();
-    
+
     #[cfg(feature = "module_path_tracking")]
     {
         visitor_state.current_module_path = vec!["crate".to_string()];

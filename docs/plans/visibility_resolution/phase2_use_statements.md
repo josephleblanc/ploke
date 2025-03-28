@@ -36,7 +36,7 @@ impl VisitorState {
     - Glob imports (`use std::collections::*`)
 
 ### 3.2 Core Implementation
-- [ ] 3.2.1. Add UseStatement struct to nodes.rs
+- [x] 3.2.1. Add UseStatement struct to nodes.rs
   - **Files to Modify**:
     - `nodes.rs` (new struct)
     - `graph.rs` (serialization)
@@ -51,9 +51,11 @@ impl VisitorState {
     }
     ```
 
-- [ ] 3.2.2. Enhance visit_item_use in CodeVisitor
+- [~] 3.2.2. Enhance visit_item_use in CodeVisitor
   - **Files to Modify**: `code_visitor.rs`
   - **Testing Approach**: Verify all use statement variants are captured
+  - Progress:
+    - Struct exists but actual collection logic not yet implemented
 
 ### 3.3 Testing & Integration
 - [ ] 3.3.1. Add use statement fixtures
