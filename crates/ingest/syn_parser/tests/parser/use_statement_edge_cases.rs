@@ -1,5 +1,5 @@
 #![cfg(feature = "use_statement_tracking")]
-use crate::common::{parse_fixture, parse_fixture_malformed};
+use crate::common::{parse_fixture, parse_fixture_malformed, FixtureError};
 // use syn_parser::parser::nodes::UseStatement;
 
 #[test]
@@ -46,19 +46,23 @@ fn test_edge_case_imports() {
     );
 }
 
-#[test]
 // WARNING: This parses a malformed rust file, and should ONLY be used to test error handling.
+#[test]
 fn test_invalid_use_statements() {
-    let error_result = parse_fixture_malformed("invalid_use.rs");
-    assert!(error_result.is_err(), "Invalid syntax should return error");
+    let result = parse_fixture_malformed("invalid_use.rs");
 
-    let err = error_result.unwrap_err();
-    assert!(
-        err.to_string().contains(
-            "expected one of: identifier, `self`, 
- `super`, `crate`, `try`, `*`, curly braces"
-        ),
-        "Unexpected error message: {}",
-        err
-    );
+    // First verify we got the right error type
+    match result {
+        Err(FixtureError::Parse(syn_err)) => {
+            // Check for specific error kind if needed
+            let msg = syn_err.to_string();
+            assert!(
+                msg.contains("expected one of") && msg.contains("identifier"),
+                "Expected syntax error about identifiers, got: {}",
+                msg
+            );
+        }
+        Err(e) => panic!("Expected parse error, got: {:?}", e),
+        Ok(_) => panic!("Expected error for invalid syntax"),
+    }
 }
