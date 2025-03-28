@@ -18,7 +18,8 @@ fn test_simple_imports() {
         .find(|u| u.path == vec!["std", "collections", "HashMap"]);
     assert!(
         has_map.is_some(),
-        "Should find std::collections::HashMap import"
+        "Should find std::collections::HashMap import\nFound use statements: {:#?}",
+        graph.use_statements
     );
 }
 
@@ -31,7 +32,12 @@ fn test_aliases() {
         .use_statements
         .iter()
         .find(|u| u.path == vec!["std", "fmt"] && u.alias.as_deref() == Some("formatting"));
-    assert!(fmt_alias.is_some(), "Should find fmt as formatting alias");
+    assert!(
+        fmt_alias.is_some(),
+        "Should find fmt as formatting alias\nFound use statements:\n{:#?}\nExpected path: {:?} with alias: 'formatting'",
+        graph.use_statements,
+        vec!["std", "fmt"]
+    );
 }
 
 #[test]
@@ -55,7 +61,11 @@ fn test_glob_imports() {
         .use_statements
         .iter()
         .find(|u| u.path.last() == Some(&"*".to_string()));
-    assert!(glob.is_some(), "Should find glob import");
+    assert!(
+        glob.is_some(),
+        "Should find glob import\nFound use statements:\n{:#?}\nExpected a glob import ending with '*'",
+        graph.use_statements
+    );
 }
 
 #[test]

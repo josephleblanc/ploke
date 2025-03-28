@@ -5,7 +5,12 @@ use crate::common::parse_fixture;
 #[test]
 fn test_edge_case_imports() {
     let graph = parse_fixture("use_statement_edge_cases.rs")
-        .expect("Error parsing fixture 'use_statement_edge_cases.rs'");
+        .unwrap_or_else(|e| panic!(
+            "Error parsing fixture 'use_statement_edge_cases.rs': {}\n\
+            This likely indicates the test file itself has invalid syntax or the parser \
+            doesn't support some valid syntax yet",
+            e
+        ));
 
     #[cfg(feature = "use_statement_tracking")]
     {
