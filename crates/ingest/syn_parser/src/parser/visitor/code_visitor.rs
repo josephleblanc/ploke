@@ -1036,7 +1036,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.current_module_path.pop();
     }
 
-    // Visit use statements
+    /// Visits `use` statements during AST traversal.                      
+    ///                                                                    
+    /// # Current Limitations                                              
+    /// - Does not handle macro-generated `use` statements (MVP exclusion)
+    /// - `pub use` re-exports are treated as regular imports              
+    ///                                                                    
+    /// # Flow                                                             
+    /// 1. Captures raw path segments and spans                            
+    /// 2. Normalizes `self`/`super` prefixes                              
+    /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
         // Create an import node
         let import_id = self.state.next_node_id();
