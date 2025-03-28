@@ -3,6 +3,12 @@ use crate::common::parse_fixture;
 use syn_parser::parser::nodes::UseStatement;
 
 #[test]
+fn test_empty_file() {
+    let graph = parse_fixture("empty.rs");
+    assert!(graph.use_statements.is_empty());
+}
+
+#[test]
 fn test_simple_imports() {
     let graph = parse_fixture("use_statements.rs");
 
