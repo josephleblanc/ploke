@@ -7,7 +7,7 @@ use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
 
-use ploke_common::{fixtures_dir, workspace_root};
+use ploke_common::{fixtures_dir, malformed_fixtures_dir};
 
 #[test]
 fn test_paths() {
@@ -33,19 +33,40 @@ pub enum FixtureError {
 
 /// Parse a fixture file and return the resulting CodeGraph or error  
 pub fn parse_fixture(fixture_name: &str) -> Result<CodeGraph, FixtureError> {
-    // let path = Path::new("tests/fixtures").join(fixture_name);
-    let path = workspace_root().join("tests/fixtures").join(fixture_name);
+    let path = fixtures_dir().join(fixture_name);
     if !path.exists() {
         return Err(FixtureError::NotFound(path.display().to_string()));
     }
     Ok(analyze_code(&path)?)
 }
 
-/// Parse multiple fixtures and collect results                       
+/// WARNING: Only use this for testing error handling!!!
+/// Parse a malformed fixture file and return the resulting CodeGraph or error  
+pub fn parse_fixture_malformed(malformed_fixture_name: &str) -> Result<CodeGraph, FixtureError> {
+    let path = malformed_fixtures_dir().join(malformed_fixture_name);
+
+    if !path.exists() {
+        return Err(FixtureError::NotFound(path.display().to_string()));
+    }
+    Ok(analyze_code(&path)?) // Add more error handling here?
+}
+
+/// Parse multiple fixtures and collect results
 pub fn parse_fixtures(fixture_names: &[&str]) -> Result<Vec<CodeGraph>, FixtureError> {
     fixture_names
         .iter()
         .map(|name| parse_fixture(name))
+        .collect()
+}
+
+/// WARNING: Only use this for testing error handling!!!
+/// Parse multiple malformed fixtures and collect results
+pub fn parse_fixtures_malformed(
+    malformed_fixture_names: &[&str],
+) -> Result<Vec<CodeGraph>, FixtureError> {
+    malformed_fixture_names
+        .iter()
+        .map(|name| parse_fixture_malformed(name))
         .collect()
 }
 

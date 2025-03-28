@@ -28,10 +28,11 @@ fn test_aliases() {
     let graph =
         parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
-    let fmt_alias = graph
-        .use_statements
-        .iter()
-        .find(|u| u.path == vec!["std", "fmt"] && u.visible_name == "formatting");
+    let fmt_alias = graph.use_statements.iter().find(|u| {
+        u.path == vec!["std", "fmt"]
+            && u.visible_name == "formatting"
+            && u.original_name == Some("fmt".to_owned())
+    });
     // #[cfg(features = "debug_print")]
     assert!(
         fmt_alias.is_some(),

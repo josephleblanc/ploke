@@ -1,5 +1,5 @@
 #![cfg(feature = "use_statement_tracking")]
-use crate::common::parse_fixture;
+use crate::common::{parse_fixture, parse_fixture_malformed};
 // use syn_parser::parser::nodes::UseStatement;
 
 #[test]
@@ -24,10 +24,10 @@ fn test_edge_case_imports() {
         "Multiple renames failed"
     );
 
-    // 3. Test empty path segments
+    // 3. Test repeated `self` path segments
     assert!(
         uses.iter()
-            .any(|u| u.path == vec!["", "", "module"] && u.visible_name == "module"),
+            .any(|u| u.path == vec!["self", "self", "module"] && u.visible_name == "module"),
         "Empty path segments failed"
     );
 
@@ -47,11 +47,12 @@ fn test_edge_case_imports() {
 }
 
 #[test]
+// WARNING: This parses a malformed rust file, and should ONLY be used to test error handling.
 fn test_invalid_use_statements() {
-    let result = parse_fixture("invalid_uses.rs");
-    assert!(result.is_err(), "Invalid syntax should return error");
+    let error_result = parse_fixture_malformed("invalid_use.rs");
+    assert!(error_result.is_err(), "Invalid syntax should return error");
 
-    let err = result.unwrap_err();
+    let err = error_result.unwrap_err();
     assert!(
         err.to_string().contains(
             "expected one of: identifier, `self`, 
