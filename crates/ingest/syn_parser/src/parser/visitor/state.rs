@@ -31,6 +31,8 @@ impl VisitorState {
                 modules: Vec::new(),
                 values: Vec::new(),
                 macros: Vec::new(),
+                #[cfg(feature = "use_statement_tracking")]
+                use_statements: Vec::new(),
             },
             next_node_id: 0,
             next_type_id: 0,

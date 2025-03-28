@@ -230,6 +230,15 @@ pub enum ImportKind {
     ExternCrate,
 }
 
+#[cfg(feature = "use_statement_tracking")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UseStatement {
+    pub path: Vec<String>,
+    pub alias: Option<String>,
+    pub is_glob: bool,
+    pub span: (usize, usize),
+}
+
 // Represent an attribute
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Attribute {

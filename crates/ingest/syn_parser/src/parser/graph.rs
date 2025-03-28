@@ -6,6 +6,9 @@ use crate::parser::{
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "use_statement_tracking")]
+use super::nodes::UseStatement;
+
 // Main structure representing the entire code graph
 // Derive Send and Sync automatically since all component types implement them
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -30,4 +33,6 @@ pub struct CodeGraph {
     pub values: Vec<ValueNode>,
     // Macros defined in the code
     pub macros: Vec<MacroNode>,
+    #[cfg(feature = "use_statement_tracking")]
+    pub use_statements: Vec<UseStatement>,
 }
