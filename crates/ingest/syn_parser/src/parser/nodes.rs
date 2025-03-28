@@ -230,6 +230,37 @@ pub enum ImportKind {
     ExternCrate,
 }
 
+/// Represents a Rust `use` statement's semantic meaning in the graph.
+/// 
+/// # Current Implementation Notes
+/// - Tracks raw path segments exactly as written in source
+/// - Preserves original spans for error reporting
+/// - Aliases are normalized (handles `as` clauses)
+/// - Does NOT yet handle macro expansions (pending Phase 4)
+///
+/// # Example
+/// ```rust
+/// use std::collections::{HashMap as Map, BTreeSet};
+/// ```
+/// Produces two UseStatement nodes:
+/// ```ignore
+/// [
+///     UseStatement {
+///         path: vec!["std", "collections", "HashMap"],
+///         visible_name: "Map",
+///         original_name: Some("HashMap"),
+///         is_glob: false,
+///         span: (start_byte, end_byte)
+///     },
+///     UseStatement {
+///         path: vec!["std", "collections", "BTreeSet"],
+///         visible_name: "BTreeSet",
+///         original_name: None,
+///         is_glob: false,
+///         span: (start_byte, end_byte)
+///     }
+/// ]
+/// ```
 #[cfg(feature = "use_statement_tracking")]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UseStatement {

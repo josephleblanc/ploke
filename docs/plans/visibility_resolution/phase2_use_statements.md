@@ -87,10 +87,24 @@ impl VisitorState {
 2. Revert UseStatement additions
 3. Maintain backward-compatible serialization
 
-## 5. Progress Tracking
+## 5. Progress Tracking & Dependencies
+
+### Completed
 - [x] Analysis Phase: 1/1 complete
 - [x] Implementation Phase: 2/2 complete
+
+### Pending Resolution
 - [~] Testing Phase: 1/3 complete
-- [ ] Documentation Phase: 0/3 complete
+  - Blocked by `ploke-graph` integration work
+  - Benchmarking deferred until database layer stabilizes
+- [~] Documentation Phase: 1/3 complete
+  - Core docs added
+  - Examples pending final API shape
+
+### Interdependent Work
+- Parallel `ploke-graph` development may require:
+  - Adjustments to UseStatement representation
+  - Additional span handling requirements
+  - Query pattern optimizations
 
 The task maintains the same structure as the previous one while addressing the next logical piece of functionality. Each completion brings us closer to full visibility resolution while keeping the changes isolated and testable.
