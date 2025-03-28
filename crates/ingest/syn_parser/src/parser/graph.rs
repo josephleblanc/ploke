@@ -73,8 +73,30 @@ impl CodeGraph {
     }
 
     fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
-        // Implementation searching all node types
-        unimplemented!()
+        // Check all node collections for matching ID
+        self.functions.iter()
+            .find(|n| n.id == item_id)
+            .map(|n| n as &dyn Visible)
+            .or_else(|| self.defined_types.iter().find_map(|n| match n {
+                TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn Visible),
+                TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn Visible),
+                TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn Visible),
+                TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn Visible),
+                _ => None,
+            }))
+            .or_else(|| self.traits.iter()
+                .chain(&self.private_traits)
+                .find(|n| n.id == item_id)
+                .map(|n| n as &dyn Visible))
+            .or_else(|| self.modules.iter()
+                .find(|n| n.id == item_id)
+                .map(|n| n as &dyn Visible))
+            .or_else(|| self.values.iter()
+                .find(|n| n.id == item_id)
+                .map(|n| n as &dyn Visible))
+            .or_else(|| self.macros.iter()
+                .find(|n| n.id == item_id)
+                .map(|n| n as &dyn Visible))
     }
 
     fn same_crate(&self, context: &[String]) -> bool {

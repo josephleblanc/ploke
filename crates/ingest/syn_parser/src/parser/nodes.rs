@@ -8,6 +8,15 @@ pub type NodeId = usize;
 // ANCHOR: ItemFn
 // Represents a function definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for ModuleNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct FunctionNode {
     pub id: NodeId,
     pub name: String,
@@ -54,6 +63,15 @@ pub enum TypeDefNode {
 // ANCHOR: StructNode
 // Represents a struct definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for StructNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct StructNode {
     pub id: NodeId,
     pub name: String,
@@ -68,6 +86,15 @@ pub struct StructNode {
 
 // Represents an enum definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for EnumNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct EnumNode {
     pub id: NodeId,
     pub name: String,
@@ -103,6 +130,15 @@ pub struct VariantNode {
 
 // Represents a type alias (type NewType = OldType)
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for TypeAliasNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct TypeAliasNode {
     pub id: NodeId,
     pub name: String,
@@ -116,6 +152,15 @@ pub struct TypeAliasNode {
 
 // Represents a union definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for UnionNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct UnionNode {
     pub id: NodeId,
     pub name: String,
@@ -142,6 +187,15 @@ pub struct ImplNode {
 // ANCHOR: TraitNode
 // Represents a trait definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for TraitNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct TraitNode {
     pub id: NodeId,
     pub name: String,
@@ -172,6 +226,15 @@ pub struct ModuleNode {
 
 // Represents a constant or static variable
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for ValueNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct ValueNode {
     pub id: NodeId,
     pub name: String,
@@ -185,6 +248,15 @@ pub struct ValueNode {
 
 // Represents a macro definition
 #[derive(Debug, Serialize, Deserialize, Clone)]
+impl Visible for MacroNode {
+    fn visibility(&self) -> VisibilityKind {
+        self.visibility
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
