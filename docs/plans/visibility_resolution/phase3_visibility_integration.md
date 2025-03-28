@@ -23,7 +23,33 @@ impl CodeGraph {
         item_id: NodeId,
         context_module: &[String]
     ) -> VisibilityResult {
-        // Implementation using module_paths and use_statements
+        let item = self.get_node(item_id);
+        
+        match item.visibility {
+            VisibilityKind::Public => VisibilityResult::Direct,
+            VisibilityKind::Inherited if context_module.is_empty() => VisibilityResult::Direct,
+            VisibilityKind::Crate => {
+                if self.same_crate(context_module) {
+                    VisibilityResult::Direct
+                } else {
+                    VisibilityResult::OutOfScope {
+                        reason: OutOfScopeReason::CrateRestricted,
+                        allowed_scopes: None
+                    }
+                }
+            },
+            VisibilityKind::Restricted(path) => {
+                if self.is_path_visible(path, context_module) {
+                    VisibilityResult::Direct
+                } else {
+                    VisibilityResult::OutOfScope {
+                        reason: OutOfScopeReason::SuperRestricted,
+                        allowed_scopes: Some(path)
+                    }
+                }
+            },
+            _ => self.check_use_statements(item_id, context_module)
+        }
     }
 }
 
@@ -64,12 +90,30 @@ impl CodeGraph {
     - Alternative paths to item
   - **Code Changes**:
     ```rust
+    /// Result of visibility resolution with detailed scoping information
     #[derive(Debug, Serialize, Deserialize)]
     pub enum VisibilityResult {
-        DirectlyVisible,
-        RequiresUse(Vec<String>), // Path needed for visibility
-        Restricted,
-        Unknown
+        /// Directly usable without imports
+        Direct,
+        /// Needs use statement with given path
+        NeedsUse(Vec<String>),
+        /// Not accessible with current scope
+        OutOfScope {
+            /// Why the item isn't accessible
+            reason: OutOfScopeReason,
+            /// For pub(in path) cases, shows allowed scopes
+            allowed_scopes: Option<Vec<String>>
+        }
+    }
+
+    /// Detailed reasons for out-of-scope items
+    #[derive(Debug, Serialize, Deserialize)]
+    pub enum OutOfScopeReason {
+        Private,
+        CrateRestricted,
+        SuperRestricted,
+        WorkspaceHidden, // Reserved for future workspace support
+        CfgGated,       // Reserved for cfg() attributes
     }
     ```
 
