@@ -74,7 +74,6 @@ impl CodeGraph {
         }
     }
 
-    #[cfg(feature = "visibility_resolution")]
     fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
         // Check all node collections for matching ID
 
@@ -118,7 +117,7 @@ impl CodeGraph {
             })
     }
 
-    #[cfg(feature = "workspace_vis")]
+    #[cfg(feature = "visibility_resolution")]
     #[allow(unused_variables)]
     fn same_crate(&self, context: &[String]) -> bool {
         // Default true until we handle workspaces
