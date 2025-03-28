@@ -57,7 +57,11 @@ fn test_edge_case_imports() {
 #[test]
 fn test_invalid_use_statements() {
     let graph = parse_fixture("invalid_uses.rs");
-    assert!(graph.is_ok(), "Should handle invalid syntax gracefully");
+    assert!(
+        graph.is_ok(), 
+        "Should handle invalid syntax gracefully\nGot error: {:?}",
+        graph.err()
+    );
 
     #[cfg(feature = "use_statement_tracking")]
     {
