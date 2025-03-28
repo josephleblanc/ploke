@@ -1,8 +1,17 @@
 # Comprehensive Refactoring Plan: Visibility Resolution Integration
 
 ## 1. Task Definition
-**Task**: Implement visibility resolution system combining module paths and use statements  
+**Task**: Implement single-crate visibility resolution combining:
+1. Module paths (from Phase 1)
+2. Use statements (from Phase 2)
+3. Rust's visibility rules (`pub`, `pub(crate)`, etc.)
+
 **Purpose**: Enable accurate determination of item visibility in any given scope  
+**MVP Limitations**:
+- No workspace/cross-crate resolution  
+- Physical file locations not considered  
+- Cfg-conditional items treated as always visible
+
 **Success Criteria**:
 - System correctly classifies items into three visibility states:
   1. Directly visible in current scope
