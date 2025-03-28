@@ -31,7 +31,8 @@ fn test_aliases() {
     let fmt_alias = graph
         .use_statements
         .iter()
-        .find(|u| u.path == vec!["std", "fmt"] && u.alias.as_deref() == Some("formatting"));
+        .find(|u| u.path == vec!["std", "fmt"] && u.visible_name == "formatting");
+    // #[cfg(features = "debug_print")]
     assert!(
         fmt_alias.is_some(),
         "Should find fmt as formatting alias\nFound use statements:\n{:#?}\nExpected path: {:?} with alias: 'formatting'",

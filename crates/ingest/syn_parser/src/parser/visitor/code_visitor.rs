@@ -50,24 +50,20 @@ impl<'a> CodeVisitor<'a> {
     }
 
     #[cfg(feature = "use_statement_tracking")]
-    // Helper to process use trees into our simplified format
-    fn process_use_tree(tree: &syn::UseTree) -> Vec<UseStatement> {
+    fn process_use_tree(tree: &syn::UseTree, base_path: &[String]) -> Vec<UseStatement> {
         let mut statements = Vec::new();
 
         match tree {
             syn::UseTree::Path(path) => {
-                let mut base_path = vec![path.ident.to_string()];
-                let child_results = Self::process_use_tree(&path.tree);
-
-                for mut child in child_results {
-                    base_path.extend(child.path);
-                    child.path = base_path.clone();
-                    statements.push(child);
-                }
+                let mut new_base = base_path.to_vec();
+                new_base.push(path.ident.to_string());
+                statements.extend(Self::process_use_tree(&path.tree, &new_base));
             }
             syn::UseTree::Name(name) => {
+                let mut path = base_path.to_vec();
+                path.push(name.ident.to_string());
                 statements.push(UseStatement {
-                    path: vec![name.ident.to_string()],
+                    path,
                     visible_name: name.ident.to_string(),
                     alias: None,
                     is_glob: false,
@@ -75,9 +71,10 @@ impl<'a> CodeVisitor<'a> {
                 });
             }
             syn::UseTree::Rename(rename) => {
-                // Handle renamed imports
+                let mut path = base_path.to_vec();
+                path.push(rename.ident.to_string());
                 statements.push(UseStatement {
-                    path: vec![rename.ident.to_string()],
+                    path,
                     visible_name: rename.rename.to_string(),
                     alias: Some(rename.ident.to_string()),
                     is_glob: false,
@@ -85,18 +82,19 @@ impl<'a> CodeVisitor<'a> {
                 });
             }
             syn::UseTree::Glob(_) => {
-                let byte_range = tree.span().byte_range();
+                let mut path = base_path.to_vec();
+                path.push("*".to_string());
                 statements.push(UseStatement {
-                    path: Vec::new(), // Will be filled by parent path
+                    path,
                     visible_name: "*".to_string(),
                     alias: None,
                     is_glob: true,
-                    span: (byte_range.start, byte_range.end),
+                    span: tree.extract_span_bytes(),
                 });
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
-                    statements.extend(Self::process_use_tree(item));
+                    statements.extend(Self::process_use_tree(item, base_path));
                 }
             }
         }
@@ -1071,21 +1069,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
         #[cfg(feature = "use_statement_tracking")]
         {
-            let base_segments = if let Some(_colon) = &use_item.leading_colon {
+            let base_segments = if use_item.leading_colon.is_some() {
                 vec!["".to_string()] // Represents leading ::
             } else {
                 Vec::new()
             };
 
-            let mut statements = Self::process_use_tree(&use_item.tree);
-
-            // Apply base segments/path to all statements
-            for stmt in &mut statements {
-                if !base_segments.is_empty() {
-                    stmt.path = base_segments.iter().chain(&stmt.path).cloned().collect();
-                }
+            let statements = Self::process_use_tree(&use_item.tree, &base_segments);
+            for mut stmt in statements {
                 stmt.span = use_item.extract_span_bytes();
-                self.state.code_graph.use_statements.push(stmt.clone());
+                self.state.code_graph.use_statements.push(stmt);
             }
         }
         // Continue visiting
