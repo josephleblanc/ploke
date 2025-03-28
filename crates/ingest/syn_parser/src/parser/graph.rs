@@ -128,6 +128,49 @@ impl CodeGraph {
         // Check if context starts with path
         context.starts_with(path)
     }
+
+    #[cfg(feature = "use_statement_tracking")]
+    fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
+        let item = match self.find_node(item_id) {
+            Some(item) => item,
+            None => return VisibilityResult::OutOfScope {
+                reason: OutOfScopeReason::Private,
+                allowed_scopes: None,
+            },
+        };
+
+        // Get current module's use statements
+        let current_module = self.modules.iter().find(|m| {
+            #[cfg(feature = "module_path_tracking")]
+            { m.path == context_module }
+            #[cfg(not(feature = "module_path_tracking"))]
+            { false } // Fallback if module path tracking is disabled
+        });
+
+        if let Some(module) = current_module {
+            for use_stmt in &module.imports {
+                // Check if use statement brings the item into scope
+                if use_stmt.path.ends_with(&[item.name().to_string()]) {
+                    return VisibilityResult::NeedsUse(use_stmt.path.clone());
+                }
+            }
+        }
+
+        // Default to private if no matching use statement found
+        VisibilityResult::OutOfScope {
+            reason: OutOfScopeReason::Private,
+            allowed_scopes: None,
+        }
+    }
+
+    #[cfg(not(feature = "use_statement_tracking"))]
+    fn check_use_statements(&self, _item_id: NodeId, _context_module: &[String]) -> VisibilityResult {
+        // Fallback when use statement tracking is disabled
+        VisibilityResult::OutOfScope {
+            reason: OutOfScopeReason::Private,
+            allowed_scopes: None,
+        }
+    }
 }
 
 // Main structure representing the entire code graph
