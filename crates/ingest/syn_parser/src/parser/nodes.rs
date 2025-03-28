@@ -282,6 +282,32 @@ pub struct UseStatement {
     pub span: (usize, usize),
 }
 
+/// Result of visibility resolution with detailed scoping information
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum VisibilityResult {
+    /// Directly usable without imports
+    Direct,
+    /// Needs use statement with given path
+    NeedsUse(Vec<String>),
+    /// Not accessible with current scope
+    OutOfScope {
+        /// Why the item isn't accessible
+        reason: OutOfScopeReason,
+        /// For pub(in path) cases, shows allowed scopes  
+        allowed_scopes: Option<Vec<String>>
+    }
+}
+
+/// Detailed reasons for out-of-scope items
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum OutOfScopeReason {
+    Private,
+    CrateRestricted,
+    SuperRestricted,
+    WorkspaceHidden, // Reserved for future workspace support
+    CfgGated,       // Reserved for cfg() attributes
+}
+
 // Represent an attribute
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Attribute {
