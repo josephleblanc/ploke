@@ -1,4 +1,5 @@
 //! Extreme edge cases for use statement parsing
+//! Should not contain any invalid code.
 
 // Deeply nested
 use a::b::c::d::e::f;
@@ -7,7 +8,7 @@ use a::b::c::d::e::f;
 use x::y as z;
 
 // Empty segments
-use ::::module;
+use self::self::module;
 
 // UTF-8 paths
 use 模块::子模块 as 类型;

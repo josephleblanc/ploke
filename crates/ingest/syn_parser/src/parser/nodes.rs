@@ -240,8 +240,9 @@ pub struct UseStatement {
     /// For `use foo::bar as baz` this would be "baz"
     pub visible_name: String,
 
-    /// Hold on to the alias if it exists. Useful for debugging but also might come in handy
-    pub alias: Option<String>,
+    /// Original name if renamed (for `use x::y as z` this is Some("y"
+    /// None for non-renamed imports                                   
+    pub original_name: Option<String>,
 
     /// Whether this is a glob import
     pub is_glob: bool,

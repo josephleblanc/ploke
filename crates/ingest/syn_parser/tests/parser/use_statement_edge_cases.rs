@@ -20,7 +20,7 @@ fn test_edge_case_imports() {
     assert!(
         uses.iter().any(|u| u.path == vec!["x", "y"]
             && u.visible_name == "z"
-            && u.alias == Some("y".to_string())),
+            && u.original_name == Some("y".to_string())),
         "Multiple renames failed"
     );
 

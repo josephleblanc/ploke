@@ -54,10 +54,10 @@ impl VisitorState {
         id
     }
 
-    #[cfg(feature = "module_path_tracking")]
-    pub(crate) fn current_path(&self) -> String {
-        self.current_module_path.join("::")
-    }
+    // #[cfg(feature = "module_path_tracking")]
+    // pub(crate) fn current_path(&self) -> String {
+    //     self.current_module_path.join("::")
+    // }
 
     // Move the get_or_create_type method to type_processing.rs
     // Move the process_type method to type_processing.rs

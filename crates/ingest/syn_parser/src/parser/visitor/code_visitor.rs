@@ -65,7 +65,7 @@ impl<'a> CodeVisitor<'a> {
                 statements.push(UseStatement {
                     path,
                     visible_name: name.ident.to_string(),
-                    alias: None,
+                    original_name: None,
                     is_glob: false,
                     span: name.extract_span_bytes(),
                 });
@@ -76,7 +76,7 @@ impl<'a> CodeVisitor<'a> {
                 statements.push(UseStatement {
                     path,
                     visible_name: rename.rename.to_string(),
-                    alias: Some(rename.ident.to_string()),
+                    original_name: Some(rename.ident.to_string()),
                     is_glob: false,
                     span: rename.extract_span_bytes(),
                 });
@@ -87,7 +87,7 @@ impl<'a> CodeVisitor<'a> {
                 statements.push(UseStatement {
                     path,
                     visible_name: "*".to_string(),
-                    alias: None,
+                    original_name: None,
                     is_glob: true,
                     span: tree.extract_span_bytes(),
                 });
@@ -103,6 +103,7 @@ impl<'a> CodeVisitor<'a> {
     }
 }
 
+#[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
     fn visit_item_fn(&mut self, func: &'ast ItemFn) {
