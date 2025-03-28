@@ -1,16 +1,16 @@
 #![cfg(feature = "use_statement_tracking")]
 use crate::common::parse_fixture;
-use syn_parser::parser::nodes::UseStatement;
 
 #[test]
 fn test_empty_file() {
-    let graph = parse_fixture("empty.rs");
+    let graph = parse_fixture("empty.rs").expect("Error parsing fixture empty.rs");
     assert!(graph.use_statements.is_empty());
 }
 
 #[test]
 fn test_simple_imports() {
-    let graph = parse_fixture("use_statements.rs");
+    let graph =
+        parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
     let has_map = graph
         .use_statements
@@ -24,7 +24,8 @@ fn test_simple_imports() {
 
 #[test]
 fn test_aliases() {
-    let graph = parse_fixture("use_statements.rs");
+    let graph =
+        parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
     let fmt_alias = graph
         .use_statements
@@ -35,7 +36,8 @@ fn test_aliases() {
 
 #[test]
 fn test_nested_groups() {
-    let graph = parse_fixture("use_statements.rs");
+    let graph =
+        parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
     let atomic_bool = graph
         .use_statements
@@ -46,7 +48,8 @@ fn test_nested_groups() {
 
 #[test]
 fn test_glob_imports() {
-    let graph = parse_fixture("use_statements.rs");
+    let graph =
+        parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
     let glob = graph
         .use_statements
@@ -57,7 +60,8 @@ fn test_glob_imports() {
 
 #[test]
 fn test_relative_paths() {
-    let graph = parse_fixture("use_statements.rs");
+    let graph =
+        parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
     let rel_super = graph
         .use_statements
