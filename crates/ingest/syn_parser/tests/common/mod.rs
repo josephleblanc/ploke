@@ -1,16 +1,61 @@
 use std::fs::File;
-use std::io::Read;
-use std::io::Seek;
+use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
 use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
+use thiserror::Error;
 
-/// Parse a fixture file and return the resulting CodeGraph
-pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
-    let path = Path::new("tests/fixtures").join(fixture_name);
-    analyze_code(&path).expect("Failed to parse fixture")
+use ploke_common::{fixtures_dir, workspace_root};
+
+#[test]
+fn test_paths() {
+    let fixture_path = fixtures_dir().join("my_fixture.rs");
+    println!("Fixture path: {}", fixture_path.display());
+}
+
+pub const FIXTURES_DIR: &str = "tests/fixtures";
+
+#[derive(Error, Debug)]
+pub enum FixtureError {
+    #[error("IO error reading fixture: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Parse error in fixture: {0}")]
+    Parse(#[from] syn::Error),
+    #[error("Fixture not found: {0}")]
+    NotFound(String),
+    #[error("Invalid UTF-8 in fixture: {0}")]
+    Utf8(#[from] std::string::FromUtf8Error),
+    #[error("Test assertion failed: {0}")]
+    Assertion(String),
+}
+
+/// Parse a fixture file and return the resulting CodeGraph or error  
+pub fn parse_fixture(fixture_name: &str) -> Result<CodeGraph, FixtureError> {
+    // let path = Path::new("tests/fixtures").join(fixture_name);
+    let path = workspace_root().join("tests/fixtures").join(fixture_name);
+    if !path.exists() {
+        return Err(FixtureError::NotFound(path.display().to_string()));
+    }
+    Ok(analyze_code(&path)?)
+}
+
+/// Parse multiple fixtures and collect results                       
+pub fn parse_fixtures(fixture_names: &[&str]) -> Result<Vec<CodeGraph>, FixtureError> {
+    fixture_names
+        .iter()
+        .map(|name| parse_fixture(name))
+        .collect()
+}
+
+/// Helper to assert a condition with a descriptive error             
+pub fn assert_fixture<T>(condition: bool, message: &str, ok_value: T) -> Result<T, FixtureError> {
+    if condition {
+        Ok(ok_value)
+    } else {
+        Err(FixtureError::Assertion(message.to_string()))
+    }
 }
 
 /// Find a struct by name in the code graph

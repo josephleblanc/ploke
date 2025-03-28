@@ -3,7 +3,7 @@ use syn_parser::parser::types::VisibilityKind;
 
 #[test]
 fn test_enum_parsing() {
-    let graph = parse_fixture("enums.rs");
+    let graph = parse_fixture("enums.rs").expect("Error parsing fixture 'enums.rs");
 
     let sample_enum = find_enum_by_name(&graph, "SampleEnum").expect("SampleEnum not found");
 

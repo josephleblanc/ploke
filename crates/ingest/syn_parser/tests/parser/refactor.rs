@@ -4,7 +4,7 @@ use syn_parser::{parser::types::VisibilityKind, CodeGraph};
 
 #[test]
 fn test_module_path_tracking_basic() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
 
     let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
     assert_eq!(outer.path, vec!["crate", "outer"]);
@@ -15,7 +15,7 @@ fn test_module_path_tracking_basic() {
 
 #[test]
 fn test_module_path_serialization() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
     let serialized = ron::to_string(&graph).unwrap();
     let deserialized: CodeGraph = ron::from_str(&serialized).unwrap();
 
@@ -30,7 +30,7 @@ fn test_module_path_serialization() {
 #[test]
 #[cfg(not(feature = "module_path_tracking"))]
 fn test_module_visibility() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
     let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
     assert_eq!(outer.visibility, VisibilityKind::Public);
 }
@@ -38,7 +38,7 @@ fn test_module_visibility() {
 #[test]
 #[cfg(feature = "module_path_tracking")]
 fn test_module_visibility() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
     let outer = graph.modules.iter().find(|m| m.name == "outer").unwrap();
     assert_eq!(
         outer.visibility,
@@ -48,14 +48,14 @@ fn test_module_visibility() {
 
 #[test]
 fn test_root_module_path() {
-    let graph = parse_fixture("modules.rs");
+    let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
     let root = graph.modules.first().unwrap();
     assert_eq!(root.path, vec!["crate"]);
 }
 
 #[test]
 fn test_non_module_items_ignored() {
-    let graph = parse_fixture("mixed_sample.rs");
+    let graph = parse_fixture("mixed_sample.rs").expect("Error parsing fixture mixed_sample.rs");
 
     // Should have root + private_module + public_module
     assert_eq!(graph.modules.len(), 3);
@@ -71,7 +71,7 @@ fn test_non_module_items_ignored() {
 
 #[test]
 fn test_private_module_handling() {
-    let graph = parse_fixture("mixed_sample.rs");
+    let graph = parse_fixture("mixed_sample.rs").expect("Error parsing fixture mixed_sample.rs");
 
     let private_mod = graph.modules.iter().find(|m| m.name == "private_module");
     assert!(
@@ -97,7 +97,7 @@ fn test_private_module_handling() {
 
 #[test]
 fn test_public_module_handling() {
-    let graph = parse_fixture("mixed_sample.rs");
+    let graph = parse_fixture("mixed_sample.rs").expect("Error parsing fixture mixed_sample.rs");
 
     let public_mod = graph.modules.iter().find(|m| m.name == "public_module");
     assert!(

@@ -1,0 +1,9 @@
+[package]
+name = "ploke-test-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ploke-common = { path = "../common" }
+syn_parser = { path = "../ingest/syn_parser" } # Only if you need parser-specific stuff
+syn = { workspace = true }

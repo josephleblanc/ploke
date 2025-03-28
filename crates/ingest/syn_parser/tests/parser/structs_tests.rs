@@ -3,7 +3,7 @@ use syn_parser::parser::types::*;
 
 #[test]
 fn test_regular_struct_parsing() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let sample_struct =
         find_struct_by_name(&graph, "SampleStruct").expect("SampleStruct not found");
@@ -16,7 +16,7 @@ fn test_regular_struct_parsing() {
 
 #[test]
 fn test_tuple_struct_parsing() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let tuple_struct = find_struct_by_name(&graph, "TupleStruct").expect("TupleStruct not found");
 
@@ -26,7 +26,7 @@ fn test_tuple_struct_parsing() {
 
 #[test]
 fn test_unit_struct_parsing() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let unit_struct = find_struct_by_name(&graph, "UnitStruct").expect("UnitStruct not found");
 
@@ -35,7 +35,7 @@ fn test_unit_struct_parsing() {
 
 #[test]
 fn test_struct_with_generics() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let generic_struct =
         find_struct_by_name(&graph, "GenericStruct").expect("GenericStruct not found");
@@ -50,7 +50,7 @@ fn test_struct_with_generics() {
 
 #[test]
 fn test_struct_with_attributes() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let attributed_struct =
         find_struct_by_name(&graph, "AttributedStruct").expect("AttributedStruct not found");
@@ -63,7 +63,7 @@ fn test_struct_with_attributes() {
 
 #[test]
 fn test_struct_with_docstring() {
-    let graph = parse_fixture("structs.rs");
+    let graph = parse_fixture("structs.rs").expect("Error parsing fixture structs.rs");
 
     let documented_struct =
         find_struct_by_name(&graph, "DocumentedStruct").expect("DocumentedStruct not found");

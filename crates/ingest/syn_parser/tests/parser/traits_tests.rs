@@ -9,7 +9,7 @@ use syn_parser::parser::types::*;
 
 #[test]
 fn test_regular_trait_parsing() {
-    let graph = parse_fixture("traits.rs");
+    let graph = parse_fixture("traits.rs").expect("Error parsing fixture traits.rs");
 
     let sample_trait = find_trait_by_name(&graph, "SampleTrait").expect("SampleTrait not found");
 
@@ -21,7 +21,7 @@ fn test_regular_trait_parsing() {
 
 #[test]
 fn test_default_trait_parsing() {
-    let graph = parse_fixture("traits.rs");
+    let graph = parse_fixture("traits.rs").expect("Error parsing fixture traits.rs");
 
     let default_trait = find_trait_by_name(&graph, "DefaultTrait").expect("DefaultTrait not found");
 
@@ -33,7 +33,7 @@ fn test_default_trait_parsing() {
 
 #[test]
 fn test_generic_trait_parsing() {
-    let graph = parse_fixture("traits.rs");
+    let graph = parse_fixture("traits.rs").expect("Error parsing fixture traits.rs");
 
     let generic_trait = find_trait_by_name(&graph, "GenericTrait").expect("GenericTrait not found");
 
@@ -51,7 +51,7 @@ fn test_generic_trait_parsing() {
 
 #[test]
 fn test_assoc_type_trait_parsing() {
-    let graph = parse_fixture("traits.rs");
+    let graph = parse_fixture("traits.rs").expect("Error parsing fixture traits.rs");
 
     let assoc_type_trait =
         find_trait_by_name(&graph, "assoc_type_trait").expect("assoc_type_trait not found");
@@ -64,7 +64,7 @@ fn test_assoc_type_trait_parsing() {
 
 #[test]
 fn test_private_trait_parsing() {
-    let graph = parse_fixture("traits.rs");
+    let graph = parse_fixture("traits.rs").expect("Error parsing fixture traits.rs");
 
     if let Some(private_trait) = find_trait_by_name(&graph, "PrivateTrait") {
         println!(

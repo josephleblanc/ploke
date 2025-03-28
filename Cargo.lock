@@ -1267,6 +1267,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "ploke-common"
+version = "0.1.0"
+dependencies = [
+ "syn 2.0.100",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "ploke-db"
 version = "0.1.0"
 dependencies = [
@@ -1295,7 +1303,17 @@ version = "0.1.0"
 dependencies = [
  "cozo",
  "itertools",
+ "ploke-test-utils",
  "serde",
+ "syn_parser",
+]
+
+[[package]]
+name = "ploke-test-utils"
+version = "0.1.0"
+dependencies = [
+ "ploke-common",
+ "syn 2.0.100",
  "syn_parser",
 ]
 
@@ -1811,6 +1829,7 @@ dependencies = [
  "dashmap 6.1.0",
  "flume",
  "petgraph",
+ "ploke-common",
  "proc-macro2",
  "quote",
  "rayon",
@@ -1818,6 +1837,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
+ "thiserror 2.0.12",
  "tokio",
  "uuid",
 ]

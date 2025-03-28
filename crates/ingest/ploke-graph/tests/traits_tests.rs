@@ -1,13 +1,12 @@
 use cozo::DataValue;
 use ploke_graph::traits::{BatchIntoCozo, IntoCozo};
-use syn_parser::parser::nodes::*;
-use test_helpers::parse_fixture;
+use ploke_test_utils::parse_fixture;
 
 mod test_helpers;
 
 #[test]
 fn test_visibility_conversions() {
-    let graph = parse_fixture("visibility.rs");
+    let graph = parse_fixture("visibility.rs").expect("Error parsing fixture visibility.rs");
     let func = graph
         .functions
         .iter()
@@ -24,7 +23,7 @@ fn test_visibility_conversions() {
 
 #[test]
 fn test_function_node_conversion() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
     let func = graph
         .functions
         .iter()
@@ -38,7 +37,7 @@ fn test_function_node_conversion() {
 
 #[test]
 fn test_batch_insert() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
     let functions: Vec<_> = graph.functions.iter().take(2).cloned().collect();
     let script = FunctionNode::cozo_batch_insert_script(&functions);
 

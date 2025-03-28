@@ -5,7 +5,7 @@ use syn_parser::parser::types::VisibilityKind;
 
 #[test]
 fn test_regular_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function =
         find_function_by_name(&graph, "regular_function").expect("regular_function not found");
@@ -21,7 +21,7 @@ fn test_regular_function_parsing() {
 
 #[test]
 fn test_function_with_params_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture 'functions.rs");
 
     let function = find_function_by_name(&graph, "function_with_params")
         .expect("function_with_params not found");
@@ -37,7 +37,7 @@ fn test_function_with_params_parsing() {
 
 #[test]
 fn test_generic_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture 'functions.rs");
 
     let function =
         find_function_by_name(&graph, "generic_function").expect("generic_function not found");
@@ -58,7 +58,7 @@ fn test_generic_function_parsing() {
 
 #[test]
 fn test_attributed_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture 'functions.rs");
 
     let function = find_function_by_name(&graph, "attributed_function")
         .expect("attributed_function not found");
@@ -75,7 +75,7 @@ fn test_attributed_function_parsing() {
 
 #[test]
 fn test_documented_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture 'functions.rs");
 
     let function = find_function_by_name(&graph, "documented_function")
         .expect("documented_function not found");
@@ -95,7 +95,7 @@ fn test_documented_function_parsing() {
 
 #[test]
 fn test_unsafe_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function =
         find_function_by_name(&graph, "unsafe_function").expect("unsafe_function not found");
@@ -111,7 +111,7 @@ fn test_unsafe_function_parsing() {
 
 #[test]
 fn test_lifetime_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
     let function =
         find_function_by_name(&graph, "lifetime_function").expect("lifetime_function not found");
 
@@ -132,13 +132,13 @@ fn test_lifetime_function_parsing() {
 
     assert_eq!(function.parameters.len(), 1);
     assert_eq!(function.parameters[0].name, Some("param".to_string()));
-    assert_eq!(function.parameters[0].type_id, graph.type_graph.iter().find(|t| matches!(t.kind, TypeKind::Reference { lifetime: Some(ref lt), is_mutable: false } if lt == "a")).map(|t| t.id).expect("Reference type with lifetime 'a' not found"));
-    assert_eq!(function.return_type, Some(graph.type_graph.iter().find(|t| matches!(t.kind, TypeKind::Reference { lifetime: Some(ref lt), is_mutable: false } if lt == "a")).map(|t| t.id).expect("Reference type with lifetime 'a' not found")));
+    assert_eq!(function.parameters[0].type_id, graph.type_graph.iter().find(|t| matches!(t.kind, TypeKind::Reference { lifetime: Some(ref lt), is_mutable: false } if lt == "a")).map(|t| t.id).expect("Reference type with lifetime a not found"));
+    assert_eq!(function.return_type, Some(graph.type_graph.iter().find(|t| matches!(t.kind, TypeKind::Reference { lifetime: Some(ref lt), is_mutable: false } if lt == "a")).map(|t| t.id).expect("Reference type with lifetime a not found")));
 }
 
 #[test]
 fn test_private_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function =
         find_function_by_name(&graph, "private_function").expect("private_function not found");
@@ -154,7 +154,7 @@ fn test_private_function_parsing() {
 
 #[test]
 fn test_multi_generic_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function = find_function_by_name(&graph, "multi_generic_function")
         .expect("multi_generic_function not found");
@@ -183,7 +183,7 @@ fn test_multi_generic_function_parsing() {
 
 #[test]
 fn test_where_clause_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function = find_function_by_name(&graph, "where_clause_function")
         .expect("where_clause_function not found");
@@ -200,7 +200,7 @@ fn test_where_clause_function_parsing() {
 
 #[test]
 fn test_async_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function =
         find_function_by_name(&graph, "async_function").expect("async_function not found");
@@ -213,7 +213,7 @@ fn test_async_function_parsing() {
 
 #[test]
 fn test_default_params_function_parsing() {
-    let graph = parse_fixture("functions.rs");
+    let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 
     let function =
         find_function_by_name(&graph, "default_params").expect("default_params not found");

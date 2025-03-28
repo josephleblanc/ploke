@@ -84,21 +84,21 @@ pub fn print_debug(message: &str, result: &cozo::NamedRows) {
 }
 
 /// Parse a fixture file and return the resulting CodeGraph
-#[allow(dead_code)]
-pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
-    #[cfg(feature = "debug")]
-    println!("parsing fixture: fixture_name");
-    let path = Path::new("../syn_parser/tests/fixtures").join(fixture_name);
-    #[cfg(feature = "debug")]
-    println!(
-        "parsing file path: {}",
-        path.to_str().expect("invalid file path")
-    );
-    #[cfg(feature = "debug")]
-    println!(
-        "parsing target file path exists: {}",
-        path.try_exists()
-            .expect("file path existance cannot be confirmed as true or false")
-    );
-    analyze_code(&path).expect("Failed to parse fixture")
-}
+// #[allow(dead_code)]
+// pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
+//     #[cfg(feature = "debug")]
+//     println!("parsing fixture: fixture_name");
+//     let path = Path::new("../syn_parser/tests/fixtures").join(fixture_name);
+//     #[cfg(feature = "debug")]
+//     println!(
+//         "parsing file path: {}",
+//         path.to_str().expect("invalid file path")
+//     );
+//     #[cfg(feature = "debug")]
+//     println!(
+//         "parsing target file path exists: {}",
+//         path.try_exists()
+//             .expect("file path existance cannot be confirmed as true or false")
+//     );
+//     analyze_code(&path).expect("Failed to parse fixture")
+// }

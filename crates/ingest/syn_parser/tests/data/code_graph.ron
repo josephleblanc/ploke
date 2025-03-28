@@ -1552,5 +1552,4 @@
             body: Some("() => { println ! (\"Hello from macro!\") ; } ; ($ expr : expr) => { println ! (\"Expression: {}\" , $ expr) ; } ; ($ name : ident , $ value : expr) => { println ! (\"{} = {}\" , stringify ! ($ name) , $ value) ; } ;"),
         ),
     ],
-    use_statements: [],
 )

@@ -5,6 +5,8 @@ members = [
     "crates/ingest/ploke-graph",
     "crates/ingest/ploke-embed",
     "crates/ploke-db",
+    "crates/common",
+    "crates/test-utils",
     # Add more modules as needed
 ]
 exclude = ["ai_workflow"]
@@ -30,3 +32,9 @@ dashmap = "6.1.0"
 petgraph = "0.7.1"
 cozo = "0.7.6"
 uuid = { version = "1.16.0", features = ["v5", "atomic"] }
+
+# Error handling
+thiserror = "2"
+
+[workspace.metadata]
+fixtures_dir = "tests/fixtures"
