@@ -1,4 +1,6 @@
 #[cfg(feature = "visibility_resolution")]
+use super::nodes::Visible;
+#[cfg(feature = "visibility_resolution")]
 use crate::parser::nodes::NodeId;
 #[cfg(feature = "visibility_resolution")]
 use crate::parser::nodes::OutOfScopeReason;
@@ -59,7 +61,7 @@ impl CodeGraph {
                 }
             }
             VisibilityKind::Restricted(path) => {
-                if self.is_path_visible(path, context_module) {
+                if self.is_path_visible(&path, context_module) {
                     VisibilityResult::Direct
                 } else {
                     VisibilityResult::OutOfScope {
@@ -72,33 +74,52 @@ impl CodeGraph {
         }
     }
 
+    #[cfg(feature = "visibility_resolution")]
     fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
         // Check all node collections for matching ID
-        self.functions.iter()
+
+        self.functions
+            .iter()
             .find(|n| n.id == item_id)
             .map(|n| n as &dyn Visible)
-            .or_else(|| self.defined_types.iter().find_map(|n| match n {
-                TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn Visible),
-                TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn Visible),
-                TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn Visible),
-                TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn Visible),
-                _ => None,
-            }))
-            .or_else(|| self.traits.iter()
-                .chain(&self.private_traits)
-                .find(|n| n.id == item_id)
-                .map(|n| n as &dyn Visible))
-            .or_else(|| self.modules.iter()
-                .find(|n| n.id == item_id)
-                .map(|n| n as &dyn Visible))
-            .or_else(|| self.values.iter()
-                .find(|n| n.id == item_id)
-                .map(|n| n as &dyn Visible))
-            .or_else(|| self.macros.iter()
-                .find(|n| n.id == item_id)
-                .map(|n| n as &dyn Visible))
+            .or_else(|| {
+                self.defined_types.iter().find_map(|n| match n {
+                    TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn Visible),
+                    TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn Visible),
+                    TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn Visible),
+                    TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn Visible),
+                    _ => None,
+                })
+            })
+            .or_else(|| {
+                self.traits
+                    .iter()
+                    .chain(&self.private_traits)
+                    .find(|n| n.id == item_id)
+                    .map(|n| n as &dyn Visible)
+            })
+            .or_else(|| {
+                self.modules
+                    .iter()
+                    .find(|n| n.id == item_id)
+                    .map(|n| n as &dyn Visible)
+            })
+            .or_else(|| {
+                self.values
+                    .iter()
+                    .find(|n| n.id == item_id)
+                    .map(|n| n as &dyn Visible)
+            })
+            .or_else(|| {
+                self.macros
+                    .iter()
+                    .find(|n| n.id == item_id)
+                    .map(|n| n as &dyn Visible)
+            })
     }
 
+    #[cfg(feature = "workspace_vis")]
+    #[allow(unused_variables)]
     fn same_crate(&self, context: &[String]) -> bool {
         // Default true until we handle workspaces
         true

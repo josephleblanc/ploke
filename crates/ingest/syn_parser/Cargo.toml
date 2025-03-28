@@ -54,3 +54,5 @@ verbose_debug = []
 module_path_tracking = []   # phase 1 (done)
 use_statement_tracking = [] # phase 2 (done)
 visibility_resolution = []  #phase 3 (current)
+# Post-MVP feature
+workspace_vis = []
