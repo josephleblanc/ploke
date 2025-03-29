@@ -129,6 +129,10 @@ impl CodeGraph {
         context.starts_with(path)
     }
 
+    #[cfg_attr(
+        not(feature = "use_statement_tracking"),
+        allow(unused_variables, unused_mut)
+    )]
     #[cfg(feature = "use_statement_tracking")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
         let item = match self.find_node(item_id) {
@@ -142,7 +146,7 @@ impl CodeGraph {
         };
 
         // Get current module's use statements
-        let current_module = self.modules.iter().find(|m| {
+        let current_module = self.modules.iter().find(|#[cfg_attr(not(feature = "module_path_tracking"), allow(unused_variables))] m| {
             #[cfg(feature = "module_path_tracking")]
             {
                 m.path == context_module
