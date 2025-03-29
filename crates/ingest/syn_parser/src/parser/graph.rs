@@ -146,20 +146,22 @@ impl CodeGraph {
         };
 
         // Get current module's use statements
-        let current_module = self.modules.iter().find(|#[cfg_attr(not(feature = "module_path_tracking"), allow(unused_variables))] m| {
-            #[cfg(feature = "module_path_tracking")]
-            {
-                m.path == context_module
-            }
-            #[cfg(not(feature = "module_path_tracking"))]
-            #[cfg_attr(
-                not(feature = "module_path_tracking"),
-                allow(unused_imports, dead_code)
-            )]
-            {
-                false
-            } // Fallback if module path tracking is disabled
-        });
+        let current_module = self.modules.iter().find(
+            |#[cfg_attr(not(feature = "module_path_tracking"), allow(unused_variables))] m| {
+                #[cfg(feature = "module_path_tracking")]
+                {
+                    m.path == context_module
+                }
+                #[cfg(not(feature = "module_path_tracking"))]
+                #[cfg_attr(
+                    not(feature = "module_path_tracking"),
+                    allow(unused_imports, dead_code)
+                )]
+                {
+                    false
+                } // Fallback if module path tracking is disabled
+            },
+        );
 
         if let Some(module) = current_module {
             for use_stmt in &module.imports {

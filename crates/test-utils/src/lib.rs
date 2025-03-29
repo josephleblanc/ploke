@@ -1,5 +1,9 @@
 use ploke_common::fixtures_dir;
-use syn_parser::parser::visitor::analyze_code;
+use syn_parser::parser::nodes::TypeDefNode;
+use syn_parser::{
+    parser::{nodes::NodeId, visitor::analyze_code},
+    CodeGraph,
+};
 
 pub fn parse_fixture(
     fixture_name: &str,
@@ -17,26 +21,24 @@ pub fn parse_malformed_fixture(
 
 /// Find a function node by name in a CodeGraph
 pub fn find_function_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
-    graph.functions.iter()
+    graph
+        .functions
+        .iter()
         .find(|f| f.name == name)
         .map(|f| f.id)
 }
 
 /// Find a struct node by name in a CodeGraph  
 pub fn find_struct_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
-    graph.defined_types.iter()
-        .find_map(|t| match t {
-            TypeDefNode::Struct(s) if s.name == name => Some(s.id),
-            _ => None
-        })
+    graph.defined_types.iter().find_map(|t| match t {
+        TypeDefNode::Struct(s) if s.name == name => Some(s.id),
+        _ => None,
+    })
 }
 
 /// Find a module node by path in a CodeGraph
-#[cfg(feature = "module_path_tracking")]
 pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
-    graph.modules.iter()
-        .find(|m| m.path == path)
-        .map(|m| m.id)
+    graph.modules.iter().find(|m| m.path == path).map(|m| m.id)
 }
 
 /// Helper to create module path for testing

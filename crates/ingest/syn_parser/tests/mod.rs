@@ -3,5 +3,6 @@ pub mod common;
 pub mod integration;
 pub mod parser;
 pub mod serialization;
+pub mod visibility;
 
 pub mod refactor;

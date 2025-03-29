@@ -1,13 +1,7 @@
-use test_utils::{
-    parse_fixture,
-    find_function_by_name,
-    find_struct_by_name,
-    find_module_by_path,
-    test_module_path
-};
-use syn_parser::parser::{
-    nodes::{VisibilityResult, OutOfScopeReason},
-};
+use syn_parser::parser::nodes::{OutOfScopeReason, VisibilityResult};
+
+// #![cfg(feature = "use_statement_tracking")]
+use crate::common::*;
 
 mod fixtures {
     pub const SIMPLE_PUB: &str = "visibility/simple_pub.rs";
@@ -19,7 +13,7 @@ mod fixtures {
 #[test]
 fn test_public_items_direct_visibility() {
     let graph = parse_fixture(fixtures::SIMPLE_PUB).unwrap();
-    
+
     // Test public function visibility
     let pub_func_id = find_function_by_name(&graph, "public_function").unwrap();
     assert!(matches!(
@@ -35,9 +29,13 @@ fn test_public_items_direct_visibility() {
     ));
 
     // Test nested public module visibility
-    let pub_mod_id = find_module_by_path(&graph, &test_module_path(&["crate", "public_module"])).unwrap();
+    let pub_mod_id =
+        find_module_by_path(&graph, &test_module_path(&["crate", "public_module"])).unwrap();
     assert!(matches!(
-        graph.resolve_visibility(pub_mod_id, &test_module_path(&["crate", "unrelated_module"])),
+        graph.resolve_visibility(
+            pub_mod_id,
+            &test_module_path(&["crate", "unrelated_module"])
+        ),
         VisibilityResult::Direct
     ));
 
