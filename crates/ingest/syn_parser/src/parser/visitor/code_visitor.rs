@@ -1182,7 +1182,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         #[cfg(feature = "module_path_tracking")]
         {
-            self.state.current_module_path.pop();
+            self.state.current_module_path = parent_path;
         }
     }
 
