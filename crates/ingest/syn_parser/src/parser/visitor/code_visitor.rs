@@ -888,12 +888,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Save current path and update
         #[cfg(feature = "module_path_tracking")]
-        let parent_path = {
-            let current = &mut self.state.current_module_path;
-            let path = current.clone();
-            current.push(module_name.clone());
-            path
-        };
+        let parent_path = self.state.current_module_path.clone();
+        #[cfg(feature = "module_path_tracking")]
+        self.state.current_module_path.push(module_name.clone());
 
         // Determine module visibility
         let visibility =
@@ -991,7 +988,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         let new_module = ModuleNode {
                             id: module_id,
                             name: module_name.clone(),
-                            path: path,
+                            #[cfg(feature = "module_path_tracking")]
+                            path: {
+                                let mut path = parent_path.clone();
+                                path.push(module_name.clone());
+                                path
+                            },
                             visibility: visibility.clone(),
                             attributes: extract_attributes(&module.attrs),
                             docstring: extract_docstring(&module.attrs),
