@@ -40,10 +40,7 @@ mod inherited_items {
 
     #[test]
     fn private_function_cross_module() {
-        let graph = parse_fixture("modules.rs").expect(
-            "Fixture failed to   
- parse",
-        );
+        let graph = parse_fixture("modules.rs").expect("Fixture failed to parse");
         let inner_func = find_function_by_name(&graph, "inner_function").unwrap();
 
         // Context is outer module trying to access inner module's private  function

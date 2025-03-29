@@ -886,7 +886,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
 
-        // Save current path and update
+        // Save current path before entering module
         #[cfg(feature = "module_path_tracking")]
         let parent_path = self.state.current_module_path.clone();
 
@@ -894,39 +894,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         #[cfg(feature = "module_path_tracking")]
         self.state.current_module_path.push(module_name.clone());
 
-        // Determine module visibility
-        let visibility =
-            if module_name == "private_module" && matches!(module.vis, Visibility::Inherited) {
-                VisibilityKind::Restricted(vec!["super".to_string()])
-            } else {
-                self.state.convert_visibility(&module.vis)
-            };
-
-        // Get or create the module node
-
-        // Process inner items if available
+        // Process module contents
         let mut submodules = Vec::new();
         let mut items = Vec::new();
-
-        // Determine module visibility
-        // For private modules like 'mod private_module', we need to set Restricted visibility
-        let visibility =
-            if module_name == "private_module" && matches!(module.vis, Visibility::Inherited) {
-                // Private modules should have Restricted visibility
-                VisibilityKind::Restricted(vec!["super".to_string()])
-            } else {
-                self.state.convert_visibility(&module.vis)
-            };
 
         if let Some((_, mod_items)) = &module.content {
             for item in mod_items {
                 let item_id = self.state.next_node_id();
                 items.push(item_id);
 
+                // Store item-module relationship immediately
+                self.state.code_graph.relations.push(Relation {
+                    source: module_id,
+                    target: item_id,
+                    kind: RelationKind::Contains,
+                });
+
+                // Visit item - this will now happen in the correct module context
                 match item {
-                    syn::Item::Fn(func) => {
-                        self.visit_item_fn(func);
-                    }
+                    syn::Item::Fn(func) => self.visit_item_fn(func),
                     syn::Item::Struct(strct) => {
                         self.visit_item_struct(strct);
                     }
@@ -969,225 +955,30 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 }
             }
         }
-        let module_node = {
-            #[cfg(feature = "module_path_tracking")]
-            {
-                // Build the full module path
-                let mut path = self.state.current_module_path.clone();
-                path.push(module_name.clone());
-                self.state.current_module_path = path.clone();
 
-                // Find or create the module
-                let module_node = match self
-                    .state
-                    .code_graph
-                    .modules
-                    .iter_mut()
-                    .find(|m| m.name == module_name)
-                {
-                    Some(existing) => existing,
-                    None => {
-                        let new_module = ModuleNode {
-                            id: module_id,
-                            name: module_name.clone(),
-                            #[cfg(feature = "module_path_tracking")]
-                            path: {
-                                let mut path = parent_path.clone();
-                                path.push(module_name.clone());
-                                path
-                            },
-                            visibility: visibility.clone(),
-                            attributes: extract_attributes(&module.attrs),
-                            docstring: extract_docstring(&module.attrs),
-                            submodules: Vec::new(),
-                            items: Vec::new(),
-                            imports: Vec::new(),
-                            exports: Vec::new(),
-                        };
-                        self.state.code_graph.modules.push(new_module);
-                        self.state.code_graph.modules.last_mut().unwrap()
-                    }
-                };
-                module_node
-            }
-            #[cfg(not(feature = "module_path_tracking"))]
-            {
-                let new_module = ModuleNode {
-                    id: module_id,
-                    name: module_name.clone(),
-                    visibility: visibility.clone(),
-                    attributes: extract_attributes(&module.attrs),
-                    docstring: extract_docstring(&module.attrs),
-                    submodules: Vec::new(),
-                    items: Vec::new(),
-                    imports: Vec::new(),
-                    exports: Vec::new(),
-                };
-                self.state.code_graph.modules.push(new_module);
-                self.state.code_graph.modules.last_mut().unwrap()
-            }
+        // Create module node with proper path tracking
+        // Create module node with proper hierarchy tracking
+        let module_node = ModuleNode {
+            id: module_id,
+            name: module_name.clone(),
+            #[cfg(feature = "module_path_tracking")]
+            path: self.state.current_module_path.clone(),
+            visibility: self.state.convert_visibility(&module.vis),
+            attributes: extract_attributes(&module.attrs),
+            docstring: extract_docstring(&module.attrs),
+            submodules,
+            items,
+            imports: Vec::new(),
+            exports: Vec::new(),
         };
 
-        // Add module to graph
-        // self.state.code_graph.modules.push(ModuleNode {
-        //     id: module_id,
-        //     name: module_name.clone(),
-        //     #[cfg(feature = "module_path_tracking")]
-        //     path: self.state.current_module_path.clone(),
-        //     // This is a little tricky given how our visitor starts traversing the tree.
-        //     // Consider implementing. See syn_parser/src/parser/visitor/mod.rs
-        //     // span: module.extract_span_bytes(),
-        //     visibility: visibility.clone(),
-        //     attributes: extract_attributes(&module.attrs),
-        //     docstring: extract_docstring(&module.attrs),
-        //     submodules: submodules.clone(),
-        //     items: items.clone(),
-        //     imports: Vec::new(),
-        //     exports: Vec::new(),
-        // });
-
-        // Add "Contains" relations between the module and its items
-        if let Some((_, mod_items)) = &module.content {
-            for item in mod_items {
-                let item_id = match item {
-                    syn::Item::Fn(func) => {
-                        // Find the function node ID
-                        self.state
-                            .code_graph
-                            .functions
-                            .iter()
-                            .find(|f| func.sig.ident == f.name)
-                            .map(|f| f.id)
-                    }
-                    syn::Item::Struct(strct) => {
-                        // Find the struct node ID
-                        self.state
-                            .code_graph
-                            .defined_types
-                            .iter()
-                            .find(|def| match def {
-                                TypeDefNode::Struct(s) => strct.ident == s.name,
-                                _ => false,
-                            })
-                            .map(|def| match def {
-                                TypeDefNode::Struct(s) => s.id,
-                                _ => 0, // Should never happen
-                            })
-                    }
-                    syn::Item::Enum(enm) => {
-                        // Find the enum node ID
-                        self.state
-                            .code_graph
-                            .defined_types
-                            .iter()
-                            .find(|def| match def {
-                                TypeDefNode::Enum(e) => enm.ident == e.name,
-                                _ => false,
-                            })
-                            .map(|def| match def {
-                                TypeDefNode::Enum(e) => e.id,
-                                _ => 0, // Should never happen
-                            })
-                    }
-                    syn::Item::Type(type_alias) => {
-                        // Find the type alias node ID
-                        self.state
-                            .code_graph
-                            .defined_types
-                            .iter()
-                            .find(|def| match def {
-                                TypeDefNode::TypeAlias(ta) => type_alias.ident == ta.name,
-                                _ => false,
-                            })
-                            .map(|def| match def {
-                                TypeDefNode::TypeAlias(ta) => ta.id,
-                                _ => 0, // Should never happen
-                            })
-                    }
-                    syn::Item::Union(union_def) => {
-                        // Find the union node ID
-                        self.state
-                            .code_graph
-                            .defined_types
-                            .iter()
-                            .find(|def| match def {
-                                TypeDefNode::Union(u) => union_def.ident == u.name,
-                                _ => false,
-                            })
-                            .map(|def| match def {
-                                TypeDefNode::Union(u) => u.id,
-                                _ => 0, // Should never happen
-                            })
-                    }
-                    syn::Item::Trait(trt) => {
-                        // Find the trait node ID
-                        self.state
-                            .code_graph
-                            .traits
-                            .iter()
-                            .find(|t| trt.ident == t.name)
-                            .map(|t| t.id)
-                    }
-                    syn::Item::Const(item_const) => {
-                        // Find the constant node ID
-                        self.state
-                            .code_graph
-                            .values
-                            .iter()
-                            .find(|v| item_const.ident == v.name && v.kind == ValueKind::Constant)
-                            .map(|v| v.id)
-                    }
-                    syn::Item::Static(item_static) => {
-                        // Find the static node ID
-                        self.state
-                            .code_graph
-                            .values
-                            .iter()
-                            .find(|v| {
-                                item_static.ident == v.name
-                                    && matches!(v.kind, ValueKind::Static { .. })
-                            })
-                            .map(|v| v.id)
-                    }
-                    syn::Item::Macro(item_macro) => {
-                        // Find the macro node ID
-                        let macro_name = item_macro
-                            .ident
-                            .as_ref()
-                            .map(|ident| ident.to_string())
-                            .unwrap_or_else(|| "unnamed_macro".to_string());
-
-                        self.state
-                            .code_graph
-                            .macros
-                            .iter()
-                            .find(|m| m.name == macro_name)
-                            .map(|m| m.id)
-                    }
-                    _ => None,
-                };
-
-                if let Some(id) = item_id {
-                    self.state.code_graph.relations.push(Relation {
-                        source: module_id,
-                        target: id,
-                        kind: RelationKind::Contains,
-                    });
-                }
-            }
-        }
-
-        #[cfg(feature = "module_path_tracking")]
-        let module_path = self.state.current_module_path.clone();
-
-        // Update the module with collected items
-        module_node.submodules = submodules;
-        module_node.items = items;
-
+        // Restore parent path after processing module
         #[cfg(feature = "module_path_tracking")]
         {
             self.state.current_module_path = parent_path;
         }
+
+        self.state.code_graph.modules.push(module_node);
     }
 
     /// Visits `use` statements during AST traversal.

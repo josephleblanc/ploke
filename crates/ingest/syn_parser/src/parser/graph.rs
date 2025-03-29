@@ -97,21 +97,33 @@ impl CodeGraph {
                     }
                 }
             }
-            _ => self.check_use_statements(item_id, context_module),
         }
     }
 
+    /// Gets the full module path for an item by searching through all modules
+    /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
+    /// Gets the full module path for an item by following Contains relations
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         #[cfg(feature = "module_path_tracking")]
         {
-            self.modules
+            // Find the module that contains this item
+            let module_id = self
+                .relations
                 .iter()
-                .find(|m| m.items.contains(&item_id))
-                .map(|m| m.path.clone())
-                .unwrap_or_else(|| {
-                    println!("Item {} not contained in any module", item_id);
-                    vec!["crate".to_string()]
-                })
+                .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
+                .map(|r| r.source);
+
+            if let Some(mod_id) = module_id {
+                // Get the module's path
+                self.modules
+                    .iter()
+                    .find(|m| m.id == mod_id)
+                    .map(|m| m.path.clone())
+                    .unwrap_or_else(|| vec!["crate".to_string()])
+            } else {
+                // Item not in any module (crate root)
+                vec!["crate".to_string()]
+            }
         }
         #[cfg(not(feature = "module_path_tracking"))]
         {

@@ -1248,9 +1248,19 @@
             kind: EnumVariant,
         ),
         (
+            source: 46,
+            target: 47,
+            kind: Contains,
+        ),
+        (
             source: 48,
             target: 49,
             kind: StructField,
+        ),
+        (
+            source: 46,
+            target: 50,
+            kind: Contains,
         ),
         (
             source: 52,
@@ -1268,9 +1278,19 @@
             kind: ImplementsFor,
         ),
         (
+            source: 46,
+            target: 54,
+            kind: Contains,
+        ),
+        (
             source: 55,
             target: 24,
             kind: FunctionReturn,
+        ),
+        (
+            source: 46,
+            target: 56,
+            kind: Contains,
         ),
         (
             source: 57,
@@ -1278,9 +1298,19 @@
             kind: FunctionReturn,
         ),
         (
+            source: 46,
+            target: 58,
+            kind: Contains,
+        ),
+        (
             source: 59,
             target: 60,
             kind: StructField,
+        ),
+        (
+            source: 46,
+            target: 61,
+            kind: Contains,
         ),
         (
             source: 62,
@@ -1293,6 +1323,16 @@
             kind: EnumVariant,
         ),
         (
+            source: 46,
+            target: 65,
+            kind: Contains,
+        ),
+        (
+            source: 46,
+            target: 67,
+            kind: Contains,
+        ),
+        (
             source: 68,
             target: 69,
             kind: StructField,
@@ -1301,6 +1341,11 @@
             source: 68,
             target: 70,
             kind: StructField,
+        ),
+        (
+            source: 46,
+            target: 71,
+            kind: Contains,
         ),
         (
             source: 73,
@@ -1314,17 +1359,27 @@
         ),
         (
             source: 46,
-            target: 55,
+            target: 75,
             kind: Contains,
         ),
         (
             source: 46,
-            target: 57,
+            target: 77,
             kind: Contains,
         ),
         (
             source: 46,
-            target: 72,
+            target: 79,
+            kind: Contains,
+        ),
+        (
+            source: 46,
+            target: 81,
+            kind: Contains,
+        ),
+        (
+            source: 82,
+            target: 83,
             kind: Contains,
         ),
         (
@@ -1333,9 +1388,19 @@
             kind: Uses,
         ),
         (
+            source: 82,
+            target: 85,
+            kind: Contains,
+        ),
+        (
             source: 86,
             target: 87,
             kind: StructField,
+        ),
+        (
+            source: 82,
+            target: 88,
+            kind: Contains,
         ),
         (
             source: 90,
@@ -1358,6 +1423,11 @@
             kind: ImplementsTrait,
         ),
         (
+            source: 82,
+            target: 93,
+            kind: Contains,
+        ),
+        (
             source: 94,
             target: 95,
             kind: EnumVariant,
@@ -1366,16 +1436,6 @@
             source: 94,
             target: 96,
             kind: EnumVariant,
-        ),
-        (
-            source: 82,
-            target: 86,
-            kind: Contains,
-        ),
-        (
-            source: 82,
-            target: 94,
-            kind: Contains,
         ),
         (
             source: 97,
@@ -1431,7 +1491,11 @@
             attributes: [],
             docstring: None,
             submodules: [],
-            items: [],
+            items: [
+                37,
+                55,
+                57,
+            ],
             imports: [],
             exports: [],
         ),
