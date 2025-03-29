@@ -47,8 +47,40 @@ fn test_pub_in_path_restricted_function() {
 fn test_pub_in_path_restricted_struct() {
     let graph = parse_fixture("restricted_visibility.rs").expect("Fixture failed to parse");
 
+    #[cfg(feature = "verbose_debug")]
+    {
+        println!("\n=== Debugging restricted_visibility_tests ===");
+        println!("Defined types in graph:");
+        for ty in &graph.defined_types {
+            match ty {
+                TypeDefNode::Struct(s) => println!("Struct: {} (vis: {:?})", s.name, s.visibility),
+                TypeDefNode::Enum(e) => println!("Enum: {} (vis: {:?})", e.name, e.visibility),
+                _ => {}
+            }
+        }
+        
+        println!("\nModule paths in graph:");
+        for m in &graph.modules {
+            #[cfg(feature = "module_path_tracking")]
+            println!("- {} (path: {:?})", m.name, m.path);
+            #[cfg(not(feature = "module_path_tracking"))]
+            println!("- {}", m.name);
+        }
+    }
+
     let restricted_struct = find_struct_by_name(&graph, "RestrictedStruct")
-        .expect("RestrictedStruct not found in fixture");
+        .unwrap_or_else(|| {
+            #[cfg(feature = "verbose_debug")]
+            {
+                eprintln!("\nAll structs in graph:");
+                for ty in &graph.defined_types {
+                    if let TypeDefNode::Struct(s) = ty {
+                        eprintln!("- {} (vis: {:?})", s.name, s.visibility);
+                    }
+                }
+            }
+            panic!("RestrictedStruct not found in fixture");
+        });
     
     // Test allowed access
     let allowed_result = graph.resolve_visibility(
