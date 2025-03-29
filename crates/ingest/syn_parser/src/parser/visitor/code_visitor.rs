@@ -889,6 +889,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Save current path and update
         #[cfg(feature = "module_path_tracking")]
         let parent_path = self.state.current_module_path.clone();
+
+        // Update path for nested module visitation
         #[cfg(feature = "module_path_tracking")]
         self.state.current_module_path.push(module_name.clone());
 

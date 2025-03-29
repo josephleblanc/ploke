@@ -104,17 +104,14 @@ impl CodeGraph {
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         #[cfg(feature = "module_path_tracking")]
         {
-            // Find immediate containing module
-            let containing_module = match self.modules.iter().find(|m| m.items.contains(&item_id)) {
-                Some(m) => m,
-                None => {
+            self.modules
+                .iter()
+                .find(|m| m.items.contains(&item_id))
+                .map(|m| m.path.clone())
+                .unwrap_or_else(|| {
                     println!("Item {} not contained in any module", item_id);
-                    return vec!["crate".to_string()];
-                }
-            };
-
-            // Build path using module names - tracked via ModuleNode.path
-            containing_module.path.clone()
+                    vec!["crate".to_string()]
+                })
         }
         #[cfg(not(feature = "module_path_tracking"))]
         {

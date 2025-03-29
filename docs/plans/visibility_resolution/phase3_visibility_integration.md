@@ -25,6 +25,7 @@
 
 **Implementation Guide**:
 ```rust
+// WARNING: NOTIONAL EXAMPLE: MAY NOT MATCH ACTUAL IMPLEMENTATION
 #[cfg(feature = "visibility_resolution")]
 impl CodeGraph {
     pub fn resolve_visibility(

@@ -60,7 +60,14 @@ fn test_non_module_items_ignored() {
     let graph = parse_fixture("mixed_sample.rs").expect("Error parsing fixture mixed_sample.rs");
 
     // Should have root + private_module + public_module
-    assert_eq!(graph.modules.len(), 3);
+    let module_names: Vec<_> = graph.modules.iter().map(|m| &m.name).collect();
+    assert_eq!(
+        graph.modules.len(),
+        3,
+        "Expected 3 modules (root, private_module, public_module). Found:   
+ {:?}",
+        module_names
+    );
 
     let root = graph.modules.iter().find(|m| m.name == "root").unwrap();
     assert_eq!(root.path, vec!["crate"]);

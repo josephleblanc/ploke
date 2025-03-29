@@ -15,6 +15,8 @@ pub struct VisitorState {
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
     #[cfg(feature = "module_path_tracking")]
     pub(crate) current_module_path: Vec<String>,
+    #[cfg(feature = "module_path_tracking")]
+    pub(crate) current_module: Vec<String>, // Stack of module IDs we're currently in
 }
 
 impl VisitorState {
@@ -39,6 +41,7 @@ impl VisitorState {
             type_map: Arc::new(DashMap::new()),
             #[cfg(feature = "module_path_tracking")]
             current_module_path: Vec::new(),
+            #[cfg(feature = "module_path_tracking")]
             current_module: Vec::new(),
         }
     }
