@@ -3,7 +3,7 @@
 mod outer {
     // Inner module
     mod inner {
-        pub fn inner_function() {
+        fn inner_function() {
             println!("Inner function");
         }
     }
