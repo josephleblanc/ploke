@@ -39,6 +39,7 @@ default = [
     "module_path_tracking",
     "use_statement_tracking",
     "visibility_resolution",
+    "verbose_debug",
 ]
 cozo_visitor = []
 cozo_type_refactor = []
