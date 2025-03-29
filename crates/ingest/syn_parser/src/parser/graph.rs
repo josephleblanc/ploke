@@ -1,5 +1,6 @@
 #[cfg(feature = "visibility_resolution")]
 use super::nodes::Visible;
+use super::relations::RelationKind;
 #[cfg(feature = "visibility_resolution")]
 use crate::parser::nodes::NodeId;
 #[cfg(feature = "visibility_resolution")]
@@ -103,24 +104,17 @@ impl CodeGraph {
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         #[cfg(feature = "module_path_tracking")]
         {
-            self.modules
-                .iter()
-                .find(|m| m.items.contains(&item_id))
-                .map(|m| {
-                    if m.path.is_empty() {
-                        vec!["crate".to_string()] // Treat empty path as crate root
-                    } else {
-                        m.path.clone()
-                    }
-                })
-                .unwrap_or_else(|| {
-                    println!(
-                        "Item {} not in any module - defaulting to cra 
- root",
-                        item_id
-                    );
-                    vec!["crate".to_string()] // Fallback to crate root
-                })
+            // Find immediate containing module
+            let containing_module = match self.modules.iter().find(|m| m.items.contains(&item_id)) {
+                Some(m) => m,
+                None => {
+                    println!("Item {} not contained in any module", item_id);
+                    return vec!["crate".to_string()];
+                }
+            };
+
+            // Build path using module names - tracked via ModuleNode.path
+            containing_module.path.clone()
         }
         #[cfg(not(feature = "module_path_tracking"))]
         {

@@ -263,6 +263,5 @@ impl VisitorState {
     fn process_lifetime_bound(&mut self, bound: &syn::Lifetime) -> String {
         bound.ident.to_string()
     }
-
     // Move extract_docstring and extract_attributes to attribute_processing.rs
 }
