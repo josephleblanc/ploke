@@ -161,6 +161,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         let fn_id = self.state.next_node_id();
+        // Register function with current module
+        if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
+            current_mod.items.push(fn_id);
+        }
         let fn_name = func.sig.ident.to_string();
         let byte_range = func.span().byte_range();
         let span = (byte_range.start, byte_range.end);
@@ -879,12 +883,40 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
-        // Extract module information
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
 
         #[cfg(feature = "module_path_tracking")]
-        self.state.current_module_path.push(module_name.clone());
+        {
+            // Build the full module path
+            let mut path = self.state.current_module_path.clone();
+            path.push(module_name.clone());
+
+            // Only create module node if it doesn't exist already
+            if !self
+                .state
+                .code_graph
+                .modules
+                .iter()
+                .any(|m| m.name == module_name)
+            {
+                self.state.code_graph.modules.push(ModuleNode {
+                    id: module_id,
+                    name: module_name.clone(),
+                    path: path.clone(),
+                    visibility: self.state.convert_visibility(&module.vis),
+                    attributes: extract_attributes(&module.attrs),
+                    docstring: extract_docstring(&module.attrs),
+                    submodules: Vec::new(),
+                    items: Vec::new(),
+                    imports: Vec::new(),
+                    exports: Vec::new(),
+                });
+            }
+
+            // Update current path
+            self.state.current_module_path = path;
+        }
 
         // Process inner items if available
         let mut submodules = Vec::new();
@@ -1123,15 +1155,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.current_module_path.pop();
     }
 
-    /// Visits `use` statements during AST traversal.                      
-    ///                                                                    
-    /// # Current Limitations                                              
+    /// Visits `use` statements during AST traversal.
+    ///
+    /// # Current Limitations
     /// - Does not handle macro-generated `use` statements (MVP exclusion)
-    /// - `pub use` re-exports are treated as regular imports              
-    ///                                                                    
-    /// # Flow                                                             
-    /// 1. Captures raw path segments and spans                            
-    /// 2. Normalizes `self`/`super` prefixes                              
+    /// - `pub use` re-exports are treated as regular imports
+    ///
+    /// # Flow
+    /// 1. Captures raw path segments and spans
+    /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
         // Create an import node
