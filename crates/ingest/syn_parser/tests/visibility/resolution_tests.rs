@@ -17,4 +17,34 @@ mod fixtures {
 }
 
 #[test]
-fn test_public_items_direct_visibility() {/*...*/}
+fn test_public_items_direct_visibility() {
+    let graph = parse_fixture(fixtures::SIMPLE_PUB).unwrap();
+    
+    // Test public function visibility
+    let pub_func_id = find_function_by_name(&graph, "public_function").unwrap();
+    assert!(matches!(
+        graph.resolve_visibility(pub_func_id, &test_module_path(&["crate"])),
+        VisibilityResult::Direct
+    ));
+
+    // Test public struct visibility
+    let pub_struct_id = find_struct_by_name(&graph, "PublicStruct").unwrap();
+    assert!(matches!(
+        graph.resolve_visibility(pub_struct_id, &test_module_path(&["crate", "other_module"])),
+        VisibilityResult::Direct
+    ));
+
+    // Test nested public module visibility
+    let pub_mod_id = find_module_by_path(&graph, &test_module_path(&["crate", "public_module"])).unwrap();
+    assert!(matches!(
+        graph.resolve_visibility(pub_mod_id, &test_module_path(&["crate", "unrelated_module"])),
+        VisibilityResult::Direct
+    ));
+
+    // Test nested public function visibility
+    let nested_func_id = find_function_by_name(&graph, "nested_public").unwrap();
+    assert!(matches!(
+        graph.resolve_visibility(nested_func_id, &test_module_path(&["crate"])),
+        VisibilityResult::Direct
+    ));
+}
