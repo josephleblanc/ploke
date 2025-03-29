@@ -39,6 +39,7 @@ impl VisitorState {
             type_map: Arc::new(DashMap::new()),
             #[cfg(feature = "module_path_tracking")]
             current_module_path: Vec::new(),
+            current_module: Vec::new(),
         }
     }
 
