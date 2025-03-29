@@ -51,21 +51,31 @@ impl CodeGraph {
             VisibilityKind::Public => VisibilityResult::Direct,
             VisibilityKind::Inherited => {
                 let item_module = self.get_item_module_path(item_id);
+                let context = if context_module.is_empty() {
+                    vec!["crate".to_string()]
+                } else {
+                    context_module.to_vec()
+                };
+
                 println!(
                     "Checking inherited visibility - item module: {:?}, context: {:?}",
-                    item_module, context_module
+                    item_module, context
                 );
-                if item_module == context_module {
+
+                // Normalize paths and compare
+                if item_module == context {
+                    #[cfg(feature = "verbose_debug")]
                     println!("Item is in same module - allowing access");
                     VisibilityResult::Direct
                 } else {
+                    #[cfg(feature = "verbose_debug")]
                     println!("Item is in different module - blocking access");
                     VisibilityResult::OutOfScope {
                         reason: OutOfScopeReason::Private,
                         allowed_scopes: None,
                     }
                 }
-            },
+            }
             VisibilityKind::Crate => {
                 if self.same_crate(context_module) {
                     VisibilityResult::Direct
@@ -90,20 +100,30 @@ impl CodeGraph {
         }
     }
 
-    fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
+    pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         #[cfg(feature = "module_path_tracking")]
         {
-            let path = self.modules
+            self.modules
                 .iter()
                 .find(|m| m.items.contains(&item_id))
-                .map(|m| m.path.clone())
-                .unwrap_or_default();
-            println!("Found module path for item {}: {:?}", item_id, path);
-            path
+                .map(|m| {
+                    if m.path.is_empty() {
+                        vec!["crate".to_string()] // Treat empty path as crate root
+                    } else {
+                        m.path.clone()
+                    }
+                })
+                .unwrap_or_else(|| {
+                    println!(
+                        "Item {} not in any module - defaulting to cra 
+ root",
+                        item_id
+                    );
+                    vec!["crate".to_string()] // Fallback to crate root
+                })
         }
         #[cfg(not(feature = "module_path_tracking"))]
         {
-            println!("Module path tracking disabled - using default crate path");
             vec!["crate".to_string()]
         }
     }

@@ -569,34 +569,37 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         });
 
         // Handle trait visibility filtering when feature is enabled
-        #[cfg(feature = "visibility_resolution")]
-        {
-            if let Some(trait_type_id) = trait_type_id {
-                if let Some(trait_type) = self
-                    .state
-                    .code_graph
-                    .type_graph
-                    .iter()
-                    .find(|t| t.id == trait_type_id)
-                {
-                    if let TypeKind::Named { path, .. } = &trait_type.kind {
-                        let trait_name = path.last().unwrap_or(&String::new()).to_string();
-                        let trait_def = self
-                            .state
-                            .code_graph
-                            .traits
-                            .iter()
-                            .find(|t| t.name == trait_name);
+        // Handle trait visibility filtering
+        if let Some(trait_type_id) = trait_type_id {
+            if let Some(trait_type) = self
+                .state
+                .code_graph
+                .type_graph
+                .iter()
+                .find(|t| t.id == trait_type_id)
+            {
+                if let TypeKind::Named { path, .. } = &trait_type.kind {
+                    let trait_name = path.last().unwrap_or(&String::new()).to_string();
 
-                        if let Some(trait_def) = trait_def {
-                            // Skip if trait is not public (only when visibility resolution is enabled)
-                            if !matches!(trait_def.visibility, VisibilityKind::Public) {
-                                return;
-                            }
-                        } else {
-                            // Trait definition not found, skip this impl
+                    // Check both public and private traits
+                    let trait_def = self
+                        .state
+                        .code_graph
+                        .traits
+                        .iter()
+                        .chain(&self.state.code_graph.private_traits)
+                        .find(|t| t.name == trait_name);
+
+                    if let Some(trait_def) = trait_def {
+                        // Only skip private traits when visibility resolution is DISABLED
+                        if !cfg!(feature = "visibility_resolution")
+                            && !matches!(trait_def.visibility, VisibilityKind::Public)
+                        {
                             return;
                         }
+                    } else {
+                        // Trait definition not found, skip this impl
+                        return;
                     }
                 }
             }

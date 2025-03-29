@@ -99,7 +99,7 @@ fn test_analyzer() {
 
     // Check macros
     assert!(
-        code_graph.macros.len() >= 1,
+        !code_graph.macros.is_empty(),
         "Expected at least 1 macro (test_macro)"
     );
 
@@ -392,7 +392,7 @@ fn test_analyzer() {
 
     // Check macro rules
     assert!(
-        test_macro.rules.len() >= 1,
+        !test_macro.rules.is_empty(),
         "Expected at least one rule in test_macro"
     );
 
@@ -488,7 +488,7 @@ fn test_analyzer() {
 
     assert_eq!(sample_function.visibility, VisibilityKind::Public);
     assert_eq!(sample_function.parameters.len(), 2);
-    assert!(sample_function.generic_params.len() > 0);
+    assert!(!sample_function.generic_params.is_empty());
     assert!(sample_function.docstring.is_some());
 
     // Check parameter types

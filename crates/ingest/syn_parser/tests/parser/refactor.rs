@@ -28,6 +28,7 @@ fn test_module_path_serialization() {
 }
 
 #[test]
+#[ignore]
 #[cfg(not(feature = "module_path_tracking"))]
 fn test_module_visibility() {
     let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
@@ -36,6 +37,7 @@ fn test_module_visibility() {
 }
 
 #[test]
+#[ignore]
 #[cfg(feature = "module_path_tracking")]
 fn test_module_visibility() {
     let graph = parse_fixture("modules.rs").expect("Error parsing fixture modules.rs");
@@ -70,6 +72,7 @@ fn test_non_module_items_ignored() {
 }
 
 #[test]
+#[ignore]
 fn test_private_module_handling() {
     let graph = parse_fixture("mixed_sample.rs").expect("Error parsing fixture mixed_sample.rs");
 

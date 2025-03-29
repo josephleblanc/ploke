@@ -177,40 +177,44 @@ pub fn find_generic_param_by_name<'a>(
     })
 }
 
-#[cfg(feature = "module_path_tracking")]
-/// Find a module node by path in a CodeGraph
-pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
-    graph
-        .modules
-        .iter()
-        .find(|m| {
-            #[cfg(feature = "module_path_tracking")]
-            {
-                println!(
-                    "---> Comparing module m.path {:?} == {:?} path",
-                    m.path, path
-                );
-                m.path == path
-            }
-
-            // #[cfg(not(feature = "module_path_tracking"))]
-            // {
-            //     false
-            // } // Return None if path tracking is disabled
-        })
-        .map(|m| m.id)
-}
+// #[cfg(feature = "module_path_tracking")]
+// /// Find a module node by path in a CodeGraph
+// pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
+//     graph
+//         .modules
+//         .iter()
+//         .find(|m| {
+//             #[cfg(feature = "module_path_tracking")]
+//             {
+//                 println!(
+//                     "---> Comparing module m.path {:?} == {:?} path",
+//                     m.path, path
+//                 );
+//                 m.path == path
+//             }
+//
+//             // #[cfg(not(feature = "module_path_tracking"))]
+//             // {
+//             //     false
+//             // } // Return None if path tracking is disabled
+//         })
+//         .map(|m| m.id)
+// }
 /// Helper to create module path for tests
 pub fn test_module_path(segments: &[&str]) -> Vec<String> {
     segments.iter().map(|s| s.to_string()).collect()
 }
 
 /// Find module by path segments
-pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<&ModuleNode> {
+pub fn find_module_by_path<'a>(graph: &'a CodeGraph, path: &'a [String]) -> Option<&'a ModuleNode> {
     graph.modules.iter().find(|m| {
         #[cfg(feature = "module_path_tracking")]
-        { m.path == path }
+        {
+            m.path == path
+        }
         #[cfg(not(feature = "module_path_tracking"))]
-        { false }
+        {
+            false
+        }
     })
 }

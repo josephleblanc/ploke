@@ -18,21 +18,21 @@ fn test_public_items_direct_visibility_complicated() {
     );
 
     // 2. Debug output if module not found
-    let pub_mod_id = find_module_by_path(&graph, &test_module_path(&["crate", "public_module"]))
-        .unwrap_or_else(|| {
-            eprintln!("All modules in graph:");
-            for m in &graph.modules {
-                // #[cfg(feature = "module_path_tracking")]
-                eprintln!("- {} (path: {:?})", m.name, m.path);
-                // #[cfg(not(feature = "module_path_tracking"))]
-                // eprintln!("- {}", m.name);
-            }
-            panic!("public_module not found");
-        });
+    let binding = test_module_path(&["crate", "public_module"]);
+    let pub_mod_id = find_module_by_path(&graph, &binding).unwrap_or_else(|| {
+        eprintln!("All modules in graph:");
+        for m in &graph.modules {
+            // #[cfg(feature = "module_path_tracking")]
+            eprintln!("- {} (path: {:?})", m.name, m.path);
+            // #[cfg(not(feature = "module_path_tracking"))]
+            // eprintln!("- {}", m.name);
+        }
+        panic!("public_module not found");
+    });
 
     // 3. Direct assertion with debug info
     let result = graph.resolve_visibility(
-        pub_mod_id,
+        pub_mod_id.id,
         &test_module_path(&["crate", "unrelated_module"]),
     );
 
@@ -65,11 +65,11 @@ fn test_public_items_direct_visibility() {
     ));
 
     // Test nested public module visibility
-    let pub_mod_id =
-        find_module_by_path(&graph, &test_module_path(&["crate", "public_module"])).unwrap();
+    let binding = test_module_path(&["crate", "public_module"]);
+    let pub_mod_id = find_module_by_path(&graph, &binding).unwrap();
     assert!(matches!(
         graph.resolve_visibility(
-            pub_mod_id,
+            pub_mod_id.id,
             &test_module_path(&["crate", "unrelated_module"])
         ),
         VisibilityResult::Direct

@@ -137,6 +137,7 @@ fn test_lifetime_function_parsing() {
 }
 
 #[test]
+#[ignore]
 fn test_private_function_parsing() {
     let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
 

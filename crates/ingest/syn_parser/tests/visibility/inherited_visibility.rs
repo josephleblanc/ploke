@@ -3,6 +3,8 @@ use crate::common::{find_function_by_name, find_struct_by_name, parse_fixture};
 use syn_parser::parser::nodes::{OutOfScopeReason, VisibilityResult};
 
 mod inherited_items {
+    use syn_parser::parser::nodes::Visible;
+
     use super::*;
 
     #[test]
@@ -16,7 +18,10 @@ mod inherited_items {
         println!("Struct name: {}", private_struct.name);
         println!("Struct visibility: {:?}", private_struct.visibility());
         println!("Context module: {:?}", context);
-        println!("Struct module path: {:?}", graph.get_item_module_path(private_struct.id));
+        println!(
+            "Struct module path: {:?}",
+            graph.get_item_module_path(private_struct.id)
+        );
 
         let result = graph.resolve_visibility(private_struct.id, context);
         println!("Visibility result: {:?}", result);
@@ -35,18 +40,35 @@ mod inherited_items {
 
     #[test]
     fn private_function_cross_module() {
-        let graph = parse_fixture("modules.rs").expect("Fixture failed to parse");
+        let graph = parse_fixture("modules.rs").expect(
+            "Fixture failed to   
+ parse",
+        );
         let inner_func = find_function_by_name(&graph, "inner_function").unwrap();
-        let context = &["crate".to_owned(), "outer".to_owned()];
 
-        println!("\n=== Testing private_function_cross_module ===");
-        println!("Function ID: {}", inner_func.id);
-        println!("Function name: {}", inner_func.name);
-        println!("Function visibility: {:?}", inner_func.visibility());
-        println!("Context module: {:?}", context);
-        println!("Function module path: {:?}", graph.get_item_module_path(inner_func.id));
+        // Context is outer module trying to access inner module's private  function
+        let context = &["crate".to_owned(), "outer".to_owned()];
+        let expected_module_path = &["crate".to_owned(), "outer".to_owned(), "inner".to_owned()];
+
+        #[cfg(feature = "verbose_debug")]
+        {
+            println!("\n=== Testing private_function_cross_module ===");
+            println!("Function ID: {}", inner_func.id);
+            println!("Function name: {}", inner_func.name);
+            println!("Function visibility: {:?}", inner_func.visibility());
+            println!("Context module: {:?}", context);
+        }
+
+        let actual_module_path = graph.get_item_module_path(inner_func.id);
+        #[cfg(feature = "verbose_debug")]
+        println!("Function module path: {:?}", actual_module_path);
+        assert_eq!(
+            actual_module_path, expected_module_path,
+            "Function module path mismatch"
+        );
 
         let result = graph.resolve_visibility(inner_func.id, context);
+        #[cfg(feature = "verbose_debug")]
         println!("Visibility result: {:?}", result);
 
         assert!(
@@ -57,12 +79,12 @@ mod inherited_items {
                     ..
                 }
             ),
-            "Private function should be blocked outside module.\n\
-             Context: {:?}\n\
-             Function module: {:?}\n\
-             Actual result: {:?}",
+            "Private function should be blocked outside module.\n
+              Context: {:?}\n
+              Function module: {:?}\n
+              Actual result: {:?}",
             context,
-            graph.get_item_module_path(inner_func.id),
+            actual_module_path,
             result
         );
     }
