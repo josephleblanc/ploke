@@ -32,7 +32,7 @@ thiserror = { workspace = true }
 ploke-common = { path = "../../common" }
 
 [dev-dependencies]
-# Add test-specific dependencies here
+test-utils = { path = "../../../test-utils" }
 
 # Feature flags
 [features]

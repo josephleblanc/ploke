@@ -1,11 +1,26 @@
 use syn_parser::parser::nodes::VisibilityResult;
-use test_utils::{
-    parse_fixture,
-    find_function_by_name,
-    find_struct_by_name,
-    find_module_by_path,
-    test_module_path
-};
+use syn_parser::parser::visitor::analyze_code;
+use std::path::Path;
+
+fn parse_fixture(fixture_name: &str) -> syn_parser::CodeGraph {
+    let path = Path::new("tests/fixtures").join(fixture_name);
+    analyze_code(&path).unwrap()
+}
+
+fn find_function_by_name(graph: &syn_parser::CodeGraph, name: &str) -> syn_parser::parser::nodes::NodeId {
+    graph.functions.iter().find(|f| f.name == name).map(|f| f.id).unwrap()
+}
+
+fn find_struct_by_name(graph: &syn_parser::CodeGraph, name: &str) -> syn_parser::parser::nodes::NodeId {
+    graph.defined_types.iter().find_map(|t| match t {
+        syn_parser::parser::nodes::TypeDefNode::Struct(s) if s.name == name => Some(s.id),
+        _ => None
+    }).unwrap()
+}
+
+fn test_module_path(segments: &[&str]) -> Vec<String> {
+    segments.iter().map(|s| s.to_string()).collect()
+}
 
 mod fixtures {
     pub const SIMPLE_PUB: &str = "visibility/simple_pub.rs";
