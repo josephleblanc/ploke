@@ -36,9 +36,23 @@ pub fn find_struct_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
     })
 }
 
-/// Find a module node by path in a CodeGraph
+/// Find a module node by path in a CodeGraph                          
 pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
-    graph.modules.iter().find(|m| m.path == path).map(|m| m.id)
+    graph
+        .modules
+        .iter()
+        .find(|m| {
+            #[cfg(feature = "module_path_tracking")]
+            {
+                m.path == path
+            }
+
+            #[cfg(not(feature = "module_path_tracking"))]
+            {
+                false
+            } // Return None if path tracking is disabled
+        })
+        .map(|m| m.id)
 }
 
 /// Helper to create module path for testing

@@ -7,3 +7,6 @@ edition = "2021"
 ploke-common = { path = "../common" }
 syn_parser = { path = "../ingest/syn_parser" } # Only if you need parser-specific stuff
 syn = { workspace = true }
+
+[features]
+module_path_tracking = ["syn_parser/module_path_tracking"]

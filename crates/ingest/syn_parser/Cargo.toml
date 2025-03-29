@@ -32,18 +32,16 @@ thiserror = { workspace = true }
 ploke-common = { path = "../../common" }
 
 [dev-dependencies]
-test-utils = { path = "../../../test-utils" }
 
 # Feature flags
 [features]
 default = [
-    "visitor_refactor",
+    "module_path_tracking",
     "use_statement_tracking",
     "visibility_resolution",
 ]
 cozo_visitor = []
 cozo_type_refactor = []
-visitor_refactor = []
 verbose_debug = []
 # Phase 1-3 of visitor resolution refactor
 # We will hold onto these for benchmarking for now, and leave them in `default`
