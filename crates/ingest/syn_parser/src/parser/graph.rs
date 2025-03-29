@@ -49,7 +49,23 @@ impl CodeGraph {
 
         match item.visibility() {
             VisibilityKind::Public => VisibilityResult::Direct,
-            VisibilityKind::Inherited if context_module.is_empty() => VisibilityResult::Direct,
+            VisibilityKind::Inherited => {
+                let item_module = self.get_item_module_path(item_id);
+                println!(
+                    "Checking inherited visibility - item module: {:?}, context: {:?}",
+                    item_module, context_module
+                );
+                if item_module == context_module {
+                    println!("Item is in same module - allowing access");
+                    VisibilityResult::Direct
+                } else {
+                    println!("Item is in different module - blocking access");
+                    VisibilityResult::OutOfScope {
+                        reason: OutOfScopeReason::Private,
+                        allowed_scopes: None,
+                    }
+                }
+            },
             VisibilityKind::Crate => {
                 if self.same_crate(context_module) {
                     VisibilityResult::Direct
@@ -71,6 +87,24 @@ impl CodeGraph {
                 }
             }
             _ => self.check_use_statements(item_id, context_module),
+        }
+    }
+
+    fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
+        #[cfg(feature = "module_path_tracking")]
+        {
+            let path = self.modules
+                .iter()
+                .find(|m| m.items.contains(&item_id))
+                .map(|m| m.path.clone())
+                .unwrap_or_default();
+            println!("Found module path for item {}: {:?}", item_id, path);
+            path
+        }
+        #[cfg(not(feature = "module_path_tracking"))]
+        {
+            println!("Module path tracking disabled - using default crate path");
+            vec!["crate".to_string()]
         }
     }
 

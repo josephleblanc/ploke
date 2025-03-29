@@ -9,12 +9,27 @@ mod inherited_items {
     fn private_struct_same_module() {
         let graph = parse_fixture("visibility.rs").expect("Fixture failed to parse");
         let private_struct = find_struct_by_name(&graph, "InheritedStruct").unwrap();
+        let context = &["crate".to_owned()];
 
-        // Should be visible in same module
-        let result = graph.resolve_visibility(private_struct.id, &["crate".to_owned()]);
+        println!("\n=== Testing private_struct_same_module ===");
+        println!("Struct ID: {}", private_struct.id);
+        println!("Struct name: {}", private_struct.name);
+        println!("Struct visibility: {:?}", private_struct.visibility());
+        println!("Context module: {:?}", context);
+        println!("Struct module path: {:?}", graph.get_item_module_path(private_struct.id));
+
+        let result = graph.resolve_visibility(private_struct.id, context);
+        println!("Visibility result: {:?}", result);
+
         assert!(
             matches!(result, VisibilityResult::Direct),
-            "Private struct should be visible in same module"
+            "Private struct should be visible in same module.\n\
+             Context: {:?}\n\
+             Struct module: {:?}\n\
+             Actual result: {:?}",
+            context,
+            graph.get_item_module_path(private_struct.id),
+            result
         );
     }
 
@@ -22,10 +37,18 @@ mod inherited_items {
     fn private_function_cross_module() {
         let graph = parse_fixture("modules.rs").expect("Fixture failed to parse");
         let inner_func = find_function_by_name(&graph, "inner_function").unwrap();
+        let context = &["crate".to_owned(), "outer".to_owned()];
 
-        // Should be blocked outside module
-        let result =
-            graph.resolve_visibility(inner_func.id, &["crate".to_owned(), "outer".to_owned()]);
+        println!("\n=== Testing private_function_cross_module ===");
+        println!("Function ID: {}", inner_func.id);
+        println!("Function name: {}", inner_func.name);
+        println!("Function visibility: {:?}", inner_func.visibility());
+        println!("Context module: {:?}", context);
+        println!("Function module path: {:?}", graph.get_item_module_path(inner_func.id));
+
+        let result = graph.resolve_visibility(inner_func.id, context);
+        println!("Visibility result: {:?}", result);
+
         assert!(
             matches!(
                 result,
@@ -34,7 +57,13 @@ mod inherited_items {
                     ..
                 }
             ),
-            "Private function should be blocked outside module"
+            "Private function should be blocked outside module.\n\
+             Context: {:?}\n\
+             Function module: {:?}\n\
+             Actual result: {:?}",
+            context,
+            graph.get_item_module_path(inner_func.id),
+            result
         );
     }
 }
