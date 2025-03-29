@@ -200,3 +200,17 @@ pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId>
         })
         .map(|m| m.id)
 }
+/// Helper to create module path for tests
+pub fn test_module_path(segments: &[&str]) -> Vec<String> {
+    segments.iter().map(|s| s.to_string()).collect()
+}
+
+/// Find module by path segments
+pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<&ModuleNode> {
+    graph.modules.iter().find(|m| {
+        #[cfg(feature = "module_path_tracking")]
+        { m.path == path }
+        #[cfg(not(feature = "module_path_tracking"))]
+        { false }
+    })
+}
