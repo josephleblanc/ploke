@@ -886,61 +886,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
 
+        // Save current path
+        #[cfg(feature = "module_path_tracking")]
+        let parent_path = self.state.current_module_path.clone();
+        // Update path for this module
+        #[cfg(feature = "module_path_tracking")]
+        self.state
+            .current_module_path
+            .push(module.ident.to_string());
+
         // Determine module visibility
-        let visibility = if module_name == "private_module" && matches!(module.vis, Visibility::Inherited) {
-            VisibilityKind::Restricted(vec!["super".to_string()])
-        } else {
-            self.state.convert_visibility(&module.vis)
-        };
+        let visibility =
+            if module_name == "private_module" && matches!(module.vis, Visibility::Inherited) {
+                VisibilityKind::Restricted(vec!["super".to_string()])
+            } else {
+                self.state.convert_visibility(&module.vis)
+            };
 
         // Get or create the module node
-        let module_node = {
-            #[cfg(feature = "module_path_tracking")]
-            {
-                // Build the full module path
-                let mut path = self.state.current_module_path.clone();
-                path.push(module_name.clone());
-                self.state.current_module_path = path.clone();
-
-                // Find or create the module
-                let module_node = match self.state.code_graph.modules.iter_mut().find(|m| m.name == module_name) {
-                    Some(existing) => existing,
-                    None => {
-                        let new_module = ModuleNode {
-                            id: module_id,
-                            name: module_name.clone(),
-                            path: path,
-                            visibility: visibility.clone(),
-                            attributes: extract_attributes(&module.attrs),
-                            docstring: extract_docstring(&module.attrs),
-                            submodules: Vec::new(),
-                            items: Vec::new(),
-                            imports: Vec::new(),
-                            exports: Vec::new(),
-                        };
-                        self.state.code_graph.modules.push(new_module);
-                        self.state.code_graph.modules.last_mut().unwrap()
-                    }
-                };
-                module_node
-            }
-            #[cfg(not(feature = "module_path_tracking"))]
-            {
-                let new_module = ModuleNode {
-                    id: module_id,
-                    name: module_name.clone(),
-                    visibility: visibility.clone(),
-                    attributes: extract_attributes(&module.attrs),
-                    docstring: extract_docstring(&module.attrs),
-                    submodules: Vec::new(),
-                    items: Vec::new(),
-                    imports: Vec::new(),
-                    exports: Vec::new(),
-                };
-                self.state.code_graph.modules.push(new_module);
-                self.state.code_graph.modules.last_mut().unwrap()
-            }
-        };
 
         // Process inner items if available
         let mut submodules = Vec::new();
@@ -1007,6 +970,59 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 }
             }
         }
+        let module_node = {
+            #[cfg(feature = "module_path_tracking")]
+            {
+                // Build the full module path
+                let mut path = self.state.current_module_path.clone();
+                path.push(module_name.clone());
+                self.state.current_module_path = path.clone();
+
+                // Find or create the module
+                let module_node = match self
+                    .state
+                    .code_graph
+                    .modules
+                    .iter_mut()
+                    .find(|m| m.name == module_name)
+                {
+                    Some(existing) => existing,
+                    None => {
+                        let new_module = ModuleNode {
+                            id: module_id,
+                            name: module_name.clone(),
+                            path: path,
+                            visibility: visibility.clone(),
+                            attributes: extract_attributes(&module.attrs),
+                            docstring: extract_docstring(&module.attrs),
+                            submodules: Vec::new(),
+                            items: Vec::new(),
+                            imports: Vec::new(),
+                            exports: Vec::new(),
+                        };
+                        self.state.code_graph.modules.push(new_module);
+                        self.state.code_graph.modules.last_mut().unwrap()
+                    }
+                };
+                module_node
+            }
+            #[cfg(not(feature = "module_path_tracking"))]
+            {
+                let new_module = ModuleNode {
+                    id: module_id,
+                    name: module_name.clone(),
+                    visibility: visibility.clone(),
+                    attributes: extract_attributes(&module.attrs),
+                    docstring: extract_docstring(&module.attrs),
+                    submodules: Vec::new(),
+                    items: Vec::new(),
+                    imports: Vec::new(),
+                    exports: Vec::new(),
+                };
+                self.state.code_graph.modules.push(new_module);
+                self.state.code_graph.modules.last_mut().unwrap()
+            }
+        };
 
         // Add module to graph
         // self.state.code_graph.modules.push(ModuleNode {
