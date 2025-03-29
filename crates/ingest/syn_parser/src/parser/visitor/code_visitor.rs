@@ -589,10 +589,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             .find(|t| t.name == trait_name);
 
                         if let Some(trait_def) = trait_def {
-                            // Only skip if we're not tracking all visibilities
-                            if !cfg!(feature = "visibility_resolution")
-                                && !matches!(trait_def.visibility, VisibilityKind::Public)
-                            {
+                            // Skip if trait is not public (only when visibility resolution is enabled)
+                            if !matches!(trait_def.visibility, VisibilityKind::Public) {
                                 return;
                             }
                         } else {
