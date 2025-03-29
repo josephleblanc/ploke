@@ -11,16 +11,23 @@
 
 [Related Errors](#common-error-patterns-in-ai-assisted-development)
 
-## Potential Insights from E0405  
-1. **Cross-Module Visibility**:
-   - Highlights importance of our visibility tracking work
-   - Shows how trait scoping affects entire codebase
+## Potential Insights from E0499
+1. **Visitor Pattern Complexity**:
+   - Recursive AST traversal creates hidden borrow chains
+   - Need better modeling of ownership flows in documentation
+   - Current implementation doesn't clearly separate lookup/mutation phases
 
-2. **Feature Flag Complexity**:
-   - Conditional compilation adds layer of difficulty
-   - Need to track active features during analysis
+2. **LLM Limitations**:
+   - Tendency to focus on local context over full ownership graph
+   - Difficulty anticipating recursive borrow scenarios
+   - Over-reliance on compiler rather than preemptive design
 
-[Related Errors](#common-error-patterns-in-ai-assisted-development)
+3. **Improvement Opportunities**:
+   - Could benefit from ownership-aware code generation
+   - Need better visualization of borrow chains
+   - Should document expected mutation patterns
+
+[Related Error](#error-e0499-multiple-mutable-borrows-in-visitor-pattern)
 
 ## Cross-Document Links
 - [Error Documentation](#common-error-patterns-in-ai-assisted-development)

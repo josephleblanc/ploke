@@ -38,23 +38,22 @@
 
 [See Insights](#potential-insights-from-e0405)
 
-## Template for New Error Documentation
-
-### Error [CODE]: Brief Description
-**Description**: 1-2 sentence explanation
+### Error E0499: Multiple Mutable Borrows in Visitor Pattern
+**Description**: Attempting to mutate visitor state while already holding a mutable reference during AST traversal.
 
 **Context**:
-- What operation was being attempted
-- Relevant code sections
+- Occurred while processing module items in code visitor
+- Nested structure traversal requires multiple state mutations
+- Specifically during module path tracking implementation
 
 **Root Causes**:
-1. Primary technical reason
-2. Workflow/process factors
-3. System limitations
+1. Complex nested ownership patterns in visitor implementation
+2. Not accounting for recursive borrows in AST traversal
+3. State management design that doesn't separate lookup from mutation
 
 **Prevention Strategies**:
-- Specific technical solutions
-- Process improvements
-- Tooling enhancements
+- Separate mutable operations into distinct phases
+- Use interior mutability patterns for shared state
+- Better static analysis of borrow patterns in visitor code
 
-[See Insights](#link-to-relevant-insights)
+[See Insights](#potential-insights-from-e0499)

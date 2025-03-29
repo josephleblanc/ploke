@@ -34,20 +34,24 @@ This template ensures consistent documentation of:
 
 ## Example Structure
 ```markdown
-### Error EXXXX: Brief Title  
-**Description**: Explanation of error  
+### Error E0499: Multiple Mutable Borrows  
+**Description**: Attempting concurrent mutable access to visitor state  
 
 **Context**:  
-- Was trying to...  
-- In file...  
+- During module item processing  
+- While tracking module paths  
 
 **Root Causes**:  
-1. Primary reason  
-2. Secondary factors  
+1. Nested mutation requirements  
+2. Missing borrow separation  
+3. Complex visitor flow  
 
 **Prevention**:  
-- Strategy 1  
-- Strategy 2  
+- Phase separation pattern  
+- Interior mutability  
+- Ownership visualization  
 
-[See Related Insights](#)  
+[See Insights](#potential-insights-from-e0499)  
 ```
+
+[Back to Common Errors](#common-error-patterns-in-ai-assisted-development)
