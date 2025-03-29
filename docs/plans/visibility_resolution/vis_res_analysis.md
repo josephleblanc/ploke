@@ -157,6 +157,44 @@ mod b {
    - Resolution time vs module depth
    - Impact of use statement volume
 
+## Current Implementation Analysis (Pre-Fix)
+
+### Problematic Module Resolution Flow
+```mermaid
+graph TD
+    A[Visit ItemMod] --> B{module_path_tracking?}
+    B -->|Yes| C[Create ModuleNode if not exists]
+    C --> D[Process Module Contents]
+    B -->|No| D
+    D --> E[Unconditionally Push ModuleNode]
+    E --> F[Result: Duplicate Modules]
+```
+
+### Current Code Paths Causing Duplicates:
+1. **First Creation** (when module_path_tracking enabled):
+```rust
+if !self.state.code_graph.modules.iter().any(|m| m.name == module_name) {
+    self.state.code_graph.modules.push(ModuleNode { ... });
+}
+```
+
+2. **Second Creation** (unconditional):
+```rust
+self.state.code_graph.modules.push(ModuleNode {
+    id: module_id,
+    name: module_name,
+    #[cfg(feature = "module_path_tracking")]
+    path: module_path,
+    visibility,
+    attributes,
+    docstring,
+    submodules,
+    items,
+    imports: Vec::new(),
+    exports: Vec::new(),
+});
+```
+
 ## Future Roadmap
 
 1. **Phase 4**: Cross-crate visibility
