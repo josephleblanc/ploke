@@ -63,6 +63,7 @@ impl VisitorState {
     // Move the process_type method to type_processing.rs
 
     // Convert syn::Visibility to our VisibilityKind
+
     pub(crate) fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
@@ -75,9 +76,16 @@ impl VisitorState {
                     .collect();
                 VisibilityKind::Restricted(path)
             }
-            // Private visibility shows up as Inherited in syn, which in Rust means
-            // visibility is limited to the current module and its descendants
-            Visibility::Inherited => VisibilityKind::Restricted(vec!["super".to_string()]),
+            // Changed handling of inherited visibility
+            Visibility::Inherited => {
+                if cfg!(feature = "visibility_resolution") {
+                    // In new system, inherited means private to current module
+                    VisibilityKind::Inherited
+                } else {
+                    // Old behavior for backward compatibility
+                    VisibilityKind::Restricted(vec!["super".to_string()])
+                }
+            }
         }
     }
 
