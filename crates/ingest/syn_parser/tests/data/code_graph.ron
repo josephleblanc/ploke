@@ -39,7 +39,7 @@
             body: Some("{ let local_var = param1 . field . clone () ; SampleStruct { field : local_var } }"),
         ),
         (
-            id: 55,
+            id: 65,
             name: "public_function_in_private_module",
             span: (2372, 2483),
             visibility: Public,
@@ -51,38 +51,10 @@
             body: Some("{ \"I\'m public but in a private module\" }"),
         ),
         (
-            id: 57,
+            id: 66,
             name: "private_function",
             span: (2513, 2560),
-            visibility: Restricted([
-                "super",
-            ]),
-            parameters: [],
-            return_type: Some(16),
-            generic_params: [],
-            attributes: [],
-            docstring: None,
-            body: Some("{ 42 }"),
-        ),
-        (
-            id: 87,
-            name: "public_function_in_private_module",
-            span: (2372, 2483),
-            visibility: Public,
-            parameters: [],
-            return_type: Some(24),
-            generic_params: [],
-            attributes: [],
-            docstring: None,
-            body: Some("{ \"I\'m public but in a private module\" }"),
-        ),
-        (
-            id: 88,
-            name: "private_function",
-            span: (2513, 2560),
-            visibility: Restricted([
-                "super",
-            ]),
+            visibility: Inherited,
             parameters: [],
             return_type: Some(16),
             generic_params: [],
@@ -167,9 +139,7 @@
                             id: 44,
                             name: None,
                             type_id: 0,
-                            visibility: Restricted([
-                                "super",
-                            ]),
+                            visibility: Inherited,
                             attributes: [],
                         ),
                     ],
@@ -200,13 +170,108 @@
             docstring: Some("Sample enum with different variant types"),
         )),
         Struct((
-            id: 108,
+            id: 60,
+            name: "PrivateStruct",
+            span: (2190, 2249),
+            visibility: Inherited,
+            fields: [
+                (
+                    id: 61,
+                    name: Some("private_field"),
+                    type_id: 8,
+                    visibility: Inherited,
+                    attributes: [],
+                ),
+            ],
+            generic_params: [],
+            attributes: [],
+            docstring: None,
+        )),
+        Struct((
+            id: 67,
+            name: "PrivateStruct2",
+            span: (2588, 2645),
+            visibility: Inherited,
+            fields: [
+                (
+                    id: 68,
+                    name: Some("private_field"),
+                    type_id: 16,
+                    visibility: Inherited,
+                    attributes: [],
+                ),
+            ],
+            generic_params: [],
+            attributes: [],
+            docstring: None,
+        )),
+        Enum((
+            id: 69,
+            name: "PrivateEnum",
+            span: (2671, 2731),
+            visibility: Inherited,
+            variants: [
+                (
+                    id: 70,
+                    name: "Variant1",
+                    fields: [],
+                    discriminant: None,
+                    attributes: [],
+                ),
+                (
+                    id: 71,
+                    name: "Variant2",
+                    fields: [],
+                    discriminant: None,
+                    attributes: [],
+                ),
+            ],
+            generic_params: [],
+            attributes: [],
+            docstring: None,
+        )),
+        TypeAlias((
+            id: 72,
+            name: "PrivateTypeAlias",
+            span: (2763, 2791),
+            visibility: Inherited,
+            type_id: 16,
+            generic_params: [],
+            attributes: [],
+            docstring: None,
+        )),
+        Union((
+            id: 73,
+            name: "PrivateUnion",
+            visibility: Inherited,
+            fields: [
+                (
+                    id: 74,
+                    name: Some("i"),
+                    type_id: 16,
+                    visibility: Inherited,
+                    attributes: [],
+                ),
+                (
+                    id: 75,
+                    name: Some("f"),
+                    type_id: 25,
+                    visibility: Inherited,
+                    attributes: [],
+                ),
+            ],
+            generic_params: [],
+            attributes: [],
+            docstring: None,
+        )),
+        Struct((
+            id: 90,
             name: "ModuleStruct",
             span: (3473, 3576),
             visibility: Public,
             fields: [
                 (
-                    id: 109,
+                    id: 91,
                     name: Some("module_field"),
                     type_id: 8,
                     visibility: Public,
@@ -218,20 +283,20 @@
             docstring: Some("Struct inside a public module"),
         )),
         Enum((
-            id: 116,
+            id: 96,
             name: "ModuleEnum",
             span: (3806, 3904),
             visibility: Public,
             variants: [
                 (
-                    id: 117,
+                    id: 97,
                     name: "First",
                     fields: [],
                     discriminant: Some("1"),
                     attributes: [],
                 ),
                 (
-                    id: 118,
+                    id: 98,
                     name: "Second",
                     fields: [],
                     discriminant: Some("2"),
@@ -243,63 +308,20 @@
             docstring: Some("Enum with discriminants"),
         )),
         Struct((
-            id: 120,
-            name: "ModuleStruct",
-            span: (3473, 3576),
-            visibility: Public,
-            fields: [
-                (
-                    id: 121,
-                    name: Some("module_field"),
-                    type_id: 8,
-                    visibility: Public,
-                    attributes: [],
-                ),
-            ],
-            generic_params: [],
-            attributes: [],
-            docstring: Some("Struct inside a public module"),
-        )),
-        Enum((
-            id: 126,
-            name: "ModuleEnum",
-            span: (3806, 3904),
-            visibility: Public,
-            variants: [
-                (
-                    id: 127,
-                    name: "First",
-                    fields: [],
-                    discriminant: Some("1"),
-                    attributes: [],
-                ),
-                (
-                    id: 128,
-                    name: "Second",
-                    fields: [],
-                    discriminant: Some("2"),
-                    attributes: [],
-                ),
-            ],
-            generic_params: [],
-            attributes: [],
-            docstring: Some("Enum with discriminants"),
-        )),
-        Struct((
-            id: 129,
+            id: 99,
             name: "TupleStruct",
             span: (3924, 3968),
             visibility: Public,
             fields: [
                 (
-                    id: 130,
+                    id: 100,
                     name: None,
                     type_id: 8,
                     visibility: Public,
                     attributes: [],
                 ),
                 (
-                    id: 131,
+                    id: 101,
                     name: None,
                     type_id: 16,
                     visibility: Public,
@@ -311,7 +333,7 @@
             docstring: None,
         )),
         Struct((
-            id: 132,
+            id: 102,
             name: "UnitStruct",
             span: (3985, 4007),
             visibility: Public,
@@ -321,24 +343,24 @@
             docstring: None,
         )),
         TypeAlias((
-            id: 133,
+            id: 103,
             name: "StringVec",
             span: (4009, 4065),
             visibility: Public,
-            type_id: 35,
+            type_id: 32,
             generic_params: [],
             attributes: [],
             docstring: Some("Type alias example"),
         )),
         TypeAlias((
-            id: 134,
+            id: 104,
             name: "Result",
             span: (4067, 4142),
             visibility: Public,
-            type_id: 36,
+            type_id: 33,
             generic_params: [
                 (
-                    id: 135,
+                    id: 105,
                     kind: Type(
                         name: "T",
                         bounds: [],
@@ -350,19 +372,19 @@
             docstring: Some("Generic type alias"),
         )),
         Union((
-            id: 136,
+            id: 106,
             name: "IntOrFloat",
             visibility: Public,
             fields: [
                 (
-                    id: 137,
+                    id: 107,
                     name: Some("i"),
                     type_id: 16,
                     visibility: Public,
                     attributes: [],
                 ),
                 (
-                    id: 138,
+                    id: 108,
                     name: Some("f"),
                     type_id: 25,
                     visibility: Public,
@@ -702,18 +724,6 @@
             id: 29,
             kind: Named(
                 path: [
-                    "Self",
-                ],
-                is_fully_qualified: false,
-            ),
-            related_types: [
-                3,
-            ],
-        ),
-        (
-            id: 30,
-            kind: Named(
-                path: [
                     "super",
                     "*",
                 ],
@@ -722,7 +732,7 @@
             related_types: [],
         ),
         (
-            id: 31,
+            id: 30,
             kind: Named(
                 path: [
                     "ModuleStruct",
@@ -732,42 +742,19 @@
             related_types: [],
         ),
         (
+            id: 31,
+            kind: Named(
+                path: [
+                    "Self",
+                ],
+                is_fully_qualified: false,
+            ),
+            related_types: [
+                3,
+            ],
+        ),
+        (
             id: 32,
-            kind: Named(
-                path: [
-                    "Self",
-                ],
-                is_fully_qualified: false,
-            ),
-            related_types: [
-                3,
-            ],
-        ),
-        (
-            id: 33,
-            kind: Named(
-                path: [
-                    "super",
-                    "*",
-                ],
-                is_fully_qualified: false,
-            ),
-            related_types: [],
-        ),
-        (
-            id: 34,
-            kind: Named(
-                path: [
-                    "Self",
-                ],
-                is_fully_qualified: false,
-            ),
-            related_types: [
-                3,
-            ],
-        ),
-        (
-            id: 35,
             kind: Named(
                 path: [
                     "Vec",
@@ -779,7 +766,7 @@
             ],
         ),
         (
-            id: 36,
+            id: 33,
             kind: Named(
                 path: [
                     "std",
@@ -794,7 +781,7 @@
             ],
         ),
         (
-            id: 37,
+            id: 34,
             kind: Named(
                 path: [
                     "usize",
@@ -815,9 +802,7 @@
                     id: 18,
                     name: "trait_method",
                     span: (937, 1009),
-                    visibility: Restricted([
-                        "super",
-                    ]),
+                    visibility: Inherited,
                     parameters: [
                         (
                             id: 19,
@@ -862,9 +847,7 @@
                     id: 23,
                     name: "another_method",
                     span: (1139, 1219),
-                    visibility: Restricted([
-                        "super",
-                    ]),
+                    visibility: Inherited,
                     parameters: [
                         (
                             id: 24,
@@ -975,21 +958,19 @@
             ],
         ),
         (
-            id: 51,
+            id: 62,
             self_type: 20,
             span: (2255, 2366),
             trait_type: None,
             methods: [
                 (
-                    id: 52,
+                    id: 63,
                     name: "private_method",
                     span: (2284, 2360),
-                    visibility: Restricted([
-                        "super",
-                    ]),
+                    visibility: Inherited,
                     parameters: [
                         (
-                            id: 53,
+                            id: 64,
                             name: Some("self"),
                             type_id: 21,
                             is_mutable: false,
@@ -1006,85 +987,50 @@
             generic_params: [],
         ),
         (
-            id: 84,
+            id: 79,
             self_type: 20,
-            span: (2255, 2366),
-            trait_type: None,
+            span: (2996, 3106),
+            trait_type: Some(27),
             methods: [
                 (
-                    id: 85,
+                    id: 80,
                     name: "private_method",
-                    span: (2284, 2360),
-                    visibility: Restricted([
-                        "super",
-                    ]),
+                    span: (3042, 3100),
+                    visibility: Inherited,
                     parameters: [
                         (
-                            id: 86,
+                            id: 81,
                             name: Some("self"),
                             type_id: 28,
                             is_mutable: false,
                             is_self: true,
                         ),
                     ],
-                    return_type: Some(23),
+                    return_type: Some(16),
                     generic_params: [],
                     attributes: [],
                     docstring: None,
-                    body: Some("{ & self . private_field }"),
+                    body: Some("{ 42 }"),
                 ),
             ],
             generic_params: [],
         ),
         (
-            id: 111,
-            self_type: 31,
+            id: 92,
+            self_type: 30,
             span: (3582, 3800),
             trait_type: Some(14),
             methods: [
                 (
-                    id: 112,
+                    id: 93,
                     name: "default_method",
                     span: (3680, 3794),
-                    visibility: Restricted([
-                        "super",
-                    ]),
+                    visibility: Inherited,
                     parameters: [
                         (
-                            id: 113,
+                            id: 94,
                             name: Some("self"),
-                            type_id: 32,
-                            is_mutable: false,
-                            is_self: true,
-                        ),
-                    ],
-                    return_type: Some(8),
-                    generic_params: [],
-                    attributes: [],
-                    docstring: None,
-                    body: Some("{ format ! (\"Custom implementation: {}\" , self . module_field) }"),
-                ),
-            ],
-            generic_params: [],
-        ),
-        (
-            id: 122,
-            self_type: 31,
-            span: (3582, 3800),
-            trait_type: Some(14),
-            methods: [
-                (
-                    id: 123,
-                    name: "default_method",
-                    span: (3680, 3794),
-                    visibility: Restricted([
-                        "super",
-                    ]),
-                    parameters: [
-                        (
-                            id: 124,
-                            name: Some("self"),
-                            type_id: 34,
+                            type_id: 31,
                             is_mutable: false,
                             is_self: true,
                         ),
@@ -1229,57 +1175,21 @@
             docstring: Some("Testing default trait with blanket implementation"),
         ),
         (
-            id: 72,
+            id: 76,
             name: "PrivateTrait",
             span: (2903, 2970),
-            visibility: Restricted([
-                "super",
-            ]),
+            visibility: Inherited,
             methods: [
                 (
-                    id: 73,
+                    id: 77,
                     name: "private_method",
                     span: (2932, 2964),
-                    visibility: Public,
+                    visibility: Inherited,
                     parameters: [
                         (
-                            id: 74,
+                            id: 78,
                             name: Some("self"),
                             type_id: 26,
-                            is_mutable: false,
-                            is_self: true,
-                        ),
-                    ],
-                    return_type: Some(16),
-                    generic_params: [],
-                    attributes: [],
-                    docstring: None,
-                    body: None,
-                ),
-            ],
-            generic_params: [],
-            super_traits: [],
-            attributes: [],
-            docstring: None,
-        ),
-        (
-            id: 98,
-            name: "PrivateTrait",
-            span: (2903, 2970),
-            visibility: Restricted([
-                "super",
-            ]),
-            methods: [
-                (
-                    id: 99,
-                    name: "private_method",
-                    span: (2932, 2964),
-                    visibility: Public,
-                    parameters: [
-                        (
-                            id: 100,
-                            name: Some("self"),
-                            type_id: 29,
                             is_mutable: false,
                             is_self: true,
                         ),
@@ -1300,9 +1210,19 @@
     private_traits: [],
     relations: [
         (
+            source: 0,
+            target: 1,
+            kind: Contains,
+        ),
+        (
             source: 1,
             target: 2,
             kind: StructField,
+        ),
+        (
+            source: 0,
+            target: 4,
+            kind: Contains,
         ),
         (
             source: 5,
@@ -1320,6 +1240,11 @@
             kind: FunctionReturn,
         ),
         (
+            source: 0,
+            target: 9,
+            kind: Contains,
+        ),
+        (
             source: 10,
             target: 11,
             kind: FunctionParameter,
@@ -1335,6 +1260,11 @@
             kind: FunctionReturn,
         ),
         (
+            source: 0,
+            target: 14,
+            kind: Contains,
+        ),
+        (
             source: 15,
             target: 16,
             kind: FunctionParameter,
@@ -1343,6 +1273,11 @@
             source: 15,
             target: 8,
             kind: FunctionReturn,
+        ),
+        (
+            source: 0,
+            target: 17,
+            kind: Contains,
         ),
         (
             source: 18,
@@ -1370,6 +1305,11 @@
             kind: ImplementsTrait,
         ),
         (
+            source: 0,
+            target: 22,
+            kind: Contains,
+        ),
+        (
             source: 23,
             target: 24,
             kind: FunctionParameter,
@@ -1395,6 +1335,11 @@
             kind: ImplementsTrait,
         ),
         (
+            source: 0,
+            target: 27,
+            kind: Contains,
+        ),
+        (
             source: 27,
             target: 9,
             kind: ImplementsTrait,
@@ -1403,6 +1348,11 @@
             source: 27,
             target: 14,
             kind: ImplementsTrait,
+        ),
+        (
+            source: 0,
+            target: 29,
+            kind: Contains,
         ),
         (
             source: 30,
@@ -1430,9 +1380,19 @@
             kind: ImplementsFor,
         ),
         (
+            source: 0,
+            target: 35,
+            kind: Contains,
+        ),
+        (
             source: 35,
             target: 36,
             kind: StructField,
+        ),
+        (
+            source: 0,
+            target: 37,
+            kind: Contains,
         ),
         (
             source: 37,
@@ -1450,6 +1410,11 @@
             kind: FunctionReturn,
         ),
         (
+            source: 0,
+            target: 41,
+            kind: Contains,
+        ),
+        (
             source: 41,
             target: 42,
             kind: EnumVariant,
@@ -1460,79 +1425,39 @@
             kind: EnumVariant,
         ),
         (
-            source: 46,
-            target: 47,
+            source: 0,
+            target: 46,
             kind: Contains,
         ),
         (
-            source: 48,
-            target: 49,
+            source: 46,
+            target: 60,
+            kind: Contains,
+        ),
+        (
+            source: 60,
+            target: 61,
             kind: StructField,
         ),
         (
             source: 46,
-            target: 50,
+            target: 62,
             kind: Contains,
         ),
         (
-            source: 52,
-            target: 53,
+            source: 63,
+            target: 64,
             kind: FunctionParameter,
         ),
         (
-            source: 52,
+            source: 63,
             target: 23,
             kind: FunctionReturn,
         ),
         (
-            source: 51,
+            source: 62,
             target: 20,
             kind: ImplementsFor,
-        ),
-        (
-            source: 46,
-            target: 54,
-            kind: Contains,
-        ),
-        (
-            source: 55,
-            target: 24,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 46,
-            target: 56,
-            kind: Contains,
-        ),
-        (
-            source: 57,
-            target: 16,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 46,
-            target: 58,
-            kind: Contains,
-        ),
-        (
-            source: 59,
-            target: 60,
-            kind: StructField,
-        ),
-        (
-            source: 46,
-            target: 61,
-            kind: Contains,
-        ),
-        (
-            source: 62,
-            target: 63,
-            kind: EnumVariant,
-        ),
-        (
-            source: 62,
-            target: 64,
-            kind: EnumVariant,
         ),
         (
             source: 46,
@@ -1540,44 +1465,79 @@
             kind: Contains,
         ),
         (
-            source: 46,
-            target: 67,
-            kind: Contains,
-        ),
-        (
-            source: 68,
-            target: 69,
-            kind: StructField,
-        ),
-        (
-            source: 68,
-            target: 70,
-            kind: StructField,
+            source: 65,
+            target: 24,
+            kind: FunctionReturn,
         ),
         (
             source: 46,
-            target: 71,
+            target: 66,
             kind: Contains,
         ),
         (
-            source: 73,
-            target: 74,
-            kind: FunctionParameter,
-        ),
-        (
-            source: 73,
+            source: 66,
             target: 16,
             kind: FunctionReturn,
         ),
         (
             source: 46,
-            target: 75,
+            target: 67,
+            kind: Contains,
+        ),
+        (
+            source: 67,
+            target: 68,
+            kind: StructField,
+        ),
+        (
+            source: 46,
+            target: 69,
+            kind: Contains,
+        ),
+        (
+            source: 69,
+            target: 70,
+            kind: EnumVariant,
+        ),
+        (
+            source: 69,
+            target: 71,
+            kind: EnumVariant,
+        ),
+        (
+            source: 46,
+            target: 72,
             kind: Contains,
         ),
         (
             source: 46,
-            target: 77,
+            target: 73,
             kind: Contains,
+        ),
+        (
+            source: 73,
+            target: 74,
+            kind: StructField,
+        ),
+        (
+            source: 73,
+            target: 75,
+            kind: StructField,
+        ),
+        (
+            source: 46,
+            target: 76,
+            kind: Contains,
+        ),
+        (
+            source: 77,
+            target: 78,
+            kind: FunctionParameter,
+        ),
+        (
+            source: 77,
+            target: 16,
+            kind: FunctionReturn,
         ),
         (
             source: 46,
@@ -1585,207 +1545,157 @@
             kind: Contains,
         ),
         (
-            source: 46,
+            source: 80,
             target: 81,
-            kind: Contains,
-        ),
-        (
-            source: 82,
-            target: 83,
-            kind: StructField,
-        ),
-        (
-            source: 85,
-            target: 86,
             kind: FunctionParameter,
         ),
         (
-            source: 85,
-            target: 23,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 84,
-            target: 20,
-            kind: ImplementsFor,
-        ),
-        (
-            source: 87,
-            target: 24,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 88,
+            source: 80,
             target: 16,
             kind: FunctionReturn,
         ),
         (
+            source: 79,
+            target: 20,
+            kind: ImplementsTrait,
+        ),
+        (
+            source: 79,
+            target: 27,
+            kind: ImplementsTrait,
+        ),
+        (
+            source: 82,
+            target: 16,
+            kind: ValueType,
+        ),
+        (
+            source: 83,
+            target: 16,
+            kind: ValueType,
+        ),
+        (
+            source: 46,
+            target: 84,
+            kind: Contains,
+        ),
+        (
             source: 89,
+            target: 29,
+            kind: Uses,
+        ),
+        (
+            source: 84,
             target: 90,
+            kind: Contains,
+        ),
+        (
+            source: 90,
+            target: 91,
             kind: StructField,
         ),
         (
-            source: 91,
+            source: 84,
             target: 92,
-            kind: EnumVariant,
+            kind: Contains,
         ),
         (
-            source: 91,
-            target: 93,
-            kind: EnumVariant,
+            source: 93,
+            target: 94,
+            kind: FunctionParameter,
         ),
         (
-            source: 95,
+            source: 93,
+            target: 8,
+            kind: FunctionReturn,
+        ),
+        (
+            source: 92,
+            target: 30,
+            kind: ImplementsTrait,
+        ),
+        (
+            source: 92,
+            target: 14,
+            kind: ImplementsTrait,
+        ),
+        (
+            source: 84,
             target: 96,
-            kind: StructField,
+            kind: Contains,
         ),
         (
-            source: 95,
+            source: 96,
             target: 97,
-            kind: StructField,
+            kind: EnumVariant,
+        ),
+        (
+            source: 96,
+            target: 98,
+            kind: EnumVariant,
+        ),
+        (
+            source: 84,
+            target: 99,
+            kind: Contains,
         ),
         (
             source: 99,
             target: 100,
-            kind: FunctionParameter,
+            kind: StructField,
         ),
         (
             source: 99,
-            target: 16,
-            kind: FunctionReturn,
+            target: 101,
+            kind: StructField,
         ),
         (
-            source: 104,
-            target: 105,
+            source: 84,
+            target: 102,
+            kind: Contains,
+        ),
+        (
+            source: 84,
+            target: 103,
+            kind: Contains,
+        ),
+        (
+            source: 84,
+            target: 104,
+            kind: Contains,
+        ),
+        (
+            source: 84,
+            target: 106,
             kind: Contains,
         ),
         (
             source: 106,
-            target: 30,
-            kind: Uses,
-        ),
-        (
-            source: 104,
             target: 107,
-            kind: Contains,
-        ),
-        (
-            source: 108,
-            target: 109,
             kind: StructField,
         ),
         (
-            source: 104,
-            target: 110,
-            kind: Contains,
-        ),
-        (
-            source: 112,
-            target: 113,
-            kind: FunctionParameter,
-        ),
-        (
-            source: 112,
-            target: 8,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 111,
-            target: 31,
-            kind: ImplementsTrait,
-        ),
-        (
-            source: 111,
-            target: 14,
-            kind: ImplementsTrait,
-        ),
-        (
-            source: 104,
-            target: 115,
-            kind: Contains,
-        ),
-        (
-            source: 116,
-            target: 117,
-            kind: EnumVariant,
-        ),
-        (
-            source: 116,
-            target: 118,
-            kind: EnumVariant,
-        ),
-        (
-            source: 119,
-            target: 33,
-            kind: Uses,
-        ),
-        (
-            source: 120,
-            target: 121,
+            source: 106,
+            target: 108,
             kind: StructField,
         ),
         (
-            source: 123,
-            target: 124,
-            kind: FunctionParameter,
-        ),
-        (
-            source: 123,
-            target: 8,
-            kind: FunctionReturn,
-        ),
-        (
-            source: 122,
-            target: 31,
-            kind: ImplementsTrait,
-        ),
-        (
-            source: 122,
-            target: 14,
-            kind: ImplementsTrait,
-        ),
-        (
-            source: 126,
-            target: 127,
-            kind: EnumVariant,
-        ),
-        (
-            source: 126,
-            target: 128,
-            kind: EnumVariant,
-        ),
-        (
-            source: 129,
-            target: 130,
-            kind: StructField,
-        ),
-        (
-            source: 129,
-            target: 131,
-            kind: StructField,
-        ),
-        (
-            source: 136,
-            target: 137,
-            kind: StructField,
-        ),
-        (
-            source: 136,
-            target: 138,
-            kind: StructField,
-        ),
-        (
-            source: 139,
-            target: 37,
+            source: 109,
+            target: 34,
             kind: ValueType,
         ),
         (
-            source: 141,
+            source: 110,
+            target: 34,
+            kind: ValueType,
+        ),
+        (
+            source: 111,
             target: 16,
             kind: ValueType,
         ),
         (
-            source: 142,
+            source: 112,
             target: 16,
             kind: ValueType,
         ),
@@ -1796,7 +1706,7 @@
         ),
         (
             source: 0,
-            target: 104,
+            target: 84,
             kind: Contains,
         ),
     ],
@@ -1804,14 +1714,26 @@
         (
             id: 0,
             name: "root",
+            path: [
+                "crate",
+            ],
             visibility: Inherited,
             attributes: [],
             docstring: None,
             submodules: [],
             items: [
+                1,
+                4,
+                9,
+                14,
+                17,
+                22,
+                27,
+                29,
+                35,
                 37,
-                55,
-                57,
+                41,
+                46,
             ],
             imports: [],
             exports: [],
@@ -1819,44 +1741,67 @@
         (
             id: 46,
             name: "private_module",
-            visibility: Restricted([
-                "super",
-            ]),
+            path: [
+                "crate",
+                "private_module",
+            ],
+            visibility: Inherited,
             attributes: [],
             docstring: None,
             submodules: [],
             items: [
                 47,
+                48,
+                49,
                 50,
+                51,
+                52,
+                53,
                 54,
+                55,
                 56,
+                57,
                 58,
-                61,
+                59,
+                60,
+                62,
                 65,
+                66,
                 67,
-                71,
-                75,
-                77,
+                69,
+                72,
+                73,
+                76,
                 79,
-                81,
-                87,
-                88,
+                84,
             ],
             imports: [],
             exports: [],
         ),
         (
-            id: 104,
+            id: 84,
             name: "public_module",
+            path: [
+                "crate",
+                "public_module",
+            ],
             visibility: Public,
             attributes: [],
             docstring: None,
             submodules: [],
             items: [
-                105,
-                107,
-                110,
-                115,
+                85,
+                86,
+                87,
+                88,
+                90,
+                92,
+                96,
+                99,
+                102,
+                103,
+                104,
+                106,
             ],
             imports: [],
             exports: [],
@@ -1864,17 +1809,49 @@
     ],
     values: [
         (
-            id: 139,
+            id: 82,
+            name: "PRIVATE_CONST",
+            visibility: Inherited,
+            type_id: 16,
+            kind: Constant,
+            value: Some("10"),
+            attributes: [],
+            docstring: None,
+        ),
+        (
+            id: 83,
+            name: "PRIVATE_STATIC",
+            visibility: Inherited,
+            type_id: 16,
+            kind: Static(
+                is_mutable: false,
+            ),
+            value: Some("0"),
+            attributes: [],
+            docstring: None,
+        ),
+        (
+            id: 109,
             name: "MAX_ITEMS",
             visibility: Public,
-            type_id: 37,
+            type_id: 34,
             kind: Constant,
             value: Some("100"),
             attributes: [],
             docstring: Some("A public constant with documentation"),
         ),
         (
-            id: 141,
+            id: 110,
+            name: "MIN_ITEMS",
+            visibility: Inherited,
+            type_id: 34,
+            kind: Constant,
+            value: Some("10"),
+            attributes: [],
+            docstring: Some("A private constant"),
+        ),
+        (
+            id: 111,
             name: "GLOBAL_COUNTER",
             visibility: Public,
             type_id: 16,
@@ -1886,7 +1863,7 @@
             docstring: Some("A public static variable"),
         ),
         (
-            id: 142,
+            id: 112,
             name: "MUTABLE_COUNTER",
             visibility: Public,
             type_id: 16,
@@ -1900,23 +1877,23 @@
     ],
     macros: [
         (
-            id: 143,
+            id: 113,
             name: "test_macro",
             visibility: Public,
             kind: DeclarativeMacro,
             rules: [
                 (
-                    id: 144,
+                    id: 114,
                     pattern: "()",
                     expansion: "{ println ! (\"Hello from macro!\")",
                 ),
                 (
-                    id: 145,
+                    id: 115,
                     pattern: "($ expr : expr)",
                     expansion: "{ println ! (\"Expression: {}\" , $ expr)",
                 ),
                 (
-                    id: 146,
+                    id: 116,
                     pattern: "($ name : ident , $ value : expr)",
                     expansion: "{ println ! (\"{} = {}\" , stringify ! ($ name) , $ value)",
                 ),
@@ -1933,6 +1910,18 @@
             ],
             docstring: Some("A simple macro for testing"),
             body: Some("() => { println ! (\"Hello from macro!\") ; } ; ($ expr : expr) => { println ! (\"Expression: {}\" , $ expr) ; } ; ($ name : ident , $ value : expr) => { println ! (\"{} = {}\" , stringify ! ($ name) , $ value) ; } ;"),
+        ),
+    ],
+    use_statements: [
+        (
+            path: [
+                "super",
+                "*",
+            ],
+            visible_name: "*",
+            original_name: None,
+            is_glob: true,
+            span: (3454, 3467),
         ),
     ],
 )

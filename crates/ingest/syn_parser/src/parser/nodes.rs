@@ -206,6 +206,7 @@ pub struct ImplNode {
     pub generic_params: Vec<GenericParamNode>,
 }
 
+#[cfg(feature = "visibility_resolution")]
 impl Visible for ImplNode {
     fn visibility(&self) -> VisibilityKind {
         VisibilityKind::Public

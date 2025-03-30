@@ -4,10 +4,12 @@ mod code_visitor;
 mod state;
 mod type_processing;
 
+#[cfg(feature = "visibility_resolution")]
+use crate::parser::nodes::Visible;
+
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::parser::nodes::Visible;
 use crate::parser::{channel::ParserMessage, graph::CodeGraph};
 use flume::{Receiver, Sender};
 use std::path::{Path, PathBuf};

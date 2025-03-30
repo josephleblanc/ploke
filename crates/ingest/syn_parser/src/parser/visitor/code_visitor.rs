@@ -140,19 +140,22 @@ impl<'a> CodeVisitor<'a> {
         }
     }
     fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
-        if let Some(current_mod) = self.state.code_graph.modules.last() {
-            let depth = self.state.code_graph.modules.len();
+        #[cfg(feature = "verbose_debug")]
+        {
+            if let Some(current_mod) = self.state.code_graph.modules.last() {
+                let depth = self.state.code_graph.modules.len();
 
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│");
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            print!("└");
-            print!("{:─<3}", "");
+                (1..depth).for_each(|_| print!("{: <3}", ""));
+                println!("│");
+                (1..depth).for_each(|_| print!("{: <3}", ""));
+                print!("└");
+                print!("{:─<3}", "");
 
-            println!(
-                " {} -> pushing name {} (id: {}) to items: now items = {:?}",
-                current_mod.name, name, node_id, current_mod.items
-            );
+                println!(
+                    " {} -> pushing name {} (id: {}) to items: now items = {:?}",
+                    current_mod.name, name, node_id, current_mod.items
+                );
+            }
         }
     }
     fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
@@ -186,6 +189,39 @@ impl<'a> CodeVisitor<'a> {
                 current_mod.name, name, node_id
             );
         }
+    }
+    #[cfg(feature = "verbose_debug")]
+    fn log_push(&self, name: &str, stack: &[String]) {
+        println!("{:+^10} (+) pushed {} <- {:?}", "", name, stack.last());
+        println!("{:+^13} {} now: {:?}", "", name, stack);
+    }
+
+    #[cfg(feature = "verbose_debug")]
+    fn log_pop(&self, name: &str, popped: Option<String>, stack: &[String]) {
+        println!("{:+^10} (-) popped {} -> {:?}", "", name, popped);
+        println!("{:+^13} {} now: {:?}", "", name, stack);
+    }
+
+    fn add_contains_rel(&mut self, node_name: Option<&str>) -> NodeId {
+        let node_id = self.state.next_node_id(); // Generate ID here
+
+        if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
+            #[cfg(feature = "visibility_resolution")]
+            current_mod.items.push(node_id);
+
+            self.state.code_graph.relations.push(Relation {
+                source: current_mod.id,
+                target: node_id,
+                kind: RelationKind::Contains,
+            });
+
+            #[cfg(feature = "verbose_debug")]
+            if let Some(name) = node_name {
+                self.debug_mod_stack_push(name.to_owned(), node_id);
+            }
+        }
+
+        node_id // Return the new ID
     }
 }
 
@@ -252,20 +288,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let fn_name = func.sig.ident.to_string();
         let byte_range = func.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let fn_id = self.state.next_node_id();
+        let fn_id = self.add_contains_rel(Some(&fn_name));
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&fn_name, fn_id);
         // Register function with current module
-        if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
-            current_mod.items.push(fn_id);
-            self.state.code_graph.relations.push(Relation {
-                source: current_mod.id,
-                target: fn_id,
-                kind: RelationKind::Contains,
-            });
-            #[cfg(feature = "verbose_debug")]
-            self.debug_mod_stack_push(fn_name.clone(), fn_id);
-        }
 
         // Process function parameters
         let mut parameters = Vec::new();
@@ -326,8 +352,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit struct definitions
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
-        let struct_id = self.state.next_node_id();
         let struct_name = item_struct.ident.to_string();
+        let struct_id = self.add_contains_rel(Some(&struct_name));
+
+        #[cfg(feature = "module_path_tracking")]
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&struct_name, struct_id);
         let byte_range = item_struct.span().byte_range();
@@ -413,8 +441,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit type alias definitions
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
-        let type_alias_id = self.state.next_node_id();
         let type_alias_name = item_type.ident.to_string();
+        let type_alias_id = self.add_contains_rel(Some(&type_alias_name));
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&type_alias_name, type_alias_id);
 
@@ -469,8 +497,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit union definitions
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
-        let union_id = self.state.next_node_id();
         let union_name = item_union.ident.to_string();
+        let union_id = self.add_contains_rel(Some(&union_name));
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&union_name, union_id);
 
@@ -550,8 +578,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit enum definitions
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
-        let enum_id = self.state.next_node_id();
         let enum_name = item_enum.ident.to_string();
+        let enum_id = self.add_contains_rel(Some(&enum_name));
+
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&enum_name, enum_id);
 
@@ -683,9 +712,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
-        let impl_id = self.state.next_node_id();
-
         // TODO: add name here when I implement visibility for impl
+        let impl_id = self.add_contains_rel(None);
+
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id("unnamed_impl", impl_id);
 
@@ -893,8 +922,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit trait definitions
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
-        let trait_id = self.state.next_node_id();
         let trait_name = item_trait.ident.to_string();
+        let trait_id = self.add_contains_rel(Some(&trait_name));
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&trait_name, trait_id);
 
@@ -1023,8 +1052,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         #[cfg(feature = "verbose_debug")]
         self.debug_mod_stack();
 
-        let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
+        let module_id = self.add_contains_rel(Some(&module_name));
+
+        #[cfg(feature = "module_path_tracking")]
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&module_name, module_id);
 
@@ -1047,6 +1078,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 items.push(item_id);
 
                 // Store item-module relationship immediately
+
+                #[cfg(not(feature = "visibility_resolution"))]
                 self.state.code_graph.relations.push(Relation {
                     source: module_id,
                     target: item_id,
@@ -1083,56 +1116,46 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // WARNING: experimenting with this
         self.state.current_module.push(module_node.name.clone());
-        println!(
-            "{:+^10} (+) pushed self.state.current_module <- {:?}",
-            "",
-            module_node.name.clone()
-        );
-        println!(
-            "{:+^13} self.state.current_module now: {:?}",
-            "", self.state.current_module
-        );
+        #[cfg(feature = "verbose_debug")]
+        {
+            self.log_push("current module", &self.state.current_module);
+            println!(
+                "{:+^13} self.state.current_module now: {:?}",
+                "", self.state.current_module
+            );
+        }
         self.state
             .current_module_path
             .push(module_node.name.clone());
-        println!(
-            "{:+^10} (+) pushed self.state.current_module_path <- {:?}",
-            "",
-            module_node.name.clone()
-        );
-        println!(
-            "{:+^13} self.state.current_module_path now: {:?}",
-            "", self.state.current_module_path
-        );
+        #[cfg(feature = "verbose_debug")]
+        {
+            println!(
+                "{:+^10} (+) pushed self.state.current_module_path <- {:?}",
+                "",
+                module_node.name.clone()
+            );
+            println!(
+                "{:+^13} self.state.current_module_path now: {:?}",
+                "", self.state.current_module_path
+            );
+        }
 
         self.state.code_graph.modules.push(module_node);
         // continue visiting.
-        println!(
-            "{:+^10}{:-^60}{:+^10}",
-            "", "before visit::visit_item_mod(self, module", ""
-        );
         visit::visit_item_mod(self, module);
-        println!("{:+^80}", "after visit::visit_item_mod(self, module)");
+
         // WARNING: experimenting with this
         let popped = self.state.current_module.pop();
-        println!(
-            "{:+^10} (-) popped self.state.current_module -> {:?}",
-            "", popped
-        );
-        println!(
-            "{:+^13} self.state.current_module now: {:?}",
-            "", self.state.current_module
-        );
+        #[cfg(feature = "verbose_debug")]
+        self.log_pop("current_module", popped, &self.state.current_module);
+
         let popped = self.state.current_module_path.pop();
-        println!(
-            "{:+^10} (-) popped self.state.current_module -> {:?}",
-            "", popped
+        #[cfg(feature = "verbose_debug")]
+        self.log_pop(
+            "current_module_path",
+            popped,
+            &self.state.current_module_path,
         );
-        println!(
-            "{:+^13} self.state.current_module_path now: {:?}",
-            "", self.state.current_module_path
-        );
-        println!("{:+^80}", "exiting visit_item_mod");
     }
 
     /// Visits `use` statements during AST traversal.

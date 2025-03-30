@@ -103,3 +103,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - Enhanced relationship tracking between code elements
 - Performance optimizations for large codebases
 
+### Notes regarding active refactor: Module Path Representation
+See plans to refactor visibility resolution and module path representation:
+- Phase 1: [Module Path] (complete)
+- Phase 2: [Use Statements] (complete)
+- Phase 3: [Visibility Integration] (80% complete, needs more tests/cleanup)
+- Phase 4: File Path Resolution (requires design)
+- Phase 5: Unified Module Path Representation (requires design, see [design docs])
+
+[Module Path]:ploke/docs/plans/visibility_resolution/phase1_module_path.md
+[Use Statements]:ploke/docs/plans/visibility_resolution/phase2_use_statements.md
+[Visibility Integration]:ploke/docs/plans/visibility_resolution/phase3_visibility_integration.md
+[design docs]:ploke/docs/plans/visibility_resolution/module_path_repr.md
+<!-- [File Path Resolution]: -->
+<!-- [Unified Module Path Representation]: -->
