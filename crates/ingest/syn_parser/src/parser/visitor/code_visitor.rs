@@ -258,6 +258,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Register function with current module
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
             current_mod.items.push(fn_id);
+            self.state.code_graph.relations.push(Relation {
+                source: current_mod.id,
+                target: fn_id,
+                kind: RelationKind::Contains,
+            });
             #[cfg(feature = "verbose_debug")]
             self.debug_mod_stack_push(fn_name.clone(), fn_id);
         }
