@@ -150,8 +150,8 @@ impl<'a> CodeVisitor<'a> {
             print!("{:─<3}", "");
 
             println!(
-                " {} -> pushing name {} (id: {}) to items",
-                current_mod.name, name, node_id
+                " {} -> pushing name {} (id: {}) to items: now items = {:?}",
+                current_mod.name, name, node_id, current_mod.items
             );
         }
     }
@@ -253,6 +253,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let byte_range = func.span().byte_range();
         let span = (byte_range.start, byte_range.end);
         let fn_id = self.state.next_node_id();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&fn_name, fn_id);
         // Register function with current module
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
             current_mod.items.push(fn_id);
@@ -1049,49 +1051,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     submodules.push(item_id);
                     self.debug_submodule("No name Maybe ok?", item_id);
                 }
-
-                // Visit item - this will now happen in the correct module context
-                // match item {
-                //     syn::Item::Fn(func) => self.visit_item_fn(func),
-                //     syn::Item::Struct(strct) => {
-                //         self.visit_item_struct(strct);
-                //     }
-                //     syn::Item::Enum(enm) => {
-                //         self.visit_item_enum(enm);
-                //     }
-                //     syn::Item::Impl(impl_block) => {
-                //         self.visit_item_impl(impl_block);
-                //     }
-                //     syn::Item::Trait(trt) => {
-                //         self.visit_item_trait(trt);
-                //     }
-                //     syn::Item::Type(type_alias) => {
-                //         self.visit_item_type(type_alias);
-                //     }
-                //     syn::Item::Union(union_def) => {
-                //         self.visit_item_union(union_def);
-                //     }
-                //     syn::Item::Mod(md) => {
-                //         self.visit_item_mod(md); // Recursive call
-                //     }
-                //     syn::Item::Use(use_item) => {
-                //         self.visit_item_use(use_item);
-                //     }
-                //     syn::Item::ExternCrate(extern_crate) => {
-                //         self.visit_item_extern_crate(extern_crate);
-                //     }
-                //     syn::Item::Const(item_const) => {
-                //         self.visit_item_const(item_const);
-                //     }
-                //     syn::Item::Static(item_static) => {
-                //         self.visit_item_static(item_static);
-                //     }
-                //     syn::Item::Macro(item_macro) => {
-                //         self.visit_item_macro(item_macro);
-                //     }
-                //     // Add other item types as needed
-                //     _ => {}
-                // }
             }
         }
 
@@ -1117,9 +1076,58 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.current_module_path = parent_path;
         }
 
+        // WARNING: experimenting with this
+        self.state.current_module.push(module_node.name.clone());
+        println!(
+            "{:+^10} (+) pushed self.state.current_module <- {:?}",
+            "",
+            module_node.name.clone()
+        );
+        println!(
+            "{:+^13} self.state.current_module now: {:?}",
+            "", self.state.current_module
+        );
+        self.state
+            .current_module_path
+            .push(module_node.name.clone());
+        println!(
+            "{:+^10} (+) pushed self.state.current_module_path <- {:?}",
+            "",
+            module_node.name.clone()
+        );
+        println!(
+            "{:+^13} self.state.current_module_path now: {:?}",
+            "", self.state.current_module_path
+        );
+
         self.state.code_graph.modules.push(module_node);
         // continue visiting.
+        println!(
+            "{:+^10}{:-^60}{:+^10}",
+            "", "before visit::visit_item_mod(self, module", ""
+        );
         visit::visit_item_mod(self, module);
+        println!("{:+^80}", "after visit::visit_item_mod(self, module)");
+        // WARNING: experimenting with this
+        let popped = self.state.current_module.pop();
+        println!(
+            "{:+^10} (-) popped self.state.current_module -> {:?}",
+            "", popped
+        );
+        println!(
+            "{:+^13} self.state.current_module now: {:?}",
+            "", self.state.current_module
+        );
+        let popped = self.state.current_module_path.pop();
+        println!(
+            "{:+^10} (-) popped self.state.current_module -> {:?}",
+            "", popped
+        );
+        println!(
+            "{:+^13} self.state.current_module_path now: {:?}",
+            "", self.state.current_module_path
+        );
+        println!("{:+^80}", "exiting visit_item_mod");
     }
 
     /// Visits `use` statements during AST traversal.
