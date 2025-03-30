@@ -616,7 +616,7 @@ mod visibility_resolution_tests {
 
         for expected_type in expected_private_types {
             assert!(
-                private_items.contains(&expected_type),
+                private_items.contains(expected_type),
                 "Expected private type '{}' not found",
                 expected_type
             );
@@ -627,7 +627,11 @@ mod visibility_resolution_tests {
             5,
             "Expected 5 PRIVATE defined types (PrivateStruct, PrivateStruct2, PrivateEnum, PrivateTypeAlias, PrivateUnion). Found: {}: {:?}",
             private_items.len(),
-            private_items.iter().map(|t| t.name()).collect::<Vec<_>>()
+            code_graph
+                .defined_types
+                .iter()
+                .map(|t| get_visibility_info(t, &code_graph).1)
+                .collect::<Vec<_>>()
         );
 
         // ===== TOTAL ITEMS TEST =====
@@ -639,7 +643,7 @@ mod visibility_resolution_tests {
             code_graph
                 .defined_types
                 .iter()
-                .map(|t| t.name())
+                .map(|t| get_visibility_info(t, &code_graph).1)
                 .collect::<Vec<_>>()
         );
 
@@ -647,12 +651,16 @@ mod visibility_resolution_tests {
         let private_struct = code_graph
             .defined_types
             .iter()
-            .find(|t| t.name() == "PrivateStruct")
+            .find(|t| {
+                let (_, name) = get_visibility_info(t, &code_graph);
+                name == "PrivateStruct"
+            })
             .unwrap();
 
+        let (private_struct_id, _) = get_visibility_info(private_struct, &code_graph);
         assert!(
             !matches!(
-                code_graph.resolve_visibility(private_struct.id(), &["crate".to_string()]),
+                code_graph.resolve_visibility(private_struct_id, &["crate".to_string()]),
                 VisibilityResult::Direct
             ),
             "PrivateStruct should not be directly visible from crate root"
@@ -663,8 +671,9 @@ mod visibility_resolution_tests {
             .defined_types
             .iter()
             .filter(|t| {
+                let (id, _) = get_visibility_info(t, &code_graph);
                 matches!(
-                    code_graph.resolve_visibility(t.id(), &["crate".to_string()]),
+                    code_graph.resolve_visibility(id, &["crate".to_string()]),
                     VisibilityResult::Direct
                 )
             })
@@ -673,6 +682,21 @@ mod visibility_resolution_tests {
         assert_eq!(
             public_items, 10,
             "Expected 10 PUBLIC defined types when checking visibility"
+        );
+
+        // ===== FUNCTION VISIBILITY TEST =====
+        let private_fn = code_graph
+            .functions
+            .iter()
+            .find(|f| f.name == "private_function")
+            .unwrap();
+
+        assert!(
+            !matches!(
+                code_graph.resolve_visibility(private_fn.id, &["crate".to_string()]),
+                VisibilityResult::Direct
+            ),
+            "private_function should not be directly visible"
         );
     }
 
