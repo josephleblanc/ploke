@@ -7,6 +7,7 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
+use crate::parser::nodes::Visible;
 use crate::parser::{channel::ParserMessage, graph::CodeGraph};
 use flume::{Receiver, Sender};
 use std::path::{Path, PathBuf};
@@ -57,34 +58,8 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
                 });
         }
     }
-
     #[cfg(feature = "verbose_debug")]
-    {
-        let mut all_ids: Vec<(String, usize)> = visitor_state
-            .code_graph
-            .modules
-            .iter()
-            .map(|n| (n.name.clone(), n.id))
-            .chain(
-                visitor_state
-                    .code_graph
-                    .values
-                    .iter()
-                    .map(|n| (n.name.clone(), n.id)),
-            )
-            .chain(
-                visitor_state
-                    .code_graph
-                    .functions
-                    .iter()
-                    .map(|n| (n.name.clone(), n.id)),
-            )
-            .collect();
-        all_ids.sort_by(|a, b| a.1.cmp(&b.1));
-        all_ids
-            .into_iter()
-            .for_each(|(n, i)| println!("id: {}, name: {}", i, n));
-    }
+    visitor_state.code_graph.debug_print_all_visible();
 
     Ok(visitor_state.code_graph)
 }

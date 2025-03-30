@@ -9,6 +9,9 @@ pub type NodeId = usize;
 // Represents a function definition
 #[cfg(feature = "visibility_resolution")]
 impl Visible for ModuleNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -33,6 +36,9 @@ pub struct FunctionNode {
 //ANCHOR_END: ItemFn
 #[cfg(feature = "visibility_resolution")]
 impl Visible for FunctionNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -65,6 +71,9 @@ pub enum TypeDefNode {
 // Represents a struct definition
 #[cfg(feature = "visibility_resolution")]
 impl Visible for StructNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -89,6 +98,9 @@ pub struct StructNode {
 // Represents an enum definition
 #[cfg(feature = "visibility_resolution")]
 impl Visible for EnumNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -134,6 +146,9 @@ pub struct VariantNode {
 // Represents a type alias (type NewType = OldType)
 #[cfg(feature = "visibility_resolution")]
 impl Visible for TypeAliasNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -157,6 +172,9 @@ pub struct TypeAliasNode {
 // Represents a union definition
 #[cfg(feature = "visibility_resolution")]
 impl Visible for UnionNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -187,6 +205,22 @@ pub struct ImplNode {
     pub methods: Vec<FunctionNode>,
     pub generic_params: Vec<GenericParamNode>,
 }
+
+impl Visible for ImplNode {
+    fn visibility(&self) -> VisibilityKind {
+        VisibilityKind::Public
+    }
+
+    fn name(&self) -> &str {
+        // Placeholder
+        // TODO: Think through this and improve it
+        "impl block"
+    }
+
+    fn id(&self) -> NodeId {
+        self.id
+    }
+}
 //ANCHOR_END: ItemImpl
 
 // ANCHOR: TraitNode
@@ -199,6 +233,10 @@ impl Visible for TraitNode {
 
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn id(&self) -> NodeId {
+        self.id
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -233,6 +271,9 @@ pub struct ModuleNode {
 // Represents a constant or static variable
 #[cfg(feature = "visibility_resolution")]
 impl Visible for ValueNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -256,6 +297,9 @@ pub struct ValueNode {
 // Represents a macro definition
 #[cfg(feature = "visibility_resolution")]
 impl Visible for MacroNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -393,6 +437,7 @@ pub enum VisibilityResult {
 pub trait Visible {
     fn visibility(&self) -> VisibilityKind;
     fn name(&self) -> &str;
+    fn id(&self) -> NodeId;
 }
 
 /// Detailed reasons for out-of-scope items

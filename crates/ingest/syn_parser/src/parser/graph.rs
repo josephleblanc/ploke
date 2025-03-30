@@ -99,6 +99,29 @@ impl CodeGraph {
             }
         }
     }
+    pub fn debug_print_all_visible(&self) {
+        #[cfg(feature = "verbose_debug")]
+        {
+            let mut all_ids: Vec<(&str, usize)> = vec![];
+            all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.impls.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.traits.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.private_traits.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.modules.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.values.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.macros.iter().map(|n| (n.name(), n.id())));
+            // Add other fields similarly...
+            // missing type_graph (different id generation lineage)
+            // missing relations might want to add this, at least for ids (though visible might be a
+            //  bit of a shoe-horn)
+            // missing use_statements not sure about this one.
+
+            all_ids.sort_by_key(|&(_, id)| id);
+            for (name, id) in all_ids {
+                println!("id: {}, name: {}", id, name);
+            }
+        }
+    }
 
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
