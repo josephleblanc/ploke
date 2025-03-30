@@ -58,6 +58,34 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         }
     }
 
+    #[cfg(feature = "verbose_debug")]
+    {
+        let mut all_ids: Vec<(String, usize)> = visitor_state
+            .code_graph
+            .modules
+            .iter()
+            .map(|n| (n.name.clone(), n.id))
+            .chain(
+                visitor_state
+                    .code_graph
+                    .values
+                    .iter()
+                    .map(|n| (n.name.clone(), n.id)),
+            )
+            .chain(
+                visitor_state
+                    .code_graph
+                    .functions
+                    .iter()
+                    .map(|n| (n.name.clone(), n.id)),
+            )
+            .collect();
+        all_ids.sort_by(|a, b| a.1.cmp(&b.1));
+        all_ids
+            .into_iter()
+            .for_each(|(n, i)| println!("id: {}, name: {}", i, n));
+    }
+
     Ok(visitor_state.code_graph)
 }
 

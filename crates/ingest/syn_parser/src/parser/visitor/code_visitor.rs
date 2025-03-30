@@ -101,6 +101,92 @@ impl<'a> CodeVisitor<'a> {
 
         statements
     }
+
+    fn debug_mod_stack(&mut self) {
+        if let Some(current_mod) = self.state.code_graph.modules.last() {
+            let modules: Vec<(usize, String)> = self
+                .state
+                .code_graph
+                .modules
+                .iter()
+                .map(|m| (m.id, m.name.clone()))
+                .collect();
+
+            let depth = self.state.code_graph.modules.len();
+            //     .iter()
+            //     .enumerate()
+            //     .find(|(_i, m)| m.id == current_mod.id)
+            //     .map(|(i, _m)| i)
+            //     .unwrap();
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            print!("└");
+            print!("{:─<3}", "");
+
+            println!(" current_mod.name: {:?}", current_mod.name);
+            print!("{: <3}", "");
+            (0..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│   id: {:?}", current_mod.id);
+            print!("{: <3}", "");
+            (0..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│   items: {:?}", current_mod.items);
+            print!("{: <3}", "");
+            (0..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│   submodules: {:?}", current_mod.submodules);
+            print!("{: <3}", "");
+            (0..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│   self.state.code_graph.modules names: {:?}", modules);
+        }
+    }
+    fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
+        if let Some(current_mod) = self.state.code_graph.modules.last() {
+            let depth = self.state.code_graph.modules.len();
+
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            print!("└");
+            print!("{:─<3}", "");
+
+            println!(
+                " {} -> pushing name {} (id: {}) to items",
+                current_mod.name, name, node_id
+            );
+        }
+    }
+    fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
+        if let Some(current_mod) = self.state.code_graph.modules.last() {
+            let depth = self.state.code_graph.modules.len();
+
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            print!("└");
+            print!("{:─<3}", "");
+
+            println!(
+                " in {} ++ new id created name: \"{}\" (id: {})",
+                current_mod.name, name, node_id
+            );
+        }
+    }
+    fn debug_submodule(&mut self, name: &str, node_id: NodeId) {
+        if let Some(current_mod) = self.state.code_graph.modules.last() {
+            let depth = self.state.code_graph.modules.len();
+
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            print!("└");
+            print!("{:─<3}", "");
+
+            println!(
+                " {} -> pushing new submodule to submodules : \"{}\" (id: {})",
+                current_mod.name, name, node_id
+            );
+        }
+    }
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -117,6 +203,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if is_proc_macro {
             let macro_id = self.state.next_node_id();
             let macro_name = func.sig.ident.to_string();
+
+            #[cfg(feature = "verbose_debug")]
+            self.debug_new_id(&macro_name, macro_id);
 
             // Determine the kind of procedural macro
             let proc_macro_kind = if func
@@ -160,14 +249,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.code_graph.macros.push(macro_node);
         }
 
+        let fn_name = func.sig.ident.to_string();
+        let byte_range = func.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
         let fn_id = self.state.next_node_id();
         // Register function with current module
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
             current_mod.items.push(fn_id);
+            #[cfg(feature = "verbose_debug")]
+            self.debug_mod_stack_push(fn_name.clone(), fn_id);
         }
-        let fn_name = func.sig.ident.to_string();
-        let byte_range = func.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
 
         // Process function parameters
         let mut parameters = Vec::new();
@@ -230,6 +321,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_id = self.state.next_node_id();
         let struct_name = item_struct.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&struct_name, struct_id);
         let byte_range = item_struct.span().byte_range();
         let span = (byte_range.start, byte_range.end);
 
@@ -238,6 +331,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for field in &item_struct.fields {
             let field_id = self.state.next_node_id();
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            #[cfg(feature = "verbose_debug")]
+            self.debug_new_id(
+                &field_name
+                    .clone()
+                    .unwrap_or("unnamed_struct_field".to_string()),
+                field_id,
+            );
             let type_id = get_or_create_type(self.state, &field.ty);
 
             let field_node = FieldNode {
@@ -308,6 +408,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
         let type_alias_id = self.state.next_node_id();
         let type_alias_name = item_type.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&type_alias_name, type_alias_id);
 
         // Process the aliased type
         let type_id = get_or_create_type(self.state, &item_type.ty);
@@ -362,12 +464,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
         let union_id = self.state.next_node_id();
         let union_name = item_union.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&union_name, union_id);
 
         // Process fields
         let mut fields = Vec::new();
         for field in &item_union.fields.named {
             let field_id = self.state.next_node_id();
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            #[cfg(feature = "verbose_debug")]
+            self.debug_new_id(
+                &field_name.clone().unwrap_or("unnamed_union".to_string()),
+                field_id,
+            );
             let type_id = get_or_create_type(self.state, &field.ty);
 
             let field_node = FieldNode {
@@ -436,6 +545,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
         let enum_id = self.state.next_node_id();
         let enum_name = item_enum.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&enum_name, enum_id);
 
         // Process variants
         let mut variants = Vec::new();
@@ -450,6 +561,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     for field in &fields_named.named {
                         let field_id = self.state.next_node_id();
                         let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+                        #[cfg(feature = "verbose_debug")]
+                        self.debug_new_id(
+                            &field_name
+                                .clone()
+                                .unwrap_or("unnamed_enum_field".to_string()),
+                            field_id,
+                        );
                         let type_id = get_or_create_type(self.state, &field.ty);
 
                         let field_node = FieldNode {
@@ -467,6 +585,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     for field in fields_unnamed.unnamed.iter() {
                         let field_id = self.state.next_node_id();
                         let type_id = get_or_create_type(self.state, &field.ty);
+                        #[cfg(feature = "verbose_debug")]
+                        self.debug_new_id("unnamed_enum_field", field_id);
 
                         let field_node = FieldNode {
                             id: field_id,
@@ -558,6 +678,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         let impl_id = self.state.next_node_id();
 
+        // TODO: add name here when I implement visibility for impl
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id("unnamed_impl", impl_id);
+
         // Process self type
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
@@ -614,6 +738,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if let syn::ImplItem::Fn(method) = item {
                 let method_node_id = self.state.next_node_id();
                 let method_name = method.sig.ident.to_string();
+                #[cfg(feature = "verbose_debug")]
+                self.debug_new_id(&method_name, method_node_id);
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -762,6 +888,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
         let trait_id = self.state.next_node_id();
         let trait_name = item_trait.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&trait_name, trait_id);
 
         // Process methods
         let mut methods = Vec::new();
@@ -769,6 +897,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if let syn::TraitItem::Fn(method) = item {
                 let method_node_id = self.state.next_node_id();
                 let method_name = method.sig.ident.to_string();
+                #[cfg(feature = "verbose_debug")]
+                self.debug_new_id(&method_name, method_node_id);
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -883,8 +1013,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        #[cfg(feature = "verbose_debug")]
+        self.debug_mod_stack();
+
         let module_id = self.state.next_node_id();
         let module_name = module.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&module_name, module_id);
 
         // Save current path before entering module
         #[cfg(feature = "module_path_tracking")]
@@ -901,6 +1036,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if let Some((_, mod_items)) = &module.content {
             for item in mod_items {
                 let item_id = self.state.next_node_id();
+                self.debug_mod_stack_push("NO NAME".to_string(), item_id);
                 items.push(item_id);
 
                 // Store item-module relationship immediately
@@ -909,50 +1045,53 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     target: item_id,
                     kind: RelationKind::Contains,
                 });
+                if matches!(item, syn::Item::Mod(_)) {
+                    submodules.push(item_id);
+                    self.debug_submodule("No name Maybe ok?", item_id);
+                }
 
                 // Visit item - this will now happen in the correct module context
-                match item {
-                    syn::Item::Fn(func) => self.visit_item_fn(func),
-                    syn::Item::Struct(strct) => {
-                        self.visit_item_struct(strct);
-                    }
-                    syn::Item::Enum(enm) => {
-                        self.visit_item_enum(enm);
-                    }
-                    syn::Item::Impl(impl_block) => {
-                        self.visit_item_impl(impl_block);
-                    }
-                    syn::Item::Trait(trt) => {
-                        self.visit_item_trait(trt);
-                    }
-                    syn::Item::Type(type_alias) => {
-                        self.visit_item_type(type_alias);
-                    }
-                    syn::Item::Union(union_def) => {
-                        self.visit_item_union(union_def);
-                    }
-                    syn::Item::Mod(md) => {
-                        submodules.push(item_id); // Add to submodules
-                        self.visit_item_mod(md); // Recursive call
-                    }
-                    syn::Item::Use(use_item) => {
-                        self.visit_item_use(use_item);
-                    }
-                    syn::Item::ExternCrate(extern_crate) => {
-                        self.visit_item_extern_crate(extern_crate);
-                    }
-                    syn::Item::Const(item_const) => {
-                        self.visit_item_const(item_const);
-                    }
-                    syn::Item::Static(item_static) => {
-                        self.visit_item_static(item_static);
-                    }
-                    syn::Item::Macro(item_macro) => {
-                        self.visit_item_macro(item_macro);
-                    }
-                    // Add other item types as needed
-                    _ => {}
-                }
+                // match item {
+                //     syn::Item::Fn(func) => self.visit_item_fn(func),
+                //     syn::Item::Struct(strct) => {
+                //         self.visit_item_struct(strct);
+                //     }
+                //     syn::Item::Enum(enm) => {
+                //         self.visit_item_enum(enm);
+                //     }
+                //     syn::Item::Impl(impl_block) => {
+                //         self.visit_item_impl(impl_block);
+                //     }
+                //     syn::Item::Trait(trt) => {
+                //         self.visit_item_trait(trt);
+                //     }
+                //     syn::Item::Type(type_alias) => {
+                //         self.visit_item_type(type_alias);
+                //     }
+                //     syn::Item::Union(union_def) => {
+                //         self.visit_item_union(union_def);
+                //     }
+                //     syn::Item::Mod(md) => {
+                //         self.visit_item_mod(md); // Recursive call
+                //     }
+                //     syn::Item::Use(use_item) => {
+                //         self.visit_item_use(use_item);
+                //     }
+                //     syn::Item::ExternCrate(extern_crate) => {
+                //         self.visit_item_extern_crate(extern_crate);
+                //     }
+                //     syn::Item::Const(item_const) => {
+                //         self.visit_item_const(item_const);
+                //     }
+                //     syn::Item::Static(item_static) => {
+                //         self.visit_item_static(item_static);
+                //     }
+                //     syn::Item::Macro(item_macro) => {
+                //         self.visit_item_macro(item_macro);
+                //     }
+                //     // Add other item types as needed
+                //     _ => {}
+                // }
             }
         }
 
@@ -979,6 +1118,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         self.state.code_graph.modules.push(module_node);
+        // continue visiting.
+        visit::visit_item_mod(self, module);
     }
 
     /// Visits `use` statements during AST traversal.
@@ -994,6 +1135,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
         // Create an import node
         let import_id = self.state.next_node_id();
+        self.debug_mod_stack_push("NO NAME".to_string(), import_id);
 
         // Process the use path
         let mut path_segments = Vec::new();
@@ -1047,6 +1189,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Get the crate name
         let crate_name = extern_crate.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&crate_name, import_id);
 
         // Create a synthetic type for the extern crate
         let type_id = self.state.next_type_id();
@@ -1074,6 +1218,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let const_id = self.state.next_node_id();
         let const_name = item_const.ident.to_string();
+
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&const_name, const_id);
 
         // Process the type
         let type_id = get_or_create_type(self.state, &item_const.ty);
@@ -1131,6 +1278,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
         let static_id = self.state.next_node_id();
         let static_name = item_static.ident.to_string();
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&static_name, static_id);
 
         // Process the type
         let type_id = get_or_create_type(self.state, &item_static.ty);
@@ -1205,6 +1354,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .as_ref()
             .map(|ident| ident.to_string())
             .unwrap_or_else(|| "unnamed_macro".to_string());
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id(&macro_name, macro_id);
 
         // Extract the macro body
         let body = Some(item_macro.mac.tokens.to_string());
@@ -1229,9 +1380,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if let Some(idx) = rule.find("=>") {
                 let pattern = rule[..idx].trim().to_string();
                 let expansion = rule[(idx + 2)..].trim().to_string();
+                let rule_id = self.state.next_node_id();
+                #[cfg(feature = "verbose_debug")]
+                self.debug_new_id("Macro `=>` item", macro_id);
 
                 rules.push(MacroRuleNode {
-                    id: self.state.next_node_id(),
+                    id: rule_id,
                     pattern,
                     expansion,
                 });
@@ -1258,6 +1412,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_macro(&mut self, mac: &'ast syn::Macro) {
         // Create a node ID for this macro invocation
         let invocation_id = self.state.next_node_id();
+
+        #[cfg(feature = "verbose_debug")]
+        self.debug_new_id("unnamed macro invocation (Whaa?)", invocation_id);
 
         // Get the macro name
         let macro_path = mac.path.to_token_stream().to_string();
