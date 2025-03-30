@@ -564,8 +564,20 @@ fn test_analyzer() {
 
 #[cfg(feature = "visibility_resolution")]
 mod visibility_resolution_tests {
+    use syn_parser::parser::nodes::NodeId;
+
     use super::*;
     use crate::nodes::VisibilityResult;
+
+    // Helper function needs explicit lifetime
+    fn get_visibility_info<'a>(def: &'a TypeDefNode, _graph: &CodeGraph) -> (NodeId, &'a str) {
+        match def {
+            TypeDefNode::Struct(s) => (s.id, s.name.as_str()),
+            TypeDefNode::Enum(e) => (e.id, e.name.as_str()),
+            TypeDefNode::TypeAlias(a) => (a.id, a.name.as_str()),
+            TypeDefNode::Union(u) => (u.id, u.name.as_str()),
+        }
+    }
 
     #[test]
     fn test_analyzer_visibility_resolution() {
@@ -573,14 +585,42 @@ mod visibility_resolution_tests {
         let code_graph = analyze_code(&input_path).unwrap();
 
         // ===== PRIVATE ITEMS TEST =====
+        let expected_private_types = &[
+            "PrivateStruct",
+            "PrivateStruct2",
+            "PrivateEnum",
+            "PrivateTypeAlias",
+            "PrivateUnion",
+        ];
+
+        // Updated test code
         let private_items = code_graph
             .defined_types
             .iter()
             .filter(|t| {
-                let vis = code_graph.resolve_visibility(t.id(), &["crate".to_string()]);
-                !matches!(vis, VisibilityResult::Direct)
+                let (id, _) = get_visibility_info(t, &code_graph);
+                !matches!(
+                    code_graph.resolve_visibility(id, &["crate".to_string()]),
+                    VisibilityResult::Direct
+                )
             })
+            .map(|t| get_visibility_info(t, &code_graph).1)
             .collect::<Vec<_>>();
+
+        // Check we found exactly the expected private types
+        assert_eq!(
+            private_items.len(),
+            expected_private_types.len(),
+            "Mismatch in number of private types"
+        );
+
+        for expected_type in expected_private_types {
+            assert!(
+                private_items.contains(&expected_type),
+                "Expected private type '{}' not found",
+                expected_type
+            );
+        }
 
         assert_eq!(
             private_items.len(),
