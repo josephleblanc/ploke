@@ -62,6 +62,9 @@ impl<T> SampleStruct<T> {
     pub fn use_field(&self) -> &T {
         &self.field
     }
+
+    /// Public method in impl block
+    pub fn public_impl_method(&self) {}
 }
 
 /// A nested struct inside the module
@@ -166,6 +169,27 @@ pub mod public_module {
         pub module_field: String,
     }
 
+    /// Macro inside a module
+    #[macro_export]
+    macro_rules! module_macro {
+        () => {};
+    }
+}
+
+// Module hierarchy for testing nested visibility
+mod outer {
+    pub mod middle {
+        pub mod inner {
+            pub fn deep_function() {}
+        }
+    }
+}
+
+// Module with re-exports
+mod intermediate {
+    pub use super::outer::middle::inner::deep_function as re_exported_fn;
+}
+
     /// Implementation of a trait from parent module
     impl DefaultTrait for ModuleStruct {
         fn default_method(&self) -> String {
@@ -186,8 +210,20 @@ pub struct TupleStruct(pub String, pub i32);
 // Unit struct
 pub struct UnitStruct;
 
+/// Struct with [Visibility] markers in docs
+pub struct DocumentedStruct;
+
+#[doc(hidden)]
+pub fn hidden_function() {}
+
 /// Type alias example
 pub type StringVec = Vec<String>;
+
+// Private type alias
+type PrivateTypeAlias = i32;
+
+// Module type alias
+pub type ModuleTypeAlias = String;
 
 // Items for attribute visibility tests
 #[cfg_attr(feature = "public", pub)]
