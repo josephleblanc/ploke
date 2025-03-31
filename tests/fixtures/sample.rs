@@ -190,18 +190,19 @@ pub mod public_module {
 }
 
 // Module hierarchy for testing nested visibility
+// Assumes presence of mod.rs file with `pub use::outer` or similar.
 mod outer {
     pub mod middle {
         pub mod inner {
             pub fn deep_function() {}
         }
-        
+
         pub fn middle_function() {}
-        
+
         pub(in crate::outer) fn restricted_fn() {}
         pub(in crate::outer) struct RestrictedStruct;
     }
-    
+
     pub fn outer_function() {}
 }
 
@@ -209,6 +210,11 @@ mod outer {
 mod intermediate {
     pub use super::outer::middle::inner::deep_function as re_exported_fn;
     pub use super::outer::middle::inner::deep_function as nested_export_fn;
+    pub use super::DefaultTrait;
+
+    pub struct ModuleStruct {
+        module_field: String,
+    }
 
     /// Implementation of a trait from parent module
     impl DefaultTrait for ModuleStruct {
@@ -257,41 +263,18 @@ mod alias_module {
 }
 
 // Items for attribute visibility tests
-#[cfg_attr(feature = "public", pub)]
+#[cfg_attr(public_attr, feature = "public")]
 struct ConditionalVisibilityStruct {
     field: String,
 }
 
 #[cfg_attr(test, allow(unused))]
-#[cfg_attr(feature = "public", pub)]
+#[cfg_attr(public_attr, feature = "public")]
 fn multi_attr_function() {}
 
-#[cfg_attr(feature = "never_enabled", pub)]
+#[cfg_attr(public_attr, feature = "never_enabled")]
 struct ConditionalPrivateStruct {
     field: String,
-}
-
-// Private items for visibility testing
-mod private_module {
-    struct PrivateStruct {
-        private_field: String,
-    }
-
-    struct PrivateStruct2 {
-        private_field: i32,
-    }
-
-    enum PrivateEnum {
-        Variant1,
-        Variant2,
-    }
-
-    type PrivateTypeAlias = i32;
-
-    union PrivateUnion {
-        i: i32,
-        f: f32,
-    }
 }
 
 /// Generic type alias

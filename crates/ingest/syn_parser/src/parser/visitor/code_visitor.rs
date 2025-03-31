@@ -714,7 +714,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
-        // TODO: add name here when I implement visibility for impl
+        // TODO: add name here if/when I implement visibility for impl
         let impl_id = self.add_contains_rel(None);
 
         #[cfg(feature = "verbose_debug")]

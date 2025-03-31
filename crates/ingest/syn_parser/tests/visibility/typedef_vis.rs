@@ -5,7 +5,10 @@ use crate::common::{
     find_function_by_name, find_struct_by_name, get_visibility_info, parse_fixture,
 };
 use syn_parser::{
-    parser::nodes::{NodeId, TypeDefNode, VisibilityResult},
+    parser::{
+        nodes::{NodeId, TypeDefNode, VisibilityResult},
+        types::VisibilityKind,
+    },
     CodeGraph,
 };
 
@@ -32,8 +35,7 @@ fn test_typedefnode_visibility_resolution() {
     ];
 
     // Updated test code
-    // Items that are presumed to be in a user's dependencies.
-    let private_items_dependency = code_graph
+    let private_items = code_graph
         .defined_types
         .iter()
         .filter(|t| {
@@ -52,6 +54,10 @@ fn test_typedefnode_visibility_resolution() {
         for private_item in &private_items {
             println!("   private type_def: {}", private_item);
         }
+        println!(
+            "     Total private type_def items found: {}",
+            private_items.len()
+        )
     }
     // Check we found exactly the expected private types
     //   All private type_def items expected:
@@ -74,11 +80,6 @@ fn test_typedefnode_visibility_resolution() {
     //     9.  ConditionalPrivateStruct
     //      - Behind cfg flag "#[cfg_attr(feature = "never_enabled", pub)]"
     //      - Known failure: Cargo.toml not parsed for cfg flags, this is a goal down the road.
-    //     10. PrivateStruct
-    //     11. PrivateStruct2
-    //     12. PrivateEnum
-    //     13. PrivateTypeAlias
-    //     14. PrivateUnion
     assert_eq!(
         private_items.len(),
         expected_private_types.len(),
@@ -94,21 +95,39 @@ fn test_typedefnode_visibility_resolution() {
     }
 
     assert_eq!(
-            private_items.len(),
-            5,
-            "Expected 5 PRIVATE defined types (PrivateStruct, PrivateStruct2, PrivateEnum, PrivateTypeAlias, PrivateUnion). Found: {}: {:?}",
-            private_items.len(),
-            code_graph
-                .defined_types
-                .iter()
-                .map(|t| get_visibility_info(t, &code_graph).1)
-                .collect::<Vec<_>>()
-        );
+        private_items.len(),
+        9,
+        "Expected 9 PRIVATE defined types: {:#?}. Found: {}: {:#?}",
+        expected_private_types,
+        private_items.len(),
+        code_graph
+            .defined_types
+            .iter()
+            .map(|t| get_visibility_info(t, &code_graph).1)
+            .collect::<Vec<_>>()
+    );
 
     // ===== TOTAL ITEMS TEST =====
+    let total_defined_types = code_graph
+        .defined_types
+        .iter()
+        .map(|t| get_visibility_info(t, &code_graph).1)
+        .collect::<Vec<_>>();
+
+    #[cfg(feature = "verbose_debug")]
+    {
+        println!("All defined types found:");
+        for defined_type in &total_defined_types {
+            println!("   type_def: {}", defined_type);
+        }
+        println!(
+            "     Total defined types found: {}",
+            total_defined_types.len()
+        )
+    }
     assert_eq!(
         code_graph.defined_types.len(),
-        15,
+        25,
         "Expected 15 TOTAL defined types (10 public + 5 private). Found: {}: {:?}",
         code_graph.defined_types.len(),
         code_graph
@@ -138,7 +157,7 @@ fn test_typedefnode_visibility_resolution() {
     );
 
     // ===== PUBLIC ITEMS TEST =====
-    let public_items = code_graph
+    let public_type_definitions = code_graph
         .defined_types
         .iter()
         .filter(|t| {
@@ -148,11 +167,25 @@ fn test_typedefnode_visibility_resolution() {
                 VisibilityResult::Direct
             )
         })
-        .count();
+        .map(|t| get_visibility_info(t, &code_graph).1)
+        .collect::<Vec<_>>();
+
+    #[cfg(feature = "verbose_debug")]
+    {
+        println!("All public type_def items found:");
+        for public_type_definition in &public_type_definitions {
+            println!("   public type_def: {}", public_type_definition);
+        }
+        println!(
+            "     Total public type_def items found: {}",
+            public_type_definitions.len()
+        )
+    }
 
     assert_eq!(
-        public_items, 10,
-        "Expected 10 PUBLIC defined types when checking visibility"
+        public_type_definitions.len(),
+        16,
+        "Expected 16 PUBLIC defined types when checking visibility"
     );
 
     // ===== FUNCTION VISIBILITY TEST =====

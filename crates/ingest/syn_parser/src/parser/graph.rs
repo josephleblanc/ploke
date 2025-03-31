@@ -24,6 +24,9 @@ use super::nodes::UseStatement;
 impl CodeGraph {
     /// Resolve whether an item is visible in the given module context
     ///
+    /// Assumes the source and target context are both in the user's repository, not project
+    /// dependencies.
+    ///
     /// # Arguments
     /// * `item_id` - ID of the item to check
     /// * `context_module` - Current module path (e.g. ["crate", "module", "submodule"])
@@ -58,8 +61,9 @@ impl CodeGraph {
                     context_module.to_vec()
                 };
 
+                #[cfg(feature = "verbose_debug")]
                 println!(
-                    "Checking inherited visibility - item module: {:?}, context: {:?}",
+                    "\nChecking inherited visibility - item module: {:?}, context: {:?}",
                     item_module, context
                 );
 
@@ -79,8 +83,12 @@ impl CodeGraph {
             }
             VisibilityKind::Crate => {
                 if self.same_crate(context_module) {
+                    #[cfg(feature = "verbose_debug")]
+                    println!("Item is in same crate - allowing access");
                     VisibilityResult::Direct
                 } else {
+                    #[cfg(feature = "verbose_debug")]
+                    println!("Item is in different crate - denying access");
                     VisibilityResult::OutOfScope {
                         reason: OutOfScopeReason::CrateRestricted,
                         allowed_scopes: None,
@@ -89,8 +97,12 @@ impl CodeGraph {
             }
             VisibilityKind::Restricted(path) => {
                 if self.is_path_visible(&path, context_module) {
+                    #[cfg(feature = "verbose_debug")]
+                    println!("Item is visible to context scope - allowing access");
                     VisibilityResult::Direct
                 } else {
+                    #[cfg(feature = "verbose_debug")]
+                    println!("Item is in different crate - denying access");
                     VisibilityResult::OutOfScope {
                         reason: OutOfScopeReason::SuperRestricted,
                         allowed_scopes: Some(path.to_vec()),
@@ -110,6 +122,12 @@ impl CodeGraph {
             all_ids.extend(self.modules.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.values.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.macros.iter().map(|n| (n.name(), n.id())));
+            all_ids.extend(self.defined_types.iter().map(|def| match def {
+                TypeDefNode::Struct(s) => (s.name(), s.id()),
+                TypeDefNode::Enum(e) => (e.name(), e.id()),
+                TypeDefNode::TypeAlias(a) => (a.name(), a.id()),
+                TypeDefNode::Union(u) => (u.name(), u.id()),
+            }));
             // Add other fields similarly...
             // missing type_graph (different id generation lineage)
             // missing relations might want to add this, at least for ids (though visible might be a
