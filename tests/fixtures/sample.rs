@@ -188,7 +188,6 @@ mod outer {
 // Module with re-exports
 mod intermediate {
     pub use super::outer::middle::inner::deep_function as re_exported_fn;
-}
 
     /// Implementation of a trait from parent module
     impl DefaultTrait for ModuleStruct {
