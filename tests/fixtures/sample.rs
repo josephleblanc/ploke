@@ -68,6 +68,10 @@ impl<T> SampleStruct<T> {
 
     /// Private method in impl block
     fn private_impl_method(&self) {}
+
+    /// Hidden method in impl block
+    #[doc(hidden)]
+    pub fn hidden_method(&self) {}
 }
 
 /// A nested struct inside the module
@@ -187,6 +191,9 @@ mod outer {
         }
         
         pub fn middle_function() {}
+        
+        pub(in crate::outer) fn restricted_fn() {}
+        pub(in crate::outer) struct RestrictedStruct;
     }
     
     pub fn outer_function() {}
@@ -195,6 +202,7 @@ mod outer {
 // Module with re-exports
 mod intermediate {
     pub use super::outer::middle::inner::deep_function as re_exported_fn;
+    pub use super::outer::middle::inner::deep_function as nested_export_fn;
 
     /// Implementation of a trait from parent module
     impl DefaultTrait for ModuleStruct {
@@ -243,7 +251,7 @@ mod alias_module {
 }
 
 // Items for attribute visibility tests
-#[cfg_attr(test, pub)]
+#[cfg_attr(feature = "public", pub)]
 struct ConditionalVisibilityStruct {
     field: String,
 }
@@ -255,6 +263,29 @@ fn multi_attr_function() {}
 #[cfg_attr(feature = "never_enabled", pub)]
 struct ConditionalPrivateStruct {
     field: String,
+}
+
+// Private items for visibility testing
+mod private_module {
+    struct PrivateStruct {
+        private_field: String,
+    }
+
+    struct PrivateStruct2 {
+        private_field: i32,
+    }
+
+    enum PrivateEnum {
+        Variant1,
+        Variant2,
+    }
+
+    type PrivateTypeAlias = i32;
+
+    union PrivateUnion {
+        i: i32,
+        f: f32,
+    }
 }
 
 /// Generic type alias
