@@ -1,7 +1,13 @@
 #![allow(dead_code, unused_variables)]
-//! Sample module for testing the code graph builder
+//! Comprehensive integration test fixture for visibility and module tracking
 //!
-//! This module contains various Rust constructs to test parsing.
+//! Organized into clear sections testing different aspects of the system.
+//! Each section has comments explaining the test cases and expected visibility.
+
+// ========================
+// SECTION 1: BASIC VISIBILITY
+// Tests: public/private items at crate root
+// ========================
 /// A sample struct with a generic parameter
 /// This docstring tests multi-line documentation
 #[derive(Debug)]
