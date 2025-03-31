@@ -41,3 +41,46 @@ mod restricted_visibility {
         pub fn shadowed_fn() -> &'static str { "unrestricted" }
     }
 }
+
+/// Case 4: Generic Parameter Shadowing
+/// Tests §17.1 (Generic Parameters) - Shadowing of generic type parameters
+mod generic_shadow {
+    pub struct Outer<T>(pub T);
+    
+    impl<T> Outer<T> {
+        /// Shadows outer T with new generic parameter
+        pub fn new<T>(t: T) -> Self {
+            Outer(t)
+        }
+    }
+}
+
+/// Case 5: Built-in Type Shadowing  
+/// Tests §3.3 (Name Resolution) - Shadowing primitive types
+mod primitive_shadow {
+    /// Shadows Rust's bool type (valid but discouraged in practice)
+    pub type bool = u8;
+    
+    /// Shadows i32 primitive
+    pub type i32 = f64;
+}
+
+/// Case 6: Macro-Generated Shadowing
+/// Tests §19.6 (Macros) - Shadowing from macro expansions
+mod macro_shadow {
+    macro_rules! make_shadow {
+        ($name:ident) => {
+            pub fn $name() -> &'static str {
+                stringify!($name)
+            }
+        };
+    }
+    
+    make_shadow!(shadowed);  // First generation
+    make_shadow!(shadowed);  // Shadowing allowed
+    
+    /// Explicit non-shadowed function for comparison
+    pub fn non_shadowed() -> &'static str {
+        "explicit"
+    }
+}
