@@ -230,3 +230,85 @@ mod pattern_shadow {
         }
     }
 }
+
+/// Case 12: Closure Parameter Shadowing
+/// Tests §13.2 (Closures) - Shadowing in closure parameters
+mod closure_shadow {
+    pub fn test() {
+        let x = 10;
+        let closure = |x: i32| {  // Shadows outer x
+            println!("Closure: {}", x);
+            x * 2
+        };
+        println!("Outer: {}, Closure: {}", x, closure(20));
+    }
+}
+
+/// Case 13: Macro Hygiene Shadowing
+/// Tests §19.6 (Macros) - Hygiene in macro expansions
+mod macro_hygiene {
+    macro_rules! hygienic {
+        ($x:ident) => {
+            let $x = 42;
+            println!("Macro: {}", $x);
+        };
+    }
+    
+    pub fn test() {
+        let x = 10;
+        hygienic!(x);  // Doesn't shadow outer x due to hygiene
+        println!("Outer: {}", x);
+    }
+}
+
+/// Case 14: Crate Root Shadowing
+/// Tests §3.3 (Name Resolution) - Shadowing std library paths
+mod crate_root_shadow {
+    pub mod std {
+        pub mod io {
+            pub struct MockReader;
+            pub fn mock_read() -> &'static str {
+                "mock data"
+            }
+        }
+    }
+    
+    pub fn test() -> &'static str {
+        // Uses our shadowed std::io
+        crate_root_shadow::std::io::mock_read()
+    }
+}
+
+/// Case 15: Lifetime Shadowing in Impls
+/// Tests §10.1 (Implementations) - Lifetime parameter shadowing
+mod lifetime_impl_shadow {
+    pub struct Wrapper<'a>(pub &'a str);
+    
+    impl<'b> Wrapper<'b> {  // Shadows 'a with 'b
+        pub fn new(s: &'b str) -> Self {
+            Wrapper(s)
+        }
+        
+        pub fn get(&self) -> &'b str {
+            self.0
+        }
+    }
+}
+
+/// Case 16: Feature-Gated Shadowing
+/// Tests §7.1 (Attributes) - Conditional compilation shadowing
+mod feature_shadow {
+    #[cfg(feature = "alt")]
+    pub fn special() -> &'static str { "alternative" }
+    
+    #[cfg(not(feature = "alt"))]
+    pub fn special() -> &'static str { "default" }
+    
+    #[cfg(feature = "alt")]
+    pub struct Config;
+    
+    #[cfg(not(feature = "alt"))]
+    pub struct Config {  // Shadows alt version
+        pub mode: &'static str,
+    }
+}
