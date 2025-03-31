@@ -189,6 +189,21 @@ pub struct UnitStruct;
 /// Type alias example
 pub type StringVec = Vec<String>;
 
+// Items for attribute visibility tests
+#[cfg_attr(feature = "public", pub)]
+struct ConditionalVisibilityStruct {
+    field: String,
+}
+
+#[cfg_attr(test, allow(unused))]
+#[cfg_attr(feature = "public", pub)]
+fn multi_attr_function() {}
+
+#[cfg_attr(feature = "never_enabled", pub)]
+struct ConditionalPrivateStruct {
+    field: String,
+}
+
 /// Generic type alias
 pub type Result<T> = std::result::Result<T, String>;
 
