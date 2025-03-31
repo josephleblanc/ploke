@@ -25,10 +25,15 @@ fn test_typedefnode_visibility_resolution() {
         "PrivateEnum",
         "PrivateTypeAlias",
         "PrivateUnion",
+        "RestrictedStruct",
+        "PrivateTypeAlias",
+        "ConditionalVisibilityStruct",
+        "ConditionalPrivateStruct",
     ];
 
     // Updated test code
-    let private_items = code_graph
+    // Items that are presumed to be in a user's dependencies.
+    let private_items_dependency = code_graph
         .defined_types
         .iter()
         .filter(|t| {
@@ -41,11 +46,43 @@ fn test_typedefnode_visibility_resolution() {
         .map(|t| get_visibility_info(t, &code_graph).1)
         .collect::<Vec<_>>();
 
+    #[cfg(feature = "verbose_debug")]
+    {
+        println!("All private type_def items found:");
+        for private_item in &private_items {
+            println!("   private type_def: {}", private_item);
+        }
+    }
     // Check we found exactly the expected private types
+    //   All private type_def items expected:
+    //     1.  PrivateStruct
+    //     2.  PrivateStruct2
+    //     3.  PrivateEnum
+    //     4.  PrivateTypeAlias
+    //     5.  PrivateUnion
+    //     6.  RestrictedStruct
+    //      - defined inside multiple `pub mod` declarations:
+    //          - In target file: pub(in crate::outer) struct RestrictedStruct;
+    //      - Correctly identified as !VisibiltyResult::Direct
+    //          - This test could be more granular by defining whether we are searching for a user
+    //          TypeDefItem or a user's dependency TypeDefItem. In the case of a user's code we
+    //          would want to show this as VisibilityResult::
+    //     7.  PrivateTypeAlias
+    //     8.  ConditionalVisibilityStruct
+    //      - Behind cfg flag "#[cfg_attr(feature = "public", pub)]"
+    //      - Known failure: Cargo.toml not parsed for cfg flags, this is a goal down the road.
+    //     9.  ConditionalPrivateStruct
+    //      - Behind cfg flag "#[cfg_attr(feature = "never_enabled", pub)]"
+    //      - Known failure: Cargo.toml not parsed for cfg flags, this is a goal down the road.
+    //     10. PrivateStruct
+    //     11. PrivateStruct2
+    //     12. PrivateEnum
+    //     13. PrivateTypeAlias
+    //     14. PrivateUnion
     assert_eq!(
         private_items.len(),
         expected_private_types.len(),
-        "Mismatch in number of private types"
+        "Mismatch in number of private types for the case of user dependency visibility"
     );
 
     for expected_type in expected_private_types {
