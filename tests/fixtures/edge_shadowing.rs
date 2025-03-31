@@ -156,3 +156,77 @@ mod macro_shadow {
         "explicit"
     }
 }
+
+/// Case 7: Trait Method Shadowing
+/// Tests §10.2 (Trait Items) - Method name shadowing between traits and impls
+mod trait_method_shadow {
+    pub trait Foo {
+        fn name() -> &'static str;
+    }
+    
+    pub struct Bar;
+    
+    impl Foo for Bar {
+        fn name() -> &'static str { "Foo" }
+    }
+    
+    impl Bar {
+        /// Shadows trait method
+        pub fn name() -> &'static str { "Bar" }
+    }
+}
+
+/// Case 8: Enum Variant Shadowing  
+/// Tests §8.1.3 (Enum Variants) - Shadowing across enum definitions
+mod enum_variant_shadow {
+    pub enum Status {
+        Active,
+        Inactive,
+    }
+    
+    pub mod nested {
+        pub enum Status {
+            Active,  // Shadows parent variant
+            Pending,
+        }
+    }
+}
+
+/// Case 9: Const/Static Shadowing
+/// Tests §6.1 (Constants) - Shadowing of compile-time values
+mod const_shadow {
+    pub const VALUE: i32 = 42;
+    pub mod inner {
+        pub const VALUE: i32 = 24;  // Shadows parent
+        pub static SHARED: i32 = VALUE;  // Uses shadowed value
+    }
+}
+
+/// Case 10: Attribute Shadowing
+/// Tests §15 (Attributes) - Shadowing with different attributes
+mod attr_shadow {
+    #[derive(Debug)]
+    pub struct Base;
+    
+    #[derive(Clone)]
+    pub struct Base;  // Shadows with different attributes
+    
+    pub fn shadowed() {}
+    
+    #[cfg(test)]
+    pub fn shadowed() {}  // Conditional shadowing
+}
+
+/// Case 11: Pattern Matching Shadowing
+/// Tests §18.2 (Patterns) - Shadowing in match arms
+mod pattern_shadow {
+    pub fn match_shadow(x: Option<i32>) {
+        match x {
+            Some(x) => {  // Shadows parameter
+                let x = x + 1;  // Shadows again
+                println!("{}", x);
+            }
+            None => {}
+        }
+    }
+}
