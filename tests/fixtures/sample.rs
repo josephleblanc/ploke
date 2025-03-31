@@ -65,6 +65,9 @@ impl<T> SampleStruct<T> {
 
     /// Public method in impl block
     pub fn public_impl_method(&self) {}
+
+    /// Private method in impl block
+    fn private_impl_method(&self) {}
 }
 
 /// A nested struct inside the module
@@ -182,7 +185,11 @@ mod outer {
         pub mod inner {
             pub fn deep_function() {}
         }
+        
+        pub fn middle_function() {}
     }
+    
+    pub fn outer_function() {}
 }
 
 // Module with re-exports
@@ -212,8 +219,11 @@ pub struct UnitStruct;
 /// Struct with [Visibility] markers in docs
 pub struct DocumentedStruct;
 
+/// Inherits visibility from parent
+pub struct DocInheritanceStruct;
+
 #[doc(hidden)]
-pub fn hidden_function() {}
+fn hidden_function() {}
 
 /// Type alias example
 pub type StringVec = Vec<String>;
@@ -224,8 +234,16 @@ type PrivateTypeAlias = i32;
 // Module type alias
 pub type ModuleTypeAlias = String;
 
+// Public type alias with generics
+pub type GenericAlias<T> = Vec<T>;
+
+// Private type alias in module
+mod alias_module {
+    pub type ModulePrivateAlias = f64;
+}
+
 // Items for attribute visibility tests
-#[cfg_attr(feature = "public", pub)]
+#[cfg_attr(test, pub)]
 struct ConditionalVisibilityStruct {
     field: String,
 }
