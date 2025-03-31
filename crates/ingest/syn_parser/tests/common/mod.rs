@@ -218,3 +218,14 @@ pub fn find_module_by_path<'a>(graph: &'a CodeGraph, path: &'a [String]) -> Opti
         }
     })
 }
+
+#[cfg(feature = "visibility_resolution")]
+/// Helper function for visibility testing of TypeDefNode
+pub fn get_visibility_info<'a>(def: &'a TypeDefNode, _graph: &CodeGraph) -> (NodeId, &'a str) {
+    match def {
+        TypeDefNode::Struct(s) => (s.id, s.name.as_str()),
+        TypeDefNode::Enum(e) => (e.id, e.name.as_str()),
+        TypeDefNode::TypeAlias(a) => (a.id, a.name.as_str()),
+        TypeDefNode::Union(u) => (u.id, u.name.as_str()),
+    }
+}
