@@ -158,6 +158,7 @@ impl<'a> CodeVisitor<'a> {
             }
         }
     }
+    #[cfg(feature = "verbose_debug")]
     fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
             let depth = self.state.code_graph.modules.len();
@@ -174,6 +175,7 @@ impl<'a> CodeVisitor<'a> {
             );
         }
     }
+    #[cfg(feature = "verbose_debug")]
     fn debug_submodule(&mut self, name: &str, node_id: NodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
             let depth = self.state.code_graph.modules.len();
@@ -865,56 +867,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 target: trait_type_id,
                 kind: RelationKind::ImplementsTrait,
             });
-
-            // Debug: Print trait type information
-            if let Some(trait_type) = self
-                .state
-                .code_graph
-                .type_graph
-                .iter()
-                .find(|t| t.id == trait_type_id)
-            {
-                if let TypeKind::Named { path, .. } = &trait_type.kind {
-                    println!("Found trait implementation: {:?}", path);
-                    // Specific check for DefaultTrait implementation
-                    if path.last().unwrap_or(&String::new()) == "DefaultTrait" {
-                        if let Some(self_type) = self
-                            .state
-                            .code_graph
-                            .type_graph
-                            .iter()
-                            .find(|t| t.id == self_type_id)
-                        {
-                            if let TypeKind::Named { path, .. } = &self_type.kind {
-                                println!("Self type for DefaultTrait: {:?}", path);
-                                if path.last().unwrap_or(&String::new()) == "ModuleStruct" {
-                                    println!("Found DefaultTrait implementation for ModuleStruct");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Debug: Print self type information
-            if let Some(self_type) = self
-                .state
-                .code_graph
-                .type_graph
-                .iter()
-                .find(|t| t.id == self_type_id)
-            {
-                if let TypeKind::Named { path, .. } = &self_type.kind {
-                    println!("Self type: {:?}", path);
-                }
-            }
-
-            // Debug: Print all methods in the impl
-            if let Some(debug_impl) = &self.state.code_graph.impls.last() {
-                for method in &debug_impl.methods {
-                    println!("Found method {} in impl {}", method.name, impl_id);
-                }
-            }
         }
 
         visit::visit_item_impl(self, item_impl);
@@ -1085,6 +1037,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     target: item_id,
                     kind: RelationKind::Contains,
                 });
+                #[cfg(feature = "verbose_debug")]
                 if matches!(item, syn::Item::Mod(_)) {
                     submodules.push(item_id);
                     self.debug_submodule("No name Maybe ok?", item_id);
