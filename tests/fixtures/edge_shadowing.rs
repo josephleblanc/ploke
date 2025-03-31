@@ -42,16 +42,88 @@ mod restricted_visibility {
     }
 }
 
-/// Case 4: Generic Parameter Shadowing
-/// Tests §17.1 (Generic Parameters) - Shadowing of generic type parameters
+/// Case 4: Comprehensive Generic Parameter Shadowing
+/// Tests §17.1 (Generic Parameters) - Various shadowing scenarios with generics
 mod generic_shadow {
-    pub struct Outer<T>(pub T);
+    /// Base struct with generic parameter
+    pub struct Outer<T: Clone>(pub T);
     
-    impl<T> Outer<T> {
+    /// Shadowing in impl block methods
+    impl<T: Clone> Outer<T> {
         /// Shadows outer T with new generic parameter
-        pub fn new<T>(t: T) -> Self {
+        pub fn new<U: Clone + 'static>(t: U) -> Outer<U> {
             Outer(t)
         }
+        
+        /// Method with different bounds shadowing outer T
+        pub fn convert<U>(&self) -> U 
+        where
+            T: Into<U>,
+            U: Default,
+        {
+            self.0.clone().into()
+        }
+    }
+
+    /// Shadowing in trait implementations
+    pub trait Processor<T> {
+        fn process(&self, input: T) -> T;
+    }
+
+    impl<T: Clone> Processor<T> for Outer<T> {
+        fn process(&self, input: T) -> T {
+            self.0.clone()
+        }
+    }
+
+    /// Shadowing in function with complex bounds
+    pub fn process_input<U, V>(input: U) -> V
+    where
+        U: Clone + Into<V>,
+        V: Default + std::fmt::Debug,
+    {
+        input.into()
+    }
+
+    /// Shadowing with dynamic dispatch
+    pub fn dynamic_dispatch<T: 'static + Clone + std::fmt::Debug>(item: Box<dyn std::any::Any>) -> T {
+        *item.downcast::<T>().unwrap()
+    }
+
+    /// Nested generic shadowing
+    pub struct Wrapper<A>(pub A);
+    
+    impl<A: Clone> Wrapper<A> {
+        pub fn wrap<B: 'static>(&self, b: B) -> (A, B) {
+            (self.0.clone(), b)
+        }
+    }
+
+    /// Shadowing with associated types
+    pub trait Transform {
+        type Output;
+        fn transform(&self) -> Self::Output;
+    }
+
+    impl<T: Clone> Transform for Outer<T> {
+        type Output = T;
+        fn transform(&self) -> T {
+            self.0.clone()
+        }
+    }
+
+    /// Shadowing in where clauses
+    pub fn complex_shadow<X, Y>(x: X, y: Y) -> (X, Y)
+    where
+        X: Clone,
+        Y: Clone + PartialEq<X>,
+    {
+        (x.clone(), y.clone())
+    }
+
+    /// Shadowing with lifetime parameters
+    pub fn lifetime_shadow<'a, 'b: 'a>(s: &'b str) -> &'a str {
+        s
     }
 }
 
