@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeKind};
 use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
@@ -142,24 +142,6 @@ pub fn verify_span(item: &impl ExtractSpan, path: &Path, expected: &str) {
     );
 }
 
-/// Find an impl block for a specific type
-pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&'a ImplNode> {
-    // This is a simplified implementation - in a real scenario, you'd need to match
-    // the type_id with the actual type name from the type graph
-    graph.impls.iter().find(|impl_node| {
-        if let Some(type_node) = graph
-            .type_graph
-            .iter()
-            .find(|t| t.id == impl_node.self_type)
-        {
-            // This is a simplification - you'd need to extract the type name from the TypeKind
-            format!("{:?}", type_node.kind).contains(type_name)
-        } else {
-            false
-        }
-    })
-}
-
 /// Find a module by name in the code graph
 pub fn find_module_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a ModuleNode> {
     graph.modules.iter().find(|m| m.name == name)
@@ -177,29 +159,6 @@ pub fn find_generic_param_by_name<'a>(
     })
 }
 
-// #[cfg(feature = "module_path_tracking")]
-// /// Find a module node by path in a CodeGraph
-// pub fn find_module_by_path(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
-//     graph
-//         .modules
-//         .iter()
-//         .find(|m| {
-//             #[cfg(feature = "module_path_tracking")]
-//             {
-//                 println!(
-//                     "---> Comparing module m.path {:?} == {:?} path",
-//                     m.path, path
-//                 );
-//                 m.path == path
-//             }
-//
-//             // #[cfg(not(feature = "module_path_tracking"))]
-//             // {
-//             //     false
-//             // } // Return None if path tracking is disabled
-//         })
-//         .map(|m| m.id)
-// }
 /// Helper to create module path for tests
 pub fn test_module_path(segments: &[&str]) -> Vec<String> {
     segments.iter().map(|s| s.to_string()).collect()
@@ -228,4 +187,25 @@ pub fn get_visibility_info<'a>(def: &'a TypeDefNode, _graph: &CodeGraph) -> (Nod
         TypeDefNode::TypeAlias(a) => (a.id, a.name.as_str()),
         TypeDefNode::Union(u) => (u.id, u.name.as_str()),
     }
+}
+
+/// Find a value (const/static) by name in the code graph                
+pub fn find_value_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a ValueNode> {
+    graph.values.iter().find(|v| v.name == name)
+}
+
+/// Find a macro by name in the code graph
+pub fn find_macro_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a MacroNode> {
+    graph.macros.iter().find(|m| m.name == name)
+}
+
+pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&'a ImplNode> {
+    graph.impls.iter().find(|i| {
+        if let Some(self_type) = graph.type_graph.iter().find(|t| t.id == i.self_type) {
+            if let TypeKind::Named { path, .. } = &self_type.kind {
+                return path.last().map(|s| s == type_name).unwrap_or(false);
+            }
+        }
+        false
+    })
 }

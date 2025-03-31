@@ -2,7 +2,6 @@
 //!    - Tests for `pub type StringVec` and other type aliases           
 //!    - Visibility tests focus on structs/enums but don't explicitly te
 //! type alias visibility                                                    
-//!    TODO: Add more test documentation and edge cases                  
 #![cfg(feature = "visibility_resolution")]
 
 use crate::common::{
