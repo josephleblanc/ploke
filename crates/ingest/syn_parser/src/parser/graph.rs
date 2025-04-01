@@ -101,11 +101,29 @@ impl CodeGraph {
                     println!("Item is visible to context scope - allowing access");
                     VisibilityResult::Direct
                 } else {
+                    let use_vis_result = self.check_use_statements(item_id, context_module);
                     #[cfg(feature = "verbose_debug")]
-                    println!("Item is in different crate - denying access");
-                    VisibilityResult::OutOfScope {
-                        reason: OutOfScopeReason::SuperRestricted,
-                        allowed_scopes: Some(path.to_vec()),
+                    println!(
+                        "use_vis_result of id: {}, in context_module {:?}: {:#?}",
+                        item_id, context_module, &use_vis_result
+                    );
+                    match &use_vis_result {
+                        VisibilityResult::NeedsUse(import_path) => {
+                            if import_path == context_module {
+                                VisibilityResult::Direct
+                            } else {
+                                VisibilityResult::NeedsUse(import_path.clone())
+                            }
+                        }
+                        _ => {
+                            // TODO: Placeholder, should consider more `use` statement variations
+                            #[cfg(feature = "verbose_debug")]
+                            println!("Item is in different crate - denying access");
+                            VisibilityResult::OutOfScope {
+                                reason: OutOfScopeReason::SuperRestricted,
+                                allowed_scopes: Some(path.to_vec()),
+                            }
+                        }
                     }
                 }
             }
@@ -244,6 +262,9 @@ impl CodeGraph {
     )]
     #[cfg(feature = "use_statement_tracking")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
+        // TODO: We need to add documentation for this function. It is not currently clear exactly
+        // how it will interact with the visibility_resolution function, or what it should be
+        // returning when we begin tracking dependency vs user code for the scope of a given item.
         let item = match self.find_node(item_id) {
             Some(item) => item,
             None => {

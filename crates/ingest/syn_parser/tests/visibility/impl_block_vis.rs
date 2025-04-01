@@ -83,11 +83,11 @@ fn test_impl_block_visibility() {
         .expect("private_impl_method not found");
 
     assert!(
-        !matches!(
+        matches!(
             code_graph.resolve_visibility(private_method.id, &["crate".to_string()]),
             VisibilityResult::Direct
         ),
-        "Private method in impl block should not be publicly visible"
+        "Private method in impl block should be publicly visible in the same module path context"
     );
 
     // Test trait impl method visibility

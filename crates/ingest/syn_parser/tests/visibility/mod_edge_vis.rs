@@ -97,6 +97,8 @@ fn test_nested_module_visibility() {
         deep_function.id,
         &["crate".to_string(), "unrelated".to_string()],
     );
+    #[cfg(feature = "verbose_debug")]
+    println!("deied_result: {:#?}", denied_result);
 
     assert!(
         matches!(
@@ -136,7 +138,13 @@ fn test_module_re_exports() {
             code_graph.resolve_visibility(re_exported_fn.id, &["crate".to_string()]),
             VisibilityResult::Direct
         ),
-        "Re-exported function should be visible at crate root"
+        "Re-exported function {} (id: {}) should be visible at crate root {:?}. 
+Instead found module path {:?} for function (id: {})",
+        re_exported_fn.name,
+        re_exported_fn.id,
+        ["crate".to_string()],
+        code_graph.get_item_module_path(re_exported_fn.id),
+        re_exported_fn.id,
     );
 
     // Test nested re-export

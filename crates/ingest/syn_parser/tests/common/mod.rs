@@ -213,3 +213,12 @@ pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&
         false
     })
 }
+
+#[cfg(feature = "visibility_resolution")]
+pub fn find_func_path_by_id<'a>(graph: &'a CodeGraph, fn_id: NodeId) -> Option<&'a Vec<String>> {
+    graph
+        .modules
+        .iter()
+        .find(|m| m.id == fn_id)
+        .map(|m| &m.path)
+}
