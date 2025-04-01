@@ -90,11 +90,116 @@ resolve_visibility() returns final result
 3. How should we handle macro-expanded items in scope tracking?
 4. Are there performance considerations for large module hierarchies?
 
-## Recommended Next Steps
-1. Audit current test coverage for scope tracking features
-2. Document expected behavior for complex cases:
-   - Nested modules with restricted visibility
-   - Use statement renaming and glob imports
-   - Cross-crate visibility rules
-3. Benchmark performance on large codebases
-4. Consider adding more detailed path tracking for better error messages
+## Project-Wide Scope Tracking Requirements
+
+### Current Limitations
+1. Single-file focus in parser
+2. No distinction between user code vs dependencies
+3. Missing file path context in visibility checks
+4. No workspace/module boundary tracking
+
+### Key Changes Needed
+
+#### Data Structure Changes
+1. **CodeGraph**:
+   - Add `source: CodeSource` enum (UserCode, Dependency)
+   - Add `file_path: PathBuf` to all nodes
+   - Add `workspace_root: Option<PathBuf>`
+
+2. **ModuleNode**:
+   - Add `file_path: PathBuf` for mod.rs/lib.rs files
+   - Add `is_workspace_boundary: bool` flag
+
+3. **ImportNode**:
+   - Add `resolved_path: Option<PathBuf>` for dependency paths
+   - Add `is_external: bool` flag
+
+4. **VisitorState**:
+   - Add `current_file: PathBuf`
+   - Add `workspace_roots: Vec<PathBuf>`
+   - Add `dependency_mode: bool` flag
+
+#### Function Changes
+1. **analyze_code()**:
+   - Accept `source: CodeSource` parameter
+   - Store file path in visitor state
+   - Handle module file discovery (mod.rs/lib.rs)
+
+2. **resolve_visibility()**:
+   - Check `CodeSource` when evaluating cross-crate visibility
+   - Consider workspace boundaries
+   - Handle dependency-specific visibility rules
+
+3. **get_item_module_path()**:
+   - Return absolute paths for dependencies
+   - Handle workspace-relative paths for user code
+
+4. New Functions Needed:
+   - `discover_module_files()` - Find all module files in project
+   - `resolve_dependency_path()` - Map use paths to dependency files
+   - `is_in_workspace()` - Check if path is within workspace
+
+#### File Changes Required
+1. **graph.rs**:
+   - Modify `CodeGraph` and node structs
+   - Add new visibility resolution logic
+
+2. **nodes.rs**:
+   - Add new fields to node structs
+   - Update `Visible` trait implementations
+
+3. **visitor/mod.rs**:
+   - Add file discovery logic
+   - Modify analysis entry points
+
+4. **visitor/state.rs**:
+   - Extend `VisitorState` with new fields
+   - Add workspace tracking
+
+### Dependency Handling Considerations
+1. Two-tier visibility system:
+   - User code: Full scope tracking
+   - Dependencies: Public items only by default
+
+2. Dependency analysis modes:
+   - Lightweight: Only public API surface
+   - Full: All items with visibility markers
+
+3. Crate boundary rules:
+   - `pub` means public to dependents
+   - `pub(crate)` is crate-internal
+   - Private items never visible
+
+### Validation Requirements
+1. Unit tests for:
+   - Cross-crate visibility resolution
+   - Workspace boundary detection
+   - Dependency path resolution
+
+2. Integration tests with:
+   - Multi-file projects
+   - Workspace setups
+   - External dependencies
+
+3. Benchmarking:
+   - Project size scaling
+   - Dependency analysis overhead
+
+## Recommended Implementation Path
+1. First add file path tracking to nodes
+2. Implement workspace boundary detection
+3. Add dependency analysis mode
+4. Extend visibility resolution rules
+5. Add validation tooling
+
+## Database Integration Notes
+The enhanced scope tracking will enable:
+- Querying by precise file locations
+- Filtering by user code vs dependencies
+- Scope-aware snippet retrieval
+- Workspace boundary awareness in RAG
+
+This aligns with CozoDB's graph capabilities by:
+- Making scope a queryable property
+- Enabling path-based filtering
+- Supporting multi-crate analysis
