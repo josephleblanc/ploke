@@ -57,9 +57,18 @@ fn test_impl_block_visibility() {
     // Test public method in public impl
     let sample_struct_impl = find_impl_for_type(&code_graph, "SampleStruct")
         .expect("Impl block for SampleStruct not found");
+    println!("sample_struct_impl: {:#?}", sample_struct_impl);
 
     let public_method = find_impl_method(sample_struct_impl, "public_impl_method")
         .expect("public_impl_method not found");
+    println!("public_method_id: {}", public_method.id);
+    println!(
+        "code_graph.functions.iter().find(|m| m.id == public_method.id) = {:?}",
+        code_graph
+            .functions
+            .iter()
+            .find(|m| m.id == public_method.id)
+    );
 
     assert!(
         matches!(

@@ -204,7 +204,15 @@ impl<'a> CodeVisitor<'a> {
         println!("{:+^13} {} now: {:?}", "", name, stack);
     }
 
+    /// Returns a newly generated NodeId while also adding a new Contains relation from the current
+    /// module (souce) to the node (target) whose NodeId is being generated.
+    /// - Follows the pattern of generating a NodeId only at the time the Relation is added to
+    ///     CodeVisitor, making orphaned nodes difficult to add by mistake.
     fn add_contains_rel(&mut self, node_name: Option<&str>) -> NodeId {
+        // TODO: Consider changing the return type to Result<NodeId> depending on the type of node
+        // being traversed. Add generic type instaed of the optional node name and find a clean way
+        // to handle adding nodes without names, perhaps by implementing a trait like UnnamedNode
+        // for them.
         let node_id = self.state.next_node_id(); // Generate ID here
 
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
@@ -714,13 +722,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
-        // TODO: add name here if/when I implement visibility for impl
+        // TODO: add name here if/when I implement the Visibility trait for ImplNode
         let impl_id = self.add_contains_rel(None);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id("unnamed_impl", impl_id);
 
-        // Process self type
+        // Process self type,
+        // // Case 1: Simple struct
+        // impl MyStruct {}
+        // // item_impl.self_ty = Type::Path for "MyStruct"
+        //
+        // // Case 2: Generic struct
+        // impl<T> MyStruct<T> {}
+        // // item_impl.self_ty = Type::Path for "MyStruct<T>"
+        //
+        // // Case 3: Trait impl
+        // impl MyTrait for MyStruct {}
+        // // item_impl.self_ty = Type::Path for "MyStruct"
+        // // item_impl.trait_ = Some for "MyTrait"
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -735,7 +755,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         });
 
         // Handle trait visibility filtering when feature is enabled
-        // Handle trait visibility filtering
         if let Some(trait_type_id) = trait_type_id {
             if let Some(trait_type) = self
                 .state
@@ -761,11 +780,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         if !cfg!(feature = "visibility_resolution")
                             && !matches!(trait_def.visibility, VisibilityKind::Public)
                         {
+                            // Early return skips remaining method items
                             return;
                         }
-                    } else {
+                        // } else {
                         // Trait definition not found, skip this impl
-                        return;
+                        // return;
                     }
                 }
             }
@@ -774,8 +794,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let mut methods = Vec::new();
         for item in &item_impl.items {
             if let syn::ImplItem::Fn(method) = item {
-                let method_node_id = self.state.next_node_id();
                 let method_name = method.sig.ident.to_string();
+                // let method_node_id = self.state.next_node_id();
+                let method_node_id = self.add_contains_rel(Some(&method_name));
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
 
@@ -807,6 +828,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         Some(type_id)
                     }
                 };
+                self.state.code_graph.relations.push(Relation {
+                    source: self_type_id, // The struct/enum type
+                    target: method_node_id,
+                    kind: RelationKind::Method,
+                });
 
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);

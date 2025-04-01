@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 // ANCHOR: Relation
 // Represents a relation between nodes
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub struct Relation {
     pub source: NodeId,
     pub target: NodeId,
@@ -12,11 +12,12 @@ pub struct Relation {
 
 // ANCHOR: Uses
 // Different kinds of relations
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy)]
 pub enum RelationKind {
     FunctionParameter,
     FunctionReturn,
     StructField,
+    Method, // e.g. StructNode -> FunctionNode
     EnumVariant,
     ImplementsFor,
     ImplementsTrait,

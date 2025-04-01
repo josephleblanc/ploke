@@ -201,7 +201,11 @@ pub fn find_macro_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a Ma
 
 pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&'a ImplNode> {
     graph.impls.iter().find(|i| {
-        if let Some(self_type) = graph.type_graph.iter().find(|t| t.id == i.self_type) {
+        if let Some(self_type) = graph
+            .type_graph
+            .iter()
+            .find(|t| t.id == i.self_type && i.trait_type.is_none())
+        {
             if let TypeKind::Named { path, .. } = &self_type.kind {
                 return path.last().map(|s| s == type_name).unwrap_or(false);
             }

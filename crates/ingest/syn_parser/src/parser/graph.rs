@@ -213,6 +213,17 @@ impl CodeGraph {
                     .find(|n| n.id == item_id)
                     .map(|n| n as &dyn Visible)
             })
+            // TODO: Kind of a hack, or at least not logically clean - since nodes should really be
+            // top-level elements in a vec in the CodeGraph. Just change CodeGraph to have a field
+            // for methods already.
+            .or_else(|| {
+                self.impls.iter().find_map(|i| {
+                    i.methods
+                        .iter()
+                        .find(|n| n.id == item_id)
+                        .map(|n| n as &dyn Visible)
+                })
+            })
     }
 
     #[cfg(feature = "visibility_resolution")]
