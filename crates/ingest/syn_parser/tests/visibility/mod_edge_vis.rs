@@ -67,7 +67,7 @@ use syn_parser::{
 
 #[test]
 fn test_nested_module_visibility() {
-    let code_graph = parse_fixture("modules.rs")
+    let code_graph = parse_fixture("sample.rs")
         .expect("Failed to parse modules.rs - file missing or invalid syntax");
 
     // Test deeply nested public item
@@ -127,7 +127,7 @@ fn test_nested_module_visibility() {
 
 #[test]
 fn test_module_re_exports() {
-    let code_graph = parse_fixture("modules.rs").expect("Failed to parse modules.rs");
+    let code_graph = parse_fixture("sample.rs").expect("Failed to parse modules.rs");
 
     // Test re-exported item visibility
     let re_exported_fn =

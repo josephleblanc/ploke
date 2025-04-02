@@ -114,7 +114,28 @@ pub fn find_trait_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a Tr
 
 /// Find a function by name in the code graph
 pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a FunctionNode> {
-    graph.functions.iter().find(|f| f.name == name)
+    if let Some(func) = graph.functions.iter().find(|f| f.name == name) {
+        return Some(func);
+    }
+
+    #[cfg(feature = "use_statement_tracking")]
+    {
+        if let Some(use_stmt) = graph
+            .use_statements
+            .iter()
+            .find(|u| u.visible_name == name && !u.is_glob)
+        {
+            if let Some(original_name) = &use_stmt.original_name {
+                // The last segment of the path should be the original name
+                return graph.functions.iter().find(|f| &f.name == original_name);
+            } else {
+                // for non-renamed imports, use the last path segment
+                let original_name = use_stmt.path.last()?;
+                return graph.functions.iter().find(|f| &f.name == original_name);
+            }
+        }
+    }
+    None
 }
 
 /// Reads bytes from a file at given positions
