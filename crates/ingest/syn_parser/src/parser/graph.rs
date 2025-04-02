@@ -44,10 +44,11 @@ impl CodeGraph {
         let item = match self.find_node(item_id) {
             Some(item) => item,
             None => {
+                // WARNING: Should this actually return an error?
                 return VisibilityResult::OutOfScope {
                     reason: OutOfScopeReason::Private,
                     allowed_scopes: None,
-                }
+                };
             }
         };
 
@@ -260,11 +261,11 @@ impl CodeGraph {
         not(feature = "use_statement_tracking"),
         allow(unused_variables, unused_mut)
     )]
+    // TODO: We need to add documentation for this function. It is not currently clear exactly
+    // how it will interact with the visibility_resolution function, or what it should be
+    // returning when we begin tracking dependency vs user code for the scope of a given item.
     #[cfg(feature = "use_statement_tracking")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
-        // TODO: We need to add documentation for this function. It is not currently clear exactly
-        // how it will interact with the visibility_resolution function, or what it should be
-        // returning when we begin tracking dependency vs user code for the scope of a given item.
         let item = match self.find_node(item_id) {
             Some(item) => item,
             None => {
