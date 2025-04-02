@@ -59,13 +59,16 @@ fn test_glob_imports() {
     let graph =
         parse_fixture("use_statements.rs").expect("Error parsing fixture use_statements.rs");
 
+    let expected_glob_path = ["std", "prelude", "v1"];
+
     let glob = graph
         .use_statements
         .iter()
-        .find(|u| u.path.last() == Some(&"*".to_string()));
+        .find(|u| u.path == expected_glob_path && u.is_glob);
     assert!(
         glob.is_some(),
-        "Should find glob import\nFound use statements:\n{:#?}\nExpected a glob import ending with '*'",
+        "Should find glob import, instead found: {:#?}\nFound use statements:\n{:#?}\nExpected a glob import ending with '*'",
+        glob,
         graph.use_statements
     );
 }

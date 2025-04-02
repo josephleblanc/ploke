@@ -1,6 +1,6 @@
 #![cfg(feature = "use_statement_tracking")]
 use crate::common::{parse_fixture, parse_fixture_malformed, FixtureError};
-// use syn_parser::parser::nodes::UseStatement;
+// use syn_parser::parser::nodes::ImportNode;
 
 #[test]
 fn test_edge_case_imports() {

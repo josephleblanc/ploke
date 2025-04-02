@@ -49,21 +49,23 @@ impl<'a> CodeVisitor<'a> {
         }
     }
 
-    #[cfg(feature = "use_statement_tracking")]
-    fn process_use_tree(tree: &syn::UseTree, base_path: &[String]) -> Vec<UseStatement> {
-        let mut statements = Vec::new();
+    fn process_use_tree(&mut self, tree: &syn::UseTree, base_path: &[String]) -> Vec<ImportNode> {
+        let mut imports = Vec::new();
 
         match tree {
             syn::UseTree::Path(path) => {
                 let mut new_base = base_path.to_vec();
                 new_base.push(path.ident.to_string());
-                statements.extend(Self::process_use_tree(&path.tree, &new_base));
+                imports.extend(self.process_use_tree(&path.tree, &new_base));
             }
             syn::UseTree::Name(name) => {
-                let mut path = base_path.to_vec();
-                path.push(name.ident.to_string());
-                statements.push(UseStatement {
-                    path,
+                let mut full_path = base_path.to_vec();
+                full_path.push(name.ident.to_string());
+                let import_id = self.add_contains_rel(Some(&name.ident.to_string()));
+                imports.push(ImportNode {
+                    id: import_id,
+                    path: full_path,
+                    kind: ImportKind::UseStatement,
                     visible_name: name.ident.to_string(),
                     original_name: None,
                     is_glob: false,
@@ -71,10 +73,13 @@ impl<'a> CodeVisitor<'a> {
                 });
             }
             syn::UseTree::Rename(rename) => {
-                let mut path = base_path.to_vec();
-                path.push(rename.ident.to_string());
-                statements.push(UseStatement {
-                    path,
+                let mut full_path = base_path.to_vec();
+                full_path.push(rename.ident.to_string());
+                let import_id = self.add_contains_rel(Some(&rename.rename.to_string()));
+                imports.push(ImportNode {
+                    id: import_id,
+                    path: full_path,
+                    kind: ImportKind::UseStatement,
                     visible_name: rename.rename.to_string(),
                     original_name: Some(rename.ident.to_string()),
                     is_glob: false,
@@ -82,10 +87,13 @@ impl<'a> CodeVisitor<'a> {
                 });
             }
             syn::UseTree::Glob(_) => {
-                let mut path = base_path.to_vec();
-                path.push("*".to_string());
-                statements.push(UseStatement {
-                    path,
+                let import_id = self.add_contains_rel(Some("*"));
+                let mut full_path = base_path.to_vec();
+                full_path.push("*".to_string());
+                imports.push(ImportNode {
+                    id: import_id,
+                    path: base_path.to_vec(),
+                    kind: ImportKind::UseStatement,
                     visible_name: "*".to_string(),
                     original_name: None,
                     is_glob: true,
@@ -94,12 +102,12 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
-                    statements.extend(Self::process_use_tree(item, base_path));
+                    imports.extend(self.process_use_tree(item, base_path));
                 }
             }
         }
 
-        statements
+        imports
     }
 
     fn debug_mod_stack(&mut self) {
@@ -1093,7 +1101,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             self.state.current_module_path = parent_path;
         }
 
-        // WARNING: experimenting with this
         self.state.current_module.push(module_node.name.clone());
         #[cfg(feature = "verbose_debug")]
         {
@@ -1123,7 +1130,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // continue visiting.
         visit::visit_item_mod(self, module);
 
-        // WARNING: experimenting with this
         let popped = self.state.current_module.pop();
         #[cfg(feature = "verbose_debug")]
         self.log_pop("current_module", popped, &self.state.current_module);
@@ -1149,48 +1155,69 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
         // Create an import node
-        let import_id = self.state.next_node_id();
-        self.debug_mod_stack_push("NO NAME".to_string(), import_id);
 
-        // Process the use path
-        let mut path_segments = Vec::new();
-        let current_path = &use_item.tree;
+        #[cfg(not(feature = "use_statement_tracking"))]
+        {
+            let import_id = self.state.next_node_id();
+            self.debug_mod_stack_push("NO NAME".to_string(), import_id);
 
-        // Extract path segments from the use tree
-        CodeVisitor::extract_use_path(current_path, &mut path_segments);
+            // Process the use path
+            let mut path_segments = Vec::new();
+            let current_path = &use_item.tree;
 
-        // Create relations for the used types
-        if !path_segments.is_empty() {
-            // Create a synthetic type for the imported item
-            let type_id = self.state.next_type_id();
-            self.state.code_graph.type_graph.push(TypeNode {
-                id: type_id,
-                kind: TypeKind::Named {
-                    path: path_segments.clone(),
-                    is_fully_qualified: false,
-                },
-                related_types: Vec::new(),
-            });
+            // Extract path segments from the use tree
+            CodeVisitor::extract_use_path(current_path, &mut path_segments);
 
-            // Add a Uses relation
-            self.state.code_graph.relations.push(Relation {
-                source: import_id,
-                target: type_id,
-                kind: RelationKind::Uses,
-            });
+            // Create relations for the used types
+            if !path_segments.is_empty() {
+                // Create a synthetic type for the imported item
+                let type_id = self.state.next_type_id();
+                self.state.code_graph.type_graph.push(TypeNode {
+                    id: type_id,
+                    kind: TypeKind::Named {
+                        path: path_segments.clone(),
+                        is_fully_qualified: false,
+                    },
+                    related_types: Vec::new(),
+                });
+
+                // Add a Uses relation
+                self.state.code_graph.relations.push(Relation {
+                    source: import_id,
+                    target: type_id,
+                    kind: RelationKind::Uses,
+                });
+            }
         }
         #[cfg(feature = "use_statement_tracking")]
         {
-            let base_segments = if use_item.leading_colon.is_some() {
-                vec!["".to_string()] // Represents leading ::
+            // Process the use tree first
+            let base_path = if use_item.leading_colon.is_some() {
+                vec!["".to_string()] // Absolute path
             } else {
-                Vec::new()
+                Vec::new() // Relative path
             };
+            let imports = self.process_use_tree(&use_item.tree, &base_path);
 
-            let statements = Self::process_use_tree(&use_item.tree, &base_segments);
-            for mut stmt in statements {
-                stmt.span = use_item.extract_span_bytes();
-                self.state.code_graph.use_statements.push(stmt);
+            // Get a mutable reference to the graph only once
+            let graph = &mut self.state.code_graph;
+
+            // Add all imports to the current module
+            if let Some(module) = graph.modules.last_mut() {
+                let module_id = module.id;
+
+                for import in imports {
+                    // Add module import relation
+                    graph.relations.push(Relation {
+                        source: module_id,
+                        target: import.id,
+                        kind: RelationKind::ModuleImports,
+                    });
+
+                    graph.use_statements.push(import.clone());
+                    // Add to module's imports list
+                    module.imports.push(import);
+                }
             }
         }
         // Continue visiting

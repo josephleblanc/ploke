@@ -89,16 +89,18 @@ fn test_nested_module_visibility() {
     );
 
     // Test cross-module access
+    let outer_module_path = ["crate".to_string(), "outer".to_string()];
     let outer_module =
-        find_module_by_path(&code_graph, &["crate".to_string(), "outer".to_string()])
-            .expect("outer module not found");
+        find_module_by_path(&code_graph, &outer_module_path).expect("outer module not found");
 
     let denied_result = code_graph.resolve_visibility(
         deep_function.id,
         &["crate".to_string(), "unrelated".to_string()],
     );
     #[cfg(feature = "verbose_debug")]
-    println!("deied_result: {:#?}", denied_result);
+    println!("denied_result: {:#?}", denied_result);
+    //
+    // let deep_function_node = find_function_by_name(&code_graph, "deep_function");
 
     assert!(
         matches!(
@@ -108,7 +110,9 @@ fn test_nested_module_visibility() {
                 ..
             }
         ),
-        "Nested function should be blocked outside module chain"
+        "Nested function should be blocked outside module chain.\nInstead, found target function `deep_function` in `mod outer_module`:\n{:#?}\n{:#?}",
+        deep_function,
+        outer_module
     );
 
     // Test restricted pub(in path)

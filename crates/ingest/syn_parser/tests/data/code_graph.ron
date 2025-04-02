@@ -1158,6 +1158,11 @@
             kind: Contains,
         ),
         (
+            source: 0,
+            target: 18,
+            kind: Contains,
+        ),
+        (
             source: 18,
             target: 19,
             kind: FunctionParameter,
@@ -1171,6 +1176,11 @@
             source: 18,
             target: 0,
             kind: FunctionReturn,
+        ),
+        (
+            source: 9,
+            target: 18,
+            kind: Method,
         ),
         (
             source: 17,
@@ -1188,6 +1198,11 @@
             kind: Contains,
         ),
         (
+            source: 0,
+            target: 23,
+            kind: Contains,
+        ),
+        (
             source: 23,
             target: 24,
             kind: FunctionParameter,
@@ -1201,6 +1216,11 @@
             source: 23,
             target: 6,
             kind: FunctionReturn,
+        ),
+        (
+            source: 9,
+            target: 23,
+            kind: Method,
         ),
         (
             source: 22,
@@ -1233,6 +1253,11 @@
             kind: Contains,
         ),
         (
+            source: 0,
+            target: 30,
+            kind: Contains,
+        ),
+        (
             source: 30,
             target: 31,
             kind: FunctionParameter,
@@ -1243,6 +1268,16 @@
             kind: FunctionReturn,
         ),
         (
+            source: 9,
+            target: 30,
+            kind: Method,
+        ),
+        (
+            source: 0,
+            target: 32,
+            kind: Contains,
+        ),
+        (
             source: 32,
             target: 33,
             kind: FunctionParameter,
@@ -1251,6 +1286,11 @@
             source: 32,
             target: 5,
             kind: FunctionReturn,
+        ),
+        (
+            source: 9,
+            target: 32,
+            kind: Method,
         ),
         (
             source: 29,
@@ -1388,6 +1428,11 @@
             kind: Contains,
         ),
         (
+            source: 46,
+            target: 63,
+            kind: Contains,
+        ),
+        (
             source: 63,
             target: 64,
             kind: FunctionParameter,
@@ -1396,6 +1441,11 @@
             source: 63,
             target: 23,
             kind: FunctionReturn,
+        ),
+        (
+            source: 20,
+            target: 63,
+            kind: Method,
         ),
         (
             source: 62,
@@ -1533,6 +1583,11 @@
             kind: Contains,
         ),
         (
+            source: 82,
+            target: 91,
+            kind: Contains,
+        ),
+        (
             source: 91,
             target: 92,
             kind: FunctionParameter,
@@ -1541,6 +1596,11 @@
             source: 91,
             target: 8,
             kind: FunctionReturn,
+        ),
+        (
+            source: 29,
+            target: 91,
+            kind: Method,
         ),
         (
             source: 90,

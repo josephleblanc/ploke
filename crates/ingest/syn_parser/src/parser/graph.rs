@@ -18,10 +18,14 @@ use crate::parser::{
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "use_statement_tracking")]
-use super::nodes::UseStatement;
+use super::nodes::ImportNode;
 
 #[cfg(feature = "visibility_resolution")]
 impl CodeGraph {
+    #[cfg(feature = "module_path_tracking")]
+    pub fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
+        self.modules.iter().find(|m| m.path == path)
+    }
     /// Resolve whether an item is visible in the given module context
     ///
     /// Assumes the source and target context are both in the user's repository, not project
@@ -51,6 +55,17 @@ impl CodeGraph {
                 };
             }
         };
+        if let Some(context_module_id) = self.find_module_by_path(context_module).map(|m| m.id) {
+            let is_imported = self.relations.iter().any(|r| {
+                r.source == context_module_id
+                    && r.kind == RelationKind::ModuleImports
+                    && r.target == item_id
+            });
+
+            if is_imported {
+                return VisibilityResult::Direct;
+            }
+        }
 
         match item.visibility() {
             VisibilityKind::Public => VisibilityResult::Direct,
@@ -257,6 +272,21 @@ impl CodeGraph {
         context.starts_with(path)
     }
 
+    #[cfg(feature = "use_statement_tracking")]
+    fn module_contains(&self, module_id: NodeId, item_id: NodeId) -> bool {
+        // Check if module directly contains the item
+        if let Some(module) = self.modules.iter().find(|m| m.id == module_id) {
+            if module.items.contains(&item_id) {
+                return true;
+            }
+        }
+
+        // Check if module contains the item through nested modules
+        self.relations.iter().any(|r| {
+            r.source == module_id && r.target == item_id && r.kind == RelationKind::Contains
+        })
+    }
+
     #[cfg_attr(
         not(feature = "use_statement_tracking"),
         allow(unused_variables, unused_mut)
@@ -266,6 +296,42 @@ impl CodeGraph {
     // returning when we begin tracking dependency vs user code for the scope of a given item.
     #[cfg(feature = "use_statement_tracking")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
+        let context_module_id = match self.find_module_by_path(context_module) {
+            Some(m) => m.id,
+            None => {
+                // Placeholder, probably should replace with error handling,
+                // since I'm pretty sure (but not completely sure) that this case means we don't
+                // have access to the target context.
+                // TODO: Implement proper error handling here.
+                return VisibilityResult::OutOfScope {
+                    reason: OutOfScopeReason::WorkspaceHidden,
+                    allowed_scopes: None,
+                };
+            }
+        };
+
+        // Get all ModuleImports relations for this context module
+        let import_relations = self
+            .relations
+            .iter()
+            .filter(|r| r.source == context_module_id && r.kind == RelationKind::ModuleImports);
+
+        for rel in import_relations {
+            // Check if this is a glob import by looking for a module that contains the target
+            let is_glob = self.modules.iter().any(|m| m.id == rel.target);
+
+            if is_glob {
+                // For glob imports, check if item is in the imported module
+                if self.module_contains(rel.target, item_id) {
+                    return VisibilityResult::Direct;
+                }
+            }
+            // Direct import match
+            else if rel.target == item_id {
+                return VisibilityResult::Direct;
+            }
+        }
+
         let item = match self.find_node(item_id) {
             Some(item) => item,
             None => {
@@ -349,5 +415,5 @@ pub struct CodeGraph {
     // Macros defined in the code
     pub macros: Vec<MacroNode>,
     #[cfg(feature = "use_statement_tracking")]
-    pub use_statements: Vec<UseStatement>,
+    pub use_statements: Vec<ImportNode>,
 }
