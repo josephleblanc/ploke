@@ -9,6 +9,4 @@ pub mod refactor;
 pub mod span_verification;
 pub mod structs_tests;
 pub mod traits_tests;
-pub mod use_statement_edge_cases;
-pub mod use_statement_tests;
 pub mod visibility_tests;

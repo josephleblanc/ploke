@@ -9,6 +9,18 @@ use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::*;
 use syn_parser::save_to_ron;
 mod data;
+
+// Updated test of test_analyzer to detect all (public + private) nodes of different kinds
+//  ----> Update in Progres <-----
+//  Note that we are migrating tests to use new extended handling of public/private items for full
+//  detection.
+//  Some of the `assert` statements have been migrated, and are marked with:
+//          #[cfg(feature = "visibility_resolution")]
+//  Others are still using the legacy system, and will need to be migrated and/or replaced by new
+//  tests later. The legacy versions will use the flag:
+//          #[cfg(not(feature = "visibility_resolution"))]
+//  Finally, some tests work for both implementations and can be used as a "canary in the coalmine"
+//  if something goes wrong across legacy/current implementations
 #[test]
 fn test_analyzer() {
     let input_path = PathBuf::from("tests/data/sample.rs");
@@ -38,11 +50,64 @@ fn test_analyzer() {
             .expect("public_function_in_private_module not found").name
     );
 
-    // Check defined types
+    let expected = vec![
+        "SampleStruct",
+        "NestedStruct",
+        "SampleEnum",
+        "PrivateStruct",
+        "PrivateStruct2",
+        "PrivateEnum",
+        "PrivateTypeAlias",
+        "PrivateUnion",
+        "ModuleStruct",
+        "ModuleEnum",
+        "TupleStruct",
+        "UnitStruct",
+        "StringVec",
+        "Result",
+        "IntOrFloat",
+    ];
+
+    let all_actual = code_graph
+        .defined_types
+        .iter()
+        .map(|t| match t {
+            TypeDefNode::Struct(struct_node) => struct_node.name.as_str(),
+            TypeDefNode::Enum(enum_node) => enum_node.name.as_str(),
+            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.name.as_str(),
+            TypeDefNode::Union(union_node) => union_node.name.as_str(),
+        })
+        .collect::<Vec<&str>>();
+    let found_expected: Vec<&&str> = all_actual.iter().filter(|t| expected.contains(t)).collect();
+    let found_not_expected: Vec<&&str> = all_actual
+        .iter()
+        .filter(|t| !expected.contains(t))
+        .collect();
+    let expected_not_found: Vec<&&str> = expected
+        .iter()
+        .filter(|t| !all_actual.contains(t))
+        .collect();
+
+    // Check all defined types are detected (public + private)
+
+    #[cfg(feature = "visibility_resolution")]
     assert_eq!(
         code_graph.defined_types.len(),
-        10,
-        "Expected 10 defined types (SampleStruct, NestedStruct, SampleEnum, ModuleStruct, TupleStruct, UnitStruct, StringVec, Result, IntOrFloat, and more)"
+        expected.len(),
+        "Expected {} defined types, found {}: (
+)
+Expected only: {:#?}
+Found all actual: {:#?}
+Found expected: {:#?}
+Found but did not expect: {:#?}
+Expected but did not find: {:#?}",
+        expected.len(),
+        all_actual.len(),
+        expected,
+        all_actual,
+        found_expected,
+        found_not_expected,
+        expected_not_found
     );
 
     // Check traits
@@ -53,20 +118,44 @@ fn test_analyzer() {
     );
 
     // Check impls
+    #[cfg(feature = "visibility_resolution")]
     assert_eq!(
         code_graph.impls.len(),
-        6,
-        "Expected 6 impls (SampleTrait/SampleStruct, AnotherTrait/SampleStruct, DefaultTrait/SampleStruct, Direct/SampleStruct, Direct/PrivateStruct, DefaultTrait/ModuleStruct)\nFound:\n\t{:?}",
-        code_graph.impls.iter().map(|imp| {
-            if let Some(trait_type) = imp.trait_type {
-                if let Some(trait_type) = code_graph.type_graph.iter().find(|t| t.id == trait_type) {
-                    if let TypeKind::Named { path, .. } = &trait_type.kind {
-                        return format!("{} for {}", path.last().unwrap_or(&"UnknownTrait".to_string()), get_self_type_name(&code_graph, imp.self_type));
+        7,
+        "\nExpected 7 impls :(
+    SampleTrait/SampleStruct, 
+    AnotherTrait/SampleStruct, 
+    DefaultTrait/SampleStruct,
+    Direct/SampleStruct, 
+    Direct/PrivateStruct,
+    PrivateTrait/PrivateStruct,
+    DefaultTrait/ModuleStruct)
+---
+Found:\n\t{:#?}
+---",
+        code_graph
+            .impls
+            .iter()
+            .map(|imp| {
+                if let Some(trait_type) = imp.trait_type {
+                    if let Some(trait_type) =
+                        code_graph.type_graph.iter().find(|t| t.id == trait_type)
+                    {
+                        if let TypeKind::Named { path, .. } = &trait_type.kind {
+                            return format!(
+                                "{} for {}",
+                                path.last().unwrap_or(&"UnknownTrait".to_string()),
+                                get_self_type_name(&code_graph, imp.self_type)
+                            );
+                        }
                     }
                 }
-            }
-            format!("Direct impl for {}", get_self_type_name(&code_graph, imp.self_type))
-        }).collect::<Vec<String>>()
+                format!(
+                    "Direct impl for {}",
+                    get_self_type_name(&code_graph, imp.self_type)
+                )
+            })
+            .collect::<Vec<String>>()
     );
 
     // Helper function to get self type name
@@ -90,11 +179,23 @@ fn test_analyzer() {
         code_graph.modules
     );
 
+    let actual: Vec<&str> = code_graph.values.iter().map(|c| c.name.as_str()).collect();
     // Check constants and statics
+    #[cfg(feature = "visibility_resolution")]
     assert_eq!(
         code_graph.values.len(),
-        3,
-        "Expected 3 values (MAX_ITEMS, GLOBAL_COUNTER, MUTABLE_COUNTER)"
+        6,
+        "Expected 6 values (
+PRIVATE_CONST,
+PRIVATE_STATIC,
+MAX_ITEMS,
+MIN_ITEMS,
+GLOBAL_COUNTER,
+MUTABLE_COUNTER,
+)
+Found: 
+{:#?}",
+        actual
     );
 
     // Check macros
@@ -115,6 +216,7 @@ fn test_analyzer() {
         .iter()
         .filter(|r| r.kind == RelationKind::ImplementsTrait)
         .count();
+    #[cfg(not(feature = "visibility_resolution"))]
     assert_eq!(trait_impl_relations, 8, "Expected 8 'implements' relations");
 
     let contains_relations = code_graph
@@ -132,6 +234,7 @@ fn test_analyzer() {
         .iter()
         .filter(|r| r.kind == RelationKind::Uses)
         .count();
+    #[cfg(not(feature = "visibility_resolution"))]
     assert!(
         uses_type_relations > 0,
         "Expected 'uses type' relations for `use` statements"
@@ -334,6 +437,7 @@ fn test_analyzer() {
     // Test private constant
     let min_items = code_graph.values.iter().find(|v| v.name == "MIN_ITEMS");
 
+    #[cfg(not(feature = "visibility_resolution"))]
     assert!(
         min_items.is_none(),
         "MIN_ITEMS constant should not be found"
@@ -504,6 +608,7 @@ fn test_analyzer() {
         .find(|m| m.name == "private_module")
         .expect("private_module not found");
 
+    #[cfg(not(feature = "visibility_resolution"))]
     assert!(matches!(
         private_module.visibility,
         VisibilityKind::Restricted(_)

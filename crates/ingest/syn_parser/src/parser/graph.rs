@@ -128,7 +128,9 @@ impl CodeGraph {
                             if import_path == context_module {
                                 VisibilityResult::Direct
                             } else {
-                                VisibilityResult::NeedsUse(import_path.clone())
+                                // VisibilityResult::NeedsUse(import_path.clone())
+                                panic!("checking if VisibilityResult::NeedsUse this is ever called")
+                                // spoiler: it's not
                             }
                         }
                         _ => {

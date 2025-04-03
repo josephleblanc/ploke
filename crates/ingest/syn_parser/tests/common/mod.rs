@@ -15,6 +15,19 @@ fn test_paths() {
     println!("Fixture path: {}", fixture_path.display());
 }
 
+pub fn print_typedef_names(code_graph: &CodeGraph) -> Vec<&str> {
+    code_graph
+        .defined_types
+        .iter()
+        .map(|t| match t {
+            TypeDefNode::Struct(struct_node) => &struct_node.name,
+            TypeDefNode::Enum(enum_node) => &enum_node.name,
+            TypeDefNode::TypeAlias(type_alias_node) => &type_alias_node.name,
+            TypeDefNode::Union(union_node) => union_node.name.as_str(),
+        })
+        .collect::<Vec<&str>>()
+}
+
 pub const FIXTURES_DIR: &str = "tests/fixtures";
 
 #[derive(Error, Debug)]
