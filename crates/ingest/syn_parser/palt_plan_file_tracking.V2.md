@@ -40,7 +40,8 @@
        pub file: PathBuf,
        pub start: usize,
        pub end: usize,
-       pub line_col: (u32, u32)
+       pub line_col: u32,
+       pub col: u32
    }
    ```
 
