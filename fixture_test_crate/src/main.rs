@@ -14,17 +14,44 @@ mod outer {
         println!("Outer function");
     }
 }
+
+// fixture_test_crate/src/main.rs
 mod a {
     pub mod b {
-        pub fn example_func() {}
+        pub fn public_func() {}
     }
     mod c {
-        pub fn incorrect_func() {}
+        fn private_func() {}
+    }
+    mod d {
+        pub fn public_func_in_private_mod() {}
     }
     fn test_func() {
-        example_func(); // Correct
-        incorrect_func();
+        // public_func(); // incorrect, not found E0425
+        // private_func(); // incorrect, not found E0425
+        // public_func_in_private_mod; // incorrect, not found E0425
     }
+    fn other_test_func() {
+        use crate::a::b::public_func;
+        public_func(); // correct
+
+        // use crate::a::c::private_func; // incorrect, is private E0603
+    }
+    fn final_test_func() {
+        use crate::a::d::public_func_in_private_mod;
+        public_func_in_private_mod(); // correct
+    }
+    fn temp_test_func() {
+        use crate::a::b::public_func;
+        use crate::a::c::private_func;
+        use crate::a::d::public_func_in_private_mod;
+    }
+}
+pub fn test_pub_in_priv() {
+    // use a::d; // Incorrect, E0603 module is private
+    // use a::d::private_func; // Incorrect, E0603 module is private
+    use a::b::public_func;
+    public_func(); // Correct
 }
 
 pub fn test_outer() {
@@ -32,7 +59,7 @@ pub fn test_outer() {
 }
 
 fn test_outer_private() {
-    outer_function(); // Error E0425
+    // outer_function(); // Error E0425
 }
 
 // outer_function(); // Incorrect. cannot call function outside a function like this.

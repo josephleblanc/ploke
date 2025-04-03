@@ -452,7 +452,7 @@ pub enum ImportKind {
 
 /// Result of visibility resolution with detailed scoping information
 #[cfg(feature = "visibility_resolution")]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VisibilityResult {
     /// Directly usable without imports
     Direct,
@@ -476,7 +476,7 @@ pub trait Visible {
 
 /// Detailed reasons for out-of-scope items
 #[cfg(feature = "visibility_resolution")]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OutOfScopeReason {
     Private,
     CrateRestricted,

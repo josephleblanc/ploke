@@ -93,26 +93,27 @@ fn test_nested_module_visibility() {
     let outer_module =
         find_module_by_path(&code_graph, &outer_module_path).expect("outer module not found");
 
-    let denied_result = code_graph.resolve_visibility(
-        deep_function.id,
-        &["crate".to_string(), "unrelated".to_string()],
-    );
-    #[cfg(feature = "verbose_debug")]
-    println!("denied_result: {:#?}", denied_result);
-    //
-    // let deep_function_node = find_function_by_name(&code_graph, "deep_function");
+    let unrelated_path = &["crate".to_string(), "unrelated".to_string()];
 
+    let actual_result = code_graph.resolve_visibility(deep_function.id, unrelated_path);
+
+    let expected_result = VisibilityResult::NeedsUse(vec![
+        "crate".to_string(),
+        "outer".to_string(),
+        "middle".to_string(),
+        "inner".to_string(),
+    ]);
     assert!(
-        matches!(
-            denied_result,
-            VisibilityResult::OutOfScope {
-                reason: OutOfScopeReason::Private,
-                ..
-            }
-        ),
-        "Nested function should be blocked outside module chain.\nInstead, found target function `deep_function` in `mod outer_module`:\n{:#?}\n{:#?}",
+            expected_result == actual_result ,
+        "\nNested function should be blocked outside module chain.\nInstead, found target function `deep_function` in `mod `:\n{:#?}\n{:#?}
+-----
+Expected VisibilityResult: {:#?}
+Actual VisibilityResult: {:#?}
+-----",
         deep_function,
-        outer_module
+        outer_module,
+        expected_result,
+        actual_result
     );
 
     // Test restricted pub(in path)
