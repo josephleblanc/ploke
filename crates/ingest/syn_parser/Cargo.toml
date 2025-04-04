@@ -25,11 +25,16 @@ dashmap = { workspace = true }
 # Data structures and algorithms
 petgraph = { workspace = true }
 cozo = { workspace = true }
-uuid = { workspace = true, features = ["v5", "serde"] }
+uuid = { workspace = true, features = ["v5", "serde"], optional = true } # Keep workspace dep, make optional
 
 # Error handling
-thiserror = { workspace = true }
+thiserror = { version = "1.0", optional = true } # Add as optional dependency
 ploke-common = { path = "../../common" }
+
+# Added for Phase 1 Discovery (Optional)
+toml = { version = "0.8", optional = true }
+walkdir = { version = "2.4", optional = true }
+
 
 [dev-dependencies]
 
@@ -41,3 +46,5 @@ default = [
 verbose_debug = []
 # Post-MVP feature
 workspace_vis = []
+# Feature flag for the UUID refactor
+uuid_ids = ["dep:uuid", "dep:toml", "dep:thiserror", "dep:walkdir"]
