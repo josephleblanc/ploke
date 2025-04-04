@@ -9,4 +9,3 @@ syn_parser = { path = "../ingest/syn_parser" } # Only if you need parser-specifi
 syn = { workspace = true }
 
 [features]
-module_path_tracking = ["syn_parser/module_path_tracking"]
