@@ -63,4 +63,4 @@ pub enum ParserError {
 2. Then, introduce our own error type
 3. Finally, add partial processing capability
 
-[See also: General Error Handling Guidelines](../error_handling_best_practices.md)
+[See also: General Error Handling Guidelines](./error_handling_best_practices.md)

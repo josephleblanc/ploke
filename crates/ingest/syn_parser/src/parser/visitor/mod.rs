@@ -4,9 +4,6 @@ mod code_visitor;
 mod state;
 mod type_processing;
 
-#[cfg(feature = "visibility_resolution")]
-use crate::parser::nodes::Visible;
-
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
@@ -40,7 +37,6 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         items: Vec::new(),
         imports: Vec::new(),
         exports: Vec::new(),
-        #[cfg(feature = "module_path_tracking")]
         path: vec!["crate".to_string()],
     });
 

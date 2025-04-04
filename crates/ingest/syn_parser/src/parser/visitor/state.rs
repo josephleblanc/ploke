@@ -13,9 +13,7 @@ pub struct VisitorState {
     next_type_id: TypeId,
     // Use DashMap for thread-safe concurrent access
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
-    // #[cfg(feature = "module_path_tracking")]
     pub(crate) current_module_path: Vec<String>,
-    // #[cfg(feature = "module_path_tracking")]
     pub(crate) current_module: Vec<String>, // Stack of module IDs we're currently in
 }
 
@@ -33,15 +31,12 @@ impl VisitorState {
                 modules: Vec::new(),
                 values: Vec::new(),
                 macros: Vec::new(),
-                #[cfg(feature = "use_statement_tracking")]
                 use_statements: Vec::new(),
             },
             next_node_id: 0,
             next_type_id: 0,
             type_map: Arc::new(DashMap::new()),
-            // #[cfg(feature = "module_path_tracking")]
             current_module_path: Vec::new(),
-            // #[cfg(feature = "module_path_tracking")]
             current_module: Vec::new(),
         }
     }
@@ -58,10 +53,6 @@ impl VisitorState {
         id
     }
 
-    pub(crate) fn current_module_id(&self) -> Option<NodeId> {
-        self.code_graph.modules.last().map(|m| m.id)
-    }
-
     pub(crate) fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
@@ -75,15 +66,7 @@ impl VisitorState {
                 VisibilityKind::Restricted(path)
             }
             // Changed handling of inherited visibility
-            Visibility::Inherited => {
-                if cfg!(feature = "visibility_resolution") {
-                    // In new system, inherited means private to current module
-                    VisibilityKind::Inherited
-                } else {
-                    // Old behavior for backward compatibility
-                    VisibilityKind::Restricted(vec!["super".to_string()])
-                }
-            }
+            Visibility::Inherited => VisibilityKind::Inherited,
         }
     }
 

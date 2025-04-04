@@ -7,7 +7,6 @@ pub type NodeId = usize;
 
 // ANCHOR: ItemFn
 // Represents a function definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for ModuleNode {
     fn id(&self) -> NodeId {
         self.id
@@ -34,7 +33,6 @@ pub struct FunctionNode {
     pub body: Option<String>,
 }
 //ANCHOR_END: ItemFn
-#[cfg(feature = "visibility_resolution")]
 impl Visible for FunctionNode {
     fn id(&self) -> NodeId {
         self.id
@@ -69,7 +67,6 @@ pub enum TypeDefNode {
 
 // ANCHOR: StructNode
 // Represents a struct definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for StructNode {
     fn id(&self) -> NodeId {
         self.id
@@ -96,7 +93,6 @@ pub struct StructNode {
 //ANCHOR_END: StructNode
 
 // Represents an enum definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for EnumNode {
     fn id(&self) -> NodeId {
         self.id
@@ -144,7 +140,6 @@ pub struct VariantNode {
 }
 
 // Represents a type alias (type NewType = OldType)
-#[cfg(feature = "visibility_resolution")]
 impl Visible for TypeAliasNode {
     fn id(&self) -> NodeId {
         self.id
@@ -170,7 +165,6 @@ pub struct TypeAliasNode {
 }
 
 // Represents a union definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for UnionNode {
     fn id(&self) -> NodeId {
         self.id
@@ -206,7 +200,6 @@ pub struct ImplNode {
     pub generic_params: Vec<GenericParamNode>,
 }
 
-#[cfg(feature = "visibility_resolution")]
 impl Visible for ImplNode {
     fn visibility(&self) -> VisibilityKind {
         VisibilityKind::Public
@@ -226,7 +219,6 @@ impl Visible for ImplNode {
 
 // ANCHOR: TraitNode
 // Represents a trait definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for TraitNode {
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -258,7 +250,6 @@ pub struct TraitNode {
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
-    #[cfg(feature = "module_path_tracking")]
     pub path: Vec<String>,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
@@ -270,7 +261,6 @@ pub struct ModuleNode {
 }
 
 // Represents a constant or static variable
-#[cfg(feature = "visibility_resolution")]
 impl Visible for ValueNode {
     fn id(&self) -> NodeId {
         self.id
@@ -296,7 +286,6 @@ pub struct ValueNode {
 }
 
 // Represents a macro definition
-#[cfg(feature = "visibility_resolution")]
 impl Visible for MacroNode {
     fn id(&self) -> NodeId {
         self.id
@@ -451,7 +440,6 @@ pub enum ImportKind {
 }
 
 /// Result of visibility resolution with detailed scoping information
-#[cfg(feature = "visibility_resolution")]
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VisibilityResult {
     /// Directly usable without imports
@@ -461,13 +449,12 @@ pub enum VisibilityResult {
     /// Not accessible with current scope
     OutOfScope {
         /// Why the item isn't accessible
-        reason: OutOfScopeReason,
+        // reason: OutOfScopeReason,
         /// For pub(in path) cases, shows allowed scopes  
         allowed_scopes: Option<Vec<String>>,
     },
 }
 /// Trait for nodes that have visibility information                   
-#[cfg(feature = "visibility_resolution")]
 pub trait Visible {
     fn visibility(&self) -> VisibilityKind;
     fn name(&self) -> &str;
@@ -475,15 +462,14 @@ pub trait Visible {
 }
 
 /// Detailed reasons for out-of-scope items
-#[cfg(feature = "visibility_resolution")]
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum OutOfScopeReason {
-    Private,
-    CrateRestricted,
-    SuperRestricted,
-    WorkspaceHidden, // Reserved for future workspace support
-    CfgGated,        // Reserved for cfg() attributes
-}
+// #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
+// pub enum OutOfScopeReason {
+//     Private,
+//     CrateRestricted,
+//     SuperRestricted,
+//     WorkspaceHidden, // Reserved for future workspace support
+//     CfgGated,        // Reserved for cfg() attributes
+// }
 
 // Represent an attribute
 #[derive(Debug, Serialize, Deserialize, Clone)]

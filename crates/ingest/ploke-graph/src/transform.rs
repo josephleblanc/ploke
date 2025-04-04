@@ -942,11 +942,8 @@ fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             RelationKind::Uses => "Uses",
             RelationKind::ValueType => "ValueType",
             RelationKind::MacroUse => "MacroUse",
-            // These variants don't exist in the RelationKind enum
-            // RelationKind::ModuleItem => "ModuleItem",
-            // RelationKind::ModuleSubmodule => "ModuleSubmodule",
-            // RelationKind::ModuleImport => "ModuleImport",
-            // RelationKind::ModuleExport => "ModuleExport",
+            RelationKind::Method => "Method",
+            RelationKind::ModuleImports => "ModuleImports",
         };
 
         let params = BTreeMap::from([

@@ -1810,7 +1810,6 @@
             id: 46,
             name: "private_module",
             path: [
-                "crate",
                 "private_module",
             ],
             visibility: Inherited,
@@ -1852,7 +1851,6 @@
             id: 84,
             name: "public_module",
             path: [
-                "crate",
                 "public_module",
             ],
             visibility: Public,

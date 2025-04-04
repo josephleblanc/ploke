@@ -12,7 +12,7 @@ use syn::spanned::Spanned;
 use syn::TypePath;
 use syn::{
     visit::{self, Visit},
-    ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type, Visibility,
+    ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
 };
 
 pub struct CodeVisitor<'a> {
@@ -25,29 +25,6 @@ impl<'a> CodeVisitor<'a> {
     }
 
     // Helper method to extract path segments from a use tree
-    fn extract_use_path(use_tree: &syn::UseTree, path_segments: &mut Vec<String>) {
-        match use_tree {
-            syn::UseTree::Path(path) => {
-                path_segments.push(path.ident.to_string());
-                CodeVisitor::extract_use_path(&path.tree, path_segments);
-            }
-            syn::UseTree::Name(name) => {
-                path_segments.push(name.ident.to_string());
-            }
-            syn::UseTree::Rename(rename) => {
-                path_segments.push(format!("{} as {}", rename.ident, rename.rename));
-            }
-            syn::UseTree::Glob(_) => {
-                path_segments.push("*".to_string());
-            }
-            syn::UseTree::Group(group) => {
-                for tree in &group.items {
-                    let mut new_path = path_segments.clone();
-                    CodeVisitor::extract_use_path(tree, &mut new_path);
-                }
-            }
-        }
-    }
 
     fn process_use_tree(&mut self, tree: &syn::UseTree, base_path: &[String]) -> Vec<ImportNode> {
         let mut imports = Vec::new();
@@ -110,6 +87,7 @@ impl<'a> CodeVisitor<'a> {
         imports
     }
 
+    #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack(&mut self) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
             let modules: Vec<(usize, String)> = self
@@ -147,23 +125,21 @@ impl<'a> CodeVisitor<'a> {
             println!("│   self.state.code_graph.modules names: {:?}", modules);
         }
     }
+    #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
-        #[cfg(feature = "verbose_debug")]
-        {
-            if let Some(current_mod) = self.state.code_graph.modules.last() {
-                let depth = self.state.code_graph.modules.len();
+        if let Some(current_mod) = self.state.code_graph.modules.last() {
+            let depth = self.state.code_graph.modules.len();
 
-                (1..depth).for_each(|_| print!("{: <3}", ""));
-                println!("│");
-                (1..depth).for_each(|_| print!("{: <3}", ""));
-                print!("└");
-                print!("{:─<3}", "");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            println!("│");
+            (1..depth).for_each(|_| print!("{: <3}", ""));
+            print!("└");
+            print!("{:─<3}", "");
 
-                println!(
-                    " {} -> pushing name {} (id: {}) to items: now items = {:?}",
-                    current_mod.name, name, node_id, current_mod.items
-                );
-            }
+            println!(
+                " {} -> pushing name {} (id: {}) to items: now items = {:?}",
+                current_mod.name, name, node_id, current_mod.items
+            );
         }
     }
     #[cfg(feature = "verbose_debug")]
@@ -216,7 +192,7 @@ impl<'a> CodeVisitor<'a> {
     /// module (souce) to the node (target) whose NodeId is being generated.
     /// - Follows the pattern of generating a NodeId only at the time the Relation is added to
     ///     CodeVisitor, making orphaned nodes difficult to add by mistake.
-    fn add_contains_rel(&mut self, node_name: Option<&str>) -> NodeId {
+    fn add_contains_rel(&mut self, _node_name: Option<&str>) -> NodeId {
         // TODO: Consider changing the return type to Result<NodeId> depending on the type of node
         // being traversed. Add generic type instaed of the optional node name and find a clean way
         // to handle adding nodes without names, perhaps by implementing a trait like UnnamedNode
@@ -224,7 +200,6 @@ impl<'a> CodeVisitor<'a> {
         let node_id = self.state.next_node_id(); // Generate ID here
 
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
-            #[cfg(feature = "visibility_resolution")]
             current_mod.items.push(node_id);
 
             self.state.code_graph.relations.push(Relation {
@@ -234,7 +209,7 @@ impl<'a> CodeVisitor<'a> {
             });
 
             #[cfg(feature = "verbose_debug")]
-            if let Some(name) = node_name {
+            if let Some(name) = _node_name {
                 self.debug_mod_stack_push(name.to_owned(), node_id);
             }
         }
@@ -373,7 +348,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let struct_name = item_struct.ident.to_string();
         let struct_id = self.add_contains_rel(Some(&struct_name));
 
-        #[cfg(feature = "module_path_tracking")]
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&struct_name, struct_id);
         let byte_range = item_struct.span().byte_range();
@@ -418,43 +392,21 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_struct.attrs);
         let attributes = extract_attributes(&item_struct.attrs);
 
-        // Store struct info only if public
-        if matches!(item_struct.vis, Visibility::Public(_)) {
-            self.state
-                .code_graph
-                .defined_types
-                .push(TypeDefNode::Struct(StructNode {
-                    id: struct_id,
-                    name: struct_name,
-                    span,
-                    visibility: self.state.convert_visibility(&item_struct.vis),
-                    fields,
-                    generic_params,
-                    attributes,
-                    docstring,
-                }));
-
-            visit::visit_item_struct(self, item_struct);
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                // Store all structs regardless of visibility
-                self.state
-                    .code_graph
-                    .defined_types
-                    .push(TypeDefNode::Struct(StructNode {
-                        id: struct_id,
-                        name: struct_name,
-                        span,
-                        visibility: self.state.convert_visibility(&item_struct.vis),
-                        fields,
-                        generic_params,
-                        attributes,
-                        docstring,
-                    }));
-                visit::visit_item_struct(self, item_struct);
-            }
-        }
+        // Store all structs regardless of visibility
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::Struct(StructNode {
+                id: struct_id,
+                name: struct_name,
+                span,
+                visibility: self.state.convert_visibility(&item_struct.vis),
+                fields,
+                generic_params,
+                attributes,
+                docstring,
+            }));
+        visit::visit_item_struct(self, item_struct);
     }
 
     // Visit type alias definitions
@@ -474,43 +426,21 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_type.attrs);
         let attributes = extract_attributes(&item_type.attrs);
 
-        // Store type alias info only if public
-        if matches!(item_type.vis, Visibility::Public(_)) {
-            self.state
-                .code_graph
-                .defined_types
-                .push(TypeDefNode::TypeAlias(TypeAliasNode {
-                    id: type_alias_id,
-                    name: type_alias_name,
-                    span: item_type.extract_span_bytes(),
-                    visibility: self.state.convert_visibility(&item_type.vis),
-                    type_id,
-                    generic_params,
-                    attributes,
-                    docstring,
-                }));
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::TypeAlias(TypeAliasNode {
+                id: type_alias_id,
+                name: type_alias_name,
+                span: item_type.extract_span_bytes(),
+                visibility: self.state.convert_visibility(&item_type.vis),
+                type_id,
+                generic_params,
+                attributes,
+                docstring,
+            }));
 
-            visit::visit_item_type(self, item_type);
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                self.state
-                    .code_graph
-                    .defined_types
-                    .push(TypeDefNode::TypeAlias(TypeAliasNode {
-                        id: type_alias_id,
-                        name: type_alias_name,
-                        span: item_type.extract_span_bytes(),
-                        visibility: self.state.convert_visibility(&item_type.vis),
-                        type_id,
-                        generic_params,
-                        attributes,
-                        docstring,
-                    }));
-
-                visit::visit_item_type(self, item_type);
-            }
-        }
+        visit::visit_item_type(self, item_type);
     }
 
     // Visit union definitions
@@ -557,41 +487,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_union.attrs);
         let attributes = extract_attributes(&item_union.attrs);
 
-        // Store union info only if public
-        if matches!(item_union.vis, Visibility::Public(_)) {
-            self.state
-                .code_graph
-                .defined_types
-                .push(TypeDefNode::Union(UnionNode {
-                    id: union_id,
-                    name: union_name,
-                    visibility: self.state.convert_visibility(&item_union.vis),
-                    fields,
-                    generic_params,
-                    attributes,
-                    docstring,
-                }));
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::Union(UnionNode {
+                id: union_id,
+                name: union_name,
+                visibility: self.state.convert_visibility(&item_union.vis),
+                fields,
+                generic_params,
+                attributes,
+                docstring,
+            }));
 
-            visit::visit_item_union(self, item_union);
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                self.state
-                    .code_graph
-                    .defined_types
-                    .push(TypeDefNode::Union(UnionNode {
-                        id: union_id,
-                        name: union_name,
-                        visibility: self.state.convert_visibility(&item_union.vis),
-                        fields,
-                        generic_params,
-                        attributes,
-                        docstring,
-                    }));
-
-                visit::visit_item_union(self, item_union);
-            }
-        }
+        visit::visit_item_union(self, item_union);
     }
 
     // Visit enum definitions
@@ -689,43 +598,21 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_enum.attrs);
         let attributes = extract_attributes(&item_enum.attrs);
 
-        // Store enum info only if public
-        if matches!(item_enum.vis, Visibility::Public(_)) {
-            self.state
-                .code_graph
-                .defined_types
-                .push(TypeDefNode::Enum(EnumNode {
-                    id: enum_id,
-                    name: enum_name,
-                    span: item_enum.extract_span_bytes(),
-                    visibility: self.state.convert_visibility(&item_enum.vis),
-                    variants,
-                    generic_params,
-                    attributes,
-                    docstring,
-                }));
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::Enum(EnumNode {
+                id: enum_id,
+                name: enum_name,
+                span: item_enum.extract_span_bytes(),
+                visibility: self.state.convert_visibility(&item_enum.vis),
+                variants,
+                generic_params,
+                attributes,
+                docstring,
+            }));
 
-            visit::visit_item_enum(self, item_enum);
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                self.state
-                    .code_graph
-                    .defined_types
-                    .push(TypeDefNode::Enum(EnumNode {
-                        id: enum_id,
-                        name: enum_name,
-                        span: item_enum.extract_span_bytes(),
-                        visibility: self.state.convert_visibility(&item_enum.vis),
-                        variants,
-                        generic_params,
-                        attributes,
-                        docstring,
-                    }));
-
-                visit::visit_item_enum(self, item_enum);
-            }
-        }
+        visit::visit_item_enum(self, item_enum);
     }
 
     // Visit impl blocks
@@ -775,6 +662,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     let trait_name = path.last().unwrap_or(&String::new()).to_string();
 
                     // Check both public and private traits
+                    // TODO: Add implements trait relation here
+                    #[allow(unused_variables, reason = "useful later")]
                     let trait_def = self
                         .state
                         .code_graph
@@ -782,19 +671,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         .iter()
                         .chain(&self.state.code_graph.private_traits)
                         .find(|t| t.name == trait_name);
-
-                    if let Some(trait_def) = trait_def {
-                        // Only skip private traits when visibility resolution is DISABLED
-                        if !cfg!(feature = "visibility_resolution")
-                            && !matches!(trait_def.visibility, VisibilityKind::Public)
-                        {
-                            // Early return skips remaining method items
-                            return;
-                        }
-                        // } else {
-                        // Trait definition not found, skip this impl
-                        // return;
-                    }
                 }
             }
         }
@@ -969,13 +845,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     id: method_node_id,
                     name: method_name,
                     span: method.extract_span_bytes(),
-                    visibility: if cfg!(feature = "visibility_resolution") {
-                        // For trait methods, visibility matches the trait's visibility
-                        self.state.convert_visibility(&item_trait.vis)
-                    } else {
-                        // Old behavior - assume public
-                        VisibilityKind::Public
-                    },
+                    visibility: self.state.convert_visibility(&item_trait.vis),
                     parameters,
                     return_type,
                     generic_params,
@@ -1041,16 +911,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let module_name = module.ident.to_string();
         let module_id = self.add_contains_rel(Some(&module_name));
 
-        #[cfg(feature = "module_path_tracking")]
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&module_name, module_id);
 
         // Save current path before entering module
-        #[cfg(feature = "module_path_tracking")]
         let parent_path = self.state.current_module_path.clone();
 
         // Update path for nested module visitation
-        #[cfg(feature = "module_path_tracking")]
         self.state.current_module_path.push(module_name.clone());
 
         // Process module contents
@@ -1058,22 +925,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let mut items = Vec::new();
 
         if let Some((_, mod_items)) = &module.content {
-            for item in mod_items {
+            for _item in mod_items {
                 let item_id = self.state.next_node_id();
+                #[cfg(feature = "verbose_debug")]
                 self.debug_mod_stack_push("NO NAME".to_string(), item_id);
                 items.push(item_id);
 
                 // Store item-module relationship immediately
-
-                #[cfg(not(feature = "visibility_resolution"))]
-                self.state.code_graph.relations.push(Relation {
-                    source: module_id,
-                    target: item_id,
-                    kind: RelationKind::Contains,
-                });
-                #[cfg(feature = "verbose_debug")]
-                if matches!(item, syn::Item::Mod(_)) {
+                if matches!(_item, syn::Item::Mod(_)) {
                     submodules.push(item_id);
+                    #[cfg(feature = "verbose_debug")]
                     self.debug_submodule("No name Maybe ok?", item_id);
                 }
             }
@@ -1084,7 +945,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let module_node = ModuleNode {
             id: module_id,
             name: module_name.clone(),
-            #[cfg(feature = "module_path_tracking")]
             path: self.state.current_module_path.clone(),
             visibility: self.state.convert_visibility(&module.vis),
             attributes: extract_attributes(&module.attrs),
@@ -1096,10 +956,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
 
         // Restore parent path after processing module
-        #[cfg(feature = "module_path_tracking")]
-        {
-            self.state.current_module_path = parent_path;
-        }
+        self.state.current_module_path = parent_path;
 
         self.state.current_module.push(module_node.name.clone());
         #[cfg(feature = "verbose_debug")]
@@ -1130,15 +987,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // continue visiting.
         visit::visit_item_mod(self, module);
 
-        let popped = self.state.current_module.pop();
+        let _popped = self.state.current_module.pop();
         #[cfg(feature = "verbose_debug")]
-        self.log_pop("current_module", popped, &self.state.current_module);
+        self.log_pop("current_module", _popped, &self.state.current_module);
 
-        let popped = self.state.current_module_path.pop();
+        let _popped = self.state.current_module_path.pop();
         #[cfg(feature = "verbose_debug")]
         self.log_pop(
             "current_module_path",
-            popped,
+            _popped,
             &self.state.current_module_path,
         );
     }
@@ -1154,75 +1011,37 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
-        // Create an import node
+        // Process the use tree first
+        let base_path = if use_item.leading_colon.is_some() {
+            vec!["".to_string()] // Absolute path
+        } else {
+            Vec::new() // Relative path
+        };
+        let imports = self.process_use_tree(&use_item.tree, &base_path);
 
-        #[cfg(not(feature = "use_statement_tracking"))]
-        {
-            let import_id = self.state.next_node_id();
-            self.debug_mod_stack_push("NO NAME".to_string(), import_id);
+        // Get a mutable reference to the graph only once
+        let graph = &mut self.state.code_graph;
 
-            // Process the use path
-            let mut path_segments = Vec::new();
-            let current_path = &use_item.tree;
+        // Add all imports to the current module
+        if let Some(module) = graph.modules.last_mut() {
+            let module_id = module.id;
 
-            // Extract path segments from the use tree
-            CodeVisitor::extract_use_path(current_path, &mut path_segments);
-
-            // Create relations for the used types
-            if !path_segments.is_empty() {
-                // Create a synthetic type for the imported item
-                let type_id = self.state.next_type_id();
-                self.state.code_graph.type_graph.push(TypeNode {
-                    id: type_id,
-                    kind: TypeKind::Named {
-                        path: path_segments.clone(),
-                        is_fully_qualified: false,
-                    },
-                    related_types: Vec::new(),
+            for import in imports {
+                // Add module import relation
+                graph.relations.push(Relation {
+                    source: module_id,
+                    target: import.id,
+                    kind: RelationKind::ModuleImports,
                 });
 
-                // Add a Uses relation
-                self.state.code_graph.relations.push(Relation {
-                    source: import_id,
-                    target: type_id,
-                    kind: RelationKind::Uses,
-                });
+                graph.use_statements.push(import.clone());
+                // Add to module's imports list
+                module.imports.push(import);
             }
         }
-        #[cfg(feature = "use_statement_tracking")]
-        {
-            // Process the use tree first
-            let base_path = if use_item.leading_colon.is_some() {
-                vec!["".to_string()] // Absolute path
-            } else {
-                Vec::new() // Relative path
-            };
-            let imports = self.process_use_tree(&use_item.tree, &base_path);
-
-            // Get a mutable reference to the graph only once
-            let graph = &mut self.state.code_graph;
-
-            // Add all imports to the current module
-            if let Some(module) = graph.modules.last_mut() {
-                let module_id = module.id;
-
-                for import in imports {
-                    // Add module import relation
-                    graph.relations.push(Relation {
-                        source: module_id,
-                        target: import.id,
-                        kind: RelationKind::ModuleImports,
-                    });
-
-                    graph.use_statements.push(import.clone());
-                    // Add to module's imports list
-                    module.imports.push(import);
-                }
-            }
-        }
-        // Continue visiting
         visit::visit_item_use(self, use_item);
     }
+    // Continue visiting
 
     // Visit extern crate statements
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
@@ -1286,31 +1105,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             docstring,
         };
 
-        // Check if the constant is public
-        if matches!(item_const.vis, Visibility::Public(_)) {
-            // Add the constant to the code graph
-            self.state.code_graph.values.push(const_node);
+        // Add the constant to the code graph
+        self.state.code_graph.values.push(const_node);
 
-            // Add relation between constant and its type
-            self.state.code_graph.relations.push(Relation {
-                source: const_id,
-                target: type_id,
-                kind: RelationKind::ValueType,
-            });
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                // Add the constant to the code graph
-                self.state.code_graph.values.push(const_node);
-
-                // Add relation between constant and its type
-                self.state.code_graph.relations.push(Relation {
-                    source: const_id,
-                    target: type_id,
-                    kind: RelationKind::ValueType,
-                });
-            }
-        }
+        // Add relation between constant and its type
+        self.state.code_graph.relations.push(Relation {
+            source: const_id,
+            target: type_id,
+            kind: RelationKind::ValueType,
+        });
 
         // Continue visiting
         visit::visit_item_const(self, item_const);
@@ -1347,31 +1150,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             docstring,
         };
 
-        // Check if the static variable is public
-        if matches!(item_static.vis, Visibility::Public(_)) {
-            // Add the static to the code graph
-            self.state.code_graph.values.push(static_node);
+        // Add the static to the code graph
+        self.state.code_graph.values.push(static_node);
 
-            // Add relation between static and its type
-            self.state.code_graph.relations.push(Relation {
-                source: static_id,
-                target: type_id,
-                kind: RelationKind::ValueType,
-            });
-        } else {
-            #[cfg(feature = "visibility_resolution")]
-            {
-                // Add the static to the code graph
-                self.state.code_graph.values.push(static_node);
-
-                // Add relation between static and its type
-                self.state.code_graph.relations.push(Relation {
-                    source: static_id,
-                    target: type_id,
-                    kind: RelationKind::ValueType,
-                });
-            }
-        }
+        // Add relation between static and its type
+        self.state.code_graph.relations.push(Relation {
+            source: static_id,
+            target: type_id,
+            kind: RelationKind::ValueType,
+        });
 
         // Continue visiting
         visit::visit_item_static(self, item_static);

@@ -131,21 +131,18 @@ pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a
         return Some(func);
     }
 
-    #[cfg(feature = "use_statement_tracking")]
+    if let Some(use_stmt) = graph
+        .use_statements
+        .iter()
+        .find(|u| u.visible_name == name && !u.is_glob)
     {
-        if let Some(use_stmt) = graph
-            .use_statements
-            .iter()
-            .find(|u| u.visible_name == name && !u.is_glob)
-        {
-            if let Some(original_name) = &use_stmt.original_name {
-                // The last segment of the path should be the original name
-                return graph.functions.iter().find(|f| &f.name == original_name);
-            } else {
-                // for non-renamed imports, use the last path segment
-                let original_name = use_stmt.path.last()?;
-                return graph.functions.iter().find(|f| &f.name == original_name);
-            }
+        if let Some(original_name) = &use_stmt.original_name {
+            // The last segment of the path should be the original name
+            return graph.functions.iter().find(|f| &f.name == original_name);
+        } else {
+            // for non-renamed imports, use the last path segment
+            let original_name = use_stmt.path.last()?;
+            return graph.functions.iter().find(|f| &f.name == original_name);
         }
     }
     None
@@ -200,19 +197,9 @@ pub fn test_module_path(segments: &[&str]) -> Vec<String> {
 
 /// Find module by path segments
 pub fn find_module_by_path<'a>(graph: &'a CodeGraph, path: &'a [String]) -> Option<&'a ModuleNode> {
-    graph.modules.iter().find(|m| {
-        #[cfg(feature = "module_path_tracking")]
-        {
-            m.path == path
-        }
-        #[cfg(not(feature = "module_path_tracking"))]
-        {
-            false
-        }
-    })
+    graph.modules.iter().find(|m| m.path == path)
 }
 
-#[cfg(feature = "visibility_resolution")]
 /// Helper function for visibility testing of TypeDefNode
 pub fn get_visibility_info<'a>(def: &'a TypeDefNode, _graph: &CodeGraph) -> (NodeId, &'a str) {
     match def {
@@ -248,8 +235,7 @@ pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&
     })
 }
 
-#[cfg(feature = "visibility_resolution")]
-pub fn find_func_path_by_id<'a>(graph: &'a CodeGraph, fn_id: NodeId) -> Option<&'a Vec<String>> {
+pub fn find_func_path_by_id(graph: &CodeGraph, fn_id: NodeId) -> Option<&Vec<String>> {
     graph
         .modules
         .iter()
