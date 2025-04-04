@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::nodes::Visible;
 use super::relations::RelationKind;
 use crate::parser::nodes::NodeId;
@@ -9,6 +11,7 @@ use crate::parser::{
 };
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::nodes::ImportNode;
 

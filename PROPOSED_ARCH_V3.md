@@ -42,7 +42,7 @@
  │   ├── ingest/                    # Core processing Pipeline
  │   │   ├── syn_parser/       󰆧    # AST traversal + parsing (Rayon)
  │   │   ├── ploke-lsp/        󰚩    # LSP data processing (Tokio)
- │   │   ├── ploke-embed/      󰆧    # Vector embeddings (Rayon)
+ │   │   ├── ploke-embed/      󰚩    # Vector embeddings (Rayon)
  │   │   └── ploke-graph/      󰆧    # AST ➔ CozoDB (Rayon)
  │   ├── io/                   󰚩    # Input/Output pipeline (Tokio)
  │   │   ├── watcher/          󰚩    # File watching (Tokio)
