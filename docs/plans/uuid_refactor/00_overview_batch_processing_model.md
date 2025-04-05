@@ -63,18 +63,23 @@ This model breaks down the parsing, resolution, and database insertion process i
         -   Using the definitive module tree and the stored context (relative path, name), calculate the absolute item path.
         -   Generate the final `NodeId::Path(Uuid)`.
         -   Build and maintain a mapping: `TemporarySynthId -> FinalPathId`. Update the node's ID in the merged representation.
-    4.  **Resolve Types & Finalize `TypeId`s:**
-        -   Create a lookup map: `absolute_type_path_string -> (FinalPathId, FinalTypeId, FinalLogicalTypeId)`.
+    4.  **Resolve Types & Finalize `TypeId`s (Intra-Crate Focus):**
+        -   Create a lookup map for items defined *within the current batch*: `absolute_type_path_string -> (FinalPathId, FinalTypeId, FinalLogicalTypeId)`.
         -   Iteratively process nodes containing unresolved type references:
             *   Use `use` statements (parsed in Phase 2) and the module context to resolve the reference path string to an absolute path.
-            *   Look up the absolute path in the map to find the defining item's final IDs.
-            *   Generate the final `TypeId` (struct) and `LogicalTypeId` (Uuid) for the resolved type.
-            *   Replace the temporary `TypeId::Synthetic` and unresolved markers with the final IDs.
-        -   Repeat resolution attempts until no further progress is made (handles dependency chains and cycles).
-    5.  **Update Relations:** Iterate through all `Relation` objects. Use the `TemporarySynthId -> FinalPathId` map to replace temporary source/target IDs with final `NodeId::Path` or `TypeId` values. Discard relations that could not be fully resolved.
+            *   **Attempt Resolution:** Look up the absolute path in the map of *locally defined* items.
+            *   **If Found:** Generate the final `TypeId` (struct) and `LogicalTypeId` (Uuid). Replace the temporary `TypeId::Synthetic` and unresolved markers with the final IDs.
+            *   **If Not Found (External/Unparsed Dependency):** The `TypeId` remains `Synthetic`. Ensure the unresolved path string is preserved alongside the synthetic ID for potential future use or analysis (per [ADR-003](docs/design/adrs/accepted/ADR-003-Defer-Dependency-Resolution.md)).
+        -   Repeat resolution attempts until no further progress is made (handles dependency chains and cycles *within the parsed set*).
+    5.  **Update Relations:** Iterate through all `Relation` objects. Use the `TemporarySynthId -> FinalPathId` map to replace temporary source/target IDs with final `NodeId::Path` or resolved `TypeId` values. For relations pointing to unresolved external types, retain the `Synthetic` `TypeId` and the associated path string. Do *not* discard relations just because the target is external/unresolved.
 -   **Output:**
-    -   A fully resolved `CodeGraph` (or equivalent data structures) with final `NodeId::Path`, `TypeId`, `LogicalTypeId`, `TrackingHash`, and resolved `Relation`s.
-    -   **Persisted State:** The definitive module tree and the `TemporarySynthId -> FinalPathId` maps.
+    -   A `CodeGraph` (or equivalent data structures) containing:
+        -   Final `NodeId::Path` for locally defined items (or `Synthetic` for macros etc.).
+        -   Final `TypeId`, `LogicalTypeId` for locally defined types.
+        -   `Synthetic` `TypeId`s (with path strings) for references to external/unparsed types.
+        -   `TrackingHash` values.
+        -   `Relation`s using final IDs where possible, and `Synthetic` IDs where necessary.
+    -   **Persisted State:** The definitive module tree and the `TemporarySynthId -> FinalPathId` maps *for the resolved items*.
 
 ### Phase 4: Embedding Generation (Async I/O)
 
