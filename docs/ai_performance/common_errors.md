@@ -57,3 +57,26 @@
 - Better static analysis of borrow patterns in visitor code
 
 [See Insights](#potential-insights-from-e0499)
+
+### Error Cascade E-UUID-Refactor: Multi-File Refactor Failure
+**Description**: A large number (54) of compilation errors occurred after attempting to refactor core data types (`NodeId`, `TypeId`) and related structures (`*Node`, `VisitorState`) across multiple files (`ploke-core`, `syn_parser/src/parser/*`, `syn_parser/src/parser/visitor/*`) simultaneously under a feature flag (`uuid_ids`).
+
+**Context**:
+- Implementing Phase 2 of the UUID refactoring plan.
+- Modifying structs to use new ID types from `ploke-core`.
+- Adding `tracking_hash` field.
+- Changing `VisitorState` fields and methods conditionally.
+
+**Root Causes**:
+1. **Incomplete Application:** Structural changes (new fields, type changes) were made, but the code *using* these structures (initializers, method calls) was not updated consistently under the feature flag.
+2. **Missing Trait Implementations:** The new `NodeId` enum was missing required trait implementations (`Ord`, `PartialOrd`) needed by deriving structs (`Relation`).
+3. **Import/Visibility Issues:** Problems with how the new types were imported or re-exported under conditional compilation.
+4. **Overly Broad Change Set:** Attempting to modify too many interdependent files and concepts in a single step, making it hard to track all necessary downstream changes.
+
+**Prevention Strategies**:
+- **Incremental Refactoring:** Apply changes step-by-step, focusing on one aspect (e.g., fixing trait bounds, updating initializers, replacing method calls) at a time.
+- **Compile After Each Step:** Run `cargo check` (with and without the feature flag) frequently after small changes.
+- **Stubbing:** Implement new methods/functions as stubs first to satisfy the compiler before adding complex logic.
+- **Focused File Access:** Request changes for a smaller, related set of files per interaction.
+
+[See Insights](#potential-insights-from-e-uuid-refactor)
