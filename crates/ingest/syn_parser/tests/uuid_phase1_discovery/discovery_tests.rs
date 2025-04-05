@@ -56,9 +56,10 @@ edition = "2021"
     let project_root = temp_dir.path().to_path_buf(); // Dummy project root
     let target_crates = vec![crate_root.clone()];
 
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(errors.is_empty(), "Discovery should succeed for valid crate, errors: {:?}", errors);
+    assert!(result.is_ok(), "Discovery should succeed for valid crate, got: {:?}", result.err());
+    let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
     let context = output.crate_contexts.get("test_crate").unwrap();
@@ -77,10 +78,11 @@ edition = "2021"
     assert!(!context.files.contains(&src_dir.join("other.txt"))); // Ensure non-rs is excluded
 
     // Check initial_module_map (assuming lib.rs contains `mod module;`)
-    // Create lib.rs with mod declaration
+    // Create lib.rs with mod declaration BEFORE running discovery
     fs::write(src_dir.join("lib.rs"), "mod module;")?;
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates); // Re-run after modifying lib.rs
-    assert!(errors.is_empty(), "Discovery should still succeed, errors: {:?}", errors);
+    let result = run_discovery_phase(&project_root, &target_crates); // Re-run after modifying lib.rs
+    assert!(result.is_ok(), "Discovery should still succeed, got: {:?}", result.err());
+    let output = result.unwrap();
 
     let module_file_path = src_dir.join("module.rs");
     assert!(output.initial_module_map.contains_key(&module_file_path), "Module map should contain module.rs");
@@ -99,12 +101,11 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(!errors.is_empty(), "Discovery should report errors if Cargo.toml is missing");
-    assert!(output.crate_contexts.is_empty(), "No context should be generated on critical error");
-    assert_eq!(errors.len(), 1);
-    assert!(matches!(errors[0], DiscoveryError::Io { ref path, .. } if path.ends_with("Cargo.toml")));
+    assert!(result.is_err(), "Discovery should fail if Cargo.toml is missing");
+    let err = result.unwrap_err();
+    assert!(matches!(err, DiscoveryError::Io { ref path, .. } if path.ends_with("Cargo.toml")));
 
     Ok(())
 }
@@ -121,12 +122,11 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(!errors.is_empty(), "Discovery should report errors for invalid Cargo.toml");
-    assert!(output.crate_contexts.is_empty(), "No context should be generated on critical error");
-    assert_eq!(errors.len(), 1);
-    assert!(matches!(errors[0], DiscoveryError::TomlParse { .. }));
+    assert!(result.is_err(), "Discovery should fail for invalid Cargo.toml");
+    let err = result.unwrap_err();
+    assert!(matches!(err, DiscoveryError::TomlParse { .. }));
 
     Ok(())
 }
@@ -148,12 +148,11 @@ version = "0.1.0"
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(!errors.is_empty(), "Discovery should report errors if src is missing");
-    assert!(output.crate_contexts.is_empty(), "No context should be generated on critical error");
-    assert_eq!(errors.len(), 1);
-    assert!(matches!(errors[0], DiscoveryError::SrcNotFound { .. }));
+    assert!(result.is_err(), "Discovery should fail if src is missing");
+    let err = result.unwrap_err();
+    assert!(matches!(err, DiscoveryError::SrcNotFound { .. }));
 
     Ok(())
 }
@@ -166,12 +165,11 @@ fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::er
     let project_root = temp_dir.path().to_path_buf();
     let target_crates = vec![crate_root.clone()];
 
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(!errors.is_empty(), "Discovery should report errors if crate path doesn't exist");
-    assert!(output.crate_contexts.is_empty(), "No context should be generated on critical error");
-    assert_eq!(errors.len(), 1);
-    assert!(matches!(errors[0], DiscoveryError::CratePathNotFound { .. }));
+    assert!(result.is_err(), "Discovery should fail if crate path doesn't exist");
+    let err = result.unwrap_err();
+    assert!(matches!(err, DiscoveryError::CratePathNotFound { .. }));
 
     Ok(())
 }
@@ -214,25 +212,12 @@ fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::
         crate2_root.clone(),
         crate3_root.clone(), // Missing src
     ];
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    // Check errors
-    assert_eq!(errors.len(), 1, "Only crate3 should produce an error");
-    assert!(matches!(errors[0], DiscoveryError::SrcNotFound { ref path, .. } if path.ends_with("crate3/src")));
-
-    // Check partial success output
-    assert_eq!(output.crate_contexts.len(), 2, "Should contain context for crate1 and crate2");
-    assert!(output.crate_contexts.contains_key("crate1"));
-    assert!(output.crate_contexts.contains_key("crate2"));
-    assert!(!output.crate_contexts.contains_key("crate3"));
-
-    let context1 = output.crate_contexts.get("crate1").unwrap();
-    assert_eq!(context1.files.len(), 1);
-    assert!(context1.files[0].ends_with("crate1/src/lib.rs"));
-
-    let context2 = output.crate_contexts.get("crate2").unwrap();
-    assert_eq!(context2.files.len(), 1);
-    assert!(context2.files[0].ends_with("crate2/src/main.rs"));
+    // Check for error (should fail because of crate3)
+    assert!(result.is_err(), "Should fail due to crate3 missing src");
+    let err = result.unwrap_err();
+    assert!(matches!(err, DiscoveryError::SrcNotFound { ref path, .. } if path.ends_with("crate3/src")));
 
     Ok(())
 }
@@ -260,9 +245,10 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let target_crates = vec![fixture_crate_root.clone()];
-    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
+    let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(errors.is_empty(), "Discovery should succeed for fixture_test_crate, errors: {:?}", errors);
+    assert!(result.is_ok(), "Discovery should succeed for fixture_test_crate, got: {:?}", result.err());
+    let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
     let context = output

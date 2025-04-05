@@ -156,28 +156,21 @@ pub fn analyze_files_parallel(
 
         // --- Phase 1: Discovery ---
         println!("Running Discovery Phase..."); // Temporary print
-        let (discovery_output, discovery_errors) =
-            run_discovery_phase(&project_root, &target_crates);
-
-        // Log any errors encountered during discovery
-        if !discovery_errors.is_empty() {
-            eprintln!(
-                "Discovery phase completed with errors: {:?}",
-                discovery_errors
-            );
-            // Decide if we should proceed even with errors? For now, let's proceed
-            // with the partial results. If discovery_output is empty and errors
-            // occurred, we might want to return early.
-            if discovery_output.crate_contexts.is_empty() {
-                 eprintln!("No crates discovered successfully, aborting parse.");
-                 return vec![]; // Or return a proper error
+        let discovery_output = match run_discovery_phase(&project_root, &target_crates) {
+            Ok(output) => {
+                 println!(
+                    "Discovery successful. Found {} crates.",
+                    output.crate_contexts.len()
+                 );
+                 output
+            },
+            Err(e) => {
+                // Handle discovery errors (e.g., log them, return an error)
+                eprintln!("Discovery phase failed: {:?}", e);
+                // Return empty results or a proper error
+                return vec![];
             }
-        }
-
-        println!(
-            "Discovery successful. Found {} crates.",
-            discovery_output.crate_contexts.len()
-        );
+        };
 
         // --- Phase 2: Parallel Parse (Stub) ---
         // TODO: Implement the actual parallel parsing using discovery_output
