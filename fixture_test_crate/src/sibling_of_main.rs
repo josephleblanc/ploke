@@ -1,5 +1,7 @@
 // fixture_test_crate/src/sibling_of_main.rs
 
+// mod second_sibling; // incorrect, unresolved module: cannot import other file here.
+
 // Inner module
 mod sibling_outer {
     fn sibling_outer_function() {
@@ -20,17 +22,17 @@ pub fn sibling_outer_function() {
     println!("Outer function");
 }
 
-pub mod second_sibling {
+pub mod third_sibling {
     // use sibling_outer; // incorrect, not in same context as `sibling_outer`
     use crate::sibling_of_main::sibling_outer; // Correct
 
-    fn second_sibling_function() {
+    fn third_sibling_function() {
         // sibling_public_function(); // Incorrect, out of scope
         sibling_outer::sibling_public_function(); // correct
     }
 }
 
-pub mod third_sibling {
+pub mod fourth_sibling {
     use super::sibling_outer;
 }
 
