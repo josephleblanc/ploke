@@ -19,6 +19,12 @@ use walkdir::WalkDir;
 // effectively versioning the tool's namespace generation.
 // For now, it provides stability relative to the analyzed crate's identity.
 // Generated via `uuidgen`: f7f4a9a0-1b1a-4b0e-9c1a-1a1a1a1a1a1a
+// NOTE: Known limitations:
+// * No currently designed methods to track changes in `ploke-db`. Would be a big feature to
+// implement, this is fine for the foreseeable future.
+//  * Explore ideas on this at leisure, in case there is easy groundwork to lay.
+// * Currently uses same namespace for all crates with no project.
+//  * Fine for now. Evaluate potential for pros/cons of this approach another time.
 pub const PROJECT_NAMESPACE_UUID: Uuid = Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
@@ -122,8 +128,13 @@ pub struct DiscoveryOutput {
 ///
 /// # Returns
 /// A `Result` containing the `DiscoveryOutput` on success, or a `DiscoveryError` on failure.
+// NOTE: Known limitations:
+// * Does not handle case of crate with no `src` directory in project
+// * Assuming target_crates provides absolute paths for simplicity
+//  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
+//  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    _project_root: &PathBuf, // Keep for potential future use
+    _project_root: &PathBuf,   // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
@@ -138,29 +149,21 @@ pub fn run_discovery_phase(
 
         // --- 3.2.2 Implement Cargo.toml Parsing ---
         let cargo_toml_path = crate_root_path.join("Cargo.toml");
-        let cargo_content = fs::read_to_string(&cargo_toml_path).map_err(|e| {
-            DiscoveryError::Io {
+        let cargo_content =
+            fs::read_to_string(&cargo_toml_path).map_err(|e| DiscoveryError::Io {
                 path: cargo_toml_path.clone(),
                 source: e,
-            }
-        })?;
+            })?;
         let manifest: CargoManifest =
             toml::from_str(&cargo_content).map_err(|e| DiscoveryError::TomlParse {
                 path: cargo_toml_path.clone(),
                 source: e,
             })?;
 
-        let crate_name = manifest
-            .package
-            .name
-            .clone();
-            // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
-        let crate_version = manifest
-            .package
-            .version
-            .clone();
-            // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
-
+        let crate_name = manifest.package.name.clone();
+        // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
+        let crate_version = manifest.package.version.clone();
+        // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
@@ -170,7 +173,9 @@ pub fn run_discovery_phase(
         if !src_path.exists() || !src_path.is_dir() {
             // Allow crates without a src dir? Maybe just return empty file list.
             // For now, let's error if src isn't found, common case.
-             return Err(DiscoveryError::SrcNotFound { path: src_path });
+            // USER: Agreed, and good call on the clear enum error. We can expand this later once
+            // core functionality is built out.
+            return Err(DiscoveryError::SrcNotFound { path: src_path });
             // files = Vec::new();
         }
 
@@ -181,9 +186,9 @@ pub fn run_discovery_phase(
             .filter(|e| e.file_type().is_file())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
         {
-             // Ensure we store absolute paths if target_crates might be relative
-             // Assuming target_crates provides absolute paths for simplicity here.
-             // If not, canonicalize crate_root_path first.
+            // Ensure we store absolute paths if target_crates might be relative
+            // Assuming target_crates provides absolute paths for simplicity here.
+            // If not, canonicalize crate_root_path first.
             files.push(entry.path().to_path_buf());
         }
         // Handle walkdir errors more robustly if needed:
@@ -198,7 +203,6 @@ pub fn run_discovery_phase(
         //         Err(e) => return Err(DiscoveryError::Walkdir { path: src_path.clone(), source: e }),
         //     }
         // }
-
 
         // --- Combine into CrateContext ---
         let context = CrateContext {
@@ -221,7 +225,6 @@ pub fn run_discovery_phase(
     })
 }
 
-
 /// Derives a deterministic UUID v5 namespace for a specific crate version.
 ///
 /// This function is intended to run single-threaded as part of the discovery setup.
@@ -233,6 +236,11 @@ pub fn run_discovery_phase(
 /// # Returns
 /// A `Uuid` representing the namespace for this crate version, derived from
 /// the `PROJECT_NAMESPACE_UUID`.
+// NOTE: Known Design Limitation
+// * Currently uses full version, e.g. "0.5.142", requiring full re-map for smaller changes.
+//  * Consider using semver as default, and adding a config (not implemented) for user-specific
+//  choices on frequency of remap (breaking, major, minor, never, etc) due to versioning changes.
+//  * Fine for now.
 pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
     // Combine name and version to form the unique identifier string within the project namespace.
     // Using "@" is a common convention.
