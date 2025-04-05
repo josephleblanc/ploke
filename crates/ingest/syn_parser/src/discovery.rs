@@ -1,10 +1,13 @@
 #![cfg(feature = "uuid_ids")] // Gate the entire module
 
+use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+use toml;
 use uuid::Uuid;
-use walkdir; // Keep walkdir import separate for clarity if needed elsewhere
+use walkdir::WalkDir;
 
 // Define a stable PROJECT_NAMESPACE UUID.
 // This UUID acts as a root namespace for deriving crate-specific namespaces.
@@ -47,6 +50,22 @@ pub enum DiscoveryError {
         #[source]
         source: walkdir::Error,
     },
+    #[error("Source directory not found for crate at: {path}")]
+    SrcNotFound { path: PathBuf },
+}
+
+// Helper structs for deserializing Cargo.toml
+#[derive(Deserialize, Debug)]
+struct CargoManifest {
+    package: PackageInfo,
+    // Add other fields like [lib], [bin] if needed later for module mapping
+}
+
+#[derive(Deserialize, Debug)]
+struct PackageInfo {
+    name: String,
+    version: String,
+    // edition: Option<String>, // Could be useful later
 }
 
 /// Context information gathered for a single crate during discovery.
@@ -104,12 +123,104 @@ pub struct DiscoveryOutput {
 /// # Returns
 /// A `Result` containing the `DiscoveryOutput` on success, or a `DiscoveryError` on failure.
 pub fn run_discovery_phase(
-    _project_root: &PathBuf,
-    _target_crates: &[PathBuf], // Assuming we pass paths to crate roots
+    _project_root: &PathBuf, // Keep for potential future use
+    target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
-    // Implementation will go here in subsequent steps (3.2.1 onwards)
-    todo!("Implement Phase 1 discovery logic")
+    let mut crate_contexts = HashMap::new();
+    let initial_module_map = HashMap::new(); // To be implemented later
+
+    for crate_root_path in target_crates {
+        if !crate_root_path.exists() || !crate_root_path.is_dir() {
+            return Err(DiscoveryError::CratePathNotFound {
+                path: crate_root_path.clone(),
+            });
+        }
+
+        // --- 3.2.2 Implement Cargo.toml Parsing ---
+        let cargo_toml_path = crate_root_path.join("Cargo.toml");
+        let cargo_content = fs::read_to_string(&cargo_toml_path).map_err(|e| {
+            DiscoveryError::Io {
+                path: cargo_toml_path.clone(),
+                source: e,
+            }
+        })?;
+        let manifest: CargoManifest =
+            toml::from_str(&cargo_content).map_err(|e| DiscoveryError::TomlParse {
+                path: cargo_toml_path.clone(),
+                source: e,
+            })?;
+
+        let crate_name = manifest
+            .package
+            .name
+            .clone();
+            // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
+        let crate_version = manifest
+            .package
+            .version
+            .clone();
+            // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
+
+
+        // --- 3.2.3 Implement Namespace Generation (Called below) ---
+        let namespace = derive_crate_namespace(&crate_name, &crate_version);
+
+        // --- 3.2.1 Implement File Discovery Logic ---
+        let src_path = crate_root_path.join("src");
+        if !src_path.exists() || !src_path.is_dir() {
+            // Allow crates without a src dir? Maybe just return empty file list.
+            // For now, let's error if src isn't found, common case.
+             return Err(DiscoveryError::SrcNotFound { path: src_path });
+            // files = Vec::new();
+        }
+
+        let mut files = Vec::new();
+        for entry in WalkDir::new(&src_path)
+            .into_iter()
+            .filter_map(Result::ok) // Ignore errors for now, or collect them
+            .filter(|e| e.file_type().is_file())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "rs"))
+        {
+             // Ensure we store absolute paths if target_crates might be relative
+             // Assuming target_crates provides absolute paths for simplicity here.
+             // If not, canonicalize crate_root_path first.
+            files.push(entry.path().to_path_buf());
+        }
+        // Handle walkdir errors more robustly if needed:
+        // let walker = WalkDir::new(&src_path).into_iter();
+        // while let Some(entry_result) = walker.next() {
+        //     match entry_result {
+        //         Ok(entry) => {
+        //             if entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "rs") {
+        //                 files.push(entry.path().to_path_buf());
+        //             }
+        //         }
+        //         Err(e) => return Err(DiscoveryError::Walkdir { path: src_path.clone(), source: e }),
+        //     }
+        // }
+
+
+        // --- Combine into CrateContext ---
+        let context = CrateContext {
+            name: crate_name.clone(),
+            version: crate_version,
+            namespace,
+            root_path: crate_root_path.clone(),
+            files,
+        };
+
+        crate_contexts.insert(crate_name, context);
+    }
+
+    // --- 3.2.4 Implement Initial Module Mapping (Deferred) ---
+    // let initial_module_map = build_initial_module_map(&crate_contexts)?;
+
+    Ok(DiscoveryOutput {
+        crate_contexts,
+        initial_module_map, // Return empty map for now
+    })
 }
+
 
 /// Derives a deterministic UUID v5 namespace for a specific crate version.
 ///
@@ -122,7 +233,9 @@ pub fn run_discovery_phase(
 /// # Returns
 /// A `Uuid` representing the namespace for this crate version, derived from
 /// the `PROJECT_NAMESPACE_UUID`.
-pub fn derive_crate_namespace(_name: &str, _version: &str) -> Uuid {
-    // Implementation will go here in step 3.2.3
-    todo!("Implement crate namespace derivation using Uuid::new_v5 and PROJECT_NAMESPACE_UUID")
+pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
+    // Combine name and version to form the unique identifier string within the project namespace.
+    // Using "@" is a common convention.
+    let name_version = format!("{}@{}", name, version);
+    Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name_version.as_bytes())
 }
