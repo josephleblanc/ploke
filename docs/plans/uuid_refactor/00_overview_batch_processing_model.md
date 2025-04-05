@@ -2,7 +2,7 @@
 
 ## 1. Goal
 
-Refactor the `ploke` codebase, primarily `syn_parser`, to use stable, deterministic `uuid::Uuid` identifiers (`NodeId`, `TypeId`, `LogicalTypeId`) instead of `usize`. This enables reliable graph merging, parallel processing, and efficient incremental updates. This plan details the initial implementation using a multi-phase batch processing model.
+Refactor the `ploke` codebase, primarily `syn_parser`, to use stable, deterministic `uuid::Uuid` identifiers (`NodeId`, `TypeId`, `LogicalTypeId`) instead of `usize`. This enables reliable graph merging, parallel processing, and efficient incremental updates. This plan details the initial implementation using a multi-phase batch processing model, focusing on intra-crate resolution first (see [ADR-003](docs/design/adrs/accepted/ADR-003-Defer-Dependency-Resolution.md)).
 
 ## 2. Core Identifier Strategy (See ADR-001)
 
@@ -10,10 +10,11 @@ Refactor the `ploke` codebase, primarily `syn_parser`, to use stable, determinis
 -   **Generation:** UUIDv5 based on hierarchical namespaces (`PROJECT -> CRATE -> ITEM/TYPE`).
 -   **Storage:** Native `cozo::DataValue::Uuid` in CozoDB.
 -   **Feature Flag:** `uuid_ids`.
+-   **Scope:** Per [ADR-004](docs/design/adrs/proposed/ADR-004-Parser-Scope-Resolution.md), the `syn_parser` crate is responsible for Phases 1-3, delivering a resolved graph.
 
 ## 3. Multi-Phase Batch Processing Model
 
-This model breaks down the parsing, resolution, and database insertion process into distinct, sequential phases, allowing for parallelism within specific phases.
+This model breaks down the parsing, resolution, and database insertion process into distinct, sequential phases, allowing for parallelism within specific phases. The initial focus is on resolving IDs for items defined *within* the parsed crates ([ADR-003](docs/design/adrs/accepted/ADR-003-Defer-Dependency-Resolution.md)).
 
 ### Phase 1: Discovery & Context Setup
 
@@ -40,14 +41,14 @@ This model breaks down the parsing, resolution, and database insertion process i
         -   For defined items (functions, structs, etc.), generate a *temporary* `NodeId::Synthetic(Uuid)` using `CRATE_NAMESPACE`, file path, relative path/span, and item name. Store the context needed for final `Path` ID calculation (relative path, name) with the node.
     4.  **`TypeId` Generation:**
         -   When encountering type paths (`syn::TypePath`), attempt local resolution.
-        -   If unresolved, store the path string (e.g., `foo::Bar`) as an unresolved reference marker within the node using it (e.g., field, parameter). Generate a *temporary* `TypeId::Synthetic(Uuid)` based on the unresolved string + `CRATE_NAMESPACE`.
-    5.  **`Relation` Generation:** Create `Relation` objects using the *temporary* `Synthetic` IDs.
+        -   If unresolved locally (e.g., it's an import `use other_crate::Foo;` or defined later in the crate), store the path string (e.g., `foo::Bar`, `other_crate::Foo`) as an unresolved reference marker within the node using it (e.g., field, parameter). Generate a *temporary* `TypeId::Synthetic(Uuid)` based on the unresolved string + `CRATE_NAMESPACE`. Ensure the synthetic ID or marker retains the original path string for later resolution attempts.
+    5.  **`Relation` Generation:** Create `Relation` objects using the *temporary* `Synthetic` IDs. Store the original path string for type relations if the target `TypeId` is synthetic.
     6.  **`TrackingHash` Generation:** Calculate the `TrackingHash` based on AST tokens for relevant nodes.
 -   **Output (per worker):** A partial `CodeGraph` containing:
     -   Full node details (`FunctionNode`, `StructNode`, etc.).
     -   Temporary `NodeId::Synthetic` and `TypeId::Synthetic` identifiers.
-    -   Unresolved type reference markers.
-    -   `Relation`s using temporary IDs.
+    -   Unresolved type reference markers (including the path string).
+    -   `Relation`s using temporary IDs (and potentially unresolved path strings for types).
     -   `TrackingHash` values.
 -   **Concurrency:** High degree of parallelism via `rayon` across files.
 
@@ -104,11 +105,11 @@ This model breaks down the parsing, resolution, and database insertion process i
     1.  Load the **Persisted State** (module tree, ID maps) from the previous run.
     2.  Run **Phase 1** only if `Cargo.toml` or crate structure changed significantly.
     3.  Run **Phase 2** (Parallel Parse) only for the changed files and potentially directly dependent files/crates.
-    4.  Run **Phase 3** (Batch Resolution), using the loaded state as a starting point. Only new/changed items need full resolution; existing IDs can be reused. Update the persisted state.
-    5.  Run **Phase 4** (Embed) only for items whose `TrackingHash` changed or are new, using `LogicalTypeId`.
-    6.  Run **Phase 5** (Transform/Insert) to update CozoDB with changes.
+    4.  Run **Phase 3** (Batch Resolution), using the loaded state as a starting point. Only new/changed items need full resolution *within the parsed set*; existing IDs can be reused. Resolution attempts for external types might succeed if the dependency was parsed previously and its map is loaded. Update the persisted state.
+    5.  Run **Phase 4** (Embed) only for items whose `TrackingHash` changed or are new, using `LogicalTypeId` (which should be generated even for unresolved types if possible, based on path string).
+    6.  Run **Phase 5** (Transform/Insert) to update CozoDB with changes, ensuring the schema can handle potentially `Synthetic` IDs or store unresolved path information alongside relations.
 
-This model provides a structured way to implement the UUID refactor while enabling parallelism and laying the groundwork for efficient incremental updates.
+This model provides a structured way to implement the UUID refactor while enabling parallelism and laying the groundwork for efficient incremental updates and future cross-crate resolution enhancements.
 
 ## 5. Identifier Definitions & Purpose
 
@@ -131,18 +132,18 @@ This table outlines the expected state of identifiers at the *end* of each phase
 | **2: Parallel Parse** | `FunctionNode`, etc | `Synthetic`           | N/A                   | N/A                   | Generated            | `Synthetic`                          | Nodes created with temporary IDs. Context for final ID stored. `TrackingHash` calculated. Relations use temporary IDs.              |
 |                       | `TypeNode`          | N/A                   | `Synthetic`           | `Synthetic`           | N/A                  | `Synthetic`                          | Temporary `TypeId` based on unresolved string. `LogicalTypeId` generated based on available info.                                   |
 |                       | `Relation`          | `Synthetic`           | `Synthetic`           | `Synthetic`           | N/A                  | `Synthetic`                          | Relations link temporary IDs. `Contains`, `Uses` might be resolvable if definition is in the same file, but generally use temp IDs. |
-| **3: Batch Resolve**  | `FunctionNode`, etc | `Path` (or `Synthetic`) | N/A                   | N/A                   | (Unchanged)          | `Path` (or `Synthetic`)              | Temporary `NodeId`s resolved to `Path` IDs using module tree. Final `Synthetic` IDs remain for macro-generated items etc.         |
-|                       | `TypeNode`          | N/A                   | Final (Struct)        | Final (Uuid)          | N/A                  | Final (Struct)                       | Temporary `TypeId`s resolved to final struct (`crate_id`, `type_id`). `LogicalTypeId` finalized.                                  |
-|                       | `Relation`          | `Path` (or `Synthetic`) | Final (Struct)        | Final (Uuid)          | N/A                  | `Path` / Final                       | `source`/`target` IDs updated to final `NodeId::Path` or `TypeId` values using mapping from resolution. Unresolved relations dropped. |
-| **4: Embed**          | Embeddings          | N/A                   | N/A                   | Final (Uuid)          | N/A                  | N/A                                  | Embeddings generated and associated with the final `LogicalTypeId`.                                                               |
-| **5: Transform/Insert** | Database Rows       | `Uuid` (`Path`/`Synth`) | `Uuid` (`type_id`)    | `Uuid`                | `Uuid`               | `Uuid` (`Path`/`Synth`/`type_id`)    | All data transformed to Cozo native types (`Uuid`, `Vector`, etc.) for insertion. `TypeId` struct stored as separate columns.      |
+| **3: Batch Resolve**  | `FunctionNode`, etc | `Path` (or `Synthetic`) | N/A                   | N/A                   | (Unchanged)          | `Path` (or `Synthetic`)              | Temporary `NodeId`s resolved to `Path` IDs using module tree for *local* items. `Synthetic` IDs remain for macros, etc.             |
+|                       | `TypeNode`          | N/A                   | Final (Struct) or `Synthetic` | Final (Uuid) or `Synthetic` | N/A                  | Final (Struct) or `Synthetic`        | *Local* `TypeId`s resolved to final struct/Uuid. *External/Unparsed* remain `Synthetic` (with path string). `LogicalTypeId` generated where possible. |
+|                       | `Relation`          | `Path` (or `Synthetic`) | Final (Struct) or `Synthetic` | Final (Uuid) or `Synthetic` | N/A                  | `Path` / Final / `Synthetic`         | `source`/`target` IDs updated to final `NodeId::Path` or resolved `TypeId`. Relations to unresolved external types retain `Synthetic` `TypeId`. **Relations are NOT dropped if target is unresolved.** |
+| **4: Embed**          | Embeddings          | N/A                   | N/A                   | Final (Uuid) or `Synthetic` | N/A                  | N/A                                  | Embeddings generated and associated with `LogicalTypeId` (final or synthetic).                                                    |
+| **5: Transform/Insert** | Database Rows       | `Uuid` (`Path`/`Synth`) | `Uuid` (`type_id`) or Null/Marker | `Uuid` or Null/Marker | `Uuid`               | `Uuid` (`Path`/`Synth`/`type_id`) or Null/Marker | Data transformed. Schema must handle unresolved types (e.g., nullable foreign keys, storing path string). `TypeId` struct stored for resolved types. |
 
 **Note on Relation Resolution Timing:**
 
 -   **`Contains` (Module -> Item/Submodule):** Generated in Phase 2 using temporary IDs. Finalized in Phase 3 when parent/child `NodeId`s are finalized.
 -   **`Uses` (Import -> Type):** Generated in Phase 2 using temporary IDs. Finalized in Phase 3 when the imported `TypeId` is resolved.
 -   **`StructField`, `FunctionParameter`, `FunctionReturn`, etc.:** Generated in Phase 2 linking temporary `NodeId` (owner) to temporary `TypeId` (type). Finalized in Phase 3 when both owner `NodeId` and field/param/return `TypeId` are resolved.
--   **`ImplementsTrait`, `ImplementsFor`:** Generated in Phase 2 linking temporary `TypeId` (implementer) to temporary `TypeId` (trait). Finalized in Phase 3 when both `TypeId`s are resolved.
+-   **`ImplementsTrait`, `ImplementsFor`:** Generated in Phase 2 linking temporary `TypeId` (implementer) to temporary `TypeId` (trait). Finalized in Phase 3 when both `TypeId`s are resolved *if both are local*. If the trait is external/unparsed, the trait `TypeId` remains `Synthetic`.
 
 ## 7. Phase / ID Flow Diagram
 
@@ -237,13 +238,13 @@ flowchart TD
         Input3 --> LoadState([Load Persisted State]);
         Merge --> BuildTree[Build Definitive Module Tree];
         LoadState --> BuildTree;
-        BuildTree --> ResolveNodeId[Resolve NodeId::Path];
+        BuildTree --> ResolveNodeId[Resolve NodeId::Path (Local)];
         LoadState --> ResolveNodeId;
-        ResolveNodeId --> ResolveTypes[Resolve Type Refs -> TypeId/LogicalTypeId];
+        ResolveNodeId --> ResolveTypes[Resolve Type Refs -> TypeId/LogicalTypeId (Local)];
         LoadState --> ResolveTypes;
-        ResolveTypes --> UpdateRelations[Update Relations w/ Final IDs];
+        ResolveTypes --> UpdateRelations[Update Relations w/ Final/Synth IDs];
         LoadState --> UpdateRelations;
-        UpdateRelations --> Output3(Resolved CodeGraph);
+        UpdateRelations --> Output3(Resolved CodeGraph w/ Unresolved Markers);
         Output3 --> PersistState(Persist Resolution State);
     end
 
@@ -290,10 +291,11 @@ flowchart TD
     -   **Cross-Crate Tests:** Once `ploke-graph` and `ploke-db` are updated, integration tests spanning parsing, transformation, and database insertion/querying are crucial to verify the end-to-end flow with native `Uuid` types.
     -   **Migration:** Develop a strategy or script to migrate existing CozoDB data if necessary (likely involves dropping and recreating relations with the new schema). For RON files, consider them incompatible artifacts of the old system.
 -   **Risk Areas & Mitigation:**
-    -   **Resolution Logic Complexity (Phase 3):** High risk of bugs in module tree building, path resolution, `use` statement handling, and cyclic dependency resolution. Mitigation: Extensive unit testing of the resolution logic in isolation; clear separation of concerns within the resolution code.
-    -   **Canonical Type String:** Risk of inconsistencies leading to different `TypeId`s for the same logical type. Mitigation: Start simple (normalized `to_token_stream`), document limitations, plan for future enhancement with deeper semantic analysis if needed. `LogicalTypeId` provides a safety net for embeddings.
-    -   **Performance:** Risk of slow UUID generation or resolution phase. Mitigation: Benchmarking; potential future optimization using faster hashes (`ahash`) or refining the resolution algorithm. Accept that initial batch processing might be slower than the old counter method.
-    -   **Persisted State Management:** Risk of corruption or inconsistency in the persisted module tree/ID maps. Mitigation: Robust serialization/deserialization; checksums or versioning for the persisted state file.
+    -   **Resolution Logic Complexity (Phase 3):** High risk of bugs in module tree building, path resolution, `use` statement handling, and cyclic dependency resolution *within the parsed set*. Mitigation: Extensive unit testing of the resolution logic in isolation; clear separation of concerns. **Deferring full cross-crate resolution mitigates some initial complexity.**
+    -   **Handling Unresolved Types:** Risk of downstream errors if code assumes all IDs are fully resolved. Mitigation: Explicitly design `CodeGraph`, `ploke-graph` transformations, and CozoDB schema to handle `Synthetic` IDs and unresolved markers ([ADR-003](docs/design/adrs/accepted/ADR-003-Defer-Dependency-Resolution.md)). Ensure `Synthetic` IDs store enough info (path string) for future resolution.
+    -   **Canonical Type String:** Risk of inconsistencies leading to different `TypeId`s for the same logical type. Mitigation: Start simple (normalized `to_token_stream`), document limitations, plan for future enhancement. `LogicalTypeId` (based on crate name + type path) provides a more stable cross-version identifier, especially important for linking embeddings even if `TypeId` changes.
+    -   **Performance:** Risk of slow UUID generation or resolution phase. Mitigation: Benchmarking; potential future optimization.
+    -   **Persisted State Management:** Risk of corruption or inconsistency. Mitigation: Robust serialization/deserialization; checksums/versioning. State must include maps for *resolved* items.
 
 ## 10. Relation Generation Context
 
