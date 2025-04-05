@@ -1,8 +1,12 @@
-use crate::parser::nodes::NodeId;
+#[cfg(feature = "uuid_ids")]
+use ploke_core::{NodeId, TypeId}; // Use new types when feature is enabled
+#[cfg(not(feature = "uuid_ids"))]
+use ploke_core::{NodeId, TypeId}; // Use compat types when feature is disabled
 
 use serde::{Deserialize, Serialize};
 
-pub type TypeId = usize;
+// TypeId and NodeId are now defined in ploke-core and conditionally compiled there.
+// pub type TypeId = usize; // REMOVED
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata

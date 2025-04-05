@@ -1,24 +1,54 @@
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::*;
-use crate::parser::types::*;
+use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, ParameterNode, Visible};
+use crate::parser::types::{GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind};
 use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use dashmap::DashMap;
 use std::sync::Arc;
 
+// --- Conditional Imports based on 'uuid_ids' feature ---
+#[cfg(feature = "uuid_ids")]
+use {
+    ploke_core::{LogicalTypeId, NodeId, TrackingHash, TypeId, PROJECT_NAMESPACE_UUID},
+    std::path::{Path, PathBuf}, // Needed for new fields
+    uuid::Uuid,                 // Needed for new fields
+};
+
+#[cfg(not(feature = "uuid_ids"))]
+use ploke_core::{NodeId, TypeId}; // Use compat types when feature is disabled
+// --- End Conditional Imports ---
+
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
-    next_node_id: NodeId,
-    next_type_id: TypeId,
-    // Use DashMap for thread-safe concurrent access
+
+    // --- Conditional Fields based on 'uuid_ids' feature ---
+    #[cfg(not(feature = "uuid_ids"))]
+    next_node_id: NodeId, // usize counter when UUIDs are off
+    #[cfg(not(feature = "uuid_ids"))]
+    next_type_id: TypeId, // usize counter when UUIDs are off
+
+    #[cfg(feature = "uuid_ids")]
+    pub(crate) crate_namespace: Uuid, // Namespace for the crate being parsed
+    #[cfg(feature = "uuid_ids")]
+    pub(crate) current_file_path: PathBuf, // Path of the file being parsed by this visitor instance
+                                       // --- End Conditional Fields ---
+
+    // Use DashMap for thread-safe concurrent access to the type cache
+    // TypeId here will be usize or the Uuid-based struct depending on the feature flag
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
-    pub(crate) current_module_path: Vec<String>,
-    pub(crate) current_module: Vec<String>, // Stack of module IDs we're currently in
+
+    // TODO: Re-evaluate if both current_module_path and current_module are needed.
+    // current_module_path seems more aligned with UUID generation needs.
+    pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
+    pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
 }
 
 impl VisitorState {
-    pub(crate) fn new() -> Self {
+    // TODO: Update constructor signature when integrating with Phase 1/`analyze_files_parallel`
+    // It will need to accept crate_namespace and current_file_path.
+    #[cfg(feature = "uuid_ids")]
+    pub(crate) fn new(crate_namespace: Uuid, current_file_path: PathBuf) -> Self {
         Self {
             code_graph: CodeGraph {
                 functions: Vec::new(),
@@ -33,25 +63,34 @@ impl VisitorState {
                 macros: Vec::new(),
                 use_statements: Vec::new(),
             },
+            // Initialize old fields for non-uuid_ids
             next_node_id: 0,
             next_type_id: 0,
+            // New fields are conditionally compiled out
             type_map: Arc::new(DashMap::new()),
             current_module_path: Vec::new(),
             current_module: Vec::new(),
         }
     }
 
+    // --- Conditional Methods based on 'uuid_ids' feature ---
+
+    // These methods only exist when using usize IDs
+    #[cfg(not(feature = "uuid_ids"))]
     pub(crate) fn next_node_id(&mut self) -> NodeId {
         let id = self.next_node_id;
         self.next_node_id += 1;
         id
     }
 
+    #[cfg(not(feature = "uuid_ids"))]
     pub(crate) fn next_type_id(&mut self) -> TypeId {
         let id = self.next_type_id;
         self.next_type_id += 1;
         id
     }
+
+    // --- End Conditional Methods ---
 
     pub(crate) fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
         match vis {
@@ -81,11 +120,25 @@ impl VisitorState {
                     Pat::Ident(PatIdent {
                         ident, mutability, ..
                     }) => (Some(ident.to_string()), mutability.is_some()),
-                    _ => (None, false),
+                    _ => (None, false), // Handle other patterns if necessary
                 };
 
+                // Generate ID based on feature flag
+                #[cfg(not(feature = "uuid_ids"))]
+                let id = self.next_node_id();
+                #[cfg(feature = "uuid_ids")]
+                let id = self.generate_synthetic_node_id(
+                    &format!(
+                        "param_{}",
+                        name.as_deref().unwrap_or("unnamed") // Simple context for param
+                    ),
+                    // TODO: Need span info here! Pass it down or get from `arg`.
+                    (0, 0), // Placeholder span
+                );
+
+
                 Some(ParameterNode {
-                    id: self.next_node_id(),
+                    id,
                     name,
                     type_id,
                     is_mutable,
@@ -94,10 +147,18 @@ impl VisitorState {
             }
             FnArg::Receiver(receiver) => {
                 // Create a special self type
+                // Use get_or_create_type for consistency, even for "Self"
+                // This might require adjustments in get_or_create_type to handle "Self" specifically
+                // or we create a dedicated "Self" type node. Let's try creating it directly for now.
+
+                #[cfg(not(feature = "uuid_ids"))]
                 let self_type_id = self.next_type_id();
+                #[cfg(feature = "uuid_ids")]
+                let self_type_id = self.generate_synthetic_type_id("Self"); // Generate ID for Self type
+
                 let mut related_types = Vec::new();
 
-                // If we have an explicit type for self, include it
+                // If we have an explicit type for self (e.g., `self: Box<Self>`), process it
                 let ty_ref: &syn::Type = &receiver.ty;
                 let inner_type_id = super::type_processing::get_or_create_type(self, ty_ref);
                 related_types.push(inner_type_id);
@@ -111,8 +172,18 @@ impl VisitorState {
                     related_types,
                 });
 
+                // Generate ID for the 'self' parameter node itself
+                #[cfg(not(feature = "uuid_ids"))]
+                let param_id = self.next_node_id();
+                #[cfg(feature = "uuid_ids")]
+                let param_id = self.generate_synthetic_node_id(
+                    "param_self",
+                    // TODO: Get span from receiver if possible
+                    (0, 0), // Placeholder span
+                );
+
                 Some(ParameterNode {
-                    id: self.next_node_id(),
+                    id: param_id,
                     name: Some("self".to_string()),
                     type_id: self_type_id,
                     is_mutable: receiver.mutability.is_some(),
@@ -140,42 +211,23 @@ impl VisitorState {
                         .collect();
 
                     let default_type = default.as_ref().map(|expr| {
-                        let path = expr.to_token_stream().to_string();
-                        // Clone the path to avoid borrowing issues
-                        let path_clone = path.clone();
-
-                        // First check if we already have this type
-                        let existing_id = self.type_map.get(&path_clone).map(|entry| {
-                            let id = *entry.value();
-                            drop(entry); // Explicitly drop the reference to release the borrow
-                            id
-                        });
-
-                        if let Some(id) = existing_id {
-                            id
-                        } else {
-                            // Create a new type ID
-                            let id = self.next_type_id();
-                            // Insert the new type ID before processing the type
-                            self.type_map.insert(path_clone, id);
-
-                            // Process the type separately to avoid borrow conflicts
-                            let (type_kind, related_types) =
-                                super::type_processing::process_type(self, expr);
-
-                            // Add the type to the graph
-                            self.code_graph.type_graph.push(TypeNode {
-                                id,
-                                kind: type_kind,
-                                related_types,
-                            });
-
-                            id
-                        }
+                        // Use get_or_create_type for default types
+                        super::type_processing::get_or_create_type(self, expr)
                     });
 
+                    // Generate ID for the generic parameter node
+                    #[cfg(not(feature = "uuid_ids"))]
+                    let param_node_id = self.next_node_id();
+                    #[cfg(feature = "uuid_ids")]
+                    let param_node_id = self.generate_synthetic_node_id(
+                        &format!("generic_type_{}", ident),
+                        // TODO: Get span from TypeParam if possible
+                        (0, 0), // Placeholder span
+                    );
+
+
                     params.push(GenericParamNode {
-                        id: self.next_node_id(),
+                        id: param_node_id,
                         kind: GenericParamKind::Type {
                             name: ident.to_string(),
                             bounds,
@@ -190,8 +242,18 @@ impl VisitorState {
                         .map(|bound| self.process_lifetime_bound(bound))
                         .collect();
 
+                    // Generate ID for the generic parameter node
+                    #[cfg(not(feature = "uuid_ids"))]
+                    let param_node_id = self.next_node_id();
+                    #[cfg(feature = "uuid_ids")]
+                    let param_node_id = self.generate_synthetic_node_id(
+                        &format!("generic_lifetime_{}", lifetime_def.lifetime.ident),
+                        // TODO: Get span from LifetimeDef if possible
+                        (0, 0), // Placeholder span
+                    );
+
                     params.push(GenericParamNode {
-                        id: self.next_node_id(),
+                        id: param_node_id,
                         kind: GenericParamKind::Lifetime {
                             name: lifetime_def.lifetime.ident.to_string(),
                             bounds,
@@ -201,8 +263,18 @@ impl VisitorState {
                 syn::GenericParam::Const(const_param) => {
                     let type_id = super::type_processing::get_or_create_type(self, &const_param.ty);
 
+                    // Generate ID for the generic parameter node
+                    #[cfg(not(feature = "uuid_ids"))]
+                    let param_node_id = self.next_node_id();
+                    #[cfg(feature = "uuid_ids")]
+                    let param_node_id = self.generate_synthetic_node_id(
+                        &format!("generic_const_{}", const_param.ident),
+                        // TODO: Get span from ConstParam if possible
+                        (0, 0), // Placeholder span
+                    );
+
                     params.push(GenericParamNode {
-                        id: self.next_node_id(),
+                        id: param_node_id,
                         kind: GenericParamKind::Const {
                             name: const_param.ident.to_string(),
                             type_id,
@@ -224,12 +296,18 @@ impl VisitorState {
                     path: trait_bound.path.clone(),
                 }),
             ),
+            // TODO: How should lifetime bounds be represented in the type graph?
+            // For now, create a placeholder type ID. Revisit during Phase 3 resolution.
             syn::TypeParamBound::Lifetime(_) => {
                 // Create a synthetic type for the lifetime bound
+                #[cfg(not(feature = "uuid_ids"))]
                 let type_id = self.next_type_id();
+                #[cfg(feature = "uuid_ids")]
+                let type_id = self.generate_synthetic_type_id("lifetime_bound"); // Placeholder
+
                 self.code_graph.type_graph.push(TypeNode {
                     id: type_id,
-                    kind: TypeKind::Named {
+                    kind: TypeKind::Named { // Or a new TypeKind::LifetimeBound?
                         path: vec!["lifetime".to_string()],
                         is_fully_qualified: false,
                     },
@@ -237,7 +315,14 @@ impl VisitorState {
                 });
                 type_id
             }
-            _ => self.next_type_id(),
+            // Handle `Verbatim` or future variants if necessary
+            _ => {
+                 #[cfg(not(feature = "uuid_ids"))]
+                 let type_id = self.next_type_id();
+                 #[cfg(feature = "uuid_ids")]
+                 let type_id = self.generate_synthetic_type_id("unknown_type_bound"); // Placeholder
+                 type_id
+            }
         }
     }
 

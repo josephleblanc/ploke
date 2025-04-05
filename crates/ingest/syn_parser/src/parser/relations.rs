@@ -1,4 +1,8 @@
-use crate::parser::nodes::NodeId;
+#[cfg(feature = "uuid_ids")]
+use ploke_core::NodeId; // Use new type when feature is enabled
+#[cfg(not(feature = "uuid_ids"))]
+use ploke_core::NodeId; // Use compat type when feature is disabled
+
 use serde::{Deserialize, Serialize};
 
 // ANCHOR: Relation

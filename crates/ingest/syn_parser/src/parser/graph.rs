@@ -1,6 +1,10 @@
+#[cfg(feature = "uuid_ids")]
+use ploke_core::NodeId; // Use new type when feature is enabled
+#[cfg(not(feature = "uuid_ids"))]
+use ploke_core::NodeId; // Use compat type when feature is disabled
+
 use super::nodes::Visible;
 use super::relations::RelationKind;
-use crate::parser::nodes::NodeId;
 use crate::parser::nodes::VisibilityResult;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
