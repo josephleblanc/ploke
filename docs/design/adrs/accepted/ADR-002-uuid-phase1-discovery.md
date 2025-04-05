@@ -1,7 +1,7 @@
 # ADR-002: Implement Phase 1 - Discovery and Context Setup for UUID Refactor
 
 ## Status
-PROPOSED
+ACCEPTED
 
 ## Context
 [ADR-001](ADR-001-uuid-for-ids.md) mandates using UUIDs for node identifiers and outlines a [Multi-Phase Batch Processing Model](docs/plans/uuid_refactor/00_overview_batch_processing_model.md). Before parallel parsing (Phase 2) can begin, essential context about the target crates (file lists, crate names, versions, namespaces, initial module structure) must be gathered. This preparatory step, defined as Phase 1, is currently missing from the implementation.

@@ -30,7 +30,7 @@
 1.  **Implement a Subtask:** Make the necessary code changes.
 2.  **Identify Relevant Test Category:** Determine which existing test category (e.g., `parser`, `serialization`) is most appropriate for the changes.
 3.  **Add Tests to Existing Category:** Add new tests to the relevant test file, using fixtures from the `fixtures` directory as input.
-4.  **Run Tests with Feature Flag:** `cargo test --features cozo_type_refactor`.
+4.  **Run Tests with Feature Flag:** `cargo test --features <some-feature>`.
 5.  **Update Regression Tests:** If the changes break existing tests, mark the affected code as `#[deprecated]` and update the tests to use the deprecated code.
 6.  **Run Regression Tests:** `cargo test`.
 7.  **Commit Changes:** Commit the code and tests.
