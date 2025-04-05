@@ -260,16 +260,9 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let target_crates = vec![fixture_crate_root.clone()];
-    let result = run_discovery_phase(&project_root, &target_crates);
+    let (output, errors) = run_discovery_phase(&project_root, &target_crates);
 
-    if let Err(ref errors) = result {
-        eprintln!("Discovery failed with errors: {:?}", errors);
-    }
-    assert!(
-        result.is_ok(),
-        "Discovery should succeed for fixture_test_crate"
-    );
-    let output = result.unwrap();
+    assert!(errors.is_empty(), "Discovery should succeed for fixture_test_crate, errors: {:?}", errors);
 
     assert_eq!(output.crate_contexts.len(), 1);
     let context = output
