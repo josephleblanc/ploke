@@ -32,7 +32,10 @@ fn test_derive_crate_namespace_uniqueness() {
     let uuid2 = derive_crate_namespace("crate-b", "1.0.0");
     let uuid3 = derive_crate_namespace("crate-a", "1.0.1");
     assert_ne!(uuid1, uuid2, "Different names should yield different UUIDs");
-    assert_ne!(uuid1, uuid3, "Different versions should yield different UUIDs");
+    assert_ne!(
+        uuid1, uuid3,
+        "Different versions should yield different UUIDs"
+    );
 }
 
 #[test]
@@ -96,7 +99,10 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail if Cargo.toml is missing");
+    assert!(
+        result.is_err(),
+        "Discovery should fail if Cargo.toml is missing"
+    );
     let errors = result.unwrap_err();
     assert_eq!(errors.len(), 1);
     assert!(matches!(errors[0], DiscoveryError::Io { .. })); // Expecting IO error reading Cargo.toml
@@ -118,7 +124,10 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail for invalid Cargo.toml");
+    assert!(
+        result.is_err(),
+        "Discovery should fail for invalid Cargo.toml"
+    );
     let errors = result.unwrap_err();
     assert_eq!(errors.len(), 1);
     assert!(matches!(errors[0], DiscoveryError::TomlParse { .. }));
@@ -163,10 +172,16 @@ fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::er
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail if crate path doesn't exist");
+    assert!(
+        result.is_err(),
+        "Discovery should fail if crate path doesn't exist"
+    );
     let errors = result.unwrap_err();
     assert_eq!(errors.len(), 1);
-    assert!(matches!(errors[0], DiscoveryError::CratePathNotFound { .. }));
+    assert!(matches!(
+        errors[0],
+        DiscoveryError::CratePathNotFound { .. }
+    ));
 
     Ok(())
 }
@@ -204,7 +219,11 @@ fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::
         "[package]\nname = \"crate3\"\nversion = \"3.0\"",
     )?;
 
-    let target_crates = vec![crate1_root.clone(), crate2_root.clone(), crate3_root.clone()];
+    let target_crates = vec![
+        crate1_root.clone(),
+        crate2_root.clone(),
+        crate3_root.clone(),
+    ];
     let result = run_discovery_phase(&project_root, &target_crates);
 
     assert!(result.is_err(), "Should return error due to crate3");
@@ -247,11 +266,17 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(ref errors) = result {
         eprintln!("Discovery failed with errors: {:?}", errors);
     }
-    assert!(result.is_ok(), "Discovery should succeed for fixture_test_crate");
+    assert!(
+        result.is_ok(),
+        "Discovery should succeed for fixture_test_crate"
+    );
     let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
-    let context = output.crate_contexts.get("fixture_test_crate").expect("Context for fixture_test_crate not found");
+    let context = output
+        .crate_contexts
+        .get("fixture_test_crate")
+        .expect("Context for fixture_test_crate not found");
 
     assert_eq!(context.name, "fixture_test_crate");
     assert_eq!(context.version, "0.1.0"); // Assuming this version in fixture Cargo.toml
@@ -269,7 +294,11 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
         src_path.join("sibling_of_main.rs"),
         // Add other expected .rs files from the fixture crate here
     ];
-    assert_eq!(context.files.len(), expected_files.len(), "Incorrect number of .rs files found");
+    assert_eq!(
+        context.files.len(),
+        expected_files.len(),
+        "Incorrect number of .rs files found"
+    );
     for expected_file in &expected_files {
         assert!(
             context.files.contains(expected_file),
@@ -277,6 +306,16 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
             expected_file.display()
         );
     }
+    let unexpected_files = context
+        .files
+        .iter()
+        .filter(|cf| !expected_files.contains(cf))
+        .collect::<Vec<_>>();
+    assert!(
+        !unexpected_files.is_empty(),
+        "Unexpected file found: {:#?}",
+        unexpected_files
+    );
 
     // TODO: Check initial_module_map once scan_for_mods is integrated
     // Example assertion (adjust based on actual scan_for_mods logic):
