@@ -294,14 +294,17 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let mut sorted_expected_files = expected_files.clone();
     sorted_expected_files.sort();
 
-    assert_eq!(
-        actual_files.len(),
-        expected_files.len(),
-        "Incorrect number of .rs files found"
+        sorted_expected_files.len(),
+        "Incorrect number of .rs files found. Expected: {:#?}, Actual: {:#?}", sorted_expected_files, actual_files
     );
-    for expected_file in &expected_files {
+    for (expected, actual) in sorted_expected_files.iter().zip(actual_files.iter()) {
+         assert_eq!(expected, actual, "Mismatch in discovered files list");
+    }
+
+    // Double-check contains for a few key files
+    for expected_file in &expected_files { // Use unsorted list for contains check
         assert!(
-            context.files.contains(expected_file),
+            context.files.contains(expected_file), // Check original context.files
             "Expected file not found: {}",
             expected_file.display()
         );
