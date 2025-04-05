@@ -51,28 +51,28 @@ pub fn analyze_files_parallel(/*...*/) -> Result</*...*/> {
 ## 3. Task Breakdown
 
 ### 3.1 Analysis & Preparation
-- [ ] 3.1.1. Review existing file processing entry points
+- [~] 3.1.1. Review existing file processing entry points
   - **Purpose**: Understand how files are currently discovered and passed to the parser (`analyze_files_parallel`, `analyze_code`). Identify where Phase 1 needs to be integrated.
   - **Expected Outcome**: Clear understanding of current file handling logic.
   - **Files to Examine**:
     - `crates/ingest/syn_parser/src/parser/visitor/mod.rs`
     - Potentially CLI or main application entry points if they initiate parsing.
-- [ ] 3.1.2. Define Core Data Structures
+- [~] 3.1.2. Define Core Data Structures
   - **Purpose**: Define the Rust structs needed to hold the output of Phase 1 and related context.
   - **Expected Outcome**: Draft definitions for `DiscoveryOutput`, `CrateContext` (containing name, version, namespace, file list), `DiscoveryError`.
   - **Files to Modify/Create**: Likely a new module, e.g., `crates/ingest/syn_parser/src/discovery.rs` or similar.
-- [ ] 3.1.3. Add Dependencies
+- [x] 3.1.3. Add Dependencies
   - **Purpose**: Add necessary crates like `uuid` (with `v5`, `serde` features) and `toml`.
   - **Expected Outcome**: Updated `Cargo.toml` for `syn_parser` (and potentially a new discovery crate if we create one).
   - **Files to Modify**: `crates/ingest/syn_parser/Cargo.toml`.
 
 ### 3.2 Core Implementation (Gated by `uuid_ids`)
-- [ ] 3.2.1. Implement File Discovery Logic
+- [~] 3.2.1. Implement File Discovery Logic
   - **Purpose**: Walk directory trees for specified target crates and collect all `.rs` file paths.
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: Use standard library (`std::fs`) or crates like `walkdir` for robust directory traversal. Handle potential I/O errors.
   - **Testing Approach**: Unit test with mock directory structures or temporary directories containing sample files. Test exclusion of non-`.rs` files.
-- [ ] 3.2.2. Implement `Cargo.toml` Parsing
+- [~] 3.2.2. Implement `Cargo.toml` Parsing
   - **Purpose**: Read and parse `Cargo.toml` for each target crate to extract `package.name` and `package.version`.
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: Use the `toml` crate for parsing. Handle file not found and parsing errors gracefully.
