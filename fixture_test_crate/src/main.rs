@@ -1,6 +1,7 @@
 // fixture_test_crate/src/main.rs
 // #![allow(unused_variables, dead_code, unused_imports, unexpected_cfgs)]
 
+mod example_mod;
 mod second_sibling;
 mod sibling_of_main;
 

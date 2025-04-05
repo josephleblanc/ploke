@@ -67,17 +67,17 @@ pub fn analyze_files_parallel(/*...*/) -> Result</*...*/> {
   - **Files to Modify**: `crates/ingest/syn_parser/Cargo.toml`.
 
 ### 3.2 Core Implementation (Gated by `uuid_ids`)
-- [~] 3.2.1. Implement File Discovery Logic
+- [x] 3.2.1. Implement File Discovery Logic
   - **Purpose**: Walk directory trees for specified target crates and collect all `.rs` file paths.
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: Use standard library (`std::fs`) or crates like `walkdir` for robust directory traversal. Handle potential I/O errors.
   - **Testing Approach**: Unit test with mock directory structures or temporary directories containing sample files. Test exclusion of non-`.rs` files.
-- [~] 3.2.2. Implement `Cargo.toml` Parsing
+- [x] 3.2.2. Implement `Cargo.toml` Parsing
   - **Purpose**: Read and parse `Cargo.toml` for each target crate to extract `package.name` and `package.version`.
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: Use the `toml` crate for parsing. Handle file not found and parsing errors gracefully.
   - **Testing Approach**: Unit test with sample valid and invalid `Cargo.toml` content.
-- [ ] 3.2.3. Implement Namespace Generation
+- [x] 3.2.3. Implement Namespace Generation
   - **Purpose**: Define `PROJECT_NAMESPACE` and implement the logic to derive `CRATE_NAMESPACE` using `Uuid::new_v5`.
   - **Files to Modify/Create**: New discovery module/functions. Define the constant `PROJECT_NAMESPACE`.
   - **Code Changes**:
@@ -93,34 +93,34 @@ pub fn analyze_files_parallel(/*...*/) -> Result</*...*/> {
     }
     ```
   - **Testing Approach**: Unit test `derive_crate_namespace` with known inputs and expected UUID outputs. Verify different names/versions produce different UUIDs.
-- [ ] 3.2.4. Implement Initial Module Mapping (Basic)
+- [x] 3.2.4. Implement Initial Module Mapping (Basic) (Integrated)
   - **Purpose**: Perform a minimal scan of key files (`lib.rs`, `main.rs`, `mod.rs`) to identify `mod my_module;` declarations and associate them with potential file paths (`src/my_module.rs` or `src/my_module/mod.rs`).
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: This provides a starting point for Phase 3 resolution. It doesn't need to be perfect yet. Use simple string matching or basic `syn` parsing focused only on `mod` items.
   - **Testing Approach**: Unit test with sample file structures and `mod` declarations.
-- [~] 3.2.5. Integrate into Entry Point(s)
+- [~] 3.2.5. Integrate into Entry Point(s) (Still stubbed in `visitor/mod.rs`)
   - **Purpose**: Modify existing parser entry points (like `analyze_files_parallel`) to call `run_discovery_phase` first when the `uuid_ids` feature is enabled.
   - **Files to Modify**: `crates/ingest/syn_parser/src/parser/visitor/mod.rs`.
   - **Reasoning**: Ensure the discovery output is available before Phase 2 starts. (Note: Actual call logic is stubbed, pending signature changes/context provision).
   - **Testing Approach**: Integration tests (under the flag) should verify that the discovery phase runs and its output is potentially passed along (even if Phase 2 isn't implemented yet).
 
 ### 3.3 Testing & Integration
-- [ ] 3.3.1. Add Unit Tests for Discovery Components
+- [x] 3.3.1. Add Unit Tests for Discovery Components
     - Test file walking logic.
     - Test `Cargo.toml` parsing (valid, invalid, missing).
     - Test namespace generation logic.
     - Test initial module mapping logic.
     - Test `DiscoveryOutput` struct creation.
-- [ ] 3.3.2. Add Integration Test for `run_discovery_phase`
+- [x] 3.3.2. Add Integration Test for `run_discovery_phase`
     - Use a sample project structure (perhaps `fixture_test_crate` or a dedicated test directory structure).
     - Run the full discovery phase and assert the correctness of the final `DiscoveryOutput` (file lists, namespaces, etc.).
-- [ ] 3.3.3. Test with and without feature flag enabled
+- [~] 3.3.3. Test with and without feature flag enabled
     - Ensure existing tests pass with the flag *disabled*.
     - Ensure new tests pass with the flag *enabled*.
     - Ensure the code compiles correctly in both configurations.
 
 ### 3.4 Documentation & Knowledge Preservation
-- [ ] 3.4.1. Update code documentation (doc comments) for new structs and functions, explaining their purpose in Phase 1.
+- [x] 3.4.1. Update code documentation (doc comments) for new structs and functions, explaining their purpose in Phase 1.
 - [ ] 3.4.2. Document design decisions within this plan and the ADR.
 - [ ] 3.4.3. Create commit message template capturing key changes (e.g., "feat(syn_parser): Implement file discovery for UUID Phase 1 [uuid_ids]").
 

@@ -139,10 +139,11 @@ pub struct DiscoveryOutput {
 pub fn run_discovery_phase(
     _project_root: &PathBuf,   // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
-) -> Result<DiscoveryOutput, DiscoveryError> { // Reverted return type
+) -> Result<DiscoveryOutput, DiscoveryError> {
+    // Reverted return type
     let mut crate_contexts = HashMap::new();
     let mut initial_module_map = HashMap::new(); // Still mutable
-    // Removed error collection vector
+                                                 // Removed error collection vector
 
     for crate_root_path in target_crates {
         // Process each crate directly, returning Err on first failure
@@ -152,96 +153,92 @@ pub fn run_discovery_phase(
             });
         }
 
-            // --- 3.2.2 Implement Cargo.toml Parsing ---
-            let cargo_toml_path = crate_root_path.join("Cargo.toml");
-            let cargo_content =
-                fs::read_to_string(&cargo_toml_path).map_err(|e| DiscoveryError::Io {
-                    path: cargo_toml_path.clone(),
-                    source: e,
-                })?;
-            let manifest: CargoManifest =
-                toml::from_str(&cargo_content).map_err(|e| DiscoveryError::TomlParse {
-                    path: cargo_toml_path.clone(),
-                    source: e,
-                })?;
+        // --- 3.2.2 Implement Cargo.toml Parsing ---
+        let cargo_toml_path = crate_root_path.join("Cargo.toml");
+        let cargo_content =
+            fs::read_to_string(&cargo_toml_path).map_err(|e| DiscoveryError::Io {
+                path: cargo_toml_path.clone(),
+                source: e,
+            })?;
+        let manifest: CargoManifest =
+            toml::from_str(&cargo_content).map_err(|e| DiscoveryError::TomlParse {
+                path: cargo_toml_path.clone(),
+                source: e,
+            })?;
 
-            let crate_name = manifest.package.name.clone();
-            // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
-            let crate_version = manifest.package.version.clone();
-            // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
+        let crate_name = manifest.package.name.clone();
+        // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
+        let crate_version = manifest.package.version.clone();
+        // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
 
-            // --- 3.2.3 Implement Namespace Generation (Called below) ---
-            let namespace = derive_crate_namespace(&crate_name, &crate_version);
+        // --- 3.2.3 Implement Namespace Generation (Called below) ---
+        let namespace = derive_crate_namespace(&crate_name, &crate_version);
 
-            // --- 3.2.1 Implement File Discovery Logic ---
-            let src_path = crate_root_path.join("src");
-            if !src_path.exists() || !src_path.is_dir() {
-                // Allow crates without a src dir? Maybe just return empty file list.
-                // For now, let's error if src isn't found, common case.
-                // USER: Agreed, and good call on the clear enum error. We can expand this later once
-                // core functionality is built out.
-                return Err(DiscoveryError::SrcNotFound { path: src_path });
-                // files = Vec::new();
+        // --- 3.2.1 Implement File Discovery Logic ---
+        let src_path = crate_root_path.join("src");
+        if !src_path.exists() || !src_path.is_dir() {
+            // Allow crates without a src dir? Maybe just return empty file list.
+            // For now, let's error if src isn't found, common case.
+            // USER: Agreed, and good call on the clear enum error. We can expand this later once
+            // core functionality is built out.
+            return Err(DiscoveryError::SrcNotFound { path: src_path });
+            // files = Vec::new();
+        }
+
+        let mut files = Vec::new();
+        // Single WalkDir loop
+        let walker = WalkDir::new(&src_path).into_iter();
+        for entry_result in walker {
+            match entry_result {
+                Ok(entry) => {
+                    if entry.file_type().is_file()
+                        && entry.path().extension().map_or(false, |ext| ext == "rs")
+                    {
+                        // Ensure we store absolute paths if target_crates might be relative
+                        // Assuming target_crates provides absolute paths for simplicity here.
+                        // If not, canonicalize crate_root_path first.
+                        files.push(entry.path().to_path_buf());
+                    }
+                }
+                Err(e) => {
+                    // Treat WalkDir errors as critical for now
+                    let path = e.path().unwrap_or(&src_path).to_path_buf();
+                    eprintln!("Error walking directory {:?}: {}", path, e); // Log to stderr
+                    return Err(DiscoveryError::Walkdir { path, source: e });
+                }
             }
+        }
 
-            let mut files = Vec::new();
-            // Single WalkDir loop
-            let walker = WalkDir::new(&src_path).into_iter();
-            for entry_result in walker {
-                match entry_result {
-                    Ok(entry) => {
-                        if entry.file_type().is_file()
-                            && entry.path().extension().map_or(false, |ext| ext == "rs")
-                        {
-                            // Ensure we store absolute paths if target_crates might be relative
-                            // Assuming target_crates provides absolute paths for simplicity here.
-                            // If not, canonicalize crate_root_path first.
-                            files.push(entry.path().to_path_buf());
-                        }
+        // --- Combine into CrateContext ---
+        let context = CrateContext {
+            name: crate_name.clone(),
+            version: crate_version,
+            namespace,
+            root_path: crate_root_path.clone(),
+            files: files.clone(), // Clone needed for module mapping below
+        };
+
+        // --- 3.2.4 Implement Initial Module Mapping ---
+        // Scan lib.rs and main.rs for `mod xyz;`
+        for entry_point_name in ["lib.rs", "main.rs"] {
+            let entry_point_path = src_path.join(entry_point_name);
+            if files.contains(&entry_point_path) {
+                match scan_for_mods(&entry_point_path, &src_path, &files) {
+                    Ok(mods) => {
+                        // Merge results into the main map
+                        initial_module_map.extend(mods);
                     }
                     Err(e) => {
-                        // Treat WalkDir errors as critical for now
-                        let path = e.path().unwrap_or(&src_path).to_path_buf();
-                        eprintln!("Error walking directory {:?}: {}", path, e); // Log to stderr
-                        return Err(DiscoveryError::Walkdir { path, source: e });
+                        // Treat scan errors as critical
+                        eprintln!("Error scanning modules in {:?}: {}", entry_point_path, e);
+                        return Err(e);
                     }
                 }
             }
-
-            // --- Combine into CrateContext ---
-            let context = CrateContext {
-                name: crate_name.clone(),
-                version: crate_version,
-                namespace,
-                root_path: crate_root_path.clone(),
-                files: files.clone(), // Clone needed for module mapping below
-            };
-
-            // --- 3.2.4 Implement Initial Module Mapping ---
-            // Scan lib.rs and main.rs for `mod xyz;`
-            for entry_point_name in ["lib.rs", "main.rs"] {
-                let entry_point_path = src_path.join(entry_point_name);
-                if files.contains(&entry_point_path) {
-                    match scan_for_mods(&entry_point_path, &src_path, &files) {
-                        Ok(mods) => {
-                            // Merge results into the main map
-                            initial_module_map.extend(mods);
-                        }
-                        Err(e) => {
-                            // Treat scan errors as critical
-                            eprintln!(
-                                "Error scanning modules in {:?}: {}",
-                                entry_point_path, e
-                            );
-                            return Err(e);
-                        }
-                    }
-                }
-            }
-            // Add context only if successful so far
-            crate_contexts.insert(crate_name, context);
-        } // End of loop for target_crates
-    } // This closing brace seems misplaced, should be after the loop
+        }
+        // Add context only if successful so far
+        crate_contexts.insert(crate_name, context);
+    } // End of loop for target_crates
 
     // Return Ok only if all crates processed without error
     Ok(DiscoveryOutput {
