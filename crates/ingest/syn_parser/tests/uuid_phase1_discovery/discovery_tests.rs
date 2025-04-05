@@ -264,16 +264,38 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let expected_namespace = derive_crate_namespace("fixture_test_crate", "0.1.0");
     assert_eq!(context.namespace, expected_namespace);
 
-    // Check file discovery (add more specific files as needed)
+    // Check file discovery - list *all* expected .rs files
     let src_path = fixture_crate_root.join("src");
     let expected_files = vec![
         src_path.join("main.rs"),
         src_path.join("second_sibling.rs"),
         src_path.join("sibling_of_main.rs"),
-        // Add other expected .rs files from the fixture crate here
+        src_path.join("example_mod/mod.rs"),
+        src_path.join("example_mod/mod_sibling_one.rs"),
+        src_path.join("example_mod/mod_sibling_private.rs"),
+        src_path.join("example_mod/mod_sibling_two.rs"),
+        src_path.join("example_mod/not_in_mod.rs"), // Should be discovered
+        src_path.join("example_mod/example_submod/mod.rs"),
+        src_path.join("example_mod/example_submod/submod_sibling_one.rs"),
+        src_path.join("example_mod/example_submod/submod_sibling_private.rs"),
+        src_path.join("example_mod/example_submod/submod_sibling_two.rs"),
+        src_path.join("example_mod/example_private_submod/mod.rs"),
+        src_path.join("example_mod/example_private_submod/public_submod_private_parent.rs"),
+        src_path.join("example_mod/example_private_submod/very_private_submod.rs"),
+        src_path.join("example_mod/example_private_submod/subsubmod/mod.rs"),
+        src_path.join("example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs"),
+        src_path.join("example_mod/example_private_submod/subsubmod/subsubsubmod/not_in_mod_deep.rs"), // Should be discovered
+        src_path.join("example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs"),
+        src_path.join("example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs"),
     ];
+    // Sort both lists for consistent comparison
+    let mut actual_files = context.files.clone();
+    actual_files.sort();
+    let mut sorted_expected_files = expected_files.clone();
+    sorted_expected_files.sort();
+
     assert_eq!(
-        context.files.len(),
+        actual_files.len(),
         expected_files.len(),
         "Incorrect number of .rs files found"
     );

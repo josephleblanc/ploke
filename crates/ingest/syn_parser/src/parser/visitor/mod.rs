@@ -156,7 +156,7 @@ pub fn analyze_files_parallel(
 
         // --- Phase 1: Discovery ---
         println!("Running Discovery Phase..."); // Temporary print
-        let discovery_output = match run_discovery_phase(&project_root, &target_crates) {
+        let _discovery_output = match run_discovery_phase(&project_root, &target_crates) { // Prefixed with _
             Ok(output) => {
                  println!(
                     "Discovery successful. Found {} crates.",
