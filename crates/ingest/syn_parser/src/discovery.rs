@@ -128,22 +128,28 @@ pub struct DiscoveryOutput {
 /// * `_target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
 ///
 /// # Returns
-/// A `Result` containing the `DiscoveryOutput` on success, or a `DiscoveryError` on failure.
+/// A `Result` containing the `DiscoveryOutput` if *all* target crates were processed
+/// without critical errors, or a `Vec<DiscoveryError>` containing all errors
+/// encountered during processing. Partial success (some crates processed, others failed)
+/// will result in an `Err` variant containing the errors for the failed crates.
 // NOTE: Known limitations:
-// * Does not handle case of crate with no `src` directory in project
+// * Does not handle case of crate with no `src` directory in project (currently returns SrcNotFound error)
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
     _project_root: &PathBuf,   // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
-) -> Result<DiscoveryOutput, DiscoveryError> {
+) -> Result<DiscoveryOutput, Vec<DiscoveryError>> { // Changed return type
     let mut crate_contexts = HashMap::new();
-    let initial_module_map = HashMap::new(); // To be implemented later
+    let mut initial_module_map = HashMap::new(); // Now mutable
+    let mut errors = Vec::new(); // Collect errors here
 
     for crate_root_path in target_crates {
-        if !crate_root_path.exists() || !crate_root_path.is_dir() {
-            return Err(DiscoveryError::CratePathNotFound {
+        // Use a closure to handle errors for this specific crate iteration
+        let crate_result: Result<(), DiscoveryError> = (|| {
+            if !crate_root_path.exists() || !crate_root_path.is_dir() {
+                return Err(DiscoveryError::CratePathNotFound {
                 path: crate_root_path.clone(),
             });
         }
