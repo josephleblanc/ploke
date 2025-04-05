@@ -3,6 +3,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use toml;
@@ -147,8 +148,16 @@ pub fn run_discovery_phase(
             });
         }
 
-        // --- 3.2.2 Implement Cargo.toml Parsing ---
-        let cargo_toml_path = crate_root_path.join("Cargo.toml");
+        // Use a closure to handle errors for this specific crate iteration
+        let crate_result: Result<(), DiscoveryError> = (|| {
+            if !crate_root_path.exists() || !crate_root_path.is_dir() {
+                return Err(DiscoveryError::CratePathNotFound {
+                    path: crate_root_path.clone(),
+                });
+            }
+
+            // --- 3.2.2 Implement Cargo.toml Parsing ---
+            let cargo_toml_path = crate_root_path.join("Cargo.toml");
         let cargo_content =
             fs::read_to_string(&cargo_toml_path).map_err(|e| DiscoveryError::Io {
                 path: cargo_toml_path.clone(),
@@ -213,16 +222,88 @@ pub fn run_discovery_phase(
             files,
         };
 
-        crate_contexts.insert(crate_name, context);
+            crate_contexts.insert(crate_name, context);
+            Ok(()) // Indicate success for this iteration's error handling
+        })(); // End of closure for crate processing
+
+        // If the closure returned an error for this crate, add it to the list
+        if let Err(e) = crate_result {
+            errors.push(e);
+        }
     }
 
-    // --- 3.2.4 Implement Initial Module Mapping (Deferred) ---
-    // let initial_module_map = build_initial_module_map(&crate_contexts)?;
+    // Check if any errors were collected during the process
+    if !errors.is_empty() {
+        Err(errors) // Return all collected errors
+    } else {
+        Ok(DiscoveryOutput {
+            crate_contexts,
+            initial_module_map,
+        })
+    }
+}
 
-    Ok(DiscoveryOutput {
-        crate_contexts,
-        initial_module_map, // Return empty map for now
-    })
+
+/// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
+/// and attempts to map them to existing files found during discovery.
+///
+/// # Arguments
+/// * `file_to_scan` - Path to the file to scan (e.g., `.../src/lib.rs`).
+/// * `src_path` - Path to the crate's `src` directory.
+/// * `existing_files` - A slice containing all `.rs` files found in the crate.
+///
+/// # Returns
+/// A `Result` containing a map from the resolved module file path to its module segments
+/// (e.g., `.../src/parser.rs` -> `["crate", "parser"]`), or a `DiscoveryError::Io` if
+/// the file cannot be read.
+fn scan_for_mods(
+    file_to_scan: &Path,
+    src_path: &Path,
+    existing_files: &[PathBuf],
+) -> Result<HashMap<PathBuf, Vec<String>>, DiscoveryError> {
+    let mut mod_map = HashMap::new();
+    let file = fs::File::open(file_to_scan).map_err(|e| DiscoveryError::Io {
+        path: file_to_scan.to_path_buf(),
+        source: e,
+    })?;
+    let reader = BufReader::new(file);
+
+    // Basic line-by-line scan for `mod name;` or `pub mod name;`
+    // This is a simplification and won't handle complex cases like `#[cfg] mod name;`
+    // or mods defined inside functions/blocks.
+    for line_result in reader.lines() {
+        let line = line_result.map_err(|e| DiscoveryError::Io {
+            path: file_to_scan.to_path_buf(),
+            source: e,
+        })?;
+        let trimmed = line.trim();
+
+        if (trimmed.starts_with("mod ") || trimmed.starts_with("pub mod ")) && trimmed.ends_with(';')
+        {
+            if let Some(name_part) = trimmed.split_whitespace().nth(1) {
+                let mod_name = name_part.trim_end_matches(';');
+
+                // Check for potential file paths: src/mod_name.rs or src/mod_name/mod.rs
+                let path1 = src_path.join(format!("{}.rs", mod_name));
+                let path2 = src_path.join(mod_name).join("mod.rs");
+
+                let found_path = if existing_files.contains(&path1) {
+                    Some(path1)
+                } else if existing_files.contains(&path2) {
+                    Some(path2)
+                } else {
+                    None
+                };
+
+                if let Some(p) = found_path {
+                    // Basic mapping: assumes it's directly under "crate"
+                    mod_map.insert(p, vec!["crate".to_string(), mod_name.to_string()]);
+                }
+            }
+        }
+    }
+
+    Ok(mod_map)
 }
 
 /// Derives a deterministic UUID v5 namespace for a specific crate version.

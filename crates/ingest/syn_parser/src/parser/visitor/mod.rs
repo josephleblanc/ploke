@@ -89,17 +89,106 @@ pub fn start_parser_worker(
 /// Process multiple files in parallel using rayon
 pub fn analyze_files_parallel(
     file_paths: Vec<PathBuf>,
-    num_workers: usize,
-) -> Vec<Result<CodeGraph, syn::Error>> {
-    use rayon::prelude::*;
+    _num_workers: usize, // Renamed as it might not be directly used in uuid_ids path yet
+) -> Vec<Result<CodeGraph, syn::Error>> { // TODO: Return type might need adjustment for UUID path
+    #[cfg(not(feature = "uuid_ids"))]
+    {
+        // --- Existing usize-based parallel implementation ---
+        use rayon::prelude::*;
 
-    // Create a thread pool with the specified number of workers
+        // Create a thread pool with the specified number of workers
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(_num_workers)
+            .build()
+            .unwrap();
+
+        // Use the thread pool to process files in parallel
+        pool.install(|| {
+            file_paths
+                .par_iter()
+                .map(|path| analyze_code(path))
+                .collect()
+        })
+    }
+    #[cfg(feature = "uuid_ids")]
+    {
+        // --- New UUID-based implementation (Phase 1 + Phase 2 stub) ---
+        use crate::discovery::{run_discovery_phase, DiscoveryError}; // Import discovery items
+
+        // TODO: Determine project_root and target_crates properly.
+        // This likely requires changes to how analyze_files_parallel is called,
+        // or more sophisticated logic here to infer context from file_paths.
+        // For now, using placeholders.
+        let project_root = PathBuf::from("."); // Placeholder
+        // Infer target crates from file paths (simplistic: assumes files are in crate roots/src)
+        let target_crates_result: Result<Vec<PathBuf>, DiscoveryError> = file_paths
+            .iter()
+            .map(|p| {
+                p.parent() // Get directory containing the file
+                    .and_then(|dir| {
+                        if dir.ends_with("src") {
+                            dir.parent() // If in src, go up one level
+                        } else {
+                            Some(dir) // Assume it's already the crate root (simplistic)
+                        }
+                    })
+                    .map(|p| p.to_path_buf())
+                    .ok_or_else(|| DiscoveryError::CratePathNotFound { path: p.clone() }) // Error if no parent
+            })
+            .collect::<Result<Vec<_>, _>>() // Collect potential crate roots
+            .map(|mut paths| {
+                paths.sort(); // Sort for deduplication
+                paths.dedup(); // Remove duplicates
+                paths
+            });
+
+
+        let target_crates = match target_crates_result {
+             Ok(paths) => paths,
+             Err(e) => {
+                 // Handle error determining target crates (e.g., return an error)
+                 // For now, just print and return empty results
+                 eprintln!("Error determining target crates: {:?}", e);
+                 return vec![]; // Or return a proper error Result
+             }
+        };
+
+
+        // --- Phase 1: Discovery ---
+        println!("Running Discovery Phase..."); // Temporary print
+        match run_discovery_phase(&project_root, &target_crates) {
+            Ok(discovery_output) => {
+                println!(
+                    "Discovery successful. Found {} crates.",
+                    discovery_output.crate_contexts.len()
+                );
+                // --- Phase 2: Parallel Parse (Stub) ---
+                // TODO: Implement the actual parallel parsing using discovery_output
+                // This will involve:
+                // 1. Distributing files from discovery_output.crate_contexts[crate].files
+                //    to rayon workers.
+                // 2. Passing the correct CrateContext (esp. namespace) to each worker.
+                // 3. Modifying analyze_code or creating a new function for Phase 2 parsing
+                //    that accepts CrateContext and generates synthetic UUIDs.
+                // 4. Collecting partial CodeGraphs from workers.
+                println!("TODO: Implement Phase 2 Parallel Parse using discovery output.");
+                // For now, return empty results as Phase 2 is not implemented
+                vec![]
+            }
+            Err(errors) => {
+                // Handle discovery errors (e.g., log them, return an error)
+                eprintln!("Discovery phase failed with errors: {:?}", errors);
+                // Return empty results or a proper error
+                vec![]
+            }
+        }
+    }
+}
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_workers)
         .build()
         .unwrap();
 
-    // Use the thread pool to process files in parallel
     pool.install(|| {
         file_paths
             .par_iter()

@@ -98,10 +98,10 @@ pub fn analyze_files_parallel(/*...*/) -> Result</*...*/> {
   - **Files to Modify/Create**: New discovery module/functions.
   - **Reasoning**: This provides a starting point for Phase 3 resolution. It doesn't need to be perfect yet. Use simple string matching or basic `syn` parsing focused only on `mod` items.
   - **Testing Approach**: Unit test with sample file structures and `mod` declarations.
-- [ ] 3.2.5. Integrate into Entry Point(s)
+- [~] 3.2.5. Integrate into Entry Point(s)
   - **Purpose**: Modify existing parser entry points (like `analyze_files_parallel`) to call `run_discovery_phase` first when the `uuid_ids` feature is enabled.
   - **Files to Modify**: `crates/ingest/syn_parser/src/parser/visitor/mod.rs`.
-  - **Reasoning**: Ensure the discovery output is available before Phase 2 starts.
+  - **Reasoning**: Ensure the discovery output is available before Phase 2 starts. (Note: Actual call logic is stubbed, pending signature changes/context provision).
   - **Testing Approach**: Integration tests (under the flag) should verify that the discovery phase runs and its output is potentially passed along (even if Phase 2 isn't implemented yet).
 
 ### 3.3 Testing & Integration
@@ -129,8 +129,8 @@ pub fn analyze_files_parallel(/*...*/) -> Result</*...*/> {
 - Revert commits related to this phase if necessary.
 
 ## 5. Progress Tracking
-- [ ] Analysis Phase: 0/3 complete
-- [ ] Implementation Phase: 0/5 complete
+- [x] Analysis Phase: 3/3 complete
+- [~] Implementation Phase: 4/5 complete (Integration stubbed)
 - [ ] Testing Phase: 0/3 complete
 - [ ] Documentation Phase: 0/3 complete
 
