@@ -128,10 +128,10 @@ pub struct DiscoveryOutput {
 /// * `_target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
 ///
 /// # Returns
-/// A `Result` containing the `DiscoveryOutput` if *all* target crates were processed
-/// without critical errors, or a `Vec<DiscoveryError>` containing all errors
-/// encountered during processing. Partial success (some crates processed, others failed)
-/// will result in an `Err` variant containing the errors for the failed crates.
+/// A tuple containing:
+///  * `DiscoveryOutput`: Contains context for all *successfully* processed crates.
+///  * `Vec<DiscoveryError>`: A list of errors encountered for crates that failed processing.
+/// The function always returns, even if some crates fail, providing partial results.
 // NOTE: Known limitations:
 // * Does not handle case of crate with no `src` directory in project (currently returns SrcNotFound error)
 // * Assuming target_crates provides absolute paths for simplicity
@@ -140,10 +140,9 @@ pub struct DiscoveryOutput {
 pub fn run_discovery_phase(
     _project_root: &PathBuf,   // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
-) -> Result<DiscoveryOutput, Vec<DiscoveryError>> {
-    // Changed return type
+) -> (DiscoveryOutput, Vec<DiscoveryError>) { // Changed return type
     let mut crate_contexts = HashMap::new();
-    let mut initial_module_map = HashMap::new(); // Now mutable
+    let mut initial_module_map = HashMap::new(); // Still mutable
     let mut errors = Vec::new(); // Collect errors here
 
     for crate_root_path in target_crates {
@@ -199,18 +198,27 @@ pub fn run_discovery_phase(
                 // If not, canonicalize crate_root_path first.
                 files.push(entry.path().to_path_buf());
             }
-            // Handle walkdir errors more robustly if needed:
-            // let walker = WalkDir::new(&src_path).into_iter();
-            // while let Some(entry_result) = walker.next() {
-            //     match entry_result {
-            //         Ok(entry) => {
-            //             if entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "rs") {
-            //                 files.push(entry.path().to_path_buf());
-            //             }
-            //         }
-            //         Err(e) => return Err(DiscoveryError::Walkdir { path: src_path.clone(), source: e }),
-            //     }
-            // }
+            // Handle walkdir errors more robustly
+            let walker = WalkDir::new(&src_path).into_iter();
+            for entry_result in walker {
+                match entry_result {
+                    Ok(entry) => {
+                        if entry.file_type().is_file()
+                            && entry.path().extension().map_or(false, |ext| ext == "rs")
+                        {
+                            files.push(entry.path().to_path_buf());
+                        }
+                    }
+                    Err(e) => {
+                        // Collect WalkDir errors but continue walking
+                        let path = e.path().unwrap_or(&src_path).to_path_buf();
+                        eprintln!("Warning: Error walking directory {:?}: {}", path, e); // Log to stderr for now
+                        errors.push(DiscoveryError::Walkdir { path, source: e });
+                        // Decide if we should skip the rest of the processing for this crate?
+                        // For now, let's continue and try to gather what we can.
+                    }
+                }
+            }
 
             // --- Combine into CrateContext ---
             let context = CrateContext {
@@ -218,8 +226,30 @@ pub fn run_discovery_phase(
                 version: crate_version,
                 namespace,
                 root_path: crate_root_path.clone(),
-                files,
+                files: files.clone(), // Clone needed for module mapping below
             };
+
+            // --- 3.2.4 Implement Initial Module Mapping ---
+            // Scan lib.rs and main.rs for `mod xyz;`
+            for entry_point_name in ["lib.rs", "main.rs"] {
+                let entry_point_path = src_path.join(entry_point_name);
+                if files.contains(&entry_point_path) {
+                    match scan_for_mods(&entry_point_path, &src_path, &files) {
+                        Ok(mods) => {
+                            // Merge results into the main map
+                            initial_module_map.extend(mods);
+                        }
+                        Err(e) => {
+                            // Log scan error and add to list, but continue
+                            eprintln!(
+                                "Warning: Error scanning modules in {:?}: {}",
+                                entry_point_path, e
+                            );
+                            errors.push(e) // Add scan error to list
+                        }
+                    }
+                }
+            }
 
             crate_contexts.insert(crate_name, context);
             Ok(()) // Indicate success for this iteration's error handling
@@ -231,15 +261,14 @@ pub fn run_discovery_phase(
         }
     }
 
-    // Check if any errors were collected during the process
-    if !errors.is_empty() {
-        Err(errors) // Return all collected errors
-    } else {
-        Ok(DiscoveryOutput {
+    // Always return collected contexts and errors
+    (
+        DiscoveryOutput {
             crate_contexts,
             initial_module_map,
-        })
-    }
+        },
+        errors,
+    )
 }
 
 /// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
