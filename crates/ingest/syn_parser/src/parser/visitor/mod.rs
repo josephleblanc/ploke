@@ -90,7 +90,8 @@ pub fn start_parser_worker(
 pub fn analyze_files_parallel(
     file_paths: Vec<PathBuf>,
     _num_workers: usize, // Renamed as it might not be directly used in uuid_ids path yet
-) -> Vec<Result<CodeGraph, syn::Error>> { // TODO: Return type might need adjustment for UUID path
+) -> Vec<Result<CodeGraph, syn::Error>> {
+    // TODO: Return type might need adjustment for UUID path
     #[cfg(not(feature = "uuid_ids"))]
     {
         // --- Existing usize-based parallel implementation ---
@@ -120,7 +121,7 @@ pub fn analyze_files_parallel(
         // or more sophisticated logic here to infer context from file_paths.
         // For now, using placeholders.
         let project_root = PathBuf::from("."); // Placeholder
-        // Infer target crates from file paths (simplistic: assumes files are in crate roots/src)
+                                               // Infer target crates from file paths (simplistic: assumes files are in crate roots/src)
         let target_crates_result: Result<Vec<PathBuf>, DiscoveryError> = file_paths
             .iter()
             .map(|p| {
@@ -133,7 +134,8 @@ pub fn analyze_files_parallel(
                         }
                     })
                     .map(|p| p.to_path_buf())
-                    .ok_or_else(|| DiscoveryError::CratePathNotFound { path: p.clone() }) // Error if no parent
+                    .ok_or_else(|| DiscoveryError::CratePathNotFound { path: p.clone() })
+                // Error if no parent
             })
             .collect::<Result<Vec<_>, _>>() // Collect potential crate roots
             .map(|mut paths| {
@@ -142,17 +144,15 @@ pub fn analyze_files_parallel(
                 paths
             });
 
-
         let target_crates = match target_crates_result {
-             Ok(paths) => paths,
-             Err(e) => {
-                 // Handle error determining target crates (e.g., return an error)
-                 // For now, just print and return empty results
-                 eprintln!("Error determining target crates: {:?}", e);
-                 return vec![]; // Or return a proper error Result
-             }
+            Ok(paths) => paths,
+            Err(e) => {
+                // Handle error determining target crates (e.g., return an error)
+                // For now, just print and return empty results
+                eprintln!("Error determining target crates: {:?}", e);
+                return vec![]; // Or return a proper error Result
+            }
         };
-
 
         // --- Phase 1: Discovery ---
         println!("Running Discovery Phase..."); // Temporary print
@@ -183,16 +183,4 @@ pub fn analyze_files_parallel(
             }
         }
     }
-}
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(num_workers)
-        .build()
-        .unwrap();
-
-    pool.install(|| {
-        file_paths
-            .par_iter()
-            .map(|path| analyze_code(path))
-            .collect()
-    })
 }
