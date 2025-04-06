@@ -12,9 +12,23 @@ use flume::{Receiver, Sender};
 use std::path::{Path, PathBuf};
 use std::thread;
 
-use super::nodes::ModuleNode;
+#[cfg(feature = "uuid_ids")]
+use {
+    super::nodes::ModuleNode,          // Moved ModuleNode import here
+    crate::discovery::DiscoveryOutput, // Import DiscoveryOutput
+    crate::parser::relations::{GraphId, Relation}, // Assuming Relation is in parser::relations
+    ploke_core::NodeId,
+    rayon::prelude::*, // Import rayon traits
+    uuid::Uuid,
+};
+#[cfg(not(feature = "uuid_ids"))]
+use {
+    super::nodes::ModuleNode, crate::parser::nodes::NodeId, crate::parser::relations::Relation,
+    rayon::prelude::*,
+};
 
 /// Analyze a single file and return the code graph
+#[cfg(not(feature = "uuid_ids"))]
 pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     let file = syn::parse_file(&std::fs::read_to_string(file_path).unwrap())?;
     let mut visitor_state = state::VisitorState::new();
@@ -35,6 +49,8 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
         imports: Vec::new(),
         exports: Vec::new(),
         path: vec!["crate".to_string()],
+        #[cfg(feature = "uuid_ids")]
+        tracking_hash: None, // Placeholder
     });
 
     let mut visitor = code_visitor::CodeVisitor::new(&mut visitor_state);
@@ -59,7 +75,132 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     Ok(visitor_state.code_graph)
 }
 
-/// Start a background parser worker that processes files from a channel
+/// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
+/// Receives context from analyze_files_parallel.
+#[cfg(feature = "uuid_ids")]
+pub fn analyze_file_phase2(
+    file_path: &Path,
+    crate_namespace: Uuid, // Context passed from caller
+) -> Result<CodeGraph, syn::Error> {
+    // Consider a more specific Phase2Error later
+    let file_content = std::fs::read_to_string(file_path).map_err(|e| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("Failed to read file {}: {}", file_path.display(), e),
+        )
+    })?;
+    let file = syn::parse_file(&file_content)?;
+
+    // 1. Create VisitorState with the provided context
+    let mut state = state::VisitorState::new(crate_namespace, file_path.to_path_buf());
+
+    // 2. Generate root module ID using context
+    // Context: crate_namespace, file_path, empty relative path [], name "crate"
+    let root_module_id = NodeId::generate_synthetic(
+        crate_namespace,
+        file_path,
+        &[], // Empty relative path for crate root
+        "crate",
+        (0, 0), // Span, there should be no other items with a (0, 0) span and this makes sense for
+                // root crate (almost, probably would make more sense as (0, <file byte length>))
+    );
+    state.current_module_path = vec!["crate".to_string()];
+
+    // 3. Create the root module node
+    state.code_graph.modules.push(ModuleNode {
+        id: root_module_id,
+        name: "crate".to_string(),
+        visibility: crate::parser::types::VisibilityKind::Public,
+        attributes: Vec::new(),
+        docstring: None,
+        submodules: Vec::new(),
+        items: Vec::new(),
+        imports: Vec::new(),
+        exports: Vec::new(),
+        path: vec!["crate".to_string()],
+        tracking_hash: None, // Root module conceptual, no specific content hash
+    });
+
+    // 4. Create and run the visitor
+    let mut visitor = code_visitor::CodeVisitor::new(&mut state);
+    visitor.visit_file(&file);
+
+    // 5. Add relations using GraphId wrappers
+    let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
+    for module_id in module_ids {
+        if module_id != root_module_id {
+            state.code_graph.relations.push(Relation {
+                source: GraphId::Node(root_module_id),
+                target: GraphId::Node(module_id),
+                kind: crate::parser::relations::RelationKind::Contains,
+            });
+        }
+    }
+
+    // TODO: Add another debug_print_all_visible function under cfg "uuid_ids", since our recent
+    // chagnes would break the normal version.
+    // #[cfg(feature = "verbose_debug")]
+    // visitor_state.code_graph.debug_print_all_visible();
+
+    Ok(state.code_graph)
+}
+
+/// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
+/// Takes DiscoveryOutput and distributes work to analyze_file_phase2.
+#[cfg(feature = "uuid_ids")]
+pub fn analyze_files_parallel(
+    discovery_output: &DiscoveryOutput, // Takes output from Phase 1
+    _num_workers: usize, // May not be directly used if relying on rayon's default pool size
+) -> Vec<Result<CodeGraph, syn::Error>> {
+    // Adjust error type if needed
+
+    println!(
+        // Temporary debug print
+        "Starting Phase 2 Parallel Parse for {} crates...",
+        discovery_output.crate_contexts.len()
+    );
+
+    discovery_output
+        .crate_contexts
+        .values() // Iterate over CrateContext values
+        .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
+        .flat_map(|crate_context| {
+            // Process each crate in parallel
+            println!(
+                // Temporary debug print
+                "  Processing crate '{}' with {} files...",
+                crate_context.name,
+                crate_context.files.len()
+            );
+            // For each crate, parallelize over its files
+            crate_context.files.par_iter().map(move |file_path| {
+                // Move namespace into the closure
+                // Call the single-file worker function with its specific context
+                analyze_file_phase2(file_path, crate_context.namespace)
+            })
+        })
+        .collect() // Collect all results (Result<CodeGraph, Error>) into a Vec
+}
+
+/// Process multiple files in parallel using rayon (Non-UUID Path)
+#[cfg(not(feature = "uuid_ids"))]
+pub fn analyze_files_parallel(
+    file_paths: Vec<PathBuf>,
+    num_workers: usize,
+) -> Vec<Result<CodeGraph, syn::Error>> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_workers)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        file_paths
+            .par_iter()
+            .map(|path| analyze_code(path)) // Call original analyze_code
+            .collect()
+    })
+}
+
+// start_parser_worker remains unchanged as it uses the non-UUID analyze_code
 pub fn start_parser_worker(
     receiver: Receiver<ParserMessage>,
     sender: Sender<ParserMessage>,
@@ -68,121 +209,25 @@ pub fn start_parser_worker(
         for message in receiver.iter() {
             match message {
                 ParserMessage::ParseFile(path) => {
-                    let result = analyze_code(&path);
-                    if sender.send(ParserMessage::ParseResult(result)).is_err() {
-                        // Channel closed, exit the worker
-                        break;
+                    #[cfg(not(feature = "uuid_ids"))]
+                    // Only run this worker logic if not using UUIDs
+                    {
+                        let result = analyze_code(&path);
+                        if sender.send(ParserMessage::ParseResult(result)).is_err() {
+                            break; // Channel closed
+                        }
+                    }
+                    #[cfg(feature = "uuid_ids")]
+                    {
+                        // This worker model doesn't fit the Phase 2 plan which uses
+                        // analyze_files_parallel directly with DiscoveryOutput.
+                        // Log an error or ignore if ParseFile is received under uuid_ids.
+                        eprintln!("Warning: Received ParseFile message via channel, but running with uuid_ids feature. This path is not supported in Phase 2.");
                     }
                 }
-                ParserMessage::Shutdown => {
-                    // Received shutdown signal, exit the worker
-                    break;
-                }
-                _ => {
-                    // Ignore other message types
-                }
+                ParserMessage::Shutdown => break,
+                _ => {} // Ignore other message types
             }
         }
     })
-}
-
-/// Process multiple files in parallel using rayon
-pub fn analyze_files_parallel(
-    file_paths: Vec<PathBuf>,
-    _num_workers: usize, // Renamed as it might not be directly used in uuid_ids path yet
-) -> Vec<Result<CodeGraph, syn::Error>> {
-    // TODO: Return type might need adjustment for UUID path
-    #[cfg(not(feature = "uuid_ids"))]
-    {
-        // --- Existing usize-based parallel implementation ---
-        use rayon::prelude::*;
-
-        // Create a thread pool with the specified number of workers
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(_num_workers)
-            .build()
-            .unwrap();
-
-        // Use the thread pool to process files in parallel
-        pool.install(|| {
-            file_paths
-                .par_iter()
-                .map(|path| analyze_code(path))
-                .collect()
-        })
-    }
-    #[cfg(feature = "uuid_ids")]
-    {
-        // --- New UUID-based implementation (Phase 1 + Phase 2 stub) ---
-        use crate::discovery::{run_discovery_phase, DiscoveryError}; // Import discovery items
-
-        // TODO: Determine project_root and target_crates properly.
-        // This likely requires changes to how analyze_files_parallel is called,
-        // or more sophisticated logic here to infer context from file_paths.
-        // For now, using placeholders.
-        let project_root = PathBuf::from("."); // Placeholder
-                                               // Infer target crates from file paths (simplistic: assumes files are in crate roots/src)
-        let target_crates_result: Result<Vec<PathBuf>, DiscoveryError> = file_paths
-            .iter()
-            .map(|p| {
-                p.parent() // Get directory containing the file
-                    .and_then(|dir| {
-                        if dir.ends_with("src") {
-                            dir.parent() // If in src, go up one level
-                        } else {
-                            Some(dir) // Assume it's already the crate root (simplistic)
-                        }
-                    })
-                    .map(|p| p.to_path_buf())
-                    .ok_or_else(|| DiscoveryError::CratePathNotFound { path: p.clone() })
-                // Error if no parent
-            })
-            .collect::<Result<Vec<_>, _>>() // Collect potential crate roots
-            .map(|mut paths| {
-                paths.sort(); // Sort for deduplication
-                paths.dedup(); // Remove duplicates
-                paths
-            });
-
-        let target_crates = match target_crates_result {
-            Ok(paths) => paths,
-            Err(e) => {
-                // Handle error determining target crates (e.g., return an error)
-                // For now, just print and return empty results
-                eprintln!("Error determining target crates: {:?}", e);
-                return vec![]; // Or return a proper error Result
-            }
-        };
-
-        // --- Phase 1: Discovery ---
-        println!("Running Discovery Phase..."); // Temporary print
-        let _discovery_output = match run_discovery_phase(&project_root, &target_crates) { // Prefixed with _
-            Ok(output) => {
-                 println!(
-                    "Discovery successful. Found {} crates.",
-                    output.crate_contexts.len()
-                 );
-                 output
-            },
-            Err(e) => {
-                // Handle discovery errors (e.g., log them, return an error)
-                eprintln!("Discovery phase failed: {:?}", e);
-                // Return empty results or a proper error
-                return vec![];
-            }
-        };
-
-        // --- Phase 2: Parallel Parse (Stub) ---
-        // TODO: Implement the actual parallel parsing using discovery_output
-        // This will involve:
-        // 1. Distributing files from discovery_output.crate_contexts[crate].files
-        //    to rayon workers.
-        // 2. Passing the correct CrateContext (esp. namespace) to each worker.
-        // 3. Modifying analyze_code or creating a new function for Phase 2 parsing
-        //    that accepts CrateContext and generates synthetic UUIDs.
-        // 4. Collecting partial CodeGraphs from workers.
-        println!("TODO: Implement Phase 2 Parallel Parse using discovery output.");
-        // For now, return empty results as Phase 2 is not implemented
-        vec![]
-    }
 }

@@ -1,9 +1,10 @@
-#[cfg(feature = "uuid_ids")]
-use ploke_core::{NodeId, TypeId, TrackingHash}; // Use new types when feature is enabled
 #[cfg(not(feature = "uuid_ids"))]
-use ploke_core::{NodeId, TypeId}; // Use compat types when feature is disabled
-
+use crate::parser::nodes::NodeId; // Use compat types when feature is disabled
+#[cfg(not(feature = "uuid_ids"))]
+use crate::parser::types::TypeId;
 use crate::parser::types::{GenericParamNode, VisibilityKind};
+#[cfg(feature = "uuid_ids")]
+use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled
 use serde::{Deserialize, Serialize};
 
 // NodeId and TypeId are now defined in ploke_core and conditionally compiled there.
@@ -29,7 +30,7 @@ pub struct FunctionNode {
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
-    pub parameters: Vec<ParameterNode>,
+    pub parameters: Vec<ParamData>,
     pub return_type: Option<TypeId>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
@@ -56,10 +57,9 @@ impl Visible for FunctionNode {
 
 // Represents a parameter in a function
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ParameterNode {
-    pub id: NodeId,
+pub struct ParamData {
     pub name: Option<String>,
-    pub type_id: TypeId,
+    pub type_id: TypeId, // The ID of the parameter's type
     pub is_mutable: bool,
     pub is_self: bool,
 }

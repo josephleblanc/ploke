@@ -2,10 +2,17 @@ use super::attribute_processing::extract_attributes;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
-use crate::parser::nodes::*;
+use crate::parser::nodes;
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::ExtractSpan;
+
+#[cfg(not(feature = "uuid_ids"))]
+use crate::parser::nodes::NodeId;
+#[cfg(not(feature = "uuid_ids"))]
+use crate::parser::types::TypeId;
+#[cfg(feature = "uuid_ids")]
+use ploke_core::{NodeId, TypeId};
 
 use quote::ToTokens;
 use syn::spanned::Spanned;
@@ -192,12 +199,17 @@ impl<'a> CodeVisitor<'a> {
     /// module (souce) to the node (target) whose NodeId is being generated.
     /// - Follows the pattern of generating a NodeId only at the time the Relation is added to
     ///     CodeVisitor, making orphaned nodes difficult to add by mistake.
-    fn add_contains_rel(&mut self, _node_name: Option<&str>) -> NodeId {
+    fn add_contains_rel(&mut self, node_name: Option<&str>) -> NodeId {
         // TODO: Consider changing the return type to Result<NodeId> depending on the type of node
         // being traversed. Add generic type instaed of the optional node name and find a clean way
         // to handle adding nodes without names, perhaps by implementing a trait like UnnamedNode
         // for them.
+        #[cfg(not(feature = "uuid_ids"))]
         let node_id = self.state.next_node_id(); // Generate ID here
+
+        if let Some(name) = node_name {
+            let node_id = self.state.generate_synthetic_node_id(name, span); // Generate ID here
+        }
 
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
             current_mod.items.push(node_id);

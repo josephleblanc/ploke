@@ -13,4 +13,7 @@ pub use self::graph::CodeGraph;
 pub use self::types::TypeId; // legacy version re-exports here, prefer direct imports on new
                              // version.
 pub use self::utils::ExtractSpan;
-pub use self::visitor::{analyze_code, analyze_files_parallel};
+pub use self::visitor::analyze_files_parallel;
+
+#[cfg(not(feature = "uuid"))]
+pub use self::visitor::analyze_code;

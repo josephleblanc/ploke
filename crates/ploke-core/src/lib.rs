@@ -89,7 +89,7 @@ mod ids {
     }
 
     /// Unique identifier for a specific type structure *within a specific crate version*.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum TypeId {
         Resolved(Uuid),
         Synthetic(Uuid),

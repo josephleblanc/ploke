@@ -1,7 +1,11 @@
+#[cfg(not(feature = "uuid_ids"))]
+use crate::parser::nodes::NodeId;
 #[cfg(feature = "uuid_ids")]
 use ploke_core::NodeId; // Use new type when feature is enabled
-#[cfg(not(feature = "uuid_ids"))]
-use ploke_core::NodeId; // Use compat type when feature is disabled
+use ploke_core::TypeId; // Use compat type when feature is disabled
+                        //
+#[cfg(feature = "uuid_ids")]
+use crate::parser::relations::GraphId; // Import GraphId under the feature
 
 use super::nodes::Visible;
 use super::relations::RelationKind;
@@ -22,10 +26,12 @@ impl CodeGraph {
     }
 
     /// Extremely simple sanity check for visibility
+    #[cfg(not(feature = "uuid_ids"))] // Keep old version for non-uuid path
     pub fn resolve_visibility(&self, item_id: NodeId, context_module_id: NodeId) -> bool {
         let item_module = self.get_item_module(item_id);
         // Only handle same-module cases
         // Basic same-module rules
+        // This comparison works because NodeId is usize here
         match self.find_node(item_id) {
             Some(_node) => item_module.id == context_module_id,
             None => false,
@@ -33,9 +39,12 @@ impl CodeGraph {
     }
 
     pub fn debug_print_all_visible(&self) {
-        #[cfg(feature = "verbose_debug")]
+        /// Gets the full module path for an item by searching through all modules
+        /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
+        #[cfg(all(feature = "verbose_debug", feature = "uuid_ids"))]
         {
-            let mut all_ids: Vec<(&str, usize)> = vec![];
+            // New implementation using NodeId enum
+            let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
             all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.impls.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.traits.iter().map(|n| (n.name(), n.id())));
@@ -50,21 +59,41 @@ impl CodeGraph {
                 TypeDefNode::Union(u) => (u.name(), u.id()),
             }));
             // Add other fields similarly...
-            // missing type_graph (different id generation lineage)
-            // missing relations might want to add this, at least for ids (though visible might be a
-            //  bit of a shoe-horn)
-            // missing use_statements not sure about this one.
 
+            // NodeId enum derives Ord, so sorting should work
             all_ids.sort_by_key(|&(_, id)| id);
             for (name, id) in all_ids {
-                println!("id: {}, name: {}", id, name);
+                println!("id: {:?}, name: {}", id, name); // Use Debug print for NodeId enum
             }
+        }
+    }
+    #[cfg(feature = "uuid_ids")] // New version for uuid path using GraphId
+    pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
+        // Find the module that contains this item
+        let module_id = self
+            .relations
+            .iter()
+            .find(|r| r.target == GraphId::Node(item_id) && r.kind == RelationKind::Contains) // Compare target with GraphId::Node
+            .map(|r| r.source); // Source should be GraphId::Node(module_id)
+
+        if let Some(GraphId::Node(mod_id)) = module_id {
+            // Unwrap GraphId::Node
+            // Get the module's path
+            self.modules
+                .iter()
+                .find(|m| m.id == mod_id) // Compare NodeId == NodeId
+                .map(|m| m.path.clone())
+                .unwrap_or_else(|| vec!["crate".to_string()]) // Should not happen if relation exists
+        } else {
+            // Item not in any module (crate root) or source wasn't a Node
+            vec!["crate".to_string()]
         }
     }
 
     /// Gets the full module path for an item by searching through all modules
-    /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
+    /// Returns ["crate"] if item not found in any module (should only happen for crate root items)
     /// Gets the full module path for an item by following Contains relations
+    #[cfg(not(feature = "uuid_ids"))] // Keep old version for non-uuid path
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         // Find the module that contains this item
         let module_id = self
@@ -85,19 +114,20 @@ impl CodeGraph {
             vec!["crate".to_string()]
         }
     }
+    #[cfg(feature = "uuid_ids")]
     pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
         // Find the module that contains this item
         let module_id = self
             .relations
             .iter()
-            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
+            .find(|r| r.target == GraphId::Node(item_id) && r.kind == RelationKind::Contains)
             .map(|r| r.source);
 
         if let Some(mod_id) = module_id {
             // Get the module's path
             self.modules
                 .iter()
-                .find(|m| m.id == mod_id)
+                .find(|m| GraphId::Node(m.id) == mod_id)
                 .unwrap_or_else(|| panic!("No containing module found"))
         } else {
             panic!("No containing module found");
@@ -159,6 +189,7 @@ impl CodeGraph {
     }
 
     #[allow(dead_code, reason = "useful later")]
+    #[cfg(feature = "uuid_ids")]
     fn module_contains(&self, module_id: NodeId, item_id: NodeId) -> bool {
         // Check if module directly contains the item
         if let Some(module) = self.modules.iter().find(|m| m.id == module_id) {
@@ -169,11 +200,14 @@ impl CodeGraph {
 
         // Check if module contains the item through nested modules
         self.relations.iter().any(|r| {
-            r.source == module_id && r.target == item_id && r.kind == RelationKind::Contains
+            r.source == GraphId::Node(module_id)
+                && r.target == GraphId::Node(item_id)
+                && r.kind == RelationKind::Contains
         })
     }
 
     #[allow(dead_code, reason = "useful later")]
+    #[cfg(feature = "uuid_ids")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
         let context_module_id = match self.find_module_by_path(context_module) {
             Some(m) => m.id,
@@ -183,23 +217,30 @@ impl CodeGraph {
         };
 
         // Get all ModuleImports relations for this context module
-        let import_relations = self
-            .relations
-            .iter()
-            .filter(|r| r.source == context_module_id && r.kind == RelationKind::ModuleImports);
+        let import_relations = self.relations.iter().filter(|r| {
+            r.source == GraphId::Node(context_module_id) && r.kind == RelationKind::ModuleImports
+        });
 
         for rel in import_relations {
             // Check if this is a glob import by looking for a module that contains the target
-            let is_glob = self.modules.iter().any(|m| m.id == rel.target);
+            let is_glob = self
+                .modules
+                .iter()
+                .any(|m| GraphId::Node(m.id) == rel.target);
 
             if is_glob {
                 // For glob imports, check if item is in the imported module
-                if self.module_contains(rel.target, item_id) {
-                    return VisibilityResult::Direct;
+                match rel.target {
+                    GraphId::Node(node_id) => {
+                        return VisibilityResult::Direct;
+                    }
+                    GraphId::Type(type_id) => {
+                        panic!("implement me!")
+                    }
                 }
             }
             // Direct import match
-            else if rel.target == item_id {
+            else if rel.target == GraphId::Node(item_id) {
                 return VisibilityResult::Direct;
             }
         }

@@ -3,14 +3,30 @@ use ploke_core::NodeId; // Use new type when feature is enabled
 #[cfg(not(feature = "uuid_ids"))]
 use ploke_core::NodeId; // Use compat type when feature is disabled
 
+#[cfg(feature = "uuid_ids")]
+use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum GraphId {
+    Node(NodeId),
+    Type(TypeId),
+}
 
 // ANCHOR: Relation
 // Represents a relation between nodes
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Relation {
+    #[cfg(not(feature = "uuid_ids"))]
     pub source: NodeId,
+    #[cfg(not(feature = "uuid_ids"))]
     pub target: NodeId,
+    #[cfg(feature = "uuid_ids")]
+    pub source: GraphId,
+    #[cfg(feature = "uuid_ids")]
+    pub target: GraphId,
+
     pub kind: RelationKind,
 }
 

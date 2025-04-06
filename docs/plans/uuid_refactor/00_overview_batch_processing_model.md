@@ -153,55 +153,55 @@ This table outlines the expected state of identifiers at the *end* of each phase
 ## 7. Phase / ID Flow Diagram
 
 ```mermaid
-graph TD
-    subgraph Phase 1: Discovery
-        D1[Identify Files] --> D2(Parse Cargo.toml);
-        D2 --> D3(Establish Namespaces);
-        D3 --> P2_Input([Files, Namespaces]);
+flowchart TD
+    subgraph Phase1["Phase 1: Discovery"]
+        D1["Identify Files"] --> D2["Parse Cargo.toml"]
+        D2 --> D3["Establish Namespaces"]
+        D3 --> P2_Input["Files, Namespaces"]
     end
 
-    subgraph Phase 2: Parallel Parse
-        P2_Input --> P2_Parse[Parse File (syn)];
-        P2_Parse --> P2_GenSynthID(Generate NodeId::Synthetic);
-        P2_Parse --> P2_GenSynthTypeID(Generate TypeId::Synthetic);
-        P2_Parse --> P2_GenTrackHash(Generate TrackingHash);
-        P2_GenSynthID --> P2_GenRelations(Generate Relations w/ Synth IDs);
-        P2_GenSynthTypeID --> P2_GenRelations;
-        P2_GenRelations --> P2_Output(Partial CodeGraph);
-        P2_GenTrackHash --> P2_Output;
+    subgraph Phase2["Phase 2: Parallel Parse"]
+        P2_Input --> P2_Parse["Parse File (syn)"]
+        P2_Parse --> P2_GenSynthID["Generate NodeId::Synthetic"]
+        P2_Parse --> P2_GenSynthTypeID["Generate TypeId::Synthetic"]
+        P2_Parse --> P2_GenTrackHash["Generate TrackingHash"]
+        P2_GenSynthID --> P2_GenRelations["Generate Relations w/ Synth IDs"]
+        P2_GenSynthTypeID --> P2_GenRelations
+        P2_GenRelations --> P2_Output["Partial CodeGraph"]
+        P2_GenTrackHash --> P2_Output
     end
 
-    subgraph Phase 3: Batch Resolution
-        P2_Output --> P3_Merge[Merge Partial Graphs];
-        P3_Merge --> P3_BuildTree(Build Module Tree);
-        P3_BuildTree --> P3_ResolveNodeID(Resolve NodeId::Synthetic to NodeId::Path);
-        P3_ResolveNodeID --> P3_ResolveTypes(Resolve Type Refs to Final TypeId / LogicalTypeId);
-        P3_ResolveTypes --> P3_UpdateRelations(Update Relations w/ Final IDs);
-        P3_UpdateRelations --> P3_Output(Resolved CodeGraph);
-        P3_Output --> P3_Persist(Persist Resolution State);
+    subgraph Phase3["Phase 3: Batch Resolution"]
+        P2_Output --> P3_Merge["Merge Partial Graphs"]
+        P3_Merge --> P3_BuildTree["Build Module Tree"]
+        P3_BuildTree --> P3_ResolveNodeID["Resolve NodeId::Synthetic to NodeId::Path"]
+        P3_ResolveNodeID --> P3_ResolveTypes["Resolve Type Refs to Final TypeId / LogicalTypeId"]
+        P3_ResolveTypes --> P3_UpdateRelations["Update Relations w/ Final IDs"]
+        P3_UpdateRelations --> P3_Output["Resolved CodeGraph"]
+        P3_Output --> P3_Persist["Persist Resolution State"]
     end
 
-    subgraph Phase 4: Embedding
-        P3_Output --> P4_Identify[Identify Nodes to Embed];
-        P4_Identify --> P4_Extract(Extract Snippets);
-        P4_Extract --> P4_Embed[Generate Embeddings (ploke-embed / async)];
-        P4_Embed --> P4_Output(Map LogicalTypeId -> Vector);
+    subgraph Phase4["Phase 4: Embedding"]
+        P3_Output --> P4_Identify["Identify Nodes to Embed"]
+        P4_Identify --> P4_Extract["Extract Snippets"]
+        P4_Extract --> P4_Embed["Generate Embeddings (ploke-embed / async)"]
+        P4_Embed --> P4_Output["Map LogicalTypeId -> Vector"]
     end
 
-    subgraph Phase 5: Transform & Insert
-        P3_Output --> P5_Transform[Transform Graph (ploke-graph)];
-        P4_Output --> P5_Transform;
-        P5_Transform --> P5_Insert[Insert/Update CozoDB];
-        P5_Insert --> P5_Output(Populated DB);
+    subgraph Phase5["Phase 5: Transform & Insert"]
+        P3_Output --> P5_Transform["Transform Graph (ploke-graph)"]
+        P4_Output --> P5_Transform
+        P5_Transform --> P5_Insert["Insert/Update CozoDB"]
+        P5_Insert --> P5_Output["Populated DB"]
     end
 
-    P3_Persist --> P1_LoadState([Load Persisted State]);
-    P1_LoadState --> P3_ResolveNodeID;
-    P1_LoadState --> P3_ResolveTypes;
-    P1_LoadState --> P3_UpdateRelations;
+    P3_Persist --> P1_LoadState["Load Persisted State"]
+    P1_LoadState --> P3_ResolveNodeID
+    P1_LoadState --> P3_ResolveTypes
+    P1_LoadState --> P3_UpdateRelations
 
-    style P1_LoadState fill:#f9f,stroke:#333,stroke-width:2px
-    style P3_Persist fill:#f9f,stroke:#333,stroke-width:2px
+    style P1_LoadState fill:#19f,stroke:#333,stroke-width:2px
+    style P3_Persist fill:#19f,stroke:#333,stroke-width:2px
 ```
 
 ## 8. Detailed Processing Flow Diagram (`syn_parser` Focus)
@@ -278,8 +278,8 @@ flowchart TD
 
     PersistState -.-> LoadState;
 
-    style LoadState fill:#f9f,stroke:#333,stroke-width:2px
-    style PersistState fill:#f9f,stroke:#333,stroke-width:2px
+    style LoadState fill:#19f,stroke:#333,stroke-width:2px
+    style PersistState fill:#19f,stroke:#333,stroke-width:2px
 ```
 
 ## 9. Testing & Risk Mitigation
