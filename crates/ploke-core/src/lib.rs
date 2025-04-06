@@ -29,19 +29,48 @@ mod ids {
         Synthetic(Uuid),
     }
     impl NodeId {
+        // Good for items that won't have the same name in the same module
+        //  - e.g. not good for function parameters, enum variant, struct field
+        //  - good for funciton, struct, enum, etc
         pub fn generate_synthetic(
             crate_namespace: uuid::Uuid,
             file_path: &std::path::Path,
             relative_path: &[String],
             item_name: &str,
         ) -> Self {
-            let fp: &[u8] = file_path.to_str().unwrap().as_bytes();
+            let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
             let synthetic_data: Vec<u8> = crate_namespace
                 .as_bytes()
                 .iter()
-                .chain(fp)
+                .chain(fp_bytes)
                 .chain(relative_path.join("::").as_bytes())
                 .chain(item_name.as_bytes())
+                .copied()
+                .collect();
+
+            Self::Synthetic(uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
+        }
+        // Possibly useful but more likely to be too fine-grained to allow for incremental updates
+        // Only here for now as a possible alternative. Probably delete/move into TrackingHash
+        // instead.
+        pub fn generate_synthetic_with_span(
+            crate_namespace: uuid::Uuid,
+            file_path: &std::path::Path,
+            relative_path: &[String],
+            item_name: &str,
+            span: (usize, usize),
+        ) -> Self {
+            let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
+            let span_start_bytes = span.0.to_le_bytes(); // use consistent byte order
+            let span_end_bytes = span.1.to_le_bytes();
+            let synthetic_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(fp_bytes)
+                .chain(relative_path.join("::").as_bytes())
+                .chain(item_name.as_bytes())
+                .chain(&span_start_bytes)
+                .chain(&span_end_bytes)
                 .copied()
                 .collect();
 

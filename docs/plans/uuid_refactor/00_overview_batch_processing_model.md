@@ -313,3 +313,13 @@ While `syn_parser` is responsible for generating relations directly derivable fr
     -   `ploke-db` (or a dedicated service): Could infer relations based on database queries (e.g., "similar embedding").
 
 The design using stable UUIDs ensures that these disparate sources can consistently refer to the same code elements within the graph stored in CozoDB. `ploke-graph` primarily handles the transformation of parser-generated data but the Cozo schema itself is open to extension.
+
+## 11. Handling Primitives and Standard Library Types
+
+Parsing the entire `std` library source code is impractical. To ensure consistent identification of primitive types (e.g., `u64`, `bool`) and common standard library types (e.g., `String`, `Vec`, `HashMap`) across the user's code and all parsed dependencies, a predefined identifier strategy will be used:
+
+1.  **Dedicated Namespace:** A constant, well-known `Uuid` (e.g., `STD_NAMESPACE_UUID`) will serve as the namespace specifically for standard library and primitive types. This namespace is distinct from the `PROJECT_NAMESPACE_UUID` used for crate-specific namespaces.
+2.  **Canonical Names:** The known, stable canonical paths or names of these types (e.g., `"u64"`, `"std::string::String"`, `"std::collections::HashMap"`) will be used as the "name" component for ID generation.
+3.  **Direct Generation of Resolved IDs:** When the parser encounters a usage of these well-known types, instead of generating a `TypeId::Synthetic` based on the current parsing context, it will directly generate (or retrieve from a cache) a predefined, stable `TypeId::Resolved(Uuid)`. This ID is deterministically generated using the `STD_NAMESPACE_UUID` and the type's canonical name string (e.g., `Uuid::new_v5(&STD_NAMESPACE_UUID, b"std::string::String")`).
+4.  **Consistency:** This approach guarantees that every reference to `String`, `u64`, `HashMap`, etc., receives the exact same `TypeId::Resolved` throughout the entire graph, regardless of which crate it appears in, without requiring `std` to be parsed.
+5.  **Generics:** Generic standard library types like `Vec<T>` or `HashMap<K, V>` are handled compositionally. The `TypeNode` representing `Vec<String>` will reference the predefined `TypeId` for `Vec` and the predefined `TypeId` for `String`. Its own `TypeId` will likely be generated based on the base type's ID and the IDs of its generic arguments.
