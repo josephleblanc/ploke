@@ -1,11 +1,7 @@
 #![cfg(feature = "uuid_ids")] // Gate the entire module
 
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
 use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};

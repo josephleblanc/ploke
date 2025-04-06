@@ -8,16 +8,45 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 
 #[cfg(feature = "uuid_ids")]
 mod ids {
+    use std::str::Bytes;
+
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
+
+    use crate::PROJECT_NAMESPACE_UUID;
 
     /// Unique identifier for code elements (functions, structs, modules, etc.).
     /// - `Path`: Stable ID based on the item's absolute path within the project/crate namespace.
     /// - `Synthetic`: Temporary ID generated during parallel parsing, resolved later to `Path` if possible.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    ///     - formed from project_namespace as namespace
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum NodeId {
         Path(Uuid),
+        // Synthetic formed from project_namespace as namespace and:
+        //  - file_path bytes for e.g. crate/module_dir1/module_dir2/file_name.resolved
+        //  - relative module path for e.g. ["crate", "mod1", "mod2"]
+        //  - item name, e.g. "SomeStruct" or "function_name"
         Synthetic(Uuid),
+    }
+    impl NodeId {
+        pub fn generate_synthetic(
+            crate_namespace: uuid::Uuid,
+            file_path: &std::path::Path,
+            relative_path: &[String],
+            item_name: &str,
+        ) -> Self {
+            let fp: &[u8] = file_path.to_str().unwrap().as_bytes();
+            let synthetic_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(fp)
+                .chain(relative_path.join("::").as_bytes())
+                .chain(item_name.as_bytes())
+                .copied()
+                .collect();
+
+            Self::Synthetic(uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
+        }
     }
 
     /// Unique identifier for a specific type structure *within a specific crate version*.

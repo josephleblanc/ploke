@@ -1,6 +1,8 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, ParameterNode, Visible};
-use crate::parser::types::{GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind};
+use crate::parser::types::{
+    GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind,
+};
 use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
@@ -17,7 +19,7 @@ use {
 
 #[cfg(not(feature = "uuid_ids"))]
 use ploke_core::{NodeId, TypeId}; // Use compat types when feature is disabled
-// --- End Conditional Imports ---
+                                  // --- End Conditional Imports ---
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -32,14 +34,15 @@ pub struct VisitorState {
     pub(crate) crate_namespace: Uuid, // Namespace for the crate being parsed
     #[cfg(feature = "uuid_ids")]
     pub(crate) current_file_path: PathBuf, // Path of the file being parsed by this visitor instance
-                                       // --- End Conditional Fields ---
+    // --- End Conditional Fields ---
 
     // Use DashMap for thread-safe concurrent access to the type cache
     // TypeId here will be usize or the Uuid-based struct depending on the feature flag
     pub(crate) type_map: Arc<DashMap<String, TypeId>>,
 
-    // TODO: Re-evaluate if both current_module_path and current_module are needed.
+    // TODO: AI comment: Re-evaluate if both current_module_path and current_module are needed.
     // current_module_path seems more aligned with UUID generation needs.
+    // USER response: Agreed, should re-evaluate post-refactor of uuid system.
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
     pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
 }
@@ -63,9 +66,14 @@ impl VisitorState {
                 macros: Vec::new(),
                 use_statements: Vec::new(),
             },
+            // Legacy, not needed
             // Initialize old fields for non-uuid_ids
-            next_node_id: 0,
-            next_type_id: 0,
+            // next_node_id: 0,
+            // next_type_id: 0,
+
+            // New values needed for Uuid generation of Synthetic NodeId/TypeId variants
+            crate_namespace,
+            current_file_path,
             // New fields are conditionally compiled out
             type_map: Arc::new(DashMap::new()),
             current_module_path: Vec::new(),
@@ -88,6 +96,14 @@ impl VisitorState {
         let id = self.next_type_id;
         self.next_type_id += 1;
         id
+    }
+    pub(crate) fn generate_synthetic_node_id(&self, name: &str) -> NodeId {
+        NodeId::generate_synthetic(
+            self.crate_namespace,
+            &self.current_file_path,
+            &self.current_module_path,
+            name,
+        )
     }
 
     // --- End Conditional Methods ---
@@ -127,15 +143,16 @@ impl VisitorState {
                 #[cfg(not(feature = "uuid_ids"))]
                 let id = self.next_node_id();
                 #[cfg(feature = "uuid_ids")]
-                let id = self.generate_synthetic_node_id(
+                let id: NodeId = self.generate_synthetic_node_id(
                     &format!(
                         "param_{}",
                         name.as_deref().unwrap_or("unnamed") // Simple context for param
-                    ),
-                    // TODO: Need span info here! Pass it down or get from `arg`.
-                    (0, 0), // Placeholder span
+                    ), // TODO: Need span info here! Pass it down or get from `arg`.
+                       // (0, 0), // Placeholder span
+                       // USER comment: Wouldn't the relative module path work just as well here
+                       // instead of span? Are they both essentially the same or is there an advantage
+                       // to one over the other?
                 );
-
 
                 Some(ParameterNode {
                     id,
@@ -225,7 +242,6 @@ impl VisitorState {
                         (0, 0), // Placeholder span
                     );
 
-
                     params.push(GenericParamNode {
                         id: param_node_id,
                         kind: GenericParamKind::Type {
@@ -307,7 +323,8 @@ impl VisitorState {
 
                 self.code_graph.type_graph.push(TypeNode {
                     id: type_id,
-                    kind: TypeKind::Named { // Or a new TypeKind::LifetimeBound?
+                    kind: TypeKind::Named {
+                        // Or a new TypeKind::LifetimeBound?
                         path: vec!["lifetime".to_string()],
                         is_fully_qualified: false,
                     },
@@ -317,11 +334,11 @@ impl VisitorState {
             }
             // Handle `Verbatim` or future variants if necessary
             _ => {
-                 #[cfg(not(feature = "uuid_ids"))]
-                 let type_id = self.next_type_id();
-                 #[cfg(feature = "uuid_ids")]
-                 let type_id = self.generate_synthetic_type_id("unknown_type_bound"); // Placeholder
-                 type_id
+                #[cfg(not(feature = "uuid_ids"))]
+                let type_id = self.next_type_id();
+                #[cfg(feature = "uuid_ids")]
+                let type_id = self.generate_synthetic_type_id("unknown_type_bound"); // Placeholder
+                type_id
             }
         }
     }

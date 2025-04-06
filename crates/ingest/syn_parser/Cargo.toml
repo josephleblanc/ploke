@@ -26,10 +26,10 @@ dashmap = { workspace = true }
 petgraph = { workspace = true }
 cozo = { workspace = true }
 # uuid is now an optional transitive dependency via ploke-core
-# uuid = { workspace = true, features = ["v5", "serde"], optional = true }
+uuid = { workspace = true, features = ["v5", "serde"], optional = true }
 
 # Error handling
-thiserror = { workspace = true }         # version 2
+thiserror = { workspace = true }                          # version 2
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
 

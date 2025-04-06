@@ -4,17 +4,17 @@
 **Task**: Implement the "Parallel Parse & Provisional Graph Generation" phase (Phase 2) of the UUID refactoring plan, as outlined in the [UUID Refactor Overview](docs/plans/uuid_refactor/00_overview_batch_processing_model.md). This involves modifying the existing parallel file parsing logic (`analyze_files_parallel`) to use the `DiscoveryOutput` from Phase 1, generate temporary `NodeId::Synthetic` and `TypeId::Synthetic` UUIDs, calculate `TrackingHash` values, and produce partial `CodeGraph` structures containing this provisional data.
 **Purpose**: To leverage parallelism (`rayon`) for the CPU-bound task of parsing Rust code into ASTs and initial graph nodes, while generating the necessary temporary identifiers and change-tracking hashes required for the sequential resolution (Phase 3) and incremental update logic.
 **Success Criteria**:
-    - The `analyze_files_parallel` function (under the `uuid_ids` flag) accepts `DiscoveryOutput` (or necessary parts like file lists and namespaces).
-    - It uses `rayon` to parse files in parallel.
-    - Each parser worker correctly uses the `CRATE_NAMESPACE` and file context passed to it.
-    - The `CodeVisitor` (and its `VisitorState`) generates `NodeId::Synthetic(Uuid)` for graph nodes (functions, structs, etc.).
-    - The `CodeVisitor` generates `TypeId::Synthetic(Uuid)` for type references, storing unresolved path strings where necessary.
-    - The `CodeVisitor` generates `TrackingHash` (Uuid) for relevant nodes based on their content.
-    - Relations within the partial graphs use the generated `Synthetic` UUIDs.
-    - `analyze_files_parallel` returns a collection of `Result<CodeGraph, _>` where each `CodeGraph` contains nodes with `Synthetic` IDs and `TrackingHash` values.
-    - All new/modified code related to UUIDs is gated behind the `uuid_ids` feature flag.
-    - Unit tests verify synthetic ID and tracking hash generation logic.
-    - Integration tests (using a simple fixture crate) verify the parallel execution and the structure of the output partial `CodeGraph`s.
+   - The `analyze_files_parallel` function (under the `uuid_ids` flag) accepts `DiscoveryOutput` (or necessary parts like file lists and namespaces).
+   - It uses `rayon` to parse files in parallel.
+   - Each parser worker correctly uses the `CRATE_NAMESPACE` and file context passed to it.
+   - The `CodeVisitor` (and its `VisitorState`) generates `NodeId::Synthetic(Uuid)` for graph nodes (functions, structs, etc.).
+   - The `CodeVisitor` generates `TypeId::Synthetic(Uuid)` for type references, storing unresolved path strings where necessary.
+   - The `CodeVisitor` generates `TrackingHash` (Uuid) for relevant nodes based on their content.
+   - Relations within the partial graphs use the generated `Synthetic` UUIDs.
+   - `analyze_files_parallel` returns a collection of `Result<CodeGraph, _>` where each `CodeGraph` contains nodes with `Synthetic` IDs and `TrackingHash` values.
+   - All new/modified code related to UUIDs is gated behind the `uuid_ids` feature flag.
+   - Unit tests verify synthetic ID and tracking hash generation logic.
+   - Integration tests (using a simple fixture crate) verify the parallel execution and the structure of the output partial `CodeGraph`s.
 
 ## 2. Feature Flag Configuration
 **Feature Name**: `uuid_ids` (already defined in ADR-001)

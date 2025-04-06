@@ -1279,6 +1279,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "ploke-db"
 version = "0.1.0"
 dependencies = [
@@ -1852,6 +1860,7 @@ dependencies = [
  "flume",
  "petgraph",
  "ploke-common",
+ "ploke-core",
  "proc-macro2",
  "quote",
  "rayon",
