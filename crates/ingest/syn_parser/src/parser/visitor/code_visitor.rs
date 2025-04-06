@@ -228,6 +228,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 || attr.path().is_ident("proc_macro_derive")
                 || attr.path().is_ident("proc_macro_attribute")
         });
+        let something = func.to_token_stream().to_string().as_bytes();
 
         if is_proc_macro {
             let macro_id = self.state.next_node_id();

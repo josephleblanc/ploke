@@ -8,7 +8,7 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 
 #[cfg(feature = "uuid_ids")]
 mod ids {
-    use std::str::Bytes;
+    use std::{path::Path, str::Bytes};
 
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -16,23 +16,33 @@ mod ids {
     use crate::PROJECT_NAMESPACE_UUID;
 
     /// Unique identifier for code elements (functions, structs, modules, etc.).
-    /// - `Path`: Stable ID based on the item's absolute path within the project/crate namespace.
+    /// - `Resolved`: Stable ID based on the item's absolute path within the project/crate namespace.
     /// - `Synthetic`: Temporary ID generated during parallel parsing, resolved later to `Path` if possible.
     ///     - formed from project_namespace as namespace
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum NodeId {
-        Path(Uuid),
+        // Resolved formed from project_namespace as namespace and:
+        //  - file_path bytes for e.g. crate/module_dir1/module_dir2/file_name.resolved
+        //  - cannonical module path for e.g. ["crate", "mod1", "mod2"]
+        //     - Fully resolved in Phase 3 of parsing after module tree created
+        //     - Guarenteed to resolve for all nodes in Phase 3
+        //  - item name, e.g. "SomeStruct" or "function_name"
+        Resolved(Uuid),
         // Synthetic formed from project_namespace as namespace and:
         //  - file_path bytes for e.g. crate/module_dir1/module_dir2/file_name.resolved
-        //  - relative module path for e.g. ["crate", "mod1", "mod2"]
+        //  - relative module path for e.g. ["mod1", "mod2"]
+        //      - Due to possibility of re-exports and aliases from other files,
+        //        e.g. a mod.rs in same dir with "pub us mod_z::mod_y as mod1",
+        //        cannot guarentee module path to correctly resolve at parse-time.
         //  - item name, e.g. "SomeStruct" or "function_name"
+        //  - span start/end
         Synthetic(Uuid),
     }
     impl NodeId {
         // Good for items that won't have the same name in the same module
-        //  - e.g. not good for function parameters, enum variant, struct field
-        //  - good for funciton, struct, enum, etc
-        pub fn generate_synthetic(
+        //  - e.g. not good for function parameters, enum variant, struct field (not nodes)
+        //  - good for funciton, struct, enum, etc (nodes)
+        pub fn generate_resolved(
             crate_namespace: uuid::Uuid,
             file_path: &std::path::Path,
             relative_path: &[String],
@@ -53,7 +63,7 @@ mod ids {
         // Possibly useful but more likely to be too fine-grained to allow for incremental updates
         // Only here for now as a possible alternative. Probably delete/move into TrackingHash
         // instead.
-        pub fn generate_synthetic_with_span(
+        pub fn generate_synthetic(
             crate_namespace: uuid::Uuid,
             file_path: &std::path::Path,
             relative_path: &[String],
@@ -80,11 +90,52 @@ mod ids {
 
     /// Unique identifier for a specific type structure *within a specific crate version*.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-    pub struct TypeId {
-        /// Namespace UUID of the crate defining the type.
-        pub crate_id: Uuid,
-        /// UUID representing the canonical type structure within that crate.
-        pub type_id: Uuid,
+    pub enum TypeId {
+        Resolved(Uuid),
+        Synthetic(Uuid),
+    }
+    impl TypeId {
+        /// Generates a temporary Synthetic TypeId based on the context where a type
+        /// is used and a string representation of that type.
+        ///
+        /// # Arguments
+        /// * `crate_namespace` - The Uuid namespace of the crate where the usage occurs.
+        /// * `file_path` - The path to the file where the usage occurs.
+        /// * `type_string_repr` - A consistent string representation of the syn::Type
+        ///   (typically generated using `ty.to_token_stream().to_string()`).
+        pub fn generate_synthetic(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            type_string_repr: &str,
+        ) -> Self {
+            // Use as_encoded_bytes() for potentially non-UTF8 paths
+            let fp_bytes = file_path.as_os_str().as_encoded_bytes();
+
+            // Combine namespace, file path bytes, and type string bytes.
+            // Using a separator helps ensure distinctness if components could overlap,
+            // though UUIDv5 hashing is generally robust.
+            let synthetic_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::FILE::") // Separator
+                .chain(fp_bytes)
+                .chain(b"::TYPE::") // Separator
+                .chain(type_string_repr.as_bytes())
+                .copied()
+                .collect();
+
+            // Generate the UUIDv5 using the project's root namespace.
+            let type_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data);
+
+            // Return the Synthetic variant containing the generated UUID.
+            Self::Synthetic(type_uuid)
+        }
+
+        // Placeholder for the Phase 3 resolved ID generation
+        // pub fn generate_resolved(defining_crate_namespace: Uuid, canonical_type_path: &str) -> Self {
+        //     // ... hash defining_crate_namespace + canonical_type_path ...
+        //     Self::Resolved(resolved_uuid)
+        // }
     }
 
     /// Stable identifier for a type's logical identity across crate versions.
@@ -121,6 +172,3 @@ mod ids_compat {
     // pub struct LogicalTypeId; // Placeholder if needed
     // pub struct TrackingHash; // Placeholder if needed
 }
-
-#[cfg(not(feature = "uuid_ids"))]
-pub use ids_compat::*;

@@ -3,6 +3,7 @@ use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, ParameterNode, Vis
 use crate::parser::types::{
     GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind,
 };
+use crate::parser::utils::type_to_string;
 use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
@@ -97,12 +98,21 @@ impl VisitorState {
         self.next_type_id += 1;
         id
     }
-    pub(crate) fn generate_synthetic_node_id(&self, name: &str) -> NodeId {
+    pub(crate) fn generate_synthetic_node_id(&self, name: &str, span: (usize, usize)) -> NodeId {
         NodeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
             &self.current_module_path,
             name,
+            span,
+        )
+    }
+
+    pub(crate) fn generate_synthetic_type_id(&self, ty: &syn::Type) {
+        TypeId::generate_synthetic(
+            self.crate_namespace,
+            &self.current_file_path,
+            type_to_string(ty),
         )
     }
 
@@ -319,7 +329,7 @@ impl VisitorState {
                 #[cfg(not(feature = "uuid_ids"))]
                 let type_id = self.next_type_id();
                 #[cfg(feature = "uuid_ids")]
-                let type_id = self.generate_synthetic_type_id("lifetime_bound"); // Placeholder
+                let type_id = self.generate_synthetic("lifetime_bound"); // Placeholder
 
                 self.code_graph.type_graph.push(TypeNode {
                     id: type_id,
