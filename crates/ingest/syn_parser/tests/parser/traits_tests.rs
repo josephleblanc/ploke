@@ -1,3 +1,4 @@
+#![cfg(not(feature = "uuid_ids"))]
 // Placeholder for trait parsing tests
 #[test]
 fn test_trait_parsing() {

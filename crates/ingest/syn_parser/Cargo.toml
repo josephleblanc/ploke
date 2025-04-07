@@ -46,9 +46,10 @@ tempfile = "3.10" # For creating temporary files/dirs in tests
 default = [
     # "verbose_debug",
 ]
+# "uuid_ids",
 verbose_debug = []
 # Post-MVP feature
 workspace_vis = []
 # Feature flag for the UUID refactor
 # Enables uuid_ids in ploke-core and brings in necessary discovery deps
-uuid_ids = ["ploke-core/uuid_ids", "dep:toml", "dep:walkdir"]
+uuid_ids = ["ploke-core/uuid_ids", "dep:toml", "dep:walkdir", "dep:uuid"]

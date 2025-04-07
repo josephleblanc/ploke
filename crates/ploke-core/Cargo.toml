@@ -3,14 +3,17 @@ name = "ploke-core"
 version = "0.1.0"
 edition = "2021"
 description = "Core data types and constants for the ploke project"
-authors = ["Your Name <your.email@example.com>"] # Please update author info
+authors = ["Your Name <your.email@example.com>"]                    # Please update author info
 
 [dependencies]
 # Enable these core dependencies only when the uuid_ids feature is active
 uuid = { workspace = true, features = ["v5", "serde"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
+proc-macro2 = { workspace = true, features = [
+    "span-locations",
+], optional = true }
 
 [features]
 default = []
 # Feature flag for the UUID refactor
-uuid_ids = ["dep:uuid", "dep:serde"]
+uuid_ids = ["dep:uuid", "dep:serde", "dep:proc-macro2"]

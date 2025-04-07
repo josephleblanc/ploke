@@ -208,75 +208,75 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    subgraph Phase 1 [Discovery]
+    subgraph Phase1["Phase 1: Discovery"]
         direction LR
-        Input1[Project Path] --> D1[Scan Files];
-        Input1 --> D2[Parse Cargo.toml];
-        D1 --> D3[Initial Module Map];
-        D2 --> D4[Crate Name/Version];
-        D4 --> D5(Derive CRATE_NAMESPACE);
-        Output1([Files List, Namespaces, Module Map])
-        D3 --> Output1;
-        D5 --> Output1;
+        Input1["Project Path"] --> D1["Scan Files"]
+        Input1 --> D2["Parse Cargo.toml"]
+        D1 --> D3["Initial Module Map"]
+        D2 --> D4["Crate Name/Version"]
+        D4 --> D5["Derive CRATE_NAMESPACE"]
+        Output1["Files List, Namespaces, Module Map"]
+        D3 --> Output1
+        D5 --> Output1
     end
 
-    subgraph Phase 2 [Parallel Parse (Rayon)]
+    subgraph Phase2["Phase 2: Parallel Parse (Rayon)"]
         direction TB
-        Input2([Files, Namespaces]) --> ForEachFile{For Each File};
-        ForEachFile --> Worker(Parser Worker);
-        Worker --> Parse[Parse AST (syn)];
-        Parse --> Visit(AST Visitor);
-        Visit -- Item Definition --> GenSynthNodeId(Generate NodeId::Synthetic);
-        Visit -- Type Reference --> GenSynthTypeId(Generate TypeId::Synthetic);
-        Visit -- Item Definition --> GenTrackingHash(Generate TrackingHash);
-        GenSynthNodeId --> StoreNode[Store Node + Context];
-        GenSynthTypeId --> StoreTypeRef[Store Unresolved Type Ref];
-        GenTrackingHash --> StoreNode;
-        StoreNode --> GenRelation(Generate Relation w/ Synth IDs);
-        StoreTypeRef --> GenRelation;
-        GenRelation --> Output2(Partial CodeGraph);
+        Input2["Files, Namespaces"] --> ForEachFile{"For Each File"}
+        ForEachFile --> Worker["Parser Worker"]
+        Worker --> Parse["Parse AST (syn)"]
+        Parse --> Visit["AST Visitor"]
+        Visit -- "Item Definition" --> GenSynthNodeId["Generate NodeId::Synthetic"]
+        Visit -- "Type Reference" --> GenSynthTypeId["Generate TypeId::Synthetic"]
+        Visit -- "Item Definition" --> GenTrackingHash["Generate TrackingHash"]
+        GenSynthNodeId --> StoreNode["Store Node + Context"]
+        GenSynthTypeId --> StoreTypeRef["Store Unresolved Type Ref"]
+        GenTrackingHash --> StoreNode
+        StoreNode --> GenRelation["Generate Relation w/ Synth IDs"]
+        StoreTypeRef --> GenRelation
+        GenRelation --> Output2["Partial CodeGraph"]
     end
 
-    subgraph Phase 3 [Batch Resolution (Sequential)]
+    subgraph Phase3["Phase 3: Batch Resolution (Sequential)"]
         direction TB
-        Input3(Collect Partial CodeGraphs) --> Merge[Merge Data];
-        Input3 --> LoadState([Load Persisted State]);
-        Merge --> BuildTree[Build Definitive Module Tree];
-        LoadState --> BuildTree;
-        BuildTree --> ResolveNodeId[Resolve NodeId::Path (Local)];
-        LoadState --> ResolveNodeId;
-        ResolveNodeId --> ResolveTypes[Resolve Type Refs -> TypeId/LogicalTypeId (Local)];
-        LoadState --> ResolveTypes;
-        ResolveTypes --> UpdateRelations[Update Relations w/ Final/Synth IDs];
-        LoadState --> UpdateRelations;
-        UpdateRelations --> Output3(Resolved CodeGraph w/ Unresolved Markers);
-        Output3 --> PersistState(Persist Resolution State);
+        Input3["Collect Partial CodeGraphs"] --> Merge["Merge Data"]
+        Input3 --> LoadState["Load Persisted State"]
+        Merge --> BuildTree["Build Definitive Module Tree"]
+        LoadState --> BuildTree
+        BuildTree --> ResolveNodeId["Resolve NodeId::Path (Local)"]
+        LoadState --> ResolveNodeId
+        ResolveNodeId --> ResolveTypes["Resolve Type Refs -> TypeId/LogicalTypeId (Local)"]
+        LoadState --> ResolveTypes
+        ResolveTypes --> UpdateRelations["Update Relations w/ Final/Synth IDs"]
+        LoadState --> UpdateRelations
+        UpdateRelations --> Output3["Resolved CodeGraph w/ Unresolved Markers"]
+        Output3 --> PersistState["Persist Resolution State"]
     end
 
-    subgraph Phase 4 [Embedding (Tokio)]
+    subgraph Phase4["Phase 4: Embedding (Tokio)"]
         direction LR
-        Input4(Resolved CodeGraph) --> IdentifyEmbed[Identify Nodes];
-        IdentifyEmbed --> ExtractSnippets[Extract Snippets];
-        ExtractSnippets --> CallEmbedder[Call ploke-embed (async)];
-        CallEmbedder --> Output4(Map LogicalTypeId -> Vector);
+        Input4["Resolved CodeGraph"] --> IdentifyEmbed["Identify Nodes"]
+        IdentifyEmbed --> ExtractSnippets["Extract Snippets"]
+        ExtractSnippets --> CallEmbedder["Call ploke-embed (async)"]
+        CallEmbedder --> Output4["Map LogicalTypeId -> Vector"]
     end
 
-    subgraph Phase 5 [Transform & Insert (ploke-graph)]
+    subgraph Phase5["Phase 5: Transform & Insert (ploke-graph)"]
         direction LR
-        Input5a(Resolved CodeGraph) --> TransformData[Transform to Cozo Values];
-        Input5b(Embedding Map) --> TransformData;
-        TransformData --> GenerateScript[Generate CozoScript :put];
-        GenerateScript --> ExecuteScript[Execute on CozoDB];
-        ExecuteScript --> Output5(Populated DB);
+        Input5a["Resolved CodeGraph"] --> TransformData["Transform to Cozo Values"]
+        Input5b["Embedding Map"] --> TransformData
+        TransformData --> GenerateScript["Generate CozoScript :put"]
+        GenerateScript --> ExecuteScript["Execute on CozoDB"]
+        ExecuteScript --> Output5["Populated DB"]
     end
 
-    Phase1 --> Phase2;
-    Phase2 --> Phase3;
-    Phase3 --> Phase4;
-    Phase3 --> Phase5;
-    Phase4 --> Phase5;
+    Phase1 --> Phase2
+    Phase2 --> Phase3
+    Phase3 --> Phase4
+    Phase3 --> Phase5
+    Phase4 --> Phase5
 
-    PersistState -.-> LoadState;
+    PersistState -.-> LoadState
 
     style LoadState fill:#19f,stroke:#333,stroke-width:2px
     style PersistState fill:#19f,stroke:#333,stroke-width:2px

@@ -2,6 +2,7 @@ use crate::common::*;
 use syn_parser::parser::types::VisibilityKind;
 
 #[test]
+#[cfg(not(feature = "uuid_ids"))]
 fn test_enum_parsing() {
     let graph = parse_fixture("enums.rs").expect("Error parsing fixture 'enums.rs");
 

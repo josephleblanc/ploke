@@ -1,7 +1,8 @@
 #[cfg(not(feature = "uuid_ids"))]
-use crate::parser::nodes::NodeId;
+use crate::NodeId;
 #[cfg(feature = "uuid_ids")]
 use ploke_core::NodeId; // Use new type when feature is enabled
+#[cfg(feature = "uuid_ids")]
 use ploke_core::TypeId; // Use compat type when feature is disabled
                         //
 #[cfg(feature = "uuid_ids")]
@@ -38,9 +39,9 @@ impl CodeGraph {
         }
     }
 
+    /// Gets the full module path for an item by searching through all modules
+    /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     pub fn debug_print_all_visible(&self) {
-        /// Gets the full module path for an item by searching through all modules
-        /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
         #[cfg(all(feature = "verbose_debug", feature = "uuid_ids"))]
         {
             // New implementation using NodeId enum

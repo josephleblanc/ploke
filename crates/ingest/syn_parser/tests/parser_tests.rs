@@ -12,6 +12,7 @@ mod data;
 
 #[test]
 #[ignore = "Out of date, needs update for current model"]
+#[cfg(not(feature = "uuid_ids"))]
 fn test_analyzer() {
     let input_path = PathBuf::from("tests/data/sample.rs");
     let output_path = PathBuf::from("tests/data/code_graph.ron");

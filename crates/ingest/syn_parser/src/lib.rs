@@ -8,11 +8,20 @@ pub mod discovery;
 
 // Re-export key items for easier access
 pub use parser::visitor::start_parser_worker;
-pub use parser::{analyze_files_parallel, create_parser_channel, CodeGraph, ParserMessage};
+pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 
-#[cfg(not(feature = "uuid_ids"))]
-pub use parser::visitor::analyze_code;
 #[cfg(feature = "uuid_ids")]
 pub use parser::visitor::analyze_file_phase2;
+#[cfg(not(feature = "uuid_ids"))]
+pub use parser::visitor::{analyze_code, analyze_files_parallel};
 
-pub use serialization::ron::{save_to_ron, save_to_ron_threadsafe};
+#[cfg(feature = "uuid_ids")]
+pub use ploke_core::NodeId; // Re-export the enum from ploke-core
+#[cfg(feature = "uuid_ids")]
+pub use ploke_core::TypeId;
+pub use serialization::ron::{save_to_ron, save_to_ron_threadsafe}; // Re-export the enum/struct from ploke-core
+
+#[cfg(not(feature = "uuid_ids"))]
+pub use crate::parser::nodes::NodeId; // Re-export the `usize` type alias
+#[cfg(not(feature = "uuid_ids"))]
+pub use crate::parser::types::TypeId; // Re-export the `usize` type alias

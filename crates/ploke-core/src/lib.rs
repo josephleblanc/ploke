@@ -87,6 +87,37 @@ mod ids {
             Self::Synthetic(uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
         }
     }
+    impl std::fmt::Display for NodeId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                NodeId::Resolved(uuid) => write!(f, "R:{}", short_uuid(*uuid)),
+                NodeId::Synthetic(uuid) => write!(f, "S:{}", short_uuid(*uuid)),
+            }
+        }
+    }
+
+    fn short_uuid(uuid: Uuid) -> String {
+        let fields = uuid.as_fields();
+        // First 4 bytes (as u32) and last 4 bytes (from the 8-byte array)
+        format!(
+            "{:08x}..{:02x}{:02x}{:02x}{:02x}",
+            fields.0, fields.3[4], fields.3[5], fields.3[6], fields.3[7]
+        )
+    }
+
+    // impl std::fmt::Display for NodeId {
+    //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    //         match self {
+    //             NodeId::Resolved(uuid) => write!(f, "R:{}", short_uuid(*uuid)),
+    //             NodeId::Synthetic(uuid) => write!(f, "S:{}", short_uuid(*uuid)),
+    //         }
+    //     }
+    // }
+    //
+    // fn short_uuid(uuid: Uuid) -> String {
+    //     let bytes = uuid.as_fields().0;
+    //     format!("{:x}..{:x}", bytes[0], bytes[3])
+    // }
 
     /// Unique identifier for a specific type structure *within a specific crate version*.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -150,6 +181,40 @@ mod ids {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     pub struct TrackingHash(pub Uuid);
 
+    impl TrackingHash {
+        /// Generates a TrackingHash based on crate/file context and item content.
+        ///
+        /// The content is hashed based on its token stream representation.
+        /// WARNING: This is sensitive to formatting and minor token changes.
+        /// A more robust AST-based hash might be preferable in the future.
+        pub fn generate(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            item_tokens: &proc_macro2::TokenStream,
+        ) -> Self {
+            // Use as_encoded_bytes() for potentially non-UTF8 paths
+            let fp_bytes = file_path.as_os_str().as_encoded_bytes();
+            let item_string = item_tokens.to_string();
+
+            // Combine namespace, file path bytes, and item string bytes.
+            // Using separators for clarity.
+            let tracking_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::FILE::")
+                .chain(fp_bytes)
+                .chain(b"::CONTENT::")
+                .chain(item_string.as_bytes())
+                .copied()
+                .collect();
+
+            // Generate the UUIDv5 using the project's root namespace
+            // (or crate_namespace? Let's use PROJECT_NAMESPACE for consistency with other IDs)
+            let hash_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &tracking_data);
+
+            TrackingHash(hash_uuid)
+        }
+    }
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
 }
 

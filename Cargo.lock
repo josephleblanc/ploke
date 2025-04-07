@@ -530,6 +530,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "example_crate"
+version = "0.1.0"
+
+[[package]]
 name = "fast-float2"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1282,6 +1286,7 @@ dependencies = [
 name = "ploke-core"
 version = "0.1.0"
 dependencies = [
+ "proc-macro2",
  "serde",
  "uuid",
 ]
@@ -1325,8 +1330,11 @@ name = "ploke-test-utils"
 version = "0.1.0"
 dependencies = [
  "ploke-common",
- "syn 2.0.100",
+ "ploke-core",
+ "proc-macro2",
+ "serde",
  "syn_parser",
+ "uuid",
 ]
 
 [[package]]

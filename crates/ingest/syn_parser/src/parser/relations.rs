@@ -1,7 +1,9 @@
-#[cfg(feature = "uuid_ids")]
-use ploke_core::NodeId; // Use new type when feature is enabled
 #[cfg(not(feature = "uuid_ids"))]
-use ploke_core::NodeId; // Use compat type when feature is disabled
+use crate::NodeId;
+#[cfg(not(feature = "uuid_ids"))]
+use crate::TypeId;
+#[cfg(feature = "uuid_ids")]
+use ploke_core::NodeId; // Use new type when feature is enabled // Use compat type when feature is disabled
 
 #[cfg(feature = "uuid_ids")]
 use ploke_core::TypeId;

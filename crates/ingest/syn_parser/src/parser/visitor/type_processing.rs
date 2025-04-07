@@ -21,7 +21,6 @@ use syn::{
 /// # Arguments
 /// * `state` - Mutable visitor state containing the type cache and code graph.
 /// * `ty` - The syn::Type to get an ID for.
-/// * `type_str` - The pre-computed string representation of `ty` (used for caching and ID generation).
 ///
 /// # Returns
 /// The `TypeId` (Synthetic variant in Phase 2) for the given type.

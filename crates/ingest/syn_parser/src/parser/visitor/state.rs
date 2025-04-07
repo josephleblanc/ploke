@@ -21,8 +21,9 @@ use {
 };
 
 #[cfg(not(feature = "uuid_ids"))]
-use ploke_core::{NodeId, TypeId}; // Use compat types when feature is disabled
-                                  // --- End Conditional Imports ---
+use crate::{NodeId, TypeId}; // Use compat types when feature is disabled
+
+// --- End Conditional Imports ---
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -100,6 +101,8 @@ impl VisitorState {
         self.next_type_id += 1;
         id
     }
+
+    #[cfg(feature = "uuid_ids")]
     pub(crate) fn generate_synthetic_node_id(&self, name: &str, span: (usize, usize)) -> NodeId {
         NodeId::generate_synthetic(
             self.crate_namespace,
@@ -108,6 +111,15 @@ impl VisitorState {
             name,
             span,
         )
+    }
+
+    #[cfg(feature = "uuid_ids")]
+    pub(crate) fn generate_tracking_hash(
+        &self,
+        item_tokens: &proc_macro2::TokenStream,
+    ) -> TrackingHash {
+        // Directly call the core generation function using state context
+        TrackingHash::generate(self.crate_namespace, &self.current_file_path, item_tokens)
     }
 
     // --- End Conditional Methods ---

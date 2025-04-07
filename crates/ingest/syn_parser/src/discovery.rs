@@ -135,7 +135,7 @@ pub struct DiscoveryOutput {
 /// `DiscoveryError` encountered during processing. If successful, it means all
 /// target crates were processed without critical errors.
 // NOTE: Known limitations:
-// * Does not handle case of crate with no `src` directory in project (currently returns SrcNotFound error)
+// * Does not handle case of crate with no `src` directory in project (currently returns SrcNotFoucrates/ingest/syn_parser/src/discovery.rsnd error)
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)

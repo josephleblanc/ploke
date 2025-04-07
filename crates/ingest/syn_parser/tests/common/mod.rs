@@ -3,9 +3,13 @@ use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeKind};
+#[cfg(not(feature = "uuid_ids"))]
 use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
+
+#[cfg(not(feature = "uuid_ids"))]
+use syn_parser::parser::nodes::NodeId;
 
 use ploke_common::{fixtures_dir, malformed_fixtures_dir};
 
@@ -45,6 +49,7 @@ pub enum FixtureError {
 }
 
 /// Parse a fixture file and return the resulting CodeGraph or error  
+#[cfg(not(feature = "uuid_ids"))]
 pub fn parse_fixture(fixture_name: &str) -> Result<CodeGraph, FixtureError> {
     let path = fixtures_dir().join(fixture_name);
     if !path.exists() {
@@ -55,6 +60,7 @@ pub fn parse_fixture(fixture_name: &str) -> Result<CodeGraph, FixtureError> {
 
 /// WARNING: Only use this for testing error handling!!!
 /// Parse a malformed fixture file and return the resulting CodeGraph or error  
+#[cfg(not(feature = "uuid_ids"))]
 pub fn parse_fixture_malformed(malformed_fixture_name: &str) -> Result<CodeGraph, FixtureError> {
     let path = malformed_fixtures_dir().join(malformed_fixture_name);
 
@@ -65,6 +71,7 @@ pub fn parse_fixture_malformed(malformed_fixture_name: &str) -> Result<CodeGraph
 }
 
 /// Parse multiple fixtures and collect results
+#[cfg(not(feature = "uuid_ids"))]
 pub fn parse_fixtures(fixture_names: &[&str]) -> Result<Vec<CodeGraph>, FixtureError> {
     fixture_names
         .iter()
@@ -74,6 +81,7 @@ pub fn parse_fixtures(fixture_names: &[&str]) -> Result<Vec<CodeGraph>, FixtureE
 
 /// WARNING: Only use this for testing error handling!!!
 /// Parse multiple malformed fixtures and collect results
+#[cfg(not(feature = "uuid_ids"))]
 pub fn parse_fixtures_malformed(
     malformed_fixture_names: &[&str],
 ) -> Result<Vec<CodeGraph>, FixtureError> {
@@ -201,6 +209,7 @@ pub fn find_module_by_path<'a>(graph: &'a CodeGraph, path: &'a [String]) -> Opti
 }
 
 /// Helper function for visibility testing of TypeDefNode
+#[cfg(not(feature = "uuid_ids"))]
 pub fn get_visibility_info<'a>(def: &'a TypeDefNode, _graph: &CodeGraph) -> (NodeId, &'a str) {
     match def {
         TypeDefNode::Struct(s) => (s.id, s.name.as_str()),
@@ -235,6 +244,7 @@ pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&
     })
 }
 
+#[cfg(not(feature = "uuid_ids"))]
 pub fn find_func_path_by_id(graph: &CodeGraph, fn_id: NodeId) -> Option<&Vec<String>> {
     graph
         .modules

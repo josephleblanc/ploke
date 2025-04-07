@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[cfg(not(feature = "uuid_ids"))]
 mod tests {
     use syn_parser::parser::graph::CodeGraph;
     use syn_parser::parser::nodes::{
@@ -12,10 +13,10 @@ mod tests {
         // This test statically verifies that core data structures
         // implement Send + Sync traits as required by our conventions
         fn assert_send_sync<T: Send + Sync>() {}
-        
+
         // Test CodeGraph and its components
         assert_send_sync::<CodeGraph>();
-        
+
         // Test node types
         assert_send_sync::<FunctionNode>();
         assert_send_sync::<ParameterNode>();
@@ -30,7 +31,7 @@ mod tests {
         assert_send_sync::<ModuleNode>();
         assert_send_sync::<ValueNode>();
         assert_send_sync::<MacroNode>();
-        
+
         // Test type system
         assert_send_sync::<TypeNode>();
     }

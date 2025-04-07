@@ -1,3 +1,4 @@
+#![cfg(not(feature = "uuid_ids"))]
 use crate::common::*;
 use syn_parser::{parser::types::VisibilityKind, CodeGraph};
 

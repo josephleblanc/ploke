@@ -1,14 +1,12 @@
-#[cfg(not(feature = "uuid_ids"))]
-use crate::parser::nodes::NodeId; // Use compat types when feature is disabled
-#[cfg(not(feature = "uuid_ids"))]
-use crate::parser::types::TypeId;
 use crate::parser::types::{GenericParamNode, VisibilityKind};
+#[cfg(not(feature = "uuid_ids"))]
+use crate::TypeId;
 #[cfg(feature = "uuid_ids")]
 use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled
 use serde::{Deserialize, Serialize};
 
-// NodeId and TypeId are now defined in ploke_core and conditionally compiled there.
-// pub type NodeId = usize; // REMOVED
+#[cfg(not(feature = "uuid_ids"))]
+pub type NodeId = usize;
 
 // ANCHOR: ItemFn
 // Represents a function definition
@@ -210,6 +208,8 @@ pub struct UnionNode {
     #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
+    #[cfg(feature = "uuid_ids")]
+    pub span: (usize, usize),
 }
 
 // ANCHOR: ImplNode
@@ -340,6 +340,7 @@ pub struct MacroNode {
     pub name: String,
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
+    #[cfg(not(feature = "uuid_ids"))]
     pub rules: Vec<MacroRuleNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,

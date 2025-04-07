@@ -26,6 +26,9 @@ tests/data/code_graph.ron
 temp.md
 .temp/
 
+# entertainment
+.bored/
+
 # backups of old implementations
 *.back
 

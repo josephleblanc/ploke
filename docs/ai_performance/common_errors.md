@@ -80,3 +80,24 @@
 - **Focused File Access:** Request changes for a smaller, related set of files per interaction.
 
 [See Insights](#potential-insights-from-e-uuid-refactor)
+
+
+### Error E-DESIGN-DRIFT: Suggesting Local Fixes that Violate Core Design
+**Description**: AI proposed code changes that resolved immediate compiler errors (e.g., `E0599` no method found) but violated established design principles and coupling within the codebase (e.g., decoupling `NodeId` generation from `Relation::Contains` creation). Severity: Warning.
+
+**Context**:
+- Refactoring the large `code_visitor.rs` file during Phase 2 of the UUID refactor.
+- Specifically addressing errors related to replacing `next_node_id()` with `NodeId::generate_synthetic()` and updating the `add_contains_rel` helper function.
+
+**Root Causes**:
+1. **Local Optimization:** AI focused excessively on resolving the specific compiler error message without sufficiently considering the surrounding code's design intent, comments, or the established coupling between ID generation and relation creation.
+2. **Contextual Weighting/Loss:** Potential difficulty in maintaining the importance of specific design constraints (like preventing orphaned nodes via coupled creation) amidst a large context window containing multiple files, plans, and error messages.
+3. **Insufficient Design Constraint Reinforcement:** The AI did not adequately recall or prioritize the documented/implicit design goal of ensuring every node ID creation is immediately linked via a `Contains` relation.
+
+**Prevention Strategies**:
+- **Holistic Analysis:** AI should attempt to analyze the *purpose* of existing code patterns/coupling, not just the syntax, before suggesting changes that alter them. Explicitly check comments related to the code being modified.
+- **Query Design Intent:** When proposing a change that breaks existing coupling or patterns, the AI should explicitly ask the user to confirm if the underlying design goal is still valid or if the change is acceptable.
+- **User Guidance:** User can proactively re-state critical design constraints when asking for fixes in complex areas.
+- **Smaller Scopes:** Analyzing smaller, functionally related code sections (e.g., a single function and its direct callers/callees) might reduce the risk of overlooking broader design implications.
+
+[See Insights](#potential-insights-from-e-design-drift)

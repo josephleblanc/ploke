@@ -4,9 +4,7 @@
 // CrateContext, DiscoveryOutput, PROJECT_NAMESPACE_UUID, Uuid
 use ploke_common::workspace_root;
 use std::fs;
-use syn_parser::discovery::{
-    derive_crate_namespace, run_discovery_phase, DiscoveryError,
-};
+use syn_parser::discovery::{derive_crate_namespace, run_discovery_phase, DiscoveryError};
 use tempfile::tempdir;
 
 // --- Unit Tests ---
@@ -58,7 +56,11 @@ edition = "2021"
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_ok(), "Discovery should succeed for valid crate, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Discovery should succeed for valid crate, got: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
@@ -81,13 +83,22 @@ edition = "2021"
     // Create lib.rs with mod declaration BEFORE running discovery
     fs::write(src_dir.join("lib.rs"), "mod module;")?;
     let result = run_discovery_phase(&project_root, &target_crates); // Re-run after modifying lib.rs
-    assert!(result.is_ok(), "Discovery should still succeed, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Discovery should still succeed, got: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
 
     let module_file_path = src_dir.join("module.rs");
-    assert!(output.initial_module_map.contains_key(&module_file_path), "Module map should contain module.rs");
-    assert_eq!(output.initial_module_map[&module_file_path], vec!["crate".to_string(), "module".to_string()]);
-
+    assert!(
+        output.initial_module_map.contains_key(&module_file_path),
+        "Module map should contain module.rs"
+    );
+    assert_eq!(
+        output.initial_module_map[&module_file_path],
+        vec!["crate".to_string(), "module".to_string()]
+    );
 
     Ok(())
 }
@@ -103,7 +114,10 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail if Cargo.toml is missing");
+    assert!(
+        result.is_err(),
+        "Discovery should fail if Cargo.toml is missing"
+    );
     let err = result.unwrap_err();
     assert!(matches!(err, DiscoveryError::Io { ref path, .. } if path.ends_with("Cargo.toml")));
 
@@ -124,7 +138,10 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail for invalid Cargo.toml");
+    assert!(
+        result.is_err(),
+        "Discovery should fail for invalid Cargo.toml"
+    );
     let err = result.unwrap_err();
     assert!(matches!(err, DiscoveryError::TomlParse { .. }));
 
@@ -167,7 +184,10 @@ fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::er
 
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_err(), "Discovery should fail if crate path doesn't exist");
+    assert!(
+        result.is_err(),
+        "Discovery should fail if crate path doesn't exist"
+    );
     let err = result.unwrap_err();
     assert!(matches!(err, DiscoveryError::CratePathNotFound { .. }));
 
@@ -217,7 +237,9 @@ fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::
     // Check for error (should fail because of crate3)
     assert!(result.is_err(), "Should fail due to crate3 missing src");
     let err = result.unwrap_err();
-    assert!(matches!(err, DiscoveryError::SrcNotFound { ref path, .. } if path.ends_with("crate3/src")));
+    assert!(
+        matches!(err, DiscoveryError::SrcNotFound { ref path, .. } if path.ends_with("crate3/src"))
+    );
 
     Ok(())
 }
@@ -247,7 +269,11 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let target_crates = vec![fixture_crate_root.clone()];
     let result = run_discovery_phase(&project_root, &target_crates);
 
-    assert!(result.is_ok(), "Discovery should succeed for fixture_test_crate, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Discovery should succeed for fixture_test_crate, got: {:?}",
+        result.err()
+    );
     let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
@@ -294,15 +320,13 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let mut sorted_expected_files = expected_files.clone();
     sorted_expected_files.sort();
 
-        sorted_expected_files.len(),
-        "Incorrect number of .rs files found. Expected: {:#?}, Actual: {:#?}", sorted_expected_files, actual_files
-    );
     for (expected, actual) in sorted_expected_files.iter().zip(actual_files.iter()) {
-         assert_eq!(expected, actual, "Mismatch in discovered files list");
+        assert_eq!(expected, actual, "Mismatch in discovered files list");
     }
 
     // Double-check contains for a few key files
-    for expected_file in &expected_files { // Use unsorted list for contains check
+    for expected_file in &expected_files {
+        // Use unsorted list for contains check
         assert!(
             context.files.contains(expected_file), // Check original context.files
             "Expected file not found: {}",
@@ -316,7 +340,7 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
         .cloned() // Clone paths for assertion message
         .collect::<Vec<_>>();
     assert!(
-        unexpected_files.is_empty(), // Assert that the list IS empty
+        unexpected_files.is_empty(),     // Assert that the list IS empty
         "Unexpected files found: {:#?}", // Corrected message
         unexpected_files
     );
@@ -325,16 +349,33 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let second_sibling_path = src_path.join("second_sibling.rs");
     let sibling_of_main_path = src_path.join("sibling_of_main.rs");
 
-    assert!(output.initial_module_map.contains_key(&second_sibling_path), "Module map missing second_sibling.rs");
-    assert_eq!(output.initial_module_map[&second_sibling_path], vec!["crate".to_string(), "second_sibling".to_string()]);
+    assert!(
+        output.initial_module_map.contains_key(&second_sibling_path),
+        "Module map missing second_sibling.rs"
+    );
+    assert_eq!(
+        output.initial_module_map[&second_sibling_path],
+        vec!["crate".to_string(), "second_sibling".to_string()]
+    );
 
-    assert!(output.initial_module_map.contains_key(&sibling_of_main_path), "Module map missing sibling_of_main.rs");
-     assert_eq!(output.initial_module_map[&sibling_of_main_path], vec!["crate".to_string(), "sibling_of_main".to_string()]);
+    assert!(
+        output
+            .initial_module_map
+            .contains_key(&sibling_of_main_path),
+        "Module map missing sibling_of_main.rs"
+    );
+    assert_eq!(
+        output.initial_module_map[&sibling_of_main_path],
+        vec!["crate".to_string(), "sibling_of_main".to_string()]
+    );
 
     // Check that modules declared in other files (like second_sibling.rs) are NOT in the map yet
     // (as scan_for_mods only runs on lib.rs/main.rs in this phase)
     let intermediate_path = src_path.join("intermediate").join("mod.rs"); // Assuming this structure exists or similar
-    assert!(!output.initial_module_map.contains_key(&intermediate_path), "Module map should not contain mods from non-entry points yet");
+    assert!(
+        !output.initial_module_map.contains_key(&intermediate_path),
+        "Module map should not contain mods from non-entry points yet"
+    );
 
     Ok(())
 }
