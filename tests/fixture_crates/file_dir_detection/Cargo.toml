@@ -1,5 +1,5 @@
 [package]
-name = "fixture_test_crate"
+name = "file_dir_detection"
 version = "0.1.0"
 edition = "2021"
 
