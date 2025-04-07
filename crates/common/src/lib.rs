@@ -16,6 +16,10 @@ pub fn fixtures_dir() -> PathBuf {
     workspace_root().join("tests/fixtures")
 }
 
+pub fn fixtures_crates_dir() -> PathBuf {
+    workspace_root().join("tests/fixture_crates")
+}
+
 /// WARNING: Only use this for testing error handling!!!
 /// Get the absolute path to the malformed fixtures directory
 pub fn malformed_fixtures_dir() -> PathBuf {

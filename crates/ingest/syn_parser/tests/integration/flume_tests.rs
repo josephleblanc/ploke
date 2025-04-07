@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[cfg(not(feature = "uuid_ids"))]
 mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Barrier};

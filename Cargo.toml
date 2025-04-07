@@ -7,7 +7,10 @@ members = [
     "crates/ploke-db",
     "crates/common",
     "crates/test-utils",
-    "fixture_test_crate", "crates/ploke-core", "tests/fixture_crates/example_crate",
+    "fixture_test_crate",
+    "crates/ploke-core",
+    "tests/fixture_crates/example_crate",
+    "tests/fixture_crates/simple_crate",
     # Add more modules as needed
 ]
 exclude = ["ai_workflow"]
