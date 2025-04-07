@@ -1,5 +1,5 @@
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, ParamData, Visible};
+use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, Visible};
 use crate::parser::types::{
     GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind,
 };
@@ -15,13 +15,17 @@ use super::type_processing::get_or_create_type;
 // --- Conditional Imports based on 'uuid_ids' feature ---
 #[cfg(feature = "uuid_ids")]
 use {
+    crate::parser::nodes::ParamData,
     ploke_core::{LogicalTypeId, NodeId, TrackingHash, TypeId, PROJECT_NAMESPACE_UUID},
     std::path::{Path, PathBuf}, // Needed for new fields
     uuid::Uuid,                 // Needed for new fields
 };
 
 #[cfg(not(feature = "uuid_ids"))]
-use crate::{NodeId, TypeId}; // Use compat types when feature is disabled
+use {
+    crate::parser::nodes::ParameterNode,
+    crate::{NodeId, TypeId}, // Use compat types when feature is disabled
+};
 
 // --- End Conditional Imports ---
 
@@ -70,14 +74,35 @@ impl VisitorState {
                 macros: Vec::new(),
                 use_statements: Vec::new(),
             },
-            // Legacy, not needed
-            // Initialize old fields for non-uuid_ids
-            // next_node_id: 0,
-            // next_type_id: 0,
-
             // New values needed for Uuid generation of Synthetic NodeId/TypeId variants
             crate_namespace,
             current_file_path,
+            // New fields are conditionally compiled out
+            type_map: Arc::new(DashMap::new()),
+            current_module_path: Vec::new(),
+            current_module: Vec::new(),
+        }
+    }
+    #[cfg(not(feature = "uuid_ids"))]
+    pub(crate) fn new() -> Self {
+        Self {
+            code_graph: CodeGraph {
+                functions: Vec::new(),
+                defined_types: Vec::new(),
+                type_graph: Vec::new(),
+                impls: Vec::new(),
+                traits: Vec::new(),
+                private_traits: Vec::new(),
+                relations: Vec::new(),
+                modules: Vec::new(),
+                values: Vec::new(),
+                macros: Vec::new(),
+                use_statements: Vec::new(),
+            },
+            // Legacy, not needed
+            // Initialize old fields for non-uuid_ids
+            next_node_id: 0,
+            next_type_id: 0,
             // New fields are conditionally compiled out
             type_map: Arc::new(DashMap::new()),
             current_module_path: Vec::new(),
@@ -150,6 +175,7 @@ impl VisitorState {
     ///
     /// # Returns
     /// An `Option<ParamData>` containing parameter name, TypeId, mutability, and self status.
+    #[cfg(feature = "uuid_ids")]
     pub(crate) fn process_fn_arg(&mut self, arg: &FnArg) -> Option<ParamData> {
         match arg {
             FnArg::Typed(PatType { pat, ty, .. }) => {
@@ -182,6 +208,57 @@ impl VisitorState {
                 Some(ParamData {
                     name: Some("self".to_string()),
                     type_id,
+                    is_mutable: receiver.mutability.is_some(),
+                    is_self: true,
+                })
+            }
+        }
+    }
+    #[cfg(not(feature = "uuid_ids"))]
+    pub(crate) fn process_fn_arg(&mut self, arg: &FnArg) -> Option<ParameterNode> {
+        match arg {
+            FnArg::Typed(PatType { pat, ty, .. }) => {
+                let type_id = super::type_processing::get_or_create_type(self, ty);
+
+                // Extract parameter name and mutability
+                let (name, is_mutable) = match &**pat {
+                    Pat::Ident(PatIdent {
+                        ident, mutability, ..
+                    }) => (Some(ident.to_string()), mutability.is_some()),
+                    _ => (None, false),
+                };
+
+                Some(ParameterNode {
+                    id: self.next_node_id(),
+                    name,
+                    type_id,
+                    is_mutable,
+                    is_self: false,
+                })
+            }
+            FnArg::Receiver(receiver) => {
+                // Create a special self type
+                let self_type_id = self.next_type_id();
+                let mut related_types = Vec::new();
+
+                // If we have an explicit type for self, include it
+                let ty_ref: &syn::Type = &receiver.ty;
+                let inner_type_id = super::type_processing::get_or_create_type(self, ty_ref);
+                related_types.push(inner_type_id);
+
+                self.code_graph.type_graph.push(TypeNode {
+                    id: self_type_id,
+                    kind: TypeKind::Named {
+                        path: vec!["Self".to_string()],
+                        is_fully_qualified: false,
+                    },
+                    related_types,
+                });
+
+                Some(ParameterNode {
+                    id: self.next_node_id(),
+                    name: Some("self".to_string()),
+                    type_id: self_type_id,
                     is_mutable: receiver.mutability.is_some(),
                     is_self: true,
                 })

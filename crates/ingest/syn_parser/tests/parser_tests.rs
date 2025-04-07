@@ -14,6 +14,7 @@ mod data;
 #[ignore = "Out of date, needs update for current model"]
 #[cfg(not(feature = "uuid_ids"))]
 fn test_analyzer() {
+    use syn_parser::analyze_code;
     let input_path = PathBuf::from("tests/data/sample.rs");
     let output_path = PathBuf::from("tests/data/code_graph.ron");
 

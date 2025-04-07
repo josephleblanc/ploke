@@ -8,16 +8,15 @@ use crate::parser::nodes::ValueKind;
 use crate::parser::nodes::ValueNode;
 use crate::parser::nodes::{
     EnumNode, FieldNode, FunctionNode, ImplNode, ImportKind, ImportNode, MacroKind, MacroNode,
-    ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
+    MacroRuleNode, ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode,
+    VariantNode,
 };
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::ExtractSpan;
 
 #[cfg(not(feature = "uuid_ids"))]
-use crate::parser::nodes::NodeId;
-#[cfg(not(feature = "uuid_ids"))]
-use crate::parser::types::TypeId;
+use crate::{NodeId, TypeId};
 #[cfg(feature = "uuid_ids")]
 use ploke_core::{NodeId, TypeId};
 
@@ -378,7 +377,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 kind: MacroKind::ProcedureMacro {
                     kind: proc_macro_kind,
                 },
-                // rules: Vec::new(), // Procedural macros don't have declarative rules
+                #[cfg(not(feature = "uuid_ids"))]
+                rules: Vec::new(), // Procedural macros don't have declarative rules
                 attributes,
                 docstring,
                 body,
@@ -409,6 +409,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if let Some(param) = self.state.process_fn_arg(arg) {
                 // Add relation between function and parameter
 
+                #[cfg(feature = "uuid_ids")]
                 self.state.code_graph.relations.push(Relation {
                     source: GraphId::Node(fn_id),
                     target: GraphId::Type(param.type_id),
@@ -416,14 +417,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 });
                 parameters.push(param);
             }
-            // WARNING: I deleted the old version of the `parameter_nodes` field on `FunctionNode`.
-            // To maintain backward compatability I'll have to visit an old git implementation of
-            // it and get it back to the correct place in `node.rs` before the compilation without
-            // "uuid_ids" will work.
-            // The following is just a reminder, since it will cause an error trying to compile the
-            // old version for now.
+
             #[cfg(not(feature = "uuid_ids"))]
-            {
+            if let Some(param) = self.state.process_fn_arg(arg) {
+                // Add relation between function and parameter
                 self.state.code_graph.relations.push(Relation {
                     source: fn_id,
                     target: param.id,
@@ -439,11 +436,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ReturnType::Type(_, ty) => {
                 let type_id = get_or_create_type(self.state, ty);
                 // Add relation between function and return type
-                // WARNING: See above warning.
                 #[cfg(feature = "uuid_ids")]
                 self.state.code_graph.relations.push(Relation {
                     source: GraphId::Node(fn_id),
                     target: GraphId::Type(type_id),
+                    kind: RelationKind::FunctionReturn,
+                });
+                #[cfg(not(feature = "uuid_ids"))]
+                self.state.code_graph.relations.push(Relation {
+                    source: fn_id,
+                    target: type_id,
                     kind: RelationKind::FunctionReturn,
                 });
                 Some(type_id)
@@ -537,9 +539,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             // Add relation between struct and field
+            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(struct_id),
                 target: GraphId::Node(field_id),
+                kind: RelationKind::StructField,
+            });
+            #[cfg(not(feature = "uuid_ids"))]
+            self.state.code_graph.relations.push(Relation {
+                source: struct_id,
+                target: field_id,
                 kind: RelationKind::StructField,
             });
 
@@ -1182,6 +1191,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     attributes,
                     docstring,
                     body,
+                    #[cfg(feature = "uuid_ids")]
                     tracking_hash: Some(
                         self.state
                             .generate_tracking_hash(&method.clone().to_token_stream()),
@@ -1421,7 +1431,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // --- TypeId Generation ---
         #[cfg(not(feature = "uuid_ids"))]
-        let type_id = { /* ... old logic ... */ };
+        let type_id = {
+            // Keep old logic separate
+            let id = self.state.next_type_id();
+            self.state.code_graph.type_graph.push(TypeNode {
+                id,
+                kind: TypeKind::Named {
+                    path: vec![crate_name.clone()],
+                    is_fully_qualified: false, // extern crate is like a root path segment
+                },
+                related_types: Vec::new(),
+            });
+            id
+        };
 
         #[cfg(feature = "uuid_ids")]
         let type_id = {

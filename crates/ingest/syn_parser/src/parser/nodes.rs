@@ -28,7 +28,10 @@ pub struct FunctionNode {
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
+    #[cfg(feature = "uuid_ids")]
     pub parameters: Vec<ParamData>,
+    #[cfg(not(feature = "uuid_ids"))]
+    pub parameters: Vec<ParameterNode>,
     pub return_type: Option<TypeId>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
@@ -55,9 +58,21 @@ impl Visible for FunctionNode {
 
 // Represents a parameter in a function
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg(feature = "uuid_ids")]
 pub struct ParamData {
     pub name: Option<String>,
     pub type_id: TypeId, // The ID of the parameter's type
+    pub is_mutable: bool,
+    pub is_self: bool,
+}
+
+// Represents a parameter in a function
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg(not(feature = "uuid_ids"))]
+pub struct ParameterNode {
+    pub id: NodeId,
+    pub name: Option<String>,
+    pub type_id: TypeId,
     pub is_mutable: bool,
     pub is_self: bool,
 }

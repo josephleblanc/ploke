@@ -31,7 +31,7 @@ use {
 #[cfg(not(feature = "uuid_ids"))]
 pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     let file = syn::parse_file(&std::fs::read_to_string(file_path).unwrap())?;
-    let mut visitor_state = state::VisitorState::new();
+    let mut visitor_state = VisitorState::new();
 
     // Create the root module first
     let root_module_id = visitor_state.next_node_id();

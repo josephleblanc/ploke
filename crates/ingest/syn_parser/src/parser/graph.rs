@@ -115,6 +115,25 @@ impl CodeGraph {
             vec!["crate".to_string()]
         }
     }
+    #[cfg(not(feature = "uuid_ids"))]
+    pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
+        // Find the module that contains this item
+        let module_id = self
+            .relations
+            .iter()
+            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
+            .map(|r| r.source);
+
+        if let Some(mod_id) = module_id {
+            // Get the module's path
+            self.modules
+                .iter()
+                .find(|m| m.id == mod_id)
+                .unwrap_or_else(|| panic!("No containing module found"))
+        } else {
+            panic!("No containing module found");
+        }
+    }
     #[cfg(feature = "uuid_ids")]
     pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
         // Find the module that contains this item
