@@ -64,7 +64,8 @@ edition = "2021"
     let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
-    let context = output.crate_contexts.get("test_crate").unwrap();
+    // Use the crate_root PathBuf as the key
+    let context = output.crate_contexts.get(&crate_root).unwrap();
 
     assert_eq!(context.name, "test_crate");
     assert_eq!(context.version, "0.1.0");
@@ -277,9 +278,10 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     let output = result.unwrap();
 
     assert_eq!(output.crate_contexts.len(), 1);
+    // Use the fixture_crate_root PathBuf as the key
     let context = output
         .crate_contexts
-        .get("fixture_test_crate")
+        .get(&fixture_crate_root)
         .expect("Context for fixture_test_crate not found");
 
     assert_eq!(context.name, "fixture_test_crate");
