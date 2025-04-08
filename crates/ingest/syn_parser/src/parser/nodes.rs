@@ -22,7 +22,7 @@ impl Visible for ModuleNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FunctionNode {
     pub id: NodeId,
     pub name: String,
@@ -57,7 +57,7 @@ impl Visible for FunctionNode {
 }
 
 // Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[cfg(feature = "uuid_ids")]
 pub struct ParamData {
     pub name: Option<String>,
@@ -67,7 +67,7 @@ pub struct ParamData {
 }
 
 // Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Partialeq)]
 #[cfg(not(feature = "uuid_ids"))]
 pub struct ParameterNode {
     pub id: NodeId,
@@ -78,7 +78,7 @@ pub struct ParameterNode {
 }
 
 // Represents a type definition (struct, enum, type alias, or union)
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum TypeDefNode {
     Struct(StructNode),
     Enum(EnumNode),
@@ -100,7 +100,7 @@ impl Visible for StructNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StructNode {
     pub id: NodeId,
     pub name: String,
@@ -130,7 +130,7 @@ impl Visible for EnumNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnumNode {
     pub id: NodeId,
     pub name: String,
@@ -148,7 +148,7 @@ pub struct EnumNode {
 
 // ANCHOR: field_node
 // Represents a field in a struct
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FieldNode {
     pub id: NodeId,
     pub name: Option<String>,
@@ -159,7 +159,7 @@ pub struct FieldNode {
 //ANCHOR_END: field_node
 
 // Represents a variant in an enum
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct VariantNode {
     pub id: NodeId,
     pub name: String,
@@ -181,7 +181,7 @@ impl Visible for TypeAliasNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeAliasNode {
     pub id: NodeId,
     pub name: String,
@@ -210,7 +210,7 @@ impl Visible for UnionNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UnionNode {
     pub id: NodeId,
     pub name: String,
@@ -229,7 +229,7 @@ pub struct UnionNode {
 
 // ANCHOR: ImplNode
 // Represents an implementation block
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ImplNode {
     pub id: NodeId,
     pub self_type: TypeId,
@@ -271,7 +271,7 @@ impl Visible for TraitNode {
         self.id
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TraitNode {
     pub id: NodeId,
     pub name: String,
@@ -289,7 +289,7 @@ pub struct TraitNode {
 }
 //ANCHOR_END: TraitNode
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
@@ -320,7 +320,7 @@ impl Visible for ValueNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ValueNode {
     pub id: NodeId,
     pub name: String,
@@ -349,7 +349,7 @@ impl Visible for MacroNode {
         &self.name
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
@@ -367,7 +367,7 @@ pub struct MacroNode {
 }
 
 // Represents a macro rule
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroRuleNode {
     pub id: NodeId,
     pub pattern: String,
@@ -464,7 +464,7 @@ pub enum ValueKind {
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
     pub id: NodeId,
@@ -488,7 +488,7 @@ pub struct ImportNode {
     pub is_glob: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ImportKind {
     ImportNode,
     ExternCrate,
@@ -528,7 +528,7 @@ pub trait Visible {
 // }
 
 // Represent an attribute
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Attribute {
     pub span: (usize, usize),  // Byte start/end offsets
     pub name: String,          // e.g., "derive", "cfg", "serde"

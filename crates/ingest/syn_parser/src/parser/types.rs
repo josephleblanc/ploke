@@ -84,7 +84,7 @@ pub enum TypeKind {
 }
 
 // Represents a generic parameter
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GenericParamNode {
     pub id: NodeId,
     pub kind: GenericParamKind,
