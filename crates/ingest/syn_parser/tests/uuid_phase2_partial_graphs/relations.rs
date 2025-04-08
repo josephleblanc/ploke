@@ -50,10 +50,26 @@ mod phase2_relation_tests {
     ) -> &'a CodeGraph {
         results
             .iter()
-            .find_map(|res| {
-                res.as_ref().ok().filter(|g| {
+            .enumerate() // Add enumeration for index
+            .find_map(|(index, res)| {
+                #[cfg(feature = "verbose_debug")]
+                println!(
+                    "[find_graph_containing_item] Checking graph index: {}",
+                    index
+                );
+                res.as_ref().ok().and_then(|g| {
                     // Check functions, structs, modules etc. for the name
-                    find_node_id_by_name(g, item_name).is_some()
+                    let found_id = find_node_id_by_name(g, item_name);
+                    #[cfg(feature = "verbose_debug")]
+                    println!(
+                        "[find_graph_containing_item] Checking for '{}', found_id: {:?}",
+                        item_name, found_id
+                    );
+                    if found_id.is_some() {
+                        Some(g)
+                    } else {
+                        None
+                    }
                 })
             })
             .unwrap_or_else(|| panic!("Could not find graph containing item '{}'", item_name))
@@ -67,12 +83,28 @@ mod phase2_relation_tests {
             .find(|n| n.name == name)
             .map(|n| n.id)
             .or_else(|| {
-                graph.defined_types.iter().find_map(|td| match td {
-                    TypeDefNode::Struct(s) if s.name == name => Some(s.id),
-                    TypeDefNode::Enum(e) if e.name == name => Some(e.id),
-                    TypeDefNode::TypeAlias(t) if t.name == name => Some(t.id),
-                    TypeDefNode::Union(u) if u.name == name => Some(u.id),
-                    _ => None,
+                graph.defined_types.iter().find_map(|td| {
+                    #[cfg(feature = "verbose_debug")]
+                    {
+                        // Print details about the TypeDefNode being checked
+                        let type_name = match td {
+                            TypeDefNode::Struct(s) => &s.name,
+                            TypeDefNode::Enum(e) => &e.name,
+                            TypeDefNode::TypeAlias(t) => &t.name,
+                            TypeDefNode::Union(u) => &u.name,
+                        };
+                        println!(
+                            "[find_node_id_by_name] Checking defined_type: {}, looking for: {}",
+                            type_name, name
+                        );
+                    }
+                    match td {
+                        TypeDefNode::Struct(s) if s.name == name => Some(s.id),
+                        TypeDefNode::Enum(e) if e.name == name => Some(e.id),
+                        TypeDefNode::TypeAlias(t) if t.name == name => Some(t.id),
+                        TypeDefNode::Union(u) if u.name == name => Some(u.id),
+                        _ => None,
+                    }
                 })
             })
             .or_else(|| {
@@ -260,13 +292,42 @@ mod phase2_relation_tests {
         let mod_two_id_in_crate_graph = find_node_id_by_name(crate_graph, "module_two")
             .expect("Failed to find 'module_two' module in crate graph");
 
+        #[cfg(feature = "verbose_debug")]
+        {
+            println!("[test_contains_relation] Checking Module->SubModule:");
+            println!("  Parent Module ('crate') ID: {:?}", parent_mod_id);
+            println!("  Sub Module ('module_two') ID: {:?}", mod_two_id_in_crate_graph);
+            println!("  Parent Graph Relations Count: {}", crate_graph.relations.len());
+            // Optionally print all relations if the list isn't too long
+            // println!("  Parent Graph Relations: {:?}", crate_graph.relations);
+        }
+
         assert_relation_exists(
             crate_graph, // Check in the parent's graph
             GraphId::Node(parent_mod_id),
-            GraphId::Node(mod_two_id_in_crate_graph),
+            GraphId::Node(mod_two_id_in_crate_graph), // Use ID found in the parent graph context
             RelationKind::Contains,
             "Crate module should contain 'module_two' submodule",
         );
+
+        // Debugging for the failing Module -> Function case
+        #[cfg(feature = "verbose_debug")]
+        {
+            println!("[test_contains_relation] Checking Module->Function:");
+            println!("  Module ('crate') ID: {:?}", crate_mod_id);
+            println!("  Function ('add') ID: {:?}", add_func_id);
+            println!("  Graph Relations Count: {}", lib_graph.relations.len());
+             println!("  Graph Relations: {:?}", lib_graph.relations); // Print all relations
+        }
+        // Re-assert the failing one after printing debug info
+         assert_relation_exists(
+            lib_graph,
+            GraphId::Node(crate_mod_id),
+            GraphId::Node(add_func_id),
+            RelationKind::Contains,
+            "Crate module should contain 'add' function (re-assert after debug)",
+        );
+
     }
 
     #[test]
@@ -320,8 +381,20 @@ mod phase2_relation_tests {
     }
 
     #[test]
-    fn test_struct_field_relations() {
+    fn test_struct_field_logic() {
+        // This test verifies the FieldNode data, NOT necessarily a StructField relation,
+        // as that relation might not be generated in the current implementation.
         let results = run_phase1_phase2("example_crate");
+        #[cfg(feature = "verbose_debug")]
+        {
+            println!("[test_struct_field_logic] Phase 1&2 Results Count: {}", results.len());
+            for (i, res) in results.iter().enumerate() {
+                 match res {
+                    Ok(g) => println!("  Graph {}: {} functions, {} types, {} relations", i, g.functions.len(), g.defined_types.len(), g.relations.len()),
+                    Err(e) => println!("  Graph {}: Error - {}", i, e),
+                 }
+            }
+        }
         let lib_graph = find_graph_containing_item(&results, "MyStruct");
 
         let struct_id =
@@ -391,10 +464,19 @@ mod phase2_relation_tests {
     #[test]
     fn test_impl_relations() {
         let results = run_phase1_phase2("example_crate");
+         #[cfg(feature = "verbose_debug")]
+        {
+            println!("[test_impl_relations] Phase 1&2 Results Count: {}", results.len());
+            for (i, res) in results.iter().enumerate() {
+                 match res {
+                    Ok(g) => println!("  Graph {}: {} functions, {} types, {} impls, {} relations", i, g.functions.len(), g.defined_types.len(), g.impls.len(), g.relations.len()),
+                    Err(e) => println!("  Graph {}: Error - {}", i, e),
+                 }
+            }
+        }
         let lib_graph = find_graph_containing_item(&results, "MyStruct"); // Impl is in lib.rs
 
-        // Find the impl block (tricky without a direct name)
-        // Let's find it by the type it implements for (MyStruct)
+        // Find the impl block by the type it implements for (MyStruct)
         let my_struct_type_id = find_field_type_id(
             lib_graph,
             find_field_node_id(
