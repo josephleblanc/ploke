@@ -110,8 +110,8 @@ pub struct CrateContext {
 /// necessary.
 #[derive(Debug, Clone)]
 pub struct DiscoveryOutput {
-    /// Context information for each successfully discovered crate, keyed by crate name.
-    pub crate_contexts: HashMap<String, CrateContext>,
+    /// Context information for each successfully discovered crate, keyed by the absolute crate root path.
+    pub crate_contexts: HashMap<PathBuf, CrateContext>,
     /// An initial, potentially incomplete, mapping from file paths to their
     /// anticipated module path (e.g., `src/parser/visitor.rs` -> `["crate", "parser", "visitor"]`).
     /// This is built from `lib.rs`, `main.rs`, and `mod.rs` scans during Phase 1.
@@ -239,8 +239,8 @@ pub fn run_discovery_phase(
                 }
             }
         }
-        // Add context only if successful so far
-        crate_contexts.insert(crate_name, context);
+        // Add context only if successful so far, using the unique root path as the key
+        crate_contexts.insert(crate_root_path.clone(), context);
     } // End of loop for target_crates
 
     // Return Ok only if all crates processed without error
