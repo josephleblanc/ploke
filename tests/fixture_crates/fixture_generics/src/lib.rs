@@ -55,11 +55,14 @@ where
 impl<'a, T: Display + Clone + Default, const N: usize> GenericTrait<'a, T>
     for ComplexGenericStruct<'a, T, N>
 where
-    T: Send, // Additional bound in impl
+    T: 'a + Send, // Additional bound in impl
 {
     type Output = String;
     fn process(&'a self, input: T) -> Self::Output {
-        format!("Processing {} with ref '{}' and array size {}", input, self.reference, N)
+        format!(
+            "Processing {} with ref '{}' and array size {}",
+            input, self.reference, N
+        )
     }
 }
 

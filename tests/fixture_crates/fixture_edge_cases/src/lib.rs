@@ -3,18 +3,30 @@
 // --- 1. Name Shadowing & Slight Variations ---
 
 mod scope1 {
-    pub struct Item { pub x: i32 }
-    pub fn process() -> &'static str { "scope1::process" }
+    pub struct Item {
+        pub x: i32,
+    }
+    pub fn process() -> &'static str {
+        "scope1::process"
+    }
 }
 
 mod scope2 {
-    pub struct Item { pub y: String } // Same name, different field
-    pub fn process() -> &'static str { "scope2::process" }
+    pub struct Item {
+        pub y: String,
+    } // Same name, different field
+    pub fn process() -> &'static str {
+        "scope2::process"
+    }
 }
 
 // Slightly different names
-pub struct Item { pub z: bool }
-pub struct Item2 { pub z: bool } // Different name, same field
+pub struct Item {
+    pub z: bool,
+}
+pub struct Item2 {
+    pub z: bool,
+} // Different name, same field
 
 // --- 2. Generics Extravaganza ---
 
@@ -28,7 +40,7 @@ pub struct GenericItem<'a, T: Default + Clone, const N: usize> {
     _lifetime_marker: &'a (),
 }
 
-impl<'a, T: Default + Clone, const N: usize> GenericItem<'a, T, N> {
+impl<'a, T: Default + Clone + Copy, const N: usize> GenericItem<'a, T, N> {
     // Inherent method with same name as trait method
     pub fn process(&self) -> T {
         self.data[0].clone()
@@ -42,8 +54,10 @@ impl<'a, T: Default + Clone, const N: usize> GenericItem<'a, T, N> {
     }
 }
 
-impl<'a, T: Default + Clone + std::fmt::Debug, const N: usize> Processor<T> for GenericItem<'a, T, N>
-where T: Send // Extra bound on impl
+impl<'a, T: Default + Clone + std::fmt::Debug, const N: usize> Processor<T>
+    for GenericItem<'a, T, N>
+where
+    T: Send, // Extra bound on impl
 {
     type Output = String;
     // Trait method implementation with same name as inherent method
@@ -58,7 +72,8 @@ pub trait BaseTrait {
     fn base_method(&self);
 }
 
-pub trait DerivedTrait: BaseTrait + Send + Sync { // Inherits BaseTrait + marker traits
+pub trait DerivedTrait: BaseTrait + Send + Sync {
+    // Inherits BaseTrait + marker traits
     fn derived_method(&self);
 }
 
@@ -97,7 +112,7 @@ mod internal {
 
     fn test_visibility() {
         utils::internal_helper(); // OK
-        utils::super_helper();    // OK
+        utils::super_helper(); // OK
         restricted::restricted_func(); // OK
     }
 }
@@ -122,7 +137,9 @@ pub fn use_imports() {
     let uh = UtilityHelper;
     uh.help();
     let i1 = scope1::Item { x: 1 }; // scope1::Item is usable via glob
-    let i2 = ItemScope2 { y: "hello".to_string() };
+    let i2 = ItemScope2 {
+        y: "hello".to_string(),
+    };
     let ri = RestrictedItem;
     let root_item = RootItem { z: true };
 
@@ -136,7 +153,9 @@ pub fn use_imports() {
 // Macro defining an item (Parser might not see 'macro_generated_struct')
 macro_rules! define_struct {
     ($name:ident) => {
-        pub struct $name { pub val: i32 }
+        pub struct $name {
+            pub val: i32,
+        }
     };
 }
 define_struct!(MacroGeneratedStruct);
@@ -166,7 +185,9 @@ pub fn complex_args((x, y): (i32, i32), GenericItem { data, .. }: GenericItem<St
 pub fn r#match(r#in: i32) -> i32 {
     r#in
 }
-pub struct r#Struct { pub r#field: i32 }
+pub struct r#Struct {
+    pub r#field: i32,
+}
 
 // Empty enum
 pub enum EmptyEnum {}

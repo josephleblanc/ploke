@@ -32,11 +32,13 @@ pub fn process_mut_ref(r: &mut String) {
 }
 
 // Raw pointer types
-pub fn process_const_ptr(p: *const i32) -> i32 {
+fn process_const_ptr(p: *const i32) -> i32 {
     unsafe { *p }
 }
-pub fn process_mut_ptr(p: *mut i32) {
-    unsafe { *p = 42; }
+fn process_mut_ptr(p: *mut i32) {
+    unsafe {
+        *p = 42;
+    }
 }
 
 // Function pointer type
