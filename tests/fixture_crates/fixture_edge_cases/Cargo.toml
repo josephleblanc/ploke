@@ -1,0 +1,7 @@
+[package]
+name = "fixture_edge_cases"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# No dependencies needed for this fixture
