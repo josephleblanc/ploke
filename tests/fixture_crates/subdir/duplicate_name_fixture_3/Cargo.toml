@@ -1,0 +1,6 @@
+[package]
+name = "duplicate_name_crate" # Same name as fixture_1 and fixture_2
+version = "0.1.0"            # Same version as fixture_1 and fixture_2
+edition = "2021"
+
+[dependencies]

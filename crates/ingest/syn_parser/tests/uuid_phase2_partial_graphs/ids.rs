@@ -4,14 +4,21 @@
 mod phase2_id_tests {
     use ploke_common::fixtures_crates_dir;
     use ploke_core::{NodeId, TrackingHash, TypeId};
-    use std::path::PathBuf;
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
     use syn_parser::{
-        discovery::{run_discovery_phase, DiscoveryOutput},
-        parser::{analyze_files_parallel, graph::CodeGraph, nodes::FunctionNode}, // Import necessary items
+        discovery::{run_discovery_phase, CrateContext, DiscoveryOutput}, // Import CrateContext
+        parser::{
+            analyze_files_parallel,
+            graph::CodeGraph,
+            nodes::{FunctionNode, StructNode, TypeDefNode}, // Import StructNode, TypeDefNode
+        },
     };
     use uuid::Uuid;
 
-    // Helper function similar to the one in basic.rs
+    // Helper function for single fixture
     fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
         let crate_path = fixtures_crates_dir().join(fixture_name);
         // Use a dummy project root; discovery only needs crate paths for this setup
@@ -23,16 +30,112 @@ mod phase2_id_tests {
                     fixture_name, e
                 )
             });
-        analyze_files_parallel(&discovery_output, 0) // num_workers often ignored by rayon bridge
+        analyze_files_parallel(&discovery_output, 0)
     }
 
-    // Helper to find a function node by name in a CodeGraph
-    // Note: This is simple and assumes unique function names in the test fixtures for now.
-    fn find_function_by_name<'a>(
-        graph: &'a CodeGraph,
-        name: &str,
-    ) -> Option<&'a FunctionNode> {
-        graph.functions.iter().find(|f| f.name == name)
+    // Helper function to run Phase 1 on multiple fixtures, then Phase 2
+    // Returns results mapped by the original crate root path for easier lookup.
+    fn run_phase1_phase2_multi(
+        fixture_names: &[&str],
+    ) -> HashMap<PathBuf, Vec<Result<CodeGraph, syn::Error>>> {
+        let crate_paths: Vec<PathBuf> = fixture_names
+            .iter()
+            .map(|name| fixtures_crates_dir().join(name))
+            .collect();
+
+        // Use a dummy project root; discovery only needs crate paths for this setup
+        let project_root = fixtures_crates_dir();
+        let discovery_output = run_discovery_phase(&project_root, &crate_paths)
+            .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for fixtures: {:?}", e));
+
+        // Run Phase 2 on the combined output
+        let all_results = analyze_files_parallel(&discovery_output, 0);
+
+        // Group results back by the original crate path based on file paths in the graphs
+        // This is a bit indirect but necessary since analyze_files_parallel returns a flat Vec.
+        let mut grouped_results: HashMap<PathBuf, Vec<Result<CodeGraph, syn::Error>>> =
+            crate_paths.iter().map(|p| (p.clone(), Vec::new())).collect();
+
+        // We need to associate each result graph back to its original crate root.
+        // We can use the crate_namespace from the discovery_output and the file_path
+        // stored within the VisitorState during parsing (though not directly in CodeGraph).
+        // A simpler, albeit less robust, heuristic for these simple fixtures is to
+        // assume each result corresponds to one file from one crate context.
+        let mut result_idx = 0;
+        for crate_path in &crate_paths {
+            let crate_name = crate_path.file_name().unwrap().to_str().unwrap(); // Get dir name
+                                                                                // Find the corresponding CrateContext (might need adjustment if names differ)
+            let context = discovery_output
+                .crate_contexts
+                .values()
+                .find(|ctx| ctx.root_path == *crate_path)
+                .unwrap_or_else(|| panic!("Could not find context for path {}", crate_path.display()));
+
+            for _ in 0..context.files.len() {
+                if result_idx < all_results.len() {
+                    // Take ownership of the result
+                    let result = std::mem::replace(
+                        &mut (all_results[result_idx] as *mut _ as *mut Option<Result<CodeGraph, syn::Error>>),
+                        None,
+                    );
+                     if let Some(res) = result {
+                        grouped_results.get_mut(crate_path).unwrap().push(res);
+                    } else {
+                         panic!("Failed to extract result at index {}", result_idx);
+                    }
+
+                }
+                result_idx += 1;
+            }
+        }
+
+        // This part is tricky because analyze_files_parallel returns a flat Vec.
+        // We need a way to map results back to the original crate path.
+        // Let's refine the return type or add context to CodeGraph later if needed.
+        // For now, assuming simple 1 file per fixture for the duplicate tests.
+        let mut final_results = HashMap::new();
+        let mut results_iter = all_results.into_iter(); // Consuming iterator
+
+        for path in crate_paths {
+            // Assuming each fixture crate has exactly one file (lib.rs) for simplicity here.
+            if let Some(result) = results_iter.next() {
+                final_results.insert(path, vec![result]);
+            } else {
+                panic!(
+                    "Mismatch between expected results and actual results for path {}",
+                    path.display()
+                );
+            }
+        }
+
+        final_results
+    }
+
+    // Helper to find a node by name (function or struct)
+    fn find_node_id_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
+        graph
+            .functions
+            .iter()
+            .find(|f| f.name == name)
+            .map(|f| f.id)
+            .or_else(|| {
+                graph.defined_types.iter().find_map(|td| match td {
+                    TypeDefNode::Struct(s) if s.name == name => Some(s.id),
+                    // Add Enum, Union, TypeAlias if needed
+                    _ => None,
+                })
+            })
+        // Add other node types if necessary
+    }
+
+    // Helper to find the TypeId of a function's first parameter
+    fn find_first_param_type_id(graph: &CodeGraph, func_name: &str) -> Option<TypeId> {
+        graph
+            .functions
+            .iter()
+            .find(|f| f.name == func_name)
+            .and_then(|f| f.parameters.first())
+            .map(|p| p.type_id)
     }
 
     #[test]
@@ -140,6 +243,89 @@ mod phase2_id_tests {
         );
     }
 
+    #[test]
+    fn test_synthetic_ids_differ_across_files_same_crate_name() {
+        let fixture_names = [
+            "duplicate_name_fixture_1",
+            "duplicate_name_fixture_2",
+            "subdir/duplicate_name_fixture_3", // Include the one in subdir
+        ];
+        let results_map = run_phase1_phase2_multi(&fixture_names);
+
+        assert_eq!(
+            results_map.len(),
+            3,
+            "Should have results for 3 fixture paths"
+        );
+
+        let mut ids = HashMap::new();
+
+        for name in fixture_names {
+            let path = fixtures_crates_dir().join(name);
+            let results = results_map
+                .get(&path)
+                .unwrap_or_else(|| panic!("No results found for path {}", path.display()));
+            assert_eq!(results.len(), 1, "Expected 1 result per fixture");
+            let graph = results[0]
+                .as_ref()
+                .unwrap_or_else(|e| panic!("Parsing failed for {}: {:?}", name, e));
+
+            // Get IDs for 'Thing' struct and 'do_thing' function
+            let thing_id = find_node_id_by_name(graph, "Thing")
+                .expect("Failed to find 'Thing' struct");
+            let do_thing_id = find_node_id_by_name(graph, "do_thing")
+                .expect("Failed to find 'do_thing' function");
+            let param_type_id = find_first_param_type_id(graph, "do_thing")
+                .expect("Failed to find param type id for 'do_thing'");
+
+            ids.insert(
+                name,
+                (
+                    thing_id,       // NodeId for struct
+                    do_thing_id,    // NodeId for function
+                    param_type_id,  // TypeId for function parameter
+                ),
+            );
+        }
+
+        // Extract IDs for comparison
+        let (thing1, fn1, type1) = ids["duplicate_name_fixture_1"];
+        let (thing2, fn2, type2) = ids["duplicate_name_fixture_2"];
+        let (thing3, fn3, type3) = ids["subdir/duplicate_name_fixture_3"];
+
+        // --- Assertions ---
+
+        // 1. NodeIds for 'Thing' struct should differ due to file path
+        assert_ne!(thing1, thing2, "Thing NodeId should differ between fixture 1 and 2 (different file paths)");
+        assert_ne!(thing1, thing3, "Thing NodeId should differ between fixture 1 and 3 (different file paths)");
+        assert_ne!(thing2, thing3, "Thing NodeId should differ between fixture 2 and 3 (different file paths)");
+
+        // 2. NodeIds for 'do_thing' function should differ
+        //    - fn1 vs fn2: Different file path AND different span (due to comment)
+        //    - fn1 vs fn3: Different file path (same span)
+        //    - fn2 vs fn3: Different file path AND different span
+        assert_ne!(fn1, fn2, "do_thing NodeId should differ between fixture 1 and 2 (path and span)");
+        assert_ne!(fn1, fn3, "do_thing NodeId should differ between fixture 1 and 3 (path)");
+        assert_ne!(fn2, fn3, "do_thing NodeId should differ between fixture 2 and 3 (path and span)");
+
+        // 3. TypeIds for the 'Thing' parameter should differ due to file path context during generation
+        assert_ne!(type1, type2, "Param TypeId should differ between fixture 1 and 2 (different file context)");
+        assert_ne!(type1, type3, "Param TypeId should differ between fixture 1 and 3 (different file context)");
+        assert_ne!(type2, type3, "Param TypeId should differ between fixture 2 and 3 (different file context)");
+
+        // Ensure all IDs are Synthetic
+        assert!(matches!(thing1, NodeId::Synthetic(_)));
+        assert!(matches!(thing2, NodeId::Synthetic(_)));
+        assert!(matches!(thing3, NodeId::Synthetic(_)));
+        assert!(matches!(fn1, NodeId::Synthetic(_)));
+        assert!(matches!(fn2, NodeId::Synthetic(_)));
+        assert!(matches!(fn3, NodeId::Synthetic(_)));
+        assert!(matches!(type1, TypeId::Synthetic(_)));
+        assert!(matches!(type2, TypeId::Synthetic(_)));
+        assert!(matches!(type3, TypeId::Synthetic(_)));
+    }
+
     // TODO: Add tests for TypeId consistency/difference across crates/files
     // TODO: Add tests for TrackingHash consistency/difference
+    // TODO: Add tests for items in nested modules
 }
