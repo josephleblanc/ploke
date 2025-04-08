@@ -16,81 +16,94 @@ mod determinism_tests {
 
     #[test]
     fn test_phase2_determinism() {
-        let fixture_name = "example_crate"; // Or any other suitable fixture
+        let fixture_names = [
+            "duplicate_name_fixture_1",
+            "duplicate_name_fixture_2",
+            "example_crate",
+            "file_dir_detection",
+            "fixture_attributes",
+            "fixture_cyclic_types",
+            "fixture_edge_cases",
+            "fixture_generics",
+            "fixture_macros",
+            "fixture_tracking_hash",
+            "fixture_types",
+            "simple_crate",
+            "subdir/duplicate_name_fixture_3",
+        ];
 
-        // Run Phase 1+2 on the fixture crate
-        println!("Running first analysis of {}...", fixture_name);
-        let results1 = run_phase1_phase2(fixture_name);
-        println!("Finished first analysis.");
+        for fixture_name in fixture_names {
+            // Run Phase 1+2 on the fixture crate
+            println!("Running first analysis of {}...", fixture_name);
+            let results1 = run_phase1_phase2(fixture_name);
+            println!("Finished first analysis.");
 
-        // Run Phase 1+2 again on the same crate
-        println!("Running second analysis of {}...", fixture_name);
-        let results2 = run_phase1_phase2(fixture_name);
-        println!("Finished second analysis.");
+            // Run Phase 1+2 again on the same crate
+            println!("Running second analysis of {}...", fixture_name);
+            let results2 = run_phase1_phase2(fixture_name);
+            println!("Finished second analysis.");
 
-        // Basic check: same number of results (files processed)
-        assert_eq!(
-            results1.len(),
-            results2.len(),
-            "Number of processed files should be deterministic. Run 1: {}, Run 2: {}",
-            results1.len(),
-            results2.len()
-        );
+            // Basic check: same number of results (files processed)
+            assert_eq!(
+                results1.len(),
+                results2.len(),
+                "Number of processed files should be deterministic. Run 1: {}, Run 2: {}",
+                results1.len(),
+                results2.len()
+            );
 
-        // Compare the results element by element (assuming order is preserved)
-        for i in 0..results1.len() {
-            let res1 = &results1[i];
-            let res2 = &results2[i];
+            // Compare the results element by element (assuming order is preserved)
+            for i in 0..results1.len() {
+                let res1 = &results1[i];
+                let res2 = &results2[i];
 
-            match (res1, res2) {
-                (Ok(graph1), Ok(graph2)) => {
-                    println!("Comparing graphs for file index {}...", i);
-                    if let Err(e) = assert_graphs_identical(graph1, graph2, i) {
-                        // Use assert! with the error message for clear test failure
-                        assert!(false, "Graph comparison failed for file index {}: {}", i, e);
+                match (res1, res2) {
+                    (Ok(graph1), Ok(graph2)) => {
+                        println!("Comparing graphs for file index {}...", i);
+                        if let Err(e) = assert_graphs_identical(graph1, graph2, i) {
+                            // Use assert! with the error message for clear test failure
+                            panic!("Graph comparison failed for file index {}: {}", i, e);
+                        }
+                        println!("Graphs for file index {} are identical.", i);
                     }
-                    println!("Graphs for file index {} are identical.", i);
-                }
-                (Err(e1), Err(e2)) => {
-                    // If both runs failed for the same file, check if errors are "similar enough".
-                    // Exact error comparison can be brittle. Maybe just log it.
-                    // For determinism, ideally, the errors should be identical too.
-                    let err_msg1 = e1.to_string();
-                    let err_msg2 = e2.to_string();
-                    if err_msg1 != err_msg2 {
-                        // Use assert! for clear failure
-                        assert!(
-                            false,
-                            "Error messages differ for file index {}:\nRun 1: {}\nRun 2: {}",
-                            i, err_msg1, err_msg2
-                        );
-                    } else {
-                        println!(
-                            "Warning: Both runs produced the same error for file index {}: {}",
-                            i, err_msg1
-                        );
+                    (Err(e1), Err(e2)) => {
+                        // If both runs failed for the same file, check if errors are "similar enough".
+                        // Exact error comparison can be brittle. Maybe just log it.
+                        // For determinism, ideally, the errors should be identical too.
+                        let err_msg1 = e1.to_string();
+                        let err_msg2 = e2.to_string();
+                        if err_msg1 != err_msg2 {
+                            // Use assert! for clear failure
+                            panic!(
+                                "Error messages differ for file index {}:\nRun 1: {}\nRun 2: {}",
+                                i, err_msg1, err_msg2
+                            );
+                        } else {
+                            println!(
+                                "Warning: Both runs produced the same error for file index {}: {}",
+                                i, err_msg1
+                            );
+                        }
                     }
-                }
-                (Ok(_), Err(e2)) => {
-                    assert!(
-                        false,
+                    (Ok(_), Err(e2)) => {
+                        panic!(
                         "Mismatch in Result variant for file index {}. Run 1: Ok, Run 2: Err({})",
                         i, e2
                     );
-                }
-                (Err(e1), Ok(_)) => {
-                    assert!(
-                        false,
+                    }
+                    (Err(e1), Ok(_)) => {
+                        panic!(
                         "Mismatch in Result variant for file index {}. Run 1: Err({}), Run 2: Ok",
                         i, e1
                     );
+                    }
                 }
             }
+            println!(
+                "Phase 2 analysis appears deterministic for {}.",
+                fixture_name
+            );
         }
-        println!(
-            "Phase 2 analysis appears deterministic for {}.",
-            fixture_name
-        );
     }
 
     /// Compares two CodeGraphs assuming they originate from the *same file*

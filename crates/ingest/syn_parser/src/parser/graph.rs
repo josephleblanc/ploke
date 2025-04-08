@@ -154,7 +154,7 @@ impl CodeGraph {
         }
     }
 
-    fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
+    pub fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
         // Check all node collections for matching ID
 
         self.functions

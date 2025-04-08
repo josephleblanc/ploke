@@ -67,7 +67,7 @@ pub struct ParamData {
 }
 
 // Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize, Clone, Partialeq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[cfg(not(feature = "uuid_ids"))]
 pub struct ParameterNode {
     pub id: NodeId,

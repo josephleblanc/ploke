@@ -230,7 +230,6 @@ impl<'a> CodeVisitor<'a> {
         println!("{:+^10} (-) popped {} -> {:?}", "", name, popped);
         println!("{:+^13} {} now: {:?}", "", name, stack);
     }
-
     /// Generates a new `NodeId::Synthetic` for the item being visited,
     /// ensuring it's immediately linked to the current module via a `Contains` relation.
     /// Requires the item's name and span for UUID generation.
@@ -248,19 +247,49 @@ impl<'a> CodeVisitor<'a> {
         );
 
         // 2. Add the Contains relation using the new ID and GraphId wrapper
-        if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
-            // Ensure current_mod.id is also the correct NodeId type (it should be if modules are created correctly)
-            let current_module_id = current_mod.id; // This is already a NodeId enum
+        // Find the parent module based on the *current path*, not just the last pushed module.
+        let parent_module_id = self
+            .state
+            .code_graph
+            .modules
+            .iter()
+            .find(|m| m.path == self.state.current_module_path) // Find module matching current path
+            .map(|m| m.id);
 
-            // Add the new node's ID to the current module's list of items
-            current_mod.items.push(node_id);
+        if let Some(parent_id) = parent_module_id {
+            // Add the new node's ID to the parent module's list of items
+            // We need a mutable borrow here, so find again mutably.
+            if let Some(parent_mod) = self
+                .state
+                .code_graph
+                .modules
+                .iter_mut()
+                .find(|m| m.id == parent_id)
+            {
+                parent_mod.items.push(node_id);
+            }
 
             // Create the relation using GraphId wrappers
             self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(current_module_id), // Wrap module ID
-                target: GraphId::Node(node_id),           // Wrap new item ID
+                source: GraphId::Node(parent_id), // Use the correctly found parent ID
+                target: GraphId::Node(node_id),   // Wrap new item ID
                 kind: RelationKind::Contains,
             });
+            #[cfg(feature = "verbose_debug")]
+            {
+                // Find parent name again for logging (or pass it down)
+                let parent_name = self
+                    .state
+                    .code_graph
+                    .modules
+                    .iter()
+                    .find(|m| m.id == parent_id)
+                    .map(|m| m.name.as_str())
+                    .unwrap_or("<unknown>");
+                println!("REL_CREATE: Contains relation created for source: {} -> target: {},\n\tsource_id: {}  target_id: {}",
+                      parent_name, item_name, parent_id, node_id
+                  );
+            }
 
             // Keep the debug hook, assuming debug_mod_stack_push is updated
             // to handle the NodeId enum (e.g., using its Display impl).
@@ -279,6 +308,59 @@ impl<'a> CodeVisitor<'a> {
         node_id
     }
 
+    ///// Generates a new `NodeId::Synthetic` for the item being visited,
+    ///// ensuring it's immediately linked to the current module via a `Contains` relation.
+    ///// Requires the item's name and span for UUID generation.
+    ///// This version is active when the `uuid_ids` feature is enabled.
+    //#[cfg(feature = "uuid_ids")]
+    //fn add_contains_rel(&mut self, item_name: &str, item_span: (usize, usize)) -> NodeId {
+    //    // 1. Generate the Synthetic NodeId using context from state
+    //    //    Requires crate_namespace, current_file_path, current_module_path, item_name, item_span
+    //    let node_id = NodeId::generate_synthetic(
+    //        self.state.crate_namespace,      // Provided by VisitorState::new
+    //        &self.state.current_file_path,   // Provided by VisitorState::new
+    //        &self.state.current_module_path, // Tracked during visitation
+    //        item_name,                       // Passed as argument
+    //        item_span,                       // Passed as argument
+    //    );
+    //
+    //    // 2. Add the Contains relation using the new ID and GraphId wrapper
+    //    if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
+    //        // Ensure current_mod.id is also the correct NodeId type (it should be if modules are created correctly)
+    //        let current_module_id = current_mod.id; // This is already a NodeId enum
+    //
+    //        // Add the new node's ID to the current module's list of items
+    //        current_mod.items.push(node_id);
+    //
+    //        // Create the relation using GraphId wrappers
+    //        self.state.code_graph.relations.push(Relation {
+    //            source: GraphId::Node(current_module_id), // Wrap module ID
+    //            target: GraphId::Node(node_id),           // Wrap new item ID
+    //            kind: RelationKind::Contains,
+    //        });
+    //        #[cfg(feature = "verbose_debug")]
+    //        println!(
+    //            "REL_CREATE: Contains relation created for source: {} -> target: {},\n\tsource_id: {} -> target_id: {}",
+    //            current_mod.name, item_name, current_mod.id, node_id
+    //        );
+    //
+    //        // Keep the debug hook, assuming debug_mod_stack_push is updated
+    //        // to handle the NodeId enum (e.g., using its Display impl).
+    //        #[cfg(feature = "verbose_debug")]
+    //        self.debug_mod_stack_push(item_name.to_owned(), node_id);
+    //    } else {
+    //        // This case should ideally not happen after the root module is created in analyze_file_phase2,
+    //        // but log a warning just in case.
+    //        eprintln!(
+    //            "Warning: Attempted to add contains relation for item '{}', but no current module found in VisitorState.",
+    //            item_name
+    //        );
+    //    }
+    //
+    //    // 3. Return the newly generated NodeId enum
+    //    node_id
+    //}
+
     /// Returns a newly generated NodeId while also adding a new Contains relation from the current
     /// module (souce) to the node (target) whose NodeId is being generated.
     /// - Follows the pattern of generating a NodeId only at the time the Relation is added to
@@ -294,11 +376,6 @@ impl<'a> CodeVisitor<'a> {
         if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
             current_mod.items.push(node_id);
 
-            self.state.code_graph.relations.push(Relation {
-                source: current_mod.id,
-                target: node_id,
-                kind: RelationKind::Contains,
-            });
             self.state.code_graph.relations.push(Relation {
                 source: current_mod.id,
                 target: node_id,
