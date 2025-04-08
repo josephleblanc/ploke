@@ -245,40 +245,6 @@ mod phase2_relation_tests {
         assert!(found, "{}", message);
     }
 
-    // Core assertion helper to check if a specific relation DOES NOT exist
-    fn assert_relation_does_not_exist(
-        graph: &CodeGraph,
-        source: GraphId,
-        target: GraphId,
-        kind: RelationKind,
-        message: &str,
-    ) {
-        let found = graph
-            .relations
-            .iter()
-            .any(|r| r.source == source && r.target == target && r.kind == kind);
-        assert!(!found, "{}", message);
-    }
-
-    // Helper to find the TypeId of a specific field within a struct
-    // Returns the TypeId stored *on the FieldNode*, not from a relation
-    fn find_field_type_id_on_node(
-        graph: &CodeGraph,
-        struct_id: NodeId,
-        field_name: &str,
-    ) -> Option<TypeId> {
-        graph.defined_types.iter().find_map(|td| match td {
-            TypeDefNode::Struct(s) if s.id == struct_id => s
-                .fields
-                .iter()
-                .find(|f| f.name.as_deref() == Some(field_name))
-                .map(|f| f.type_id), // Get TypeId directly from FieldNode
-            // Add cases for Enum variants / Unions if needed
-            _ => None,
-        })
-    }
-
-
     // --- Relation Tests ---
 
     #[test]
@@ -547,37 +513,4 @@ mod phase2_relation_tests {
     // - Uses (ImportNode -> ???) - What ID does an import point to in Phase 2? Likely unresolved TypeId::Synthetic.
     // - ValueType (ValueNode -> TypeId) - Check ValueNode.type_id and assert relation ValueNodeId -> TypeId
     // - ModuleImports (ModuleNode -> ImportNode) - Check ModuleNode.imports and assert relation ModuleNodeId -> ImportNodeId
-}
-
-// Helper to find the TypeId of a specific field within a struct
-// Returns the TypeId stored *on the FieldNode*, not from a relation
-fn find_field_type_id_on_node(
-    graph: &CodeGraph,
-    struct_id: NodeId,
-    field_name: &str,
-) -> Option<TypeId> {
-    graph.defined_types.iter().find_map(|td| match td {
-        TypeDefNode::Struct(s) if s.id == struct_id => s
-            .fields
-            .iter()
-            .find(|f| f.name.as_deref() == Some(field_name))
-            .map(|f| f.type_id), // Get TypeId directly from FieldNode
-        // Add cases for Enum variants / Unions if needed
-        _ => None,
-    })
-}
-
-// Core assertion helper to check if a specific relation DOES NOT exist
-fn assert_relation_does_not_exist(
-    graph: &CodeGraph,
-    source: GraphId,
-    target: GraphId,
-    kind: RelationKind,
-    message: &str,
-) {
-    let found = graph
-        .relations
-        .iter()
-        .any(|r| r.source == source && r.target == target && r.kind == kind);
-    assert!(!found, "{}", message);
 }
