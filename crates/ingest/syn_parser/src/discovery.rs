@@ -262,7 +262,7 @@ pub fn run_discovery_phase(
 /// A `Result` containing a map from the resolved module file path to its module segments
 /// (e.g., `.../src/parser.rs` -> `["crate", "parser"]`), or a `DiscoveryError::Io` if
 /// the file cannot be read.
-fn scan_for_mods(
+pub(crate) fn scan_for_mods(
     file_to_scan: &Path,
     src_path: &Path,
     existing_files: &[PathBuf],

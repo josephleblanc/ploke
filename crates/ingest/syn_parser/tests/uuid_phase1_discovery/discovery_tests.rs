@@ -387,6 +387,7 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
 // or we could make it pub(crate) for testing if needed.
 // The test `test_run_discovery_phase_valid_crate` and `test_discovery_on_fixture_crate`
 // now cover the basic integration of scan_for_mods.
+// NOTE: Made scan_for_mods pub(crate), should test
 
 // Example of a dedicated test if scan_for_mods were made pub(crate)
 /*
