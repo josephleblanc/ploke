@@ -23,15 +23,21 @@ pub enum Expr {
     Subtract(Box<Expr>, Box<Expr>),
 }
 
-// 4. Type alias involving recursion (less direct cycle)
-pub type NestedList = Option<Box<(i32, NestedList)>>;
-
-pub fn process_nested(list: NestedList) -> i32 {
-    match list {
-        Some(boxed_tuple) => boxed_tuple.0 + process_nested(boxed_tuple.1),
-        None => 0,
-    }
+// 4. Type alias involving recursion (less direct cycle) - Causes E0391
+// pub type NestedList = Option<Box<(i32, NestedList)>>;
+//
+// pub fn process_nested(list: NestedList) -> i32 {
+//     match list {
+//         Some(boxed_tuple) => boxed_tuple.0 + process_nested(boxed_tuple.1),
+//         None => 0,
+//     }
+// }
+// Using a struct instead to represent the same recursive structure for parsing tests:
+pub struct NestedListStruct {
+    data: i32,
+    next: Option<Box<NestedListStruct>>,
 }
+
 
 // 5. Cyclic dependency through traits (harder to represent directly,
 //    but type references might form cycles in the TypeGraph)

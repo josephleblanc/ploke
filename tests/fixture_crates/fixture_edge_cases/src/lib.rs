@@ -161,10 +161,10 @@ macro_rules! define_struct {
 define_struct!(MacroGeneratedStruct);
 
 // Complex attributes
-#[cfg_attr(feature = "some_feature", derive(Debug))]
-#[outer_attr::group(#[inner_attr = "value"])]
+#[cfg_attr(feature = "some_feature", derive(Debug))] // This is fine, parser should handle cfg_attr
+// #[outer_attr::group(#[inner_attr = "value"])] // Commented out: Causes resolution error E0433
 pub struct ComplexAttributes {
-    #[field_attr(arg = true)]
+    // #[field_attr(arg = true)] // Commented out: Causes resolution error (cannot find attribute)
     field: i32,
 }
 
