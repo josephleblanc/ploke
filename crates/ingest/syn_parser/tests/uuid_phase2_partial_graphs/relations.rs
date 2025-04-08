@@ -54,7 +54,7 @@ mod phase2_relation_tests {
             .find_map(|(index, res)| {
                 #[cfg(feature = "verbose_debug")]
                 println!(
-                    "[find_graph_containing_item] Checking graph index: {}",
+                    "REL_TEST_DEBUG: [find_graph_containing_item] Checking graph index: {}",
                     index
                 );
                 res.as_ref().ok().and_then(|g| {
@@ -62,7 +62,7 @@ mod phase2_relation_tests {
                     let found_id = find_node_id_by_name(g, item_name);
                     #[cfg(feature = "verbose_debug")]
                     println!(
-                        "[find_graph_containing_item] Checking for '{}', found_id: {:?}",
+                        "REL_TEST_DEBUG: [find_graph_containing_item] Checking for '{}', found_id: {:?}",
                         item_name, found_id
                     );
                     if found_id.is_some() {
@@ -94,7 +94,7 @@ mod phase2_relation_tests {
                             TypeDefNode::Union(u) => &u.name,
                         };
                         println!(
-                            "[find_node_id_by_name] Checking defined_type: {}, looking for: {}",
+                            "REL_TEST_DEBUG: [find_node_id_by_name] Checking defined_type: {}, looking for: {}",
                             type_name, name
                         );
                     }
@@ -292,14 +292,16 @@ mod phase2_relation_tests {
         let mod_two_id_in_crate_graph = find_node_id_by_name(crate_graph, "module_two")
             .expect("Failed to find 'module_two' module in crate graph");
 
+        // Note: The structure in example_crate is a bit odd. module_one.rs also declares a module_two.
+        // We are testing the top-level `mod module_two;` declared in lib.rs here.
         #[cfg(feature = "verbose_debug")]
         {
-            println!("[test_contains_relation] Checking Module->SubModule:");
-            println!("  Parent Module ('crate') ID: {:?}", parent_mod_id);
-            println!("  Sub Module ('module_two') ID: {:?}", mod_two_id_in_crate_graph);
-            println!("  Parent Graph Relations Count: {}", crate_graph.relations.len());
+            println!("REL_TEST_DEBUG: [test_contains_relation] Checking Module->SubModule:");
+            println!("  REL_TEST_DEBUG: Parent Module ('crate') ID: {:?}", parent_mod_id);
+            println!("  REL_TEST_DEBUG: Sub Module ('module_two') ID: {:?}", mod_two_id_in_crate_graph);
+            println!("  REL_TEST_DEBUG: Parent Graph Relations Count: {}", crate_graph.relations.len());
             // Optionally print all relations if the list isn't too long
-            // println!("  Parent Graph Relations: {:?}", crate_graph.relations);
+            // println!("  REL_TEST_DEBUG: Parent Graph Relations: {:?}", crate_graph.relations);
         }
 
         assert_relation_exists(
@@ -313,13 +315,14 @@ mod phase2_relation_tests {
         // Debugging for the failing Module -> Function case
         #[cfg(feature = "verbose_debug")]
         {
-            println!("[test_contains_relation] Checking Module->Function:");
-            println!("  Module ('crate') ID: {:?}", crate_mod_id);
-            println!("  Function ('add') ID: {:?}", add_func_id);
-            println!("  Graph Relations Count: {}", lib_graph.relations.len());
-             println!("  Graph Relations: {:?}", lib_graph.relations); // Print all relations
+            println!("REL_TEST_DEBUG: [test_contains_relation] Checking Module->Function:");
+            println!("  REL_TEST_DEBUG: Module ('crate') ID: {:?}", crate_mod_id);
+            println!("  REL_TEST_DEBUG: Function ('add') ID: {:?}", add_func_id);
+            println!("  REL_TEST_DEBUG: Graph Relations Count: {}", lib_graph.relations.len());
+             println!("  REL_TEST_DEBUG: Graph Relations: {:?}", lib_graph.relations); // Print all relations
         }
         // Re-assert the failing one after printing debug info
+        // This assertion is expected to FAIL until the implementation bug is fixed.
          assert_relation_exists(
             lib_graph,
             GraphId::Node(crate_mod_id),
@@ -382,171 +385,132 @@ mod phase2_relation_tests {
 
     #[test]
     fn test_struct_field_logic() {
-        // This test verifies the FieldNode data, NOT necessarily a StructField relation,
-        // as that relation might not be generated in the current implementation.
+        // This test verifies the FieldNode data for SomeStruct in module_one.rs
         let results = run_phase1_phase2("example_crate");
         #[cfg(feature = "verbose_debug")]
         {
-            println!("[test_struct_field_logic] Phase 1&2 Results Count: {}", results.len());
+            println!("REL_TEST_DEBUG: [test_struct_field_logic] Phase 1&2 Results Count: {}", results.len());
             for (i, res) in results.iter().enumerate() {
                  match res {
-                    Ok(g) => println!("  Graph {}: {} functions, {} types, {} relations", i, g.functions.len(), g.defined_types.len(), g.relations.len()),
-                    Err(e) => println!("  Graph {}: Error - {}", i, e),
+                    Ok(g) => println!("  REL_TEST_DEBUG: Graph {}: {} functions, {} types, {} relations", i, g.functions.len(), g.defined_types.len(), g.relations.len()),
+                    Err(e) => println!("  REL_TEST_DEBUG: Graph {}: Error - {}", i, e),
                  }
             }
         }
-        let lib_graph = find_graph_containing_item(&results, "MyStruct");
+        // SomeStruct is defined in module_one.rs
+        let mod_one_graph = find_graph_containing_item(&results, "SomeStruct");
 
-        let struct_id =
-            find_node_id_by_name(lib_graph, "MyStruct").expect("Failed to find 'MyStruct' struct");
+        let struct_id = find_node_id_by_name(mod_one_graph, "SomeStruct")
+            .expect("Failed to find 'SomeStruct' struct");
 
-        // 1. Struct -> Field Node
-        // We need the NodeId generated specifically for the field itself.
-        let field_id = find_field_node_id(lib_graph, struct_id, "my_field")
-            .expect("Failed to find NodeId for 'my_field'");
+        // 1. Verify FieldNode data exists and has correct TypeId
+        // We use the helper that reads the TypeId directly from the FieldNode
+        let field_type_id = find_field_type_id_on_node(mod_one_graph, struct_id, "some_field")
+            .expect("Failed to find type ID for 'some_field' directly on FieldNode");
 
-        // This relation might not exist if fields aren't treated as first-class nodes
-        // with their own Contains relation. Let's assume it *should* exist for now.
-        // If FieldNode gets its ID via generate_synthetic, this relation should be added.
-        assert_relation_exists(
-            lib_graph,
-            GraphId::Node(struct_id),
-            GraphId::Node(field_id),
-            RelationKind::StructField, // Or maybe Contains? Let's use StructField for semantics.
-            "Relation missing for 'MyStruct' -> 'my_field' Node",
-        );
-
-        // 2. Field Node -> Field Type
-        let field_type_id =
-            find_field_type_id(lib_graph, field_id).expect("Failed to find type ID for 'my_field'");
-
-        // This relation is less common. Usually, the type info is directly on FieldNode.
-        // However, if we model types relationally, it might exist.
-        // Let's assume for now the primary check is FieldNode.type_id.
-        // If a relation *is* created, it might be References or ValueType?
-        // Let's skip asserting this specific relation for now unless the design requires it.
-        // assert_relation_exists(
-        //     lib_graph,
-        //     GraphId::Node(field_id),
-        //     GraphId::Type(field_type_id),
-        //     RelationKind::ValueType, // Or References?
-        //     "Relation missing for 'my_field' Node -> field type",
-        // );
-
-        // Verify the type_id stored on the FieldNode directly
-        let field_node = lib_graph
-            .find_node(field_id)
-            .expect("Cannot find field node by ID");
-        // We need to downcast or access the field directly. Let's assume find_node is enhanced or we search manually.
-        let found_field_type_id = lib_graph
-            .defined_types
-            .iter()
-            .find_map(|td| match td {
-                TypeDefNode::Struct(s) if s.id == struct_id => s
-                    .fields
-                    .iter()
-                    .find(|f| f.id == field_id)
-                    .map(|f| f.type_id),
-                _ => None,
-            })
-            .expect("Could not re-find field node to check type_id");
-
-        assert_eq!(
-            found_field_type_id, field_type_id,
-            "FieldNode.type_id mismatch"
-        );
+        // Assert the type ID is synthetic (as it's likely i32)
         assert!(
             matches!(field_type_id, TypeId::Synthetic(_)),
             "Field type ID should be synthetic"
         );
-    }
 
-    #[test]
-    fn test_impl_relations() {
-        let results = run_phase1_phase2("example_crate");
-         #[cfg(feature = "verbose_debug")]
-        {
-            println!("[test_impl_relations] Phase 1&2 Results Count: {}", results.len());
-            for (i, res) in results.iter().enumerate() {
-                 match res {
-                    Ok(g) => println!("  Graph {}: {} functions, {} types, {} impls, {} relations", i, g.functions.len(), g.defined_types.len(), g.impls.len(), g.relations.len()),
-                    Err(e) => println!("  Graph {}: Error - {}", i, e),
-                 }
-            }
-        }
-        let lib_graph = find_graph_containing_item(&results, "MyStruct"); // Impl is in lib.rs
-
-        // Find the impl block by the type it implements for (MyStruct)
-        let my_struct_type_id = find_field_type_id(
-            lib_graph,
-            find_field_node_id(
-                lib_graph,
-                find_node_id_by_name(lib_graph, "MyStruct").unwrap(),
-                "my_field", // Use a known field to get the TypeId for MyStruct
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        let impl_node = lib_graph
-            .impls
-            .iter()
-            .find(|imp| imp.self_type == my_struct_type_id)
-            .expect("Failed to find impl block for MyStruct");
-        let impl_id = impl_node.id;
-
-        // 1. Impl -> Self Type (ImplementsFor)
-        let self_type_id = find_impl_self_type_id(lib_graph, impl_id)
-            .expect("Failed to find self_type ID for impl");
-        assert_eq!(self_type_id, my_struct_type_id, "Impl self_type mismatch"); // Sanity check
-        assert_relation_exists(
-            lib_graph,
-            GraphId::Node(impl_id),
-            GraphId::Type(self_type_id),
-            RelationKind::ImplementsFor,
-            "Relation missing for Impl -> Self Type",
+        // 2. Assert that a StructField relation DOES NOT exist (as FieldNode has no ID)
+        // We cannot construct a target GraphId::Node(field_id).
+        // We also assume a Struct -> Type relation isn't created for fields.
+        // Therefore, we check that no relation points *from* the struct *to* the field's type
+        // with the kind StructField.
+        assert_relation_does_not_exist(
+            mod_one_graph,
+            GraphId::Node(struct_id),
+            GraphId::Type(field_type_id),
+            RelationKind::StructField,
+            "Relation Struct -> FieldType should NOT exist for StructField kind",
         );
 
-        // 2. Impl -> Trait Type (ImplementsTrait) - If applicable
-        if let Some(trait_type_id) = find_impl_trait_type_id(lib_graph, impl_id) {
-            assert_relation_exists(
-                lib_graph,
-                GraphId::Node(impl_id),
-                GraphId::Type(trait_type_id),
-                RelationKind::ImplementsTrait,
-                "Relation missing for Impl -> Trait Type",
-            );
-            // We would also need to find the TraitNode and verify its TypeId matches
-            let trait_id =
-                find_node_id_by_name(lib_graph, "MyTrait").expect("Failed to find MyTrait");
-            // How do we get the TypeId for a TraitNode? Assume it's derivable or stored.
-            // For now, just check the relation exists.
-        } else {
-            // If the impl in the fixture doesn't implement a trait, this is expected.
-            // Check the example_crate fixture to confirm.
-            // example_crate's impl block *does* implement MyTrait.
-            panic!("Expected to find a trait implementation in example_crate's impl block");
-        }
-
-        // 3. Impl -> Method (Method relation, or maybe Contains?)
-        let method_id =
-            find_node_id_by_name(lib_graph, "impl_method").expect("Failed to find 'impl_method'");
-        assert_relation_exists(
-            lib_graph,
-            GraphId::Node(impl_id),
-            GraphId::Node(method_id),
-            RelationKind::Method, // Using 'Method' kind
-            "Relation missing for Impl -> Method",
-        );
+        println!("REL_TEST_DEBUG: test_struct_field_logic passed checks for SomeStruct.");
     }
 
-    // TODO: Add tests for other relation kinds:
+    // #[test] // TODO: Re-enable this test when a fixture with an impl block is available or created.
+    // fn test_impl_relations() {
+    //     let results = run_phase1_phase2("example_crate");
+    //      #[cfg(feature = "verbose_debug")]
+    //     {
+    //         println!("REL_TEST_DEBUG: [test_impl_relations] Phase 1&2 Results Count: {}", results.len());
+    //         for (i, res) in results.iter().enumerate() {
+    //              match res {
+    //                 Ok(g) => println!("  REL_TEST_DEBUG: Graph {}: {} functions, {} types, {} impls, {} relations", i, g.functions.len(), g.defined_types.len(), g.impls.len(), g.relations.len()),
+    //                 Err(e) => println!("  REL_TEST_DEBUG: Graph {}: Error - {}", i, e),
+    //              }
+    //         }
+    //     }
+    //     // This test requires a struct/enum/trait that actually has an impl block in the fixture.
+    //     // 'example_crate' currently does not have one.
+    //     // Find an item that *is* implemented in the fixture.
+    //     let item_name_with_impl = "ItemWithImpl"; // Replace with actual item name
+    //     let graph_with_impl = find_graph_containing_item(&results, item_name_with_impl);
+    //
+    //     let item_id = find_node_id_by_name(graph_with_impl, item_name_with_impl).unwrap();
+    //     // Need a way to get the TypeId for the item being implemented
+    //     let item_type_id = /* ... get TypeId for item_id ... */ unimplemented!();
+    //
+    //     let impl_node = graph_with_impl
+    //         .impls
+    //         .iter()
+    //         .find(|imp| imp.self_type == item_type_id)
+    //         .expect("Failed to find impl block for item");
+    //     let impl_id = impl_node.id;
+    //
+    //     // 1. Impl -> Self Type (ImplementsFor)
+    //     let self_type_id = find_impl_self_type_id(graph_with_impl, impl_id)
+    //         .expect("Failed to find self_type ID for impl");
+    //     assert_eq!(self_type_id, item_type_id, "Impl self_type mismatch"); // Sanity check
+    //     assert_relation_exists(
+    //         graph_with_impl,
+    //         GraphId::Node(impl_id),
+    //         GraphId::Type(self_type_id),
+    //         RelationKind::ImplementsFor,
+    //         "Relation missing for Impl -> Self Type",
+    //     );
+    //
+    //     // 2. Impl -> Trait Type (ImplementsTrait) - If applicable
+    //     if let Some(trait_type_id) = find_impl_trait_type_id(graph_with_impl, impl_id) {
+    //         assert_relation_exists(
+    //             graph_with_impl,
+    //             GraphId::Node(impl_id),
+    //             GraphId::Type(trait_type_id),
+    //             RelationKind::ImplementsTrait,
+    //             "Relation missing for Impl -> Trait Type",
+    //         );
+    //         // Find the TraitNode and verify its TypeId matches trait_type_id
+    //         let trait_name = "SomeTrait"; // Replace with actual trait name
+    //         let trait_id = find_node_id_by_name(graph_with_impl, trait_name).expect("Failed to find Trait");
+    //         // ... verify TypeId match ...
+    //     }
+    //
+    //     // 3. Impl -> Method (Method relation)
+    //     let method_name = "impl_method_name"; // Replace with actual method name
+    //     let method_id = find_node_id_by_name(graph_with_impl, method_name)
+    //         .expect("Failed to find method in impl");
+    //     assert_relation_exists(
+    //         graph_with_impl,
+    //         GraphId::Node(impl_id),
+    //         GraphId::Node(method_id),
+    //         RelationKind::Method, // Using 'Method' kind
+    //         "Relation missing for Impl -> Method",
+    //     );
+    // }
+
+    // TODO: Add tests for other relation kinds based on current implementation:
     // - Method (Trait -> Function)
     // - EnumVariant (Enum -> VariantNode)
     // - Inherits (Trait -> Trait TypeId)
     // - References (Could be used for various things, e.g., field -> type?)
     // - Uses (ImportNode -> TypeId/NodeId of imported item)
     // - ValueType (ValueNode -> TypeId)
-    // - MacroUse (?)
-    // - ModuleImports (ModuleNode -> ImportNode)
+    // - Method (Trait -> Function) - Check TraitNode.methods and assert relation TraitNodeId -> FunctionNodeId
+    // - EnumVariant (Enum -> VariantNode) - Similar to StructField, VariantNode has no ID. Check data on EnumNode.
+    // - Inherits (Trait -> Trait TypeId) - Check TraitNode.super_traits and assert relation TraitNodeId -> SuperTraitTypeId
+    // - Uses (ImportNode -> ???) - What ID does an import point to in Phase 2? Likely unresolved TypeId::Synthetic.
+    // - ValueType (ValueNode -> TypeId) - Check ValueNode.type_id and assert relation ValueNodeId -> TypeId
+    // - ModuleImports (ModuleNode -> ImportNode) - Check ModuleNode.imports and assert relation ModuleNodeId -> ImportNodeId
 }
