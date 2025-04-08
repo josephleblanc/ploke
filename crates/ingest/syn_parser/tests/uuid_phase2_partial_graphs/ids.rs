@@ -17,6 +17,7 @@ mod phase2_id_tests {
         },
     };
     use uuid::Uuid;
+    use crate::common::find_function_by_name; // Import the helper function
 
     // Helper function for single fixture
     fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
@@ -48,67 +49,41 @@ mod phase2_id_tests {
         let discovery_output = run_discovery_phase(&project_root, &crate_paths)
             .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for fixtures: {:?}", e));
 
-        // Run Phase 2 on the combined output
-        let all_results = analyze_files_parallel(&discovery_output, 0);
+        // Run Phase 2 on the combined output. The results are ordered according to
+        // the iteration order of crate_contexts and then files within each context.
+        let mut all_results_iter = analyze_files_parallel(&discovery_output, 0).into_iter();
 
-        // Group results back by the original crate path based on file paths in the graphs
-        // This is a bit indirect but necessary since analyze_files_parallel returns a flat Vec.
         let mut grouped_results: HashMap<PathBuf, Vec<Result<CodeGraph, syn::Error>>> =
-            crate_paths.iter().map(|p| (p.clone(), Vec::new())).collect();
+            HashMap::new();
 
-        // We need to associate each result graph back to its original crate root.
-        // We can use the crate_namespace from the discovery_output and the file_path
-        // stored within the VisitorState during parsing (though not directly in CodeGraph).
-        // A simpler, albeit less robust, heuristic for these simple fixtures is to
-        // assume each result corresponds to one file from one crate context.
-        let mut result_idx = 0;
-        for crate_path in &crate_paths {
-            let crate_name = crate_path.file_name().unwrap().to_str().unwrap(); // Get dir name
-                                                                                // Find the corresponding CrateContext (might need adjustment if names differ)
-            let context = discovery_output
-                .crate_contexts
-                .values()
-                .find(|ctx| ctx.root_path == *crate_path)
-                .unwrap_or_else(|| panic!("Could not find context for path {}", crate_path.display()));
+        // Iterate through the crate contexts in the *same order* discovery likely processed them
+        // (assuming BTreeMap iteration order is stable, which it is).
+        // We rely on the fact that analyze_files_parallel processes files in the order
+        // they appear within each CrateContext, and processes CrateContexts sequentially.
+        for crate_context in discovery_output.crate_contexts.values() {
+            let crate_path = &crate_context.root_path;
+            let num_files_in_crate = crate_context.files.len();
+            let mut crate_results = Vec::with_capacity(num_files_in_crate);
 
-            for _ in 0..context.files.len() {
-                if result_idx < all_results.len() {
-                    // Take ownership of the result
-                    let result = std::mem::replace(
-                        &mut (all_results[result_idx] as *mut _ as *mut Option<Result<CodeGraph, syn::Error>>),
-                        None,
+            for _ in 0..num_files_in_crate {
+                if let Some(result) = all_results_iter.next() {
+                    crate_results.push(result);
+                } else {
+                    panic!(
+                        "Mismatch in expected number of results for crate {}",
+                        crate_path.display()
                     );
-                     if let Some(res) = result {
-                        grouped_results.get_mut(crate_path).unwrap().push(res);
-                    } else {
-                         panic!("Failed to extract result at index {}", result_idx);
-                    }
-
                 }
-                result_idx += 1;
             }
+            grouped_results.insert(crate_path.clone(), crate_results);
         }
 
-        // This part is tricky because analyze_files_parallel returns a flat Vec.
-        // We need a way to map results back to the original crate path.
-        // Let's refine the return type or add context to CodeGraph later if needed.
-        // For now, assuming simple 1 file per fixture for the duplicate tests.
-        let mut final_results = HashMap::new();
-        let mut results_iter = all_results.into_iter(); // Consuming iterator
-
-        for path in crate_paths {
-            // Assuming each fixture crate has exactly one file (lib.rs) for simplicity here.
-            if let Some(result) = results_iter.next() {
-                final_results.insert(path, vec![result]);
-            } else {
-                panic!(
-                    "Mismatch between expected results and actual results for path {}",
-                    path.display()
-                );
-            }
+        // Ensure all results were consumed
+        if all_results_iter.next().is_some() {
+            panic!("analyze_files_parallel returned more results than expected based on DiscoveryOutput");
         }
 
-        final_results
+        grouped_results
     }
 
     // Helper to find a node by name (function or struct)
