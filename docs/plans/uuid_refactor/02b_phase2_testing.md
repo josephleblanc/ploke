@@ -58,6 +58,7 @@
         *   Different `item_tokens` (content change) -> different Hash.
     *   **Insensitivity (Current Limitation):** Verify that changes *only* in whitespace or comments *do* currently change the hash (due to `to_string()`). Document this limitation.
     *   **Robustness:** Test with various token streams (empty, simple, complex).
+        * NOTE: We will likely soon improve `TrackingHash` to be less sensitive to whitespace. When that refactor occurs, we may revisit the whitespace-only `TrackingHash` sensitive, and invert these tests to verify that whitespace does not cause the `TrackingHash` to change.
 
 ## 4. Integration Tests (`analyze_files_parallel`)
 

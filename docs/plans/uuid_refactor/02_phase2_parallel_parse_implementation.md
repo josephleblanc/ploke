@@ -1,5 +1,13 @@
 # Comprehensive Refactoring Plan: Implement Phase 2 - Parallel Parse & Provisional Graph Generation
 
+### Post-implementation Notes:
+
+**Minor Devaiations:**
+
+*   No `generate_synthetic_type_id` helper directly on `VisitorState`; logic is in `type_processing.rs`.
+*   Error handling uses `syn::Error` instead of a custom `Phase2Error`.
+*   `TrackingHash` uses token stream `to_string()`, which might be less robust than a pure AST hash.
+
 ## 1. Task Definition
 **Task**: Implement the "Parallel Parse & Provisional Graph Generation" phase (Phase 2) of the UUID refactoring plan, as outlined in the [UUID Refactor Overview](docs/plans/uuid_refactor/00_overview_batch_processing_model.md). This involves modifying the existing parallel file parsing logic (`analyze_files_parallel`) to use the `DiscoveryOutput` from Phase 1, generate temporary `NodeId::Synthetic` and `TypeId::Synthetic` UUIDs, calculate `TrackingHash` values, and produce partial `CodeGraph` structures containing this provisional data.
 **Purpose**: To leverage parallelism (`rayon`) for the CPU-bound task of parsing Rust code into ASTs and initial graph nodes, while generating the necessary temporary identifiers and change-tracking hashes required for the sequential resolution (Phase 3) and incremental update logic.
@@ -84,6 +92,8 @@
         -   `crates/ingest/syn_parser/src/parser/visitor/type_processing.rs`
     -   **Sub-steps:**
         -   **[ ] 5a: Update ID Generation Calls:** Replace `state.next_node_id()` and `add_contains_rel` logic with calls to `state.generate_synthetic_node_id(...)`. Ensure the necessary context (name, span) is passed.
+        - 5a NOTE: This helper does *not* exist in `state.rs`. Type ID generation is handled within `get_or_create_type` in `type_processing.rs`, which calls `ploke_core::TypeId::generate_synthetic`. 
+
         -   **[ ] 5b: Update Type Handling:** Modify `get_or_create_type` in `type_processing.rs`. Instead of just returning an ID, it should:
             -   Attempt local resolution (within the current file's `type_map`).
             -   If found, return existing `Synthetic(Uuid)`.
@@ -92,6 +102,8 @@
             -   Update direct `TypeId` usage in `code_visitor.rs` (e.g., `visit_item_type`, `visit_item_extern_crate`) accordingly.
         -   **[ ] 5c: Update Relation Creation:** Ensure `Relation` objects are created using the `NodeId::Synthetic` and `TypeId::Synthetic` values returned by the updated generation logic.
         -   **[ ] 5d: Add TrackingHash Generation:** In relevant `visit_*` methods (e.g., `visit_item_fn`, `visit_item_struct`), after creating the node, call `state.generate_tracking_hash(...)` using the item's `TokenStream` and store the result in the node's `tracking_hash` field.
+        - 5d NOTE: **Deviation** Improve recent implementation. TrackingHash uses item_tokens.to_string(), making it sensitive to formatting.
+   and comments within the token stream, not just the AST structure.
     -   **Testing Approach**: After each sub-step (5a-5d), attempt to parse the `simple_crate` fixture. Check intermediate results (e.g., print debug info) or add basic assertions if possible, focusing on the aspect just changed. Compile checks are essential.
 
 -   **STOP & TEST 2**: After all `CodeVisitor` modifications, parse the `simple_crate` fixture. Verify (e.g., via RON serialization or debug printing) that:
@@ -141,6 +153,8 @@
 
 ### 3.4 Error Handling
 - Define `Phase2Error` enum in `crates/ingest/syn_parser/src/error.rs`.
+    - NOTE: **Deviation:**: Custom `Phase2Error` enum. The current implementation uses the existing `syn::Error` type to wrap file I/O errors and propagate parsing errors.
+        - Should be improved.
 - Include variants for:
     - `SynError(syn::Error)`: Wrap parsing errors from `syn`.
     - `IoError(std::io::Error)`: For file reading issues within the worker.
