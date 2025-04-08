@@ -10,7 +10,7 @@ pub type TypeId = usize;
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeNode {
     pub id: TypeId,
     pub kind: TypeKind,
@@ -21,7 +21,7 @@ pub struct TypeNode {
 
 // ANCHOR: TypeKind_defn
 // Different kinds of types
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum TypeKind {
     //ANCHOR_END: TypeKind_defn
     Named {

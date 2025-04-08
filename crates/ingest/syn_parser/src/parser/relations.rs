@@ -18,7 +18,7 @@ pub enum GraphId {
 // ANCHOR: Relation
 // Represents a relation between nodes
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Relation {
     #[cfg(not(feature = "uuid_ids"))]
     pub source: NodeId,
@@ -34,7 +34,7 @@ pub struct Relation {
 
 // ANCHOR: Uses
 // Different kinds of relations
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RelationKind {
     FunctionParameter,
     FunctionReturn,
