@@ -11,7 +11,21 @@ use thiserror::Error;
 #[cfg(not(feature = "uuid_ids"))]
 use syn_parser::parser::nodes::NodeId;
 
-use ploke_common::{fixtures_dir, malformed_fixtures_dir};
+#[cfg(feature = "uuid_ids")]
+use {
+    std::path::PathBuf, syn_parser::discovery::run_discovery_phase,
+    syn_parser::parser::analyze_files_parallel,
+};
+
+use ploke_common::{fixtures_crates_dir, fixtures_dir, malformed_fixtures_dir};
+
+#[cfg(feature = "uuid_ids")]
+pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
+    let crate_path = fixtures_crates_dir().join(fixture_name);
+    let discovery_output = run_discovery_phase(&PathBuf::from("."), &[crate_path]) // Adjust project_root if needed
+        .expect("Phase 1 Discovery failed");
+    analyze_files_parallel(&discovery_output, 0) // num_workers often ignored by rayon bridge
+}
 
 #[test]
 fn test_paths() {

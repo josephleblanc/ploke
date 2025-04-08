@@ -1,4 +1,9 @@
 [workspace]
+exclude = [
+    "ai_workflow",
+    "tests/fixture_crates/subdir/duplicate_name_fixture_3",
+    "tests/fixture_crates/duplicate_name_fixture_2",
+]
 resolver = "2"
 members = [
     "crates/ingest/syn_parser",
@@ -9,12 +14,19 @@ members = [
     "crates/test-utils",
     "fixture_test_crate",
     "crates/ploke-core",
+    "tests/fixture_crates/duplicate_name_fixture_1",
     "tests/fixture_crates/example_crate",
+    "tests/fixture_crates/file_dir_detection",
+    "tests/fixture_crates/fixture_attributes",
+    "tests/fixture_crates/fixture_cyclic_types",
+    "tests/fixture_crates/fixture_edge_cases",
+    "tests/fixture_crates/fixture_generics",
+    "tests/fixture_crates/fixture_macros",
+    "tests/fixture_crates/fixture_tracking_hash",
+    "tests/fixture_crates/fixture_types",
     "tests/fixture_crates/simple_crate",
-    "tests/fixture_crates/*",
     # Add more modules as needed
 ]
-exclude = ["ai_workflow"]
 
 [workspace.dependencies]
 # Parsing and code generation
