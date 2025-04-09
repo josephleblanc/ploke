@@ -31,3 +31,13 @@ pub struct UnclosedStruct {
 // Invalid attribute syntax
 // #[derive(Debug Clone)] // Missing comma
 // pub struct InvalidAttr;
+
+
+// Public union with generic parameter and trait bound (less common for unions)
+// Note: Bounds on union generics are often complex due to safety.
+// This example uses `Copy` which is common for union fields.
+pub union GenericUnionWithBound<T: Copy> {
+    typed_value: T,
+    bytes: [u8; std::mem::size_of::<T>()], // Error, cannot use generics in const (whatever that
+    // means)
+}
