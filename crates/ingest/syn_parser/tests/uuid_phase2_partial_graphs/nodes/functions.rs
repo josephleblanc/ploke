@@ -4,17 +4,12 @@
 use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId}; // Remove VisibilityKind from here
 use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
-use syn_parser::{
-    parser::{
-        graph::CodeGraph,
-        nodes::{FunctionNode, ParamData, TypeDefNode, Visible},
-        types::{TypeKind, TypeNode},
-        visitor::ParsedCodeGraph, // Use the correct existing struct
-    },
-    // PROJECT_NAMESPACE_UUID is not needed here and not public
+use syn_parser::parser::{
+    nodes::Visible,
+    types::TypeKind, // Use the correct existing struct
 };
 
-use ploke_common::fixtures_crates_dir; // Import helper to construct fixture paths
+// Import helper to construct fixture paths
 
 // --- Helper Functions ---
 
