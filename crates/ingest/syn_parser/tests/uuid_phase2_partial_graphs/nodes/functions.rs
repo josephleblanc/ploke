@@ -15,24 +15,12 @@ use syn_parser::{
 };
 use uuid::Uuid;
 
+use ploke_common::fixtures_crates_dir; // Import helper to construct fixture paths
+use std::path::PathBuf;
+
 // --- Helper Functions ---
 
-/// Runs Phase 1 & 2 and extracts the single ParsedCodeGraph for a single-file fixture.
-/// Panics if parsing fails or the fixture generates more than one output.
-fn get_single_file_parse_output(fixture_name: &str) -> ParsedCodeGraph {
-    let results = run_phase1_phase2(fixture_name);
-    assert_eq!(
-        results.len(),
-        1,
-        "Expected exactly one ParsedCodeGraph for fixture '{}'",
-        fixture_name
-    );
-    results
-        .into_iter()
-        .next()
-        .expect("Failed to get first result")
-        .expect("Parsing failed") // Panic if Err
-}
+// Removed get_single_file_parse_output as it's incorrect for multi-file fixtures.
 
 /// Finds a FunctionNode, performs paranoid checks, and returns a reference.
 /// Panics if the node is not found or if uniqueness checks fail.
@@ -115,11 +103,34 @@ fn find_type_node<'a>(graph: &'a CodeGraph, type_id: TypeId) -> &'a TypeNode {
 
 #[test]
 fn test_function_node_process_tuple() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable for clarity
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+
+    // Find the ParsedCodeGraph for src/lib.rs
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs");
+
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let file_path = &parsed_data.file_path; // Should match target_file_path
 
     let func_name = "process_tuple";
     let module_path = vec!["crate".to_string()];
@@ -135,7 +146,10 @@ fn test_function_node_process_tuple() {
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public);
     assert!(func_node.docstring.is_none());
@@ -175,8 +189,29 @@ fn test_function_node_process_tuple() {
 
 #[test]
 fn test_function_node_process_slice() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs");
+
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
     let file_path = &parsed_data.file_path;
@@ -189,7 +224,10 @@ fn test_function_node_process_slice() {
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public);
     assert!(func_node.docstring.is_none());
@@ -234,8 +272,29 @@ fn test_function_node_process_slice() {
 
 #[test]
 fn test_function_node_process_array() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs");
+
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
     let file_path = &parsed_data.file_path;
@@ -248,7 +307,10 @@ fn test_function_node_process_array() {
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public);
 
@@ -283,8 +345,29 @@ fn test_function_node_process_array() {
 
 #[test]
 fn test_function_node_process_ref() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs");
+
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
     let file_path = &parsed_data.file_path;
@@ -297,7 +380,10 @@ fn test_function_node_process_ref() {
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public);
 
@@ -340,8 +426,29 @@ fn test_function_node_process_ref() {
 
 #[test]
 fn test_function_node_process_mut_ref() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs");
+
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
     let file_path = &parsed_data.file_path;
@@ -354,7 +461,10 @@ fn test_function_node_process_mut_ref() {
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public);
 
@@ -392,11 +502,33 @@ fn test_function_node_process_mut_ref() {
 
 #[test]
 fn test_function_node_process_tuple_in_duplicate_names() {
-    let fixture = "fixture_types";
-    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let fixture_name = "fixture_types";
+    let results = run_phase1_phase2(fixture_name);
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join("src").join("lib.rs"); // Still parsing lib.rs
+
+    // Find the ParsedCodeGraph for src/lib.rs
+    let parsed_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref().ok().and_then(|data| {
+                if data.file_path == target_file_path {
+                    Some(data)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
     let graph = &parsed_data.graph;
     let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let file_path = &parsed_data.file_path; // This is lib.rs path
 
     let func_name = "process_tuple";
     // Module path as recorded during Phase 2 parse of lib.rs
@@ -407,7 +539,10 @@ fn test_function_node_process_tuple_in_duplicate_names() {
 
     // Basic Assertions (should be similar to the top-level one)
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
-    assert!(func_node.tracking_hash.is_some());
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
     assert_eq!(func_node.name(), func_name);
     assert_eq!(func_node.visibility(), VisibilityKind::Public); // Check visibility within module
 
