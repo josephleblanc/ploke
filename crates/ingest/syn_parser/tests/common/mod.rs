@@ -14,13 +14,13 @@ use syn_parser::parser::nodes::NodeId;
 #[cfg(feature = "uuid_ids")]
 use {
     std::path::PathBuf, syn_parser::discovery::run_discovery_phase,
-    syn_parser::parser::analyze_files_parallel,
+    syn_parser::parser::analyze_files_parallel, syn_parser::parser::visitor::ParsedCodeGraph,
 };
 
 use ploke_common::{fixtures_crates_dir, fixtures_dir, malformed_fixtures_dir};
 
 #[cfg(feature = "uuid_ids")]
-pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
+pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let discovery_output = run_discovery_phase(&PathBuf::from("."), &[crate_path]) // Adjust project_root if needed
         .expect("Phase 1 Discovery failed");

@@ -9,10 +9,11 @@ mod phase2_tests {
     use syn_parser::discovery::{run_discovery_phase, DiscoveryOutput};
     use syn_parser::parser::analyze_files_parallel; // Import TrackingHash if needed for assertions
     use syn_parser::parser::relations::GraphId; // Import UUID versions
+    use syn_parser::parser::visitor::ParsedCodeGraph;
     use syn_parser::{CodeGraph, NodeId, TypeId};
     use uuid::Uuid;
 
-    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
+    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
         let crate_path = fixtures_crates_dir().join(fixture_name);
         let discovery_output = run_discovery_phase(&PathBuf::from("."), &[crate_path]) // Adjust project_root if needed
             .expect("Phase 1 Discovery failed");
@@ -25,7 +26,7 @@ mod phase2_tests {
 
         assert_eq!(results.len(), 1, "Expected results for 1 file"); // Assuming simple_crate/src/lib.rs only
 
-        let graph = results[0].as_ref().expect("Parsing failed");
+        let graph = &results[0].as_ref().expect("Parsing failed").graph;
 
         // Assertions on graph content
         assert!(!graph.functions.is_empty(), "Should find functions");

@@ -19,6 +19,7 @@ mod phase2_relation_tests {
             },
             relations::{GraphId, Relation, RelationKind},
             types::{GenericParamKind, TypeNode},
+            visitor::ParsedCodeGraph,
         },
     };
     use uuid::Uuid;
@@ -26,7 +27,7 @@ mod phase2_relation_tests {
     // --- Test Setup Helpers ---
 
     // Helper function to run Phase 1 & 2 for a single fixture
-    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
+    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
         let crate_path = fixtures_crates_dir().join(fixture_name);
         // Use workspace root as project root for discovery context
         let project_root = workspace_root();
@@ -395,7 +396,7 @@ mod phase2_relation_tests {
                     crate_name, e
                 )
             });
-        let code_graphs: Vec<CodeGraph> = analyze_files_parallel(&discovery_output, 0)
+        let code_graphs: Vec<ParsedCodeGraph> = analyze_files_parallel(&discovery_output, 0)
             .iter_mut()
             .map(|res| res.to_owned().unwrap())
             .collect();
@@ -404,7 +405,7 @@ mod phase2_relation_tests {
         println!("{:-^60}", "All Relations");
         println!("{:-^60}", "");
         for code_graph in &code_graphs {
-            print_all_relations(code_graph);
+            print_all_relations(&code_graph.graph);
         }
         println!("{:-^60}", "");
 
@@ -445,7 +446,7 @@ mod phase2_relation_tests {
         );
         let code_graph_with_mod_two = code_graphs
             .iter()
-            .find(|cg| find_node_id_name(cg, expect_mod_two_id).is_some());
+            .find(|cg| find_node_id_name(&cg.graph, expect_mod_two_id).is_some());
         assert!(code_graph_with_mod_two.is_some(), "module_two's expected NodeId not found in any CodeGraph:\n\tmodule_two_expected_id: {}",
                 expect_mod_two_id
                 );

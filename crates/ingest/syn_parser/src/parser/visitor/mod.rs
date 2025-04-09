@@ -28,13 +28,6 @@ use {
     rayon::prelude::*,
 };
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct AnalyzedCodeGraph {
-    graph: CodeGraph,
-    file_path: PathBuf,
-    crate_namespace: Uuid, // Context passed from caller
-}
-
 /// Analyze a single file and return the code graph
 #[cfg(not(feature = "uuid_ids"))]
 pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
@@ -83,15 +76,26 @@ pub fn analyze_code(file_path: &Path) -> Result<CodeGraph, syn::Error> {
     Ok(visitor_state.code_graph)
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ParsedCodeGraph {
+    /// The absolute path of the file that was parsed.                                
+    pub file_path: PathBuf,
+    /// The UUID namespace of the crate this file belongs to.                         
+    pub crate_namespace: Uuid,
+    /// The resulting code graph from parsing the file.                               
+    pub graph: CodeGraph,
+    // Potentially add other relevant context if needed in the future
+}
+
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
 #[cfg(feature = "uuid_ids")]
 pub fn analyze_file_phase2(
-    file_path: &Path,
+    file_path: PathBuf,
     crate_namespace: Uuid, // Context passed from caller
-) -> Result<CodeGraph, syn::Error> {
+) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
-    let file_content = std::fs::read_to_string(file_path).map_err(|e| {
+    let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
             format!("Failed to read file {}: {}", file_path.display(), e),
@@ -106,7 +110,7 @@ pub fn analyze_file_phase2(
     // Context: crate_namespace, file_path, empty relative path [], name "crate"
     let root_module_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path,
+        &file_path,
         &[], // Empty relative path for crate root
         "crate",
         (0, 0), // Span, there should be no other items with a (0, 0) span and this makes sense for
@@ -150,7 +154,11 @@ pub fn analyze_file_phase2(
     // #[cfg(feature = "verbose_debug")]
     // visitor_state.code_graph.debug_print_all_visible();
 
-    Ok(state.code_graph)
+    Ok(ParsedCodeGraph {
+        graph: state.code_graph,
+        file_path,
+        crate_namespace,
+    })
 }
 
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
@@ -159,7 +167,7 @@ pub fn analyze_file_phase2(
 pub fn analyze_files_parallel(
     discovery_output: &DiscoveryOutput, // Takes output from Phase 1
     _num_workers: usize, // May not be directly used if relying on rayon's default pool size
-) -> Vec<Result<CodeGraph, syn::Error>> {
+) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
     // Adjust error type if needed
 
     println!(
@@ -184,7 +192,7 @@ pub fn analyze_files_parallel(
             crate_context.files.par_iter().map(move |file_path| {
                 // Move namespace into the closure
                 // Call the single-file worker function with its specific context
-                analyze_file_phase2(file_path, crate_context.namespace)
+                analyze_file_phase2(file_path.to_owned(), crate_context.namespace)
             })
         })
         .collect() // Collect all results (Result<CodeGraph, Error>) into a Vec

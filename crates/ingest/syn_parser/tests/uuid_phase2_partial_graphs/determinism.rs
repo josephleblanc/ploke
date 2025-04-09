@@ -60,7 +60,7 @@ mod determinism_tests {
                 match (res1, res2) {
                     (Ok(graph1), Ok(graph2)) => {
                         println!("Comparing graphs for file index {}...", i);
-                        if let Err(e) = assert_graphs_identical(graph1, graph2, i) {
+                        if let Err(e) = assert_graphs_identical(&graph1.graph, &graph2.graph, i) {
                             // Use assert! with the error message for clear test failure
                             panic!("Graph comparison failed for file index {}: {}", i, e);
                         }

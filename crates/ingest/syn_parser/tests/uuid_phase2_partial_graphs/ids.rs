@@ -14,13 +14,14 @@ mod phase2_id_tests {
         parser::{
             analyze_files_parallel,
             graph::CodeGraph,
-            nodes::{FunctionNode, StructNode, TypeDefNode}, // Import StructNode, TypeDefNode
+            nodes::{FunctionNode, StructNode, TypeDefNode},
+            visitor::ParsedCodeGraph, // Import StructNode, TypeDefNode
         },
     };
     use uuid::Uuid; // Import the helper function
 
     // Helper function for single fixture
-    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
+    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
         let crate_path = fixtures_crates_dir().join(fixture_name);
         // Use a dummy project root; discovery only needs crate paths for this setup
         let project_root = fixtures_crates_dir();
@@ -38,7 +39,7 @@ mod phase2_id_tests {
     // Returns results mapped by the original crate root path for easier lookup.
     fn run_phase1_phase2_multi(
         fixture_names: &[&str],
-    ) -> HashMap<PathBuf, Vec<Result<CodeGraph, syn::Error>>> {
+    ) -> HashMap<PathBuf, Vec<Result<ParsedCodeGraph, syn::Error>>> {
         let crate_paths: Vec<PathBuf> = fixture_names
             .iter()
             .map(|name| fixtures_crates_dir().join(name))
@@ -53,7 +54,7 @@ mod phase2_id_tests {
         // the iteration order of crate_contexts and then files within each context.
         let mut all_results_iter = analyze_files_parallel(&discovery_output, 0).into_iter();
 
-        let mut grouped_results: HashMap<PathBuf, Vec<Result<CodeGraph, syn::Error>>> =
+        let mut grouped_results: HashMap<PathBuf, Vec<Result<ParsedCodeGraph, syn::Error>>> =
             HashMap::new();
 
         // Iterate through the crate contexts in the *same order* discovery likely processed them
@@ -125,9 +126,10 @@ mod phase2_id_tests {
     fn test_synthetic_ids_and_hashes_present_simple_crate() {
         let results = run_phase1_phase2("simple_crate");
         assert_eq!(results.len(), 1, "Expected results for 1 file");
-        let graph = results[0]
+        let graph = &results[0]
             .as_ref()
-            .expect("Parsing failed for simple_crate");
+            .expect("Parsing failed for simple_crate")
+            .graph;
 
         // Check the 'add' function
         let func = find_function_by_name(graph, "add")
@@ -187,9 +189,10 @@ mod phase2_id_tests {
     fn test_synthetic_node_ids_differ_across_crates() {
         // Run on simple_crate
         let results_simple = run_phase1_phase2("simple_crate");
-        let graph_simple = results_simple[0]
+        let graph_simple = &results_simple[0]
             .as_ref()
-            .expect("Parsing simple_crate failed");
+            .expect("Parsing simple_crate failed")
+            .graph;
         let func_simple = find_function_by_name(graph_simple, "add")
             .expect("Failed to find 'add' function in simple_crate");
         let simple_id = match func_simple.id {
@@ -206,12 +209,12 @@ mod phase2_id_tests {
                 res.as_ref().ok().filter(|g| {
                     // Heuristic: Check if this graph contains the 'add' function.
                     // A better approach might involve checking file paths if VisitorState stored them.
-                    find_function_by_name(g, "add").is_some()
+                    find_function_by_name(&g.graph, "add").is_some()
                 })
             })
             .expect("Could not find graph containing 'add' function in example_crate results");
 
-        let func_example = find_function_by_name(graph_example, "add")
+        let func_example = find_function_by_name(&graph_example.graph, "add")
             .expect("Failed to find 'add' function in example_crate");
         let example_id = match func_example.id {
             NodeId::Synthetic(uuid) => uuid,
@@ -254,10 +257,10 @@ mod phase2_id_tests {
 
             // Get IDs for 'Thing' struct and 'do_thing' function
             let thing_id =
-                find_node_id_by_name(graph, "Thing").expect("Failed to find 'Thing' struct");
-            let do_thing_id = find_node_id_by_name(graph, "do_thing")
+                find_node_id_by_name(&graph.graph, "Thing").expect("Failed to find 'Thing' struct");
+            let do_thing_id = find_node_id_by_name(&graph.graph, "do_thing")
                 .expect("Failed to find 'do_thing' function");
-            let param_type_id = find_first_param_type_id(graph, "do_thing")
+            let param_type_id = find_first_param_type_id(&graph.graph, "do_thing")
                 .expect("Failed to find param type id for 'do_thing'");
 
             ids.insert(
