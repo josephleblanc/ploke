@@ -5,13 +5,10 @@
 use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId};
 use syn_parser::parser::{
-    graph::CodeGraph,
-    nodes::{FieldNode, FunctionNode, ParamData, StructNode, TypeDefNode, Visible},
+    nodes::Visible,
     relations::{GraphId, RelationKind}, // Added for relation checks
-    types::{GenericParamKind, TypeKind, TypeNode, VisibilityKind},
-    visitor::ParsedCodeGraph,
+    types::{GenericParamKind, TypeKind, VisibilityKind},
 };
-use uuid::Uuid;
 
 // --- Test Cases ---
 
