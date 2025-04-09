@@ -108,12 +108,12 @@ impl<T: Clone> GenericTrait<T> for GenericStruct<T> {
     }
 }
 
-// Trait impl for a specific generic instantiation
-impl SimpleTrait for GenericStruct<String> {
-    fn trait_method(&self) -> i32 {
-        self.value.len() as i32
-    }
-}
+// Trait impl for a specific generic instantiation - REMOVED due to E0119 conflict
+// impl SimpleTrait for GenericStruct<String> {
+//     fn trait_method(&self) -> i32 {
+//         self.value.len() as i32
+//     }
+// }
 
 // Trait impl for a primitive type
 impl SimpleTrait for i32 {
