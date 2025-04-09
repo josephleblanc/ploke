@@ -2,15 +2,16 @@
 #![cfg(test)]
 
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeId, VisibilityKind};
+use ploke_core::{NodeId, TypeId}; // Remove VisibilityKind from here
 use syn_parser::{
     parser::{
         graph::CodeGraph,
+        nodes::VisibilityKind, // Import VisibilityKind from its correct location
         nodes::{FunctionNode, ParamData, TypeDefNode, Visible},
         types::{TypeKind, TypeNode},
-        visitor::FileParseOutput, // Use the new return type
+        visitor::FileParseOutput, // Use the new return type (ensure this is pub in visitor/mod.rs)
     },
-    PROJECT_NAMESPACE_UUID, // Assuming this is accessible for testing ID generation if needed
+    // PROJECT_NAMESPACE_UUID is not needed here and not public
 };
 use uuid::Uuid;
 
@@ -145,12 +146,12 @@ fn test_function_node_process_tuple() {
     assert!(func_node.docstring.is_none());
     assert!(func_node.attributes.is_empty());
     assert!(func_node.generic_params.is_empty());
-    assert!(func_node.body_str.is_some()); // Check presence
+    // assert!(func_node.body_str.is_some()); // FunctionNode doesn't expose body_str
 
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "p");
+    assert_eq!(param.name.as_deref(), Some("p")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
 
     // Check parameter TypeNode (Point -> (i32, i32))
@@ -202,12 +203,12 @@ fn test_function_node_process_slice() {
     assert!(func_node.docstring.is_none());
     assert!(func_node.attributes.is_empty());
     assert!(func_node.generic_params.is_empty());
-    assert!(func_node.body_str.is_some());
+    // assert!(func_node.body_str.is_some()); // FunctionNode doesn't expose body_str
 
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "s");
+    assert_eq!(param.name.as_deref(), Some("s")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
 
     // Check parameter TypeNode (&[u8])
@@ -266,7 +267,7 @@ fn test_function_node_process_array() {
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "a");
+    assert_eq!(param.name.as_deref(), Some("a")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
 
     // Check parameter TypeNode (Buffer -> [u8; 1024])
@@ -318,7 +319,7 @@ fn test_function_node_process_ref() {
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "r");
+    assert_eq!(param.name.as_deref(), Some("r")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
 
     // Check parameter TypeNode (&String)
@@ -375,7 +376,7 @@ fn test_function_node_process_mut_ref() {
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "r");
+    assert_eq!(param.name.as_deref(), Some("r")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
 
     // Check parameter TypeNode (&mut String)
@@ -428,7 +429,7 @@ fn test_function_node_process_tuple_in_duplicate_names() {
     // Parameters
     assert_eq!(func_node.parameters.len(), 1);
     let param = &func_node.parameters[0];
-    assert_eq!(param.name, "p");
+    assert_eq!(param.name.as_deref(), Some("p")); // Use as_deref() for Option<String>
     assert!(matches!(param.type_id, TypeId::Synthetic(_)));
     let param_type_node = find_type_node(graph, param.type_id);
     // Check type kind - should reference the 'Point' defined *within* duplicate_names
