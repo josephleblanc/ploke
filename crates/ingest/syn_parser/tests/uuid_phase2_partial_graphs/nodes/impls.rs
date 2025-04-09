@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use syn_parser::parser::nodes::ImplNode; // Import ImplNode specifically
 use syn_parser::parser::nodes::TraitNode; // Import TraitNode specifically
 use syn_parser::parser::nodes::TypeAliasNode; // Import TypeAliasNode specifically
 use syn_parser::parser::nodes::UnionNode; // Import UnionNode specifically
@@ -17,15 +18,14 @@ use syn_parser::{
         analyze_files_parallel,
         graph::CodeGraph,
         nodes::{
-            FieldNode, FunctionNode, ImplNode, ImportNode, ModuleNode, StructNode, TypeDefNode,
-            ValueNode, Visible,
+            FieldNode, FunctionNode, ImportNode, ModuleNode, StructNode, TypeDefNode, ValueNode,
+            Visible,
         },
         relations::{GraphId, Relation, RelationKind},
         types::{GenericParamKind, TypeNode},
         visitor::ParsedCodeGraph,
     },
 };
-use syn_parser::parser::nodes::ImplNode; // Import ImplNode specifically
 use uuid::Uuid;
 
 // --- Test Cases ---
@@ -68,13 +68,19 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
     // Self Type (SimpleStruct)
     assert!(matches!(impl_node.self_type, TypeId::Synthetic(_)));
     let self_type_node = find_type_node(graph, impl_node.self_type);
-    assert!(matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &[self_type_str]));
+    assert!(
+        matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &[self_type_str])
+    );
 
     // Methods (new, private_method, public_method)
     assert_eq!(impl_node.methods.len(), 3);
 
     // Check 'new' method briefly
-    let method_new = impl_node.methods.iter().find(|m| m.name() == "new").expect("Method 'new' not found");
+    let method_new = impl_node
+        .methods
+        .iter()
+        .find(|m| m.name() == "new")
+        .expect("Method 'new' not found");
     assert!(matches!(method_new.id(), NodeId::Synthetic(_)));
     assert!(method_new.tracking_hash.is_some());
     assert_eq!(method_new.visibility(), VisibilityKind::Public);
@@ -86,7 +92,11 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
     assert!(matches!(&ret_type_node.kind, TypeKind::Named { path, .. } if path == &["Self"]));
 
     // Check 'private_method' briefly
-    let method_private = impl_node.methods.iter().find(|m| m.name() == "private_method").expect("Method 'private_method' not found");
+    let method_private = impl_node
+        .methods
+        .iter()
+        .find(|m| m.name() == "private_method")
+        .expect("Method 'private_method' not found");
     assert!(matches!(method_private.id(), NodeId::Synthetic(_)));
     assert!(method_private.tracking_hash.is_some());
     assert_eq!(method_private.visibility(), VisibilityKind::Inherited); // Private method
@@ -95,14 +105,17 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
     assert!(method_private.return_type.is_some()); // -> i32
 
     // Check 'public_method' briefly
-    let method_public = impl_node.methods.iter().find(|m| m.name() == "public_method").expect("Method 'public_method' not found");
+    let method_public = impl_node
+        .methods
+        .iter()
+        .find(|m| m.name() == "public_method")
+        .expect("Method 'public_method' not found");
     assert!(matches!(method_public.id(), NodeId::Synthetic(_)));
     assert!(method_public.tracking_hash.is_some());
     assert_eq!(method_public.visibility(), VisibilityKind::Public);
     assert_eq!(method_public.parameters.len(), 1); // &self
     assert!(method_public.parameters[0].is_self);
     assert!(method_public.return_type.is_some()); // -> i32
-
 
     // --- Paranoid Relation Checks ---
     let module_id = find_inline_module_by_path(graph, &module_path)
@@ -139,7 +152,6 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
     // 4. Method Relations (Param/Return - checked implicitly by finding types)
     // No explicit Impl->Method relation is created in Phase 2
 }
-
 
 #[test]
 fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
@@ -182,38 +194,51 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     assert_eq!(impl_node.generic_params.len(), 1);
     let generic_param = &impl_node.generic_params[0];
     match &generic_param.kind {
-        GenericParamKind::Type { name, bounds, default } => {
+        GenericParamKind::Type {
+            name,
+            bounds,
+            default,
+        } => {
             assert_eq!(name, "T");
             assert_eq!(bounds.len(), 1, "Expected one bound (Clone)");
             let bound_type = find_type_node(graph, bounds[0]);
             // Check bound is Clone
-            assert!(matches!(&bound_type.kind, TypeKind::Named { path, .. } if path.ends_with(&["Clone".to_string()])));
+            assert!(
+                matches!(&bound_type.kind, TypeKind::Named { path, .. } if path.ends_with(&["Clone".to_string()]))
+            );
             assert!(default.is_none());
         }
-        _ => panic!("Expected GenericParamKind::Type, found {:?}", generic_param.kind),
+        _ => panic!(
+            "Expected GenericParamKind::Type, found {:?}",
+            generic_param.kind
+        ),
     }
-
 
     // Self Type (GenericStruct<T>)
     assert!(matches!(impl_node.self_type, TypeId::Synthetic(_)));
     let self_type_node = find_type_node(graph, impl_node.self_type);
-    assert!(matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericStruct"]));
+    assert!(
+        matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericStruct"])
+    );
     assert_eq!(self_type_node.related_types.len(), 1); // T
     let related_self_t = find_type_node(graph, self_type_node.related_types[0]);
     assert!(matches!(&related_self_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
-
 
     // Trait Type (GenericTrait<T>)
     let trait_type_id = impl_node.trait_type.unwrap();
     assert!(matches!(trait_type_id, TypeId::Synthetic(_)));
     let trait_type_node = find_type_node(graph, trait_type_id);
-    assert!(matches!(&trait_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericTrait"]));
+    assert!(
+        matches!(&trait_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericTrait"])
+    );
     assert_eq!(trait_type_node.related_types.len(), 1); // T
     let related_trait_t = find_type_node(graph, trait_type_node.related_types[0]);
     assert!(matches!(&related_trait_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
     // Check that the TypeId for 'T' is the same in both self and trait types
-    assert_eq!(self_type_node.related_types[0], trait_type_node.related_types[0], "TypeId for 'T' should be consistent");
-
+    assert_eq!(
+        self_type_node.related_types[0], trait_type_node.related_types[0],
+        "TypeId for 'T' should be consistent"
+    );
 
     // Methods (generic_trait_method)
     assert_eq!(impl_node.methods.len(), 1);
@@ -228,14 +253,19 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     assert!(matches!(&param_value_type.kind, TypeKind::Named { path, .. } if path == &["T"]));
     assert!(method_node.return_type.is_none()); // Implicit unit
 
-
     // --- Paranoid Relation Checks ---
     let module_id = find_inline_module_by_path(graph, &module_path)
         .expect("Failed to find module node for relation check")
         .id();
 
     // 1. Module Contains Impl
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(impl_node.id()), RelationKind::Contains, "Module->Impl");
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(impl_node.id()),
+        RelationKind::Contains,
+        "Module->Impl",
+    );
 
     // 2. Impl Implements Trait for Self Type
     assert_relation_exists(
@@ -245,7 +275,7 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
         RelationKind::ImplementsTrait, // Correct kind for trait impl
         "Expected ImplNode to have ImplementsTrait relation to Self Type",
     );
-     assert_relation_exists(
+    assert_relation_exists(
         graph,
         GraphId::Node(impl_node.id()),
         GraphId::Type(trait_type_id), // Use the unwrapped trait_type_id
@@ -254,7 +284,7 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     );
 
     // 3. Impl does NOT Implement For
-     assert_relation_does_not_exist(
+    assert_relation_does_not_exist(
         graph,
         GraphId::Node(impl_node.id()),
         GraphId::Type(impl_node.self_type),
