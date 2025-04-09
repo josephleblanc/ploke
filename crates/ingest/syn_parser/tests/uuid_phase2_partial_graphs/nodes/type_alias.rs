@@ -685,7 +685,7 @@ fn test_other_type_alias_nodes() {
         &module_path,
         alias_name,
     );
-    let expected_type_str = "dyn Debug"; // shadowing above
+    let expected_type_str = "dyn std :: fmt :: Debug"; // shadowing above
     let aliased_type = find_type_node(graph, node.type_id);
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == expected_type_str),
