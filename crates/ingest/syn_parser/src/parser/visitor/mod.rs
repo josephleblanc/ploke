@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
@@ -26,6 +27,13 @@ use {
     super::nodes::ModuleNode, crate::parser::nodes::NodeId, crate::parser::relations::Relation,
     rayon::prelude::*,
 };
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AnalyzedCodeGraph {
+    graph: CodeGraph,
+    file_path: PathBuf,
+    crate_namespace: Uuid, // Context passed from caller
+}
 
 /// Analyze a single file and return the code graph
 #[cfg(not(feature = "uuid_ids"))]
