@@ -155,8 +155,8 @@ fn test_enum_node_sample_enum_paranoid() {
         graph,
         GraphId::Node(variant2.id),
         GraphId::Node(field_value.id),
-        RelationKind::StructField, // Re-use StructField for struct-like variants
-        "Expected Variant2 to have StructField relation to its field 'value'",
+        RelationKind::VariantField, // Use the correct RelationKind
+        "Expected Variant2 to have VariantField relation to its field 'value'",
     );
 
     // 4. Field Type Relation (Implicit via FieldNode.type_id)
