@@ -921,9 +921,115 @@ fn test_function_node_create_impl_trait_return() {
     }
 }
 
+#[test]
+fn test_function_node_process_mut_ptr() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
-// TODO: Add tests for inferred_type_example
-// TODO: Add tests for process_mut_ptr
+    let func_name = "process_mut_ptr";
+    let relative_file_path = "src/lib.rs";
+    let module_path = vec!["crate".to_string()]; // Private function at top level
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    // Private functions default to Inherited visibility in the parser
+    assert_eq!(func_node.visibility(), VisibilityKind::Inherited);
+    assert!(func_node.generic_params.is_empty());
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Parameters (p: *mut i32)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("p"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Current state: Falls back to Unknown because TypeKind::Ptr not implemented
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "* mut i32"),
+        "Expected TypeKind::Unknown for '*mut i32' currently, found {:?}", param_type_node.kind
+    );
+    #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
+    {
+        // Target state assertion
+        // assert!(matches!(param_type_node.kind, TypeKind::Pointer { is_mutable: true, .. }));
+        // assert_eq!(param_type_node.related_types.len(), 1); // Should relate to i32
+    }
+
+    // Return Type (implicit unit `()`)
+    assert!(func_node.return_type.is_none());
+}
+
+#[test]
+fn test_function_node_inferred_type_example() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "inferred_type_example";
+    let relative_file_path = "src/lib.rs";
+    let module_path = vec!["crate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    // let graph = &results // Graph not needed for this test's assertions
+    //     .iter()
+    //     .find(|data| data.file_path.ends_with(relative_file_path))
+    //     .unwrap()
+    //     .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Public);
+    assert!(func_node.generic_params.is_empty());
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Parameters () - None
+    assert!(func_node.parameters.is_empty());
+
+    // Return Type (implicit unit `()`)
+    assert!(func_node.return_type.is_none());
+
+    // Note: We don't currently parse function bodies deeply enough to create
+    // nodes or types for inferred types within `let` bindings like `let x = 5;`
+    // or `let _y: _ = ...;`. So, there are no specific type assertions to make here
+    // regarding the `_` type itself based on the FunctionNode.
+}
+
+
 // TODO: Add tests for the corresponding functions inside duplicate_names module.
 // TODO: Add tests for functions inside src/func/return_types.rs (generic_func, math_operation_consumer, math_operation_producer)
 // TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate
