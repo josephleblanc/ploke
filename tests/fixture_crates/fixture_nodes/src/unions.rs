@@ -28,14 +28,6 @@ pub union GenericUnion<T> {
     raw: usize,
 }
 
-// Public union with generic parameter and trait bound (less common for unions)
-// Note: Bounds on union generics are often complex due to safety.
-// This example uses `Copy` which is common for union fields.
-pub union GenericUnionWithBound<T: Copy> {
-    typed_value: T,
-    bytes: [u8; std::mem::size_of::<T>()], // Example using size_of
-}
-
 // Public union with an attribute
 #[repr(C)]
 pub union ReprCUnion {

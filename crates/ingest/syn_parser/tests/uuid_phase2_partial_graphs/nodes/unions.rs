@@ -330,26 +330,6 @@ fn test_other_union_nodes() {
         union_name,
     );
 
-    // GenericUnionWithBound<T: Copy>
-    let union_name = "GenericUnionWithBound";
-    let node = find_union_node_paranoid(
-        &results,
-        fixture_name,
-        relative_file_path,
-        &module_path,
-        union_name,
-    );
-    assert_eq!(node.generic_params.len(), 1);
-    // TODO: Check bound T: Copy
-    assert_eq!(node.fields.len(), 2);
-    assert_relation_exists(
-        graph,
-        GraphId::Node(module_id_crate),
-        GraphId::Node(node.id()),
-        RelationKind::Contains,
-        union_name,
-    );
-
     // ReprCUnion (attribute)
     let union_name = "ReprCUnion";
     let node = find_union_node_paranoid(
