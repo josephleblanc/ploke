@@ -1029,7 +1029,122 @@ fn test_function_node_inferred_type_example() {
     // regarding the `_` type itself based on the FunctionNode.
 }
 
+#[test]
+fn test_function_node_process_slice_in_duplicate_names() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
-// TODO: Add tests for the corresponding functions inside duplicate_names module.
+    let func_name = "process_slice";
+    let relative_file_path = "src/lib.rs"; // Defined in lib.rs
+    let module_path = vec!["crate".to_string(), "duplicate_names".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions (similar to top-level process_slice)
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Public); // Public within module
+
+    // Parameters (s: &[u8])
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("s"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Reference { is_mutable, .. } if !*is_mutable),
+        "Expected TypeKind::Reference for '&[u8]', found {:?}",
+        param_type_node.kind
+    );
+    assert_eq!(param_type_node.related_types.len(), 1);
+    let slice_type_id = param_type_node.related_types[0];
+    let slice_type_node = find_type_node(graph, slice_type_id);
+    assert!(
+        matches!(&slice_type_node.kind, TypeKind::Unknown { type_str } if type_str == "[u8]"),
+        "Expected underlying type '[u8]' to be TypeKind::Unknown currently, found {:?}",
+        slice_type_node.kind
+    );
+    #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"] { }
+
+    // Return Type (usize)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["usize"]));
+}
+
+#[test]
+fn test_function_node_process_array_in_duplicate_names() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "process_array";
+    let relative_file_path = "src/lib.rs"; // Defined in lib.rs
+    let module_path = vec!["crate".to_string(), "duplicate_names".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions (similar to top-level process_array)
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Public); // Public within module
+
+    // Parameters (a: Buffer)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("a"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Should resolve to the Buffer alias defined *within* duplicate_names
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Buffer"]),
+        "Expected TypeKind::Named for alias 'Buffer' (in duplicate_names), found {:?}",
+        param_type_node.kind
+    );
+    // TODO: Deeper check for underlying array type once alias resolution is better
+
+    // Return Type (u8)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["u8"]));
+}
+
+
+// TODO: Add tests for the corresponding functions inside duplicate_names module (process_ref, process_mut_ref, process_const_ptr, process_mut_ptr, apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example).
 // TODO: Add tests for functions inside src/func/return_types.rs (generic_func, math_operation_consumer, math_operation_producer)
 // TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate
