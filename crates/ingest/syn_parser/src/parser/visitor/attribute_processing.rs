@@ -40,20 +40,21 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
         (byte_range.start, byte_range.end)
     };
 
-    match attr.parse_meta() {
-        Ok(meta) => match meta {
-            // Case 1: Simple path attribute, e.g., #[test]
-            syn::Meta::Path(path) => Attribute {
-                span,
-                name: path.to_token_stream().to_string(),
-                args: Vec::new(),
-                value: None,
-            },
-            // Case 2: List attribute, e.g., #[derive(Debug, Clone)]
-            syn::Meta::List(list) => {
-                let name = list.path.to_token_stream().to_string();
-                let args = match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
-                    .parse2(list.tokens) {
+    match &attr.meta {
+        // Case 1: Simple path attribute, e.g., #[test]
+        syn::Meta::Path(path) => Attribute {
+            span,
+            name: path.to_token_stream().to_string(),
+            args: Vec::new(),
+            value: None,
+        },
+        // Case 2: List attribute, e.g., #[derive(Debug, Clone)]
+        syn::Meta::List(list) => {
+            let name = list.path.to_token_stream().to_string();
+            let args =
+                match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                    .parse2(list.tokens)
+                {
                     Ok(nested_metas) => nested_metas
                         .iter()
                         .map(|meta| meta.to_token_stream().to_string())
@@ -65,50 +66,36 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
                         vec![list.tokens.to_string()]
                     }
                 };
-                Attribute {
-                    span,
-                    name,
-                    args,
-                    value: None,
-                }
-            }
-            // Case 3: Name-value attribute, e.g., #[must_use = "reason"], #[path = "file.rs"]
-            syn::Meta::NameValue(nv) => {
-                let name = nv.path.to_token_stream().to_string();
-                let value = match nv.value {
-                    // Prioritize string literals
-                    syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(lit_str), .. }) => {
-                        Some(lit_str.value())
-                    }
-                    // Handle other literals by converting to string
-                    syn::Expr::Lit(syn::ExprLit { lit, .. }) => {
-                        Some(lit.to_token_stream().to_string())
-                    }
-                    // Fallback for complex expressions
-                    _ => Some(nv.value.to_token_stream().to_string()),
-                };
-                Attribute {
-                    span,
-                    name,
-                    args: Vec::new(),
-                    value,
-                }
-            }
-        },
-        Err(_) => {
-            // Fallback if parse_meta fails (e.g., unusual proc macro syntax)
-            // Store the path as name and the raw attribute tokens as value.
-            // This might not be perfect but preserves the information.
             Attribute {
                 span,
-                name: attr.path().to_token_stream().to_string(),
+                name,
+                args,
+                value: None,
+            }
+        }
+        // Case 3: Name-value attribute, e.g., #[must_use = "reason"], #[path = "file.rs"]
+        syn::Meta::NameValue(nv) => {
+            let name = nv.path.to_token_stream().to_string();
+            let value = match nv.value {
+                // Prioritize string literals
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit_str),
+                    ..
+                }) => Some(lit_str.value()),
+                // Handle other literals by converting to string
+                syn::Expr::Lit(syn::ExprLit { lit, .. }) => Some(lit.to_token_stream().to_string()),
+                // Fallback for complex expressions
+                _ => Some(nv.value.to_token_stream().to_string()),
+            };
+            Attribute {
+                span,
+                name,
                 args: Vec::new(),
-                value: Some(attr.tokens.to_string()), // Store raw tokens on error
+                value,
             }
         }
     }
 }
-
 
 pub(crate) fn extract_attributes(attrs: &[syn::Attribute]) -> Vec<Attribute> {
     attrs
