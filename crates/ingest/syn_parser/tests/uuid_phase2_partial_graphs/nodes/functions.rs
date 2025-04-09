@@ -1144,7 +1144,183 @@ fn test_function_node_process_array_in_duplicate_names() {
     assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["u8"]));
 }
 
+#[test]
+fn test_function_node_generic_func_in_func_mod() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "generic_func";
+    let relative_file_path = "src/func/return_types.rs";
+    let module_path = vec!["crate".to_string()]; // Defined directly in the file
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(
+        func_node.visibility(),
+        VisibilityKind::Restricted(vec!["crate".to_string()]) // pub(crate)
+    );
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Generics <T: Display + Clone, S: Send + Sync>
+    assert_eq!(func_node.generic_params.len(), 2);
+    // TODO: Add detailed checks for GenericParamNode kinds and bounds once implemented/needed
+
+    // Parameters (first: T, unused_param: S)
+    assert_eq!(func_node.parameters.len(), 2);
+    let param_t = &func_node.parameters[0];
+    let param_s = &func_node.parameters[1];
+
+    assert_eq!(param_t.name.as_deref(), Some("first"));
+    assert_eq!(param_s.name.as_deref(), Some("unused_param"));
+
+    let type_t = find_type_node(graph, param_t.type_id);
+    let type_s = find_type_node(graph, param_s.type_id);
+
+    // Check parameter types refer to the generic names
+    assert!(matches!(&type_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
+    assert!(matches!(&type_s.kind, TypeKind::Named { path, .. } if path == &["S"]));
+
+    // Return Type (T)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    // Should be the same TypeId as the 'T' parameter
+    assert_eq!(return_type_id, param_t.type_id);
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["T"]));
+}
+
+#[test]
+fn test_function_node_math_operation_consumer_in_func_mod() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "math_operation_consumer";
+    let relative_file_path = "src/func/return_types.rs";
+    let module_path = vec!["crate".to_string()]; // Private function
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Inherited); // Private function
+    assert!(func_node.generic_params.is_empty());
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Parameters (func_param: MathOperation, x: i32, y: i32)
+    assert_eq!(func_node.parameters.len(), 3);
+    let param_func = &func_node.parameters[0];
+    let param_x = &func_node.parameters[1];
+    let param_y = &func_node.parameters[2];
+
+    assert_eq!(param_func.name.as_deref(), Some("func_param"));
+    assert_eq!(param_x.name.as_deref(), Some("x"));
+    assert_eq!(param_y.name.as_deref(), Some("y"));
+
+    let type_func = find_type_node(graph, param_func.type_id);
+    let type_x = find_type_node(graph, param_x.type_id);
+    let type_y = find_type_node(graph, param_y.type_id);
+
+    assert!(matches!(&type_func.kind, TypeKind::Named { path, .. } if path == &["MathOperation"]));
+    assert!(matches!(&type_x.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+    assert!(matches!(&type_y.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+
+    // Return Type (i32)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+}
+
+#[test]
+fn test_function_node_math_operation_producer_in_func_mod() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "math_operation_producer";
+    let relative_file_path = "src/func/return_types.rs";
+    let module_path = vec!["crate".to_string()]; // Private function
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Inherited); // Private function
+    assert!(func_node.generic_params.is_empty());
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Parameters ()
+    assert!(func_node.parameters.is_empty());
+
+    // Return Type (MathOperation)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["MathOperation"]));
+    // TODO: Check underlying fn pointer type once alias resolution is better
+}
+
 
 // TODO: Add tests for the corresponding functions inside duplicate_names module (process_ref, process_mut_ref, process_const_ptr, process_mut_ptr, apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example).
-// TODO: Add tests for functions inside src/func/return_types.rs (generic_func, math_operation_consumer, math_operation_producer)
 // TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate
