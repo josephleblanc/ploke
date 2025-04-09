@@ -13,118 +13,10 @@ use syn_parser::{
     },
     // PROJECT_NAMESPACE_UUID is not needed here and not public
 };
-use uuid::Uuid;
 
 use ploke_common::fixtures_crates_dir; // Import helper to construct fixture paths
-use std::path::PathBuf;
 
 // --- Helper Functions ---
-
-// Removed get_single_file_parse_output as it's incorrect for multi-file fixtures.
-
-/// Finds the specific ParsedCodeGraph for the target file, then finds the FunctionNode
-/// within that graph, performs paranoid checks, and returns a reference.
-/// Panics if the graph or node is not found, or if uniqueness checks fail.
-fn find_function_node_paranoid<'a>(
-    parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
-    fixture_name: &str, // Needed to construct expected path
-    relative_file_path: &str, // e.g., "src/lib.rs" or "src/func/return_types.rs"
-    expected_module_path: &[String], // Module path within the target file
-    func_name: &str,
-) -> &'a FunctionNode {
-    // 1. Construct the absolute expected file path
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join(relative_file_path);
-
-    // 2. Find the specific ParsedCodeGraph for the target file
-    let target_data = parsed_graphs
-        .iter()
-        .find(|data| data.file_path == target_file_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &target_data.graph;
-    let crate_namespace = target_data.crate_namespace;
-    let file_path = &target_data.file_path; // Use the path from the found graph data
-
-    // 3. Filter candidates by name within the target graph
-    let name_candidates: Vec<&FunctionNode> = graph
-        .functions
-        .iter()
-        .filter(|f| f.name() == func_name)
-        .collect();
-
-    assert!(
-        !name_candidates.is_empty(),
-        "No FunctionNode found with name '{}' in file '{}'",
-        func_name,
-        file_path.display()
-    );
-
-    // 4. Filter further by module association within the target graph
-    let module_node = graph
-        .modules
-        .iter()
-        .find(|m| m.path == expected_module_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ModuleNode not found for path: {:?} in file '{}'",
-                expected_module_path,
-                file_path.display()
-            )
-        });
-
-    let module_candidates: Vec<&FunctionNode> = name_candidates
-        .into_iter()
-        .filter(|f| module_node.items.contains(&f.id()))
-        .collect();
-
-    // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
-    assert_eq!(
-        module_candidates.len(),
-        1,
-        "Expected exactly one FunctionNode named '{}' associated with module path {:?} in file '{}', found {}",
-        func_name,
-        expected_module_path,
-        file_path.display(),
-        module_candidates.len()
-    );
-
-    let func_node = module_candidates[0];
-    let func_id = func_node.id();
-    let actual_span = func_node.span; // Get span from the found node
-
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
-    let regenerated_id = NodeId::generate_synthetic(
-        crate_namespace,
-        file_path, // Use the file_path from the target_data
-        expected_module_path,
-        func_name,
-        actual_span, // Use the span from the node itself
-    );
-
-    assert_eq!(
-        func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' with span {:?}",
-        func_id, regenerated_id, func_name, file_path.display(), actual_span
-    );
-
-    // 7. Return the validated node
-    func_node
-}
-
-/// Helper to find a TypeNode by its ID. Panics if not found.
-fn find_type_node<'a>(graph: &'a CodeGraph, type_id: TypeId) -> &'a TypeNode {
-    graph
-        .type_graph
-        .iter()
-        .find(|tn| tn.id == type_id)
-        .unwrap_or_else(|| panic!("TypeNode not found for TypeId: {}", type_id))
-}
 
 // --- Test Cases ---
 
@@ -249,7 +141,11 @@ fn test_function_node_process_slice() {
         param_type_node.kind
     );
     // Check the referenced type ([u8])
-    assert_eq!(param_type_node.related_types.len(), 1, "Reference should have one related type ([u8])");
+    assert_eq!(
+        param_type_node.related_types.len(),
+        1,
+        "Reference should have one related type ([u8])"
+    );
     let slice_type_id = param_type_node.related_types[0];
     let slice_type_node = find_type_node(graph, slice_type_id);
     // The underlying slice type [u8] currently falls back to Unknown because TypeKind::Slice is not implemented
@@ -490,7 +386,7 @@ fn test_function_node_process_tuple_in_duplicate_names() {
 
     let func_name = "process_tuple";
     let relative_file_path = "src/lib.rs"; // Function is defined in lib.rs
-    // Module path *within lib.rs* where the function is defined
+                                           // Module path *within lib.rs* where the function is defined
     let module_path = vec!["crate".to_string(), "duplicate_names".to_string()];
 
     let func_node = find_function_node_paranoid(
@@ -650,7 +546,8 @@ fn test_function_node_process_const_ptr() {
     // Current state: Falls back to Unknown because TypeKind::Ptr not implemented
     assert!(
         matches!(&param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "* const i32"),
-        "Expected TypeKind::Unknown for '*const i32' currently, found {:?}", param_type_node.kind
+        "Expected TypeKind::Unknown for '*const i32' currently, found {:?}",
+        param_type_node.kind
     );
     #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
     {
@@ -665,7 +562,6 @@ fn test_function_node_process_const_ptr() {
     let return_type_node = find_type_node(graph, return_type_id);
     assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]));
 }
-
 
 #[test]
 fn test_function_node_consumes_point_in_func_mod() {
@@ -774,7 +670,11 @@ fn test_function_node_draw_object() {
         param_type_node.kind
     );
     // Check the referenced type (dyn Drawable)
-    assert_eq!(param_type_node.related_types.len(), 1, "Reference should have one related type (dyn Drawable)");
+    assert_eq!(
+        param_type_node.related_types.len(),
+        1,
+        "Reference should have one related type (dyn Drawable)"
+    );
     let trait_object_type_id = param_type_node.related_types[0];
     let trait_object_type_node = find_type_node(graph, trait_object_type_id);
     // The underlying trait object type currently falls back to Unknown because TypeKind::TraitObject is not implemented
@@ -790,7 +690,6 @@ fn test_function_node_draw_object() {
         // assert!(matches!(trait_object_type_node.kind, TypeKind::TraitObject { .. }));
         // assert_eq!(trait_object_type_node.related_types.len(), 1); // Should relate to Drawable trait TypeId
     }
-
 
     // Return Type (implicit unit `()`)
     assert!(func_node.return_type.is_none());
@@ -967,7 +866,8 @@ fn test_function_node_process_mut_ptr() {
     // Current state: Falls back to Unknown because TypeKind::Ptr not implemented
     assert!(
         matches!(&param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "* mut i32"),
-        "Expected TypeKind::Unknown for '*mut i32' currently, found {:?}", param_type_node.kind
+        "Expected TypeKind::Unknown for '*mut i32' currently, found {:?}",
+        param_type_node.kind
     );
     #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
     {
@@ -1081,7 +981,8 @@ fn test_function_node_process_slice_in_duplicate_names() {
         "Expected underlying type '[u8]' to be TypeKind::Unknown currently, found {:?}",
         slice_type_node.kind
     );
-    #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"] { }
+    #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"]
+    {}
 
     // Return Type (usize)
     assert!(func_node.return_type.is_some());
@@ -1317,7 +1218,9 @@ fn test_function_node_math_operation_producer_in_func_mod() {
     assert!(func_node.return_type.is_some());
     let return_type_id = func_node.return_type.unwrap();
     let return_type_node = find_type_node(graph, return_type_id);
-    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["MathOperation"]));
+    assert!(
+        matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["MathOperation"])
+    );
     // TODO: Check underlying fn pointer type once alias resolution is better
 }
 
@@ -1443,7 +1346,6 @@ fn test_function_node_generic_func_in_restricted_duplicate() {
     let return_type_node = find_type_node(graph, return_type_id);
     assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["T"]));
 }
-
 
 // TODO: Add tests for the corresponding functions inside duplicate_names module (process_ref, process_mut_ref, process_const_ptr, process_mut_ptr, apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example).
 // TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate (math_operation_consumer, math_operation_producer)
