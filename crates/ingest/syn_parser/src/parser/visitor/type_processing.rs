@@ -118,12 +118,10 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
                         // Handle function pointer types like Fn(Args) -> Return
                         for input in &parenthesized.inputs {
                             // Recurse: Get TypeId for input types
-                            let input_str = type_to_string(input); // Stringify nested type
                             related_types.push(get_or_create_type(state, input));
                         }
                         if let ReturnType::Type(_, return_ty) = &parenthesized.output {
                             // Recurse: Get TypeId for return type
-                            let return_ty_str = type_to_string(return_ty); // Stringify nested type
                             related_types.push(get_or_create_type(state, return_ty));
                         }
                     }
