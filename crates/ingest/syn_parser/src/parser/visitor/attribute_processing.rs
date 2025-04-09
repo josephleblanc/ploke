@@ -33,7 +33,7 @@ pub(crate) fn extract_docstring(attrs: &[syn::Attribute]) -> Option<String> {
 }
 
 /// Parses a single syn::Attribute into our custom Attribute struct.
-/// Uses syn::Attribute::parse_meta for robust parsing of different attribute forms.
+/// Uses the `attr.meta` field for structured parsing of different attribute forms.
 fn parse_attribute(attr: &syn::Attribute) -> Attribute {
     let span = {
         let byte_range = attr.span().byte_range();
@@ -51,21 +51,27 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
         // Case 2: List attribute, e.g., #[derive(Debug, Clone)]
         syn::Meta::List(list) => {
             let name = list.path.to_token_stream().to_string();
+            // Attempt to parse the tokens within the list as comma-separated meta items
+            // This handles common cases like derive, cfg, allow, etc.
             let args =
                 match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
-                    .parse2(list.tokens)
-                {
-                    Ok(nested_metas) => nested_metas
-                        .iter()
-                        .map(|meta| meta.to_token_stream().to_string())
-                        .collect(),
-                    Err(_) => {
-                        // Fallback if tokens inside list aren't standard Meta items
-                        // Might happen with complex custom attribute syntax.
-                        // Store the raw tokens as a single argument string.
-                        vec![list.tokens.to_string()]
+                .parse2(list.tokens.clone()) // Clone tokens for parsing
+            {
+                Ok(nested_metas) => nested_metas
+                    .iter()
+                    .map(|meta| meta.to_token_stream().to_string()) // Convert each parsed meta back to string
+                    .collect(),
+                Err(_) => {
+                    // Fallback if tokens inside list aren't standard Meta items
+                    // (e.g., custom attribute syntax). Store the raw tokens as a single argument string.
+                    let raw_args = list.tokens.to_string();
+                    if raw_args.is_empty() { // Avoid storing empty strings if list is empty
+                        Vec::new()
+                    } else {
+                        vec![raw_args]
                     }
-                };
+                }
+            };
             Attribute {
                 span,
                 name,
@@ -76,21 +82,21 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
         // Case 3: Name-value attribute, e.g., #[must_use = "reason"], #[path = "file.rs"]
         syn::Meta::NameValue(nv) => {
             let name = nv.path.to_token_stream().to_string();
-            let value = match nv.value {
-                // Prioritize string literals
+            // Extract the value, prioritizing string literals
+            let value = match &nv.value {
                 syn::Expr::Lit(syn::ExprLit {
                     lit: syn::Lit::Str(lit_str),
                     ..
-                }) => Some(lit_str.value()),
-                // Handle other literals by converting to string
+                }) => Some(lit_str.value()), // Extract the actual string content
+                // Handle other literals by converting their token representation to string
                 syn::Expr::Lit(syn::ExprLit { lit, .. }) => Some(lit.to_token_stream().to_string()),
-                // Fallback for complex expressions
-                _ => Some(nv.value.to_token_stream().to_string()),
+                // Fallback for non-literal expressions (less common in standard attributes)
+                expr => Some(expr.to_token_stream().to_string()),
             };
             Attribute {
                 span,
                 name,
-                args: Vec::new(),
+                args: Vec::new(), // NameValue attributes don't have list-style args
                 value,
             }
         }
