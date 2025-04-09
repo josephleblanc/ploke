@@ -9,7 +9,7 @@ use syn_parser::{
         nodes::VisibilityKind, // Import VisibilityKind from its correct location
         nodes::{FunctionNode, ParamData, TypeDefNode, Visible},
         types::{TypeKind, TypeNode},
-        visitor::FileParseOutput, // Use the new return type (ensure this is pub in visitor/mod.rs)
+        visitor::ParsedCodeGraph, // Use the correct existing struct
     },
     // PROJECT_NAMESPACE_UUID is not needed here and not public
 };
@@ -17,14 +17,14 @@ use uuid::Uuid;
 
 // --- Helper Functions ---
 
-/// Runs Phase 1 & 2 and extracts the single FileParseOutput for a single-file fixture.
+/// Runs Phase 1 & 2 and extracts the single ParsedCodeGraph for a single-file fixture.
 /// Panics if parsing fails or the fixture generates more than one output.
-fn get_single_file_parse_output(fixture_name: &str) -> FileParseOutput {
+fn get_single_file_parse_output(fixture_name: &str) -> ParsedCodeGraph {
     let results = run_phase1_phase2(fixture_name);
     assert_eq!(
         results.len(),
         1,
-        "Expected exactly one FileParseOutput for fixture '{}'",
+        "Expected exactly one ParsedCodeGraph for fixture '{}'",
         fixture_name
     );
     results
@@ -121,10 +121,10 @@ fn find_type_node<'a>(graph: &'a CodeGraph, type_id: TypeId) -> &'a TypeNode {
 #[test]
 fn test_function_node_process_tuple() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable for clarity
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_tuple";
     let module_path = vec!["crate".to_string()];
@@ -179,10 +179,10 @@ fn test_function_node_process_tuple() {
 #[test]
 fn test_function_node_process_slice() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_slice";
     let module_path = vec!["crate".to_string()];
@@ -242,10 +242,10 @@ fn test_function_node_process_slice() {
 #[test]
 fn test_function_node_process_array() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_array";
     let module_path = vec!["crate".to_string()];
@@ -294,10 +294,10 @@ fn test_function_node_process_array() {
 #[test]
 fn test_function_node_process_ref() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_ref";
     let module_path = vec!["crate".to_string()];
@@ -351,10 +351,10 @@ fn test_function_node_process_ref() {
 #[test]
 fn test_function_node_process_mut_ref() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_mut_ref";
     let module_path = vec!["crate".to_string()];
@@ -403,10 +403,10 @@ fn test_function_node_process_mut_ref() {
 #[test]
 fn test_function_node_process_tuple_in_duplicate_names() {
     let fixture = "fixture_types";
-    let parsed_output = get_single_file_parse_output(fixture);
-    let graph = &parsed_output.graph;
-    let crate_namespace = parsed_output.crate_namespace;
-    let file_path = &parsed_output.file_path;
+    let parsed_data = get_single_file_parse_output(fixture); // Rename variable
+    let graph = &parsed_data.graph;
+    let crate_namespace = parsed_data.crate_namespace;
+    let file_path = &parsed_data.file_path;
 
     let func_name = "process_tuple";
     // Module path as recorded during Phase 2 parse of lib.rs
