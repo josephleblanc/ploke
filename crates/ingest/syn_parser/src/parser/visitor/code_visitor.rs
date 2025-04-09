@@ -1294,6 +1294,35 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_trait.generics);
 
         // Process super traits
+        #[cfg(feature = "uuid_ids")]
+        let super_traits: Vec<TypeId> = item_trait
+            .supertraits
+            .iter()
+            .filter_map(|bound| {
+                // Use filter_map to handle non-trait bounds if necessary
+                match bound {
+                    syn::TypeParamBound::Trait(trait_bound) => {
+                        // Construct a Type::Path from the TraitBound's path
+                        // This correctly represents the supertrait type itself.
+                        let ty = syn::Type::Path(syn::TypePath {
+                            qself: None, // Supertraits typically don't have qself
+                            path: trait_bound.path.clone(),
+                        });
+                        Some(get_or_create_type(self.state, &ty))
+                    }
+                    syn::TypeParamBound::Lifetime(_) => {
+                        // We don't store lifetime bounds as supertrait TypeIds currently
+                        None
+                    }
+                    // Handle other TypeParamBound variants like Verbatim if needed in the future
+                    _ => {
+                        // Log or handle unexpected bound types if necessary
+                        None
+                    }
+                }
+            })
+            .collect();
+        #[cfg(not(feature = "uuid_ids"))]
         let super_traits: Vec<TypeId> = item_trait
             .supertraits
             .iter()

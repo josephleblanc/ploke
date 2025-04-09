@@ -34,7 +34,10 @@ pub trait LifetimeTrait<'a> {
 }
 
 // Public trait with multiple generic parameters and bounds
-pub trait ComplexGenericTrait<'a, T: Debug + Clone, S: Send + Sync> where T: 'a {
+pub trait ComplexGenericTrait<'a, T: Debug + Clone, S: Send + Sync>
+where
+    T: 'a,
+{
     fn complex_process(&'a self, item: T, other: S) -> &'a T;
 }
 
@@ -85,7 +88,8 @@ pub unsafe trait UnsafeTrait {
 }
 
 // Auto trait (marker trait)
-pub auto trait MarkerAutoTrait {}
+// pub auto trait MarkerAutoTrait {} // flagged by error checker as "experimental and buggy"
+// ignore for now
 
 // Module to test visibility interactions
 mod inner {
@@ -110,7 +114,9 @@ impl dyn inner::InnerPublicTrait {} // Example usage to ensure it's referenced
 
 // Trait with `Self` usage in method signature
 pub trait SelfUsageTrait {
-    fn returns_self(self) -> Self where Self: Sized;
+    fn returns_self(self) -> Self
+    where
+        Self: Sized;
     fn takes_self(&self, other: &Self);
 }
 
