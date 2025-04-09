@@ -90,6 +90,36 @@ pub struct GenericParamNode {
     pub kind: GenericParamKind,
 }
 
+impl GenericParamNode {
+    pub fn name_if_type_id(&self, ty_id: TypeId) -> Option<&str> {
+        match &self.kind {
+            GenericParamKind::Type {
+                name,
+                bounds,
+                default,
+            } => {
+                if let Some(type_id) = r#default {
+                    if type_id == &ty_id {
+                        Some(&name)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            GenericParamKind::Lifetime { name, bounds } => None,
+            GenericParamKind::Const { name, type_id } => {
+                if type_id == &ty_id {
+                    Some(&name)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+}
+
 // ANCHOR: generic_param_kind
 // Different kinds of generic parameters
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

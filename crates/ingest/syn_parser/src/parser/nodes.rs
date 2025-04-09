@@ -86,6 +86,35 @@ pub enum TypeDefNode {
     Union(UnionNode),
 }
 
+impl Visible for TypeDefNode {
+    fn visibility(&self) -> VisibilityKind {
+        match self {
+            TypeDefNode::Struct(struct_node) => struct_node.visibility.clone(),
+            TypeDefNode::Enum(enum_node) => enum_node.visibility.clone(),
+            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.visibility.clone(),
+            TypeDefNode::Union(union_node) => union_node.visibility.clone(),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            TypeDefNode::Struct(struct_node) => struct_node.name(),
+            TypeDefNode::Enum(enum_node) => enum_node.name(),
+            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.name(),
+            TypeDefNode::Union(union_node) => union_node.name(),
+        }
+    }
+
+    fn id(&self) -> NodeId {
+        match self {
+            TypeDefNode::Struct(struct_node) => struct_node.id(),
+            TypeDefNode::Enum(enum_node) => enum_node.id(),
+            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.id(),
+            TypeDefNode::Union(union_node) => union_node.id(),
+        }
+    }
+}
+
 // ANCHOR: StructNode
 // Represents a struct definition
 impl Visible for StructNode {

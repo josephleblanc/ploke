@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod phase2_id_tests {
+    use crate::common::find_function_by_name;
     use ploke_common::fixtures_crates_dir;
     use ploke_core::{NodeId, TrackingHash, TypeId};
     use std::{
@@ -16,16 +17,15 @@ mod phase2_id_tests {
             nodes::{FunctionNode, StructNode, TypeDefNode}, // Import StructNode, TypeDefNode
         },
     };
-    use uuid::Uuid;
-    use crate::common::find_function_by_name; // Import the helper function
+    use uuid::Uuid; // Import the helper function
 
     // Helper function for single fixture
     fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<CodeGraph, syn::Error>> {
         let crate_path = fixtures_crates_dir().join(fixture_name);
         // Use a dummy project root; discovery only needs crate paths for this setup
         let project_root = fixtures_crates_dir();
-        let discovery_output = run_discovery_phase(&project_root, &[crate_path])
-            .unwrap_or_else(|e| {
+        let discovery_output =
+            run_discovery_phase(&project_root, &[crate_path]).unwrap_or_else(|e| {
                 panic!(
                     "Phase 1 Discovery failed for fixture '{}': {:?}",
                     fixture_name, e
@@ -86,8 +86,16 @@ mod phase2_id_tests {
         grouped_results
     }
 
-    // Helper to find a node by name (function or struct)
+    //Helper to find a node by name (function or struct)
+    // WARNING: Brittle method, will fail in any case where names of all `graph.functions` are not
+    // unique.
     fn find_node_id_by_name(graph: &CodeGraph, name: &str) -> Option<NodeId> {
+        // misleading, there may be two valid nodes with same name
+        // e.g.
+        //  fn some_func() {}
+        //  mod a {
+        //      fn some_func() {}
+        //  }
         graph
             .functions
             .iter()
@@ -137,10 +145,7 @@ mod phase2_id_tests {
         // 2. Verify TrackingHash is Present
         match func.tracking_hash {
             Some(TrackingHash(uuid)) => {
-                assert!(
-                    !uuid.is_nil(),
-                    "TrackingHash UUID should not be nil"
-                );
+                assert!(!uuid.is_nil(), "TrackingHash UUID should not be nil");
             }
             None => panic!("Expected Some(TrackingHash), found None"),
         }
@@ -182,7 +187,9 @@ mod phase2_id_tests {
     fn test_synthetic_node_ids_differ_across_crates() {
         // Run on simple_crate
         let results_simple = run_phase1_phase2("simple_crate");
-        let graph_simple = results_simple[0].as_ref().expect("Parsing simple_crate failed");
+        let graph_simple = results_simple[0]
+            .as_ref()
+            .expect("Parsing simple_crate failed");
         let func_simple = find_function_by_name(graph_simple, "add")
             .expect("Failed to find 'add' function in simple_crate");
         let simple_id = match func_simple.id {
@@ -246,8 +253,8 @@ mod phase2_id_tests {
                 .unwrap_or_else(|e| panic!("Parsing failed for {}: {:?}", name, e));
 
             // Get IDs for 'Thing' struct and 'do_thing' function
-            let thing_id = find_node_id_by_name(graph, "Thing")
-                .expect("Failed to find 'Thing' struct");
+            let thing_id =
+                find_node_id_by_name(graph, "Thing").expect("Failed to find 'Thing' struct");
             let do_thing_id = find_node_id_by_name(graph, "do_thing")
                 .expect("Failed to find 'do_thing' function");
             let param_type_id = find_first_param_type_id(graph, "do_thing")
@@ -256,9 +263,9 @@ mod phase2_id_tests {
             ids.insert(
                 name,
                 (
-                    thing_id,       // NodeId for struct
-                    do_thing_id,    // NodeId for function
-                    param_type_id,  // TypeId for function parameter
+                    thing_id,      // NodeId for struct
+                    do_thing_id,   // NodeId for function
+                    param_type_id, // TypeId for function parameter
                 ),
             );
         }
@@ -271,22 +278,49 @@ mod phase2_id_tests {
         // --- Assertions ---
 
         // 1. NodeIds for 'Thing' struct should differ due to file path
-        assert_ne!(thing1, thing2, "Thing NodeId should differ between fixture 1 and 2 (different file paths)");
-        assert_ne!(thing1, thing3, "Thing NodeId should differ between fixture 1 and 3 (different file paths)");
-        assert_ne!(thing2, thing3, "Thing NodeId should differ between fixture 2 and 3 (different file paths)");
+        assert_ne!(
+            thing1, thing2,
+            "Thing NodeId should differ between fixture 1 and 2 (different file paths)"
+        );
+        assert_ne!(
+            thing1, thing3,
+            "Thing NodeId should differ between fixture 1 and 3 (different file paths)"
+        );
+        assert_ne!(
+            thing2, thing3,
+            "Thing NodeId should differ between fixture 2 and 3 (different file paths)"
+        );
 
         // 2. NodeIds for 'do_thing' function should differ
         //    - fn1 vs fn2: Different file path AND different span (due to comment)
         //    - fn1 vs fn3: Different file path (same span)
         //    - fn2 vs fn3: Different file path AND different span
-        assert_ne!(fn1, fn2, "do_thing NodeId should differ between fixture 1 and 2 (path and span)");
-        assert_ne!(fn1, fn3, "do_thing NodeId should differ between fixture 1 and 3 (path)");
-        assert_ne!(fn2, fn3, "do_thing NodeId should differ between fixture 2 and 3 (path and span)");
+        assert_ne!(
+            fn1, fn2,
+            "do_thing NodeId should differ between fixture 1 and 2 (path and span)"
+        );
+        assert_ne!(
+            fn1, fn3,
+            "do_thing NodeId should differ between fixture 1 and 3 (path)"
+        );
+        assert_ne!(
+            fn2, fn3,
+            "do_thing NodeId should differ between fixture 2 and 3 (path and span)"
+        );
 
         // 3. TypeIds for the 'Thing' parameter should differ due to file path context during generation
-        assert_ne!(type1, type2, "Param TypeId should differ between fixture 1 and 2 (different file context)");
-        assert_ne!(type1, type3, "Param TypeId should differ between fixture 1 and 3 (different file context)");
-        assert_ne!(type2, type3, "Param TypeId should differ between fixture 2 and 3 (different file context)");
+        assert_ne!(
+            type1, type2,
+            "Param TypeId should differ between fixture 1 and 2 (different file context)"
+        );
+        assert_ne!(
+            type1, type3,
+            "Param TypeId should differ between fixture 1 and 3 (different file context)"
+        );
+        assert_ne!(
+            type2, type3,
+            "Param TypeId should differ between fixture 2 and 3 (different file context)"
+        );
 
         // Ensure all IDs are Synthetic
         assert!(matches!(thing1, NodeId::Synthetic(_)));

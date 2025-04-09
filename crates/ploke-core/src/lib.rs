@@ -168,6 +168,14 @@ mod ids {
         //     Self::Resolved(resolved_uuid)
         // }
     }
+    impl std::fmt::Display for TypeId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                TypeId::Resolved(uuid) => write!(f, "R:{}", short_uuid(*uuid)),
+                TypeId::Synthetic(uuid) => write!(f, "S:{}", short_uuid(*uuid)),
+            }
+        }
+    }
 
     /// Stable identifier for a type's logical identity across crate versions.
     /// Primarily used for linking embeddings or tracking concepts over time.
