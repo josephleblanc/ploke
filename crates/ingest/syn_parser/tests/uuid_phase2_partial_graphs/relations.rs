@@ -229,13 +229,46 @@ mod phase2_relation_tests {
 
         None
     }
-    fn find_node_id_name(graph: &CodeGraph, node_id: NodeId) -> Option<&str> {
-        graph.find_node(node_id).map(|n| n.name())
+    fn find_import_longname_by_id(graph: &CodeGraph, node_id: NodeId) -> Option<String> {
+        graph
+            .use_statements
+            .iter()
+            .find(|imp| imp.id == node_id)
+            .map(|imp| {
+                format!(
+                    "{}::{}{}",
+                    imp.path.join("::"),
+                    imp.visible_name,
+                    if let Some(original_name) = &imp.original_name {
+                        format!(" as {}", original_name)
+                    } else {
+                        "".to_string()
+                    }
+                )
+            })
     }
-    //
-    // I'm working on this function to show the name of the return type. As you can see from the
-    // output I added to the conversation, we are getting some "Not Found" in the results. Can you
-    // add a few more sections here to try increasing the coverage to handle those missing cases?
+    fn find_node_id_name(graph: &CodeGraph, node_id: NodeId) -> Option<String> {
+        graph
+            .find_node(node_id)
+            .map(|n| n.name().to_string())
+            .or_else(|| find_import_longname_by_id(graph, node_id))
+            .or_else(|| {
+                graph
+                    .defined_types
+                    .iter()
+                    .find_map(|def_type| match def_type {
+                        TypeDefNode::Struct(struct_node) => struct_node
+                            .fields
+                            .iter()
+                            .find(|field| field.id == node_id)
+                            .map(|field| field.name.clone()),
+                        TypeDefNode::Enum(_enum_node) => None, // fill out as needed
+                        TypeDefNode::TypeAlias(_type_alias_node) => None, // fill out as needed
+                        TypeDefNode::Union(_union_node) => None, // fill out as needed
+                    })
+                    .unwrap_or(None)
+            })
+    }
     fn find_type_id_name(graph: &CodeGraph, ty_id: TypeId) -> Option<String> {
         let found_name: Option<String> = graph
             .defined_types
@@ -322,9 +355,13 @@ mod phase2_relation_tests {
     fn find_name_by_graph_id(graph: &CodeGraph, graph_id: GraphId) -> Option<String> {
         match graph_id {
             GraphId::Node(node_id) => {
+                print!("NodeId ");
                 find_node_id_name(graph, node_id).map(|n_name| n_name.to_string())
             }
-            GraphId::Type(type_id) => find_type_id_name(graph, type_id),
+            GraphId::Type(type_id) => {
+                print!("TypeId ");
+                find_type_id_name(graph, type_id)
+            }
         }
         // graph.functions.iter().find(|f| f.id == )
     }
@@ -332,8 +369,7 @@ mod phase2_relation_tests {
         for rel in &graph.relations {
             println!("{:?}: {} -> {}", rel.kind, rel.source, rel.target);
             println!(
-                "{: <34}{}\n",
-                "",
+                "{}\n",
                 format!(
                     "{} -> {}",
                     find_name_by_graph_id(graph, rel.source).unwrap_or("Not Found".to_string()),
@@ -352,8 +388,8 @@ mod phase2_relation_tests {
         let crate_path = fixtures_crates_dir().join(crate_name);
         // Use workspace root as project root for discovery context
         let project_root = workspace_root();
-        let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
-            .unwrap_or_else(|e| {
+        let discovery_output: DiscoveryOutput =
+            run_discovery_phase(&project_root, &[crate_path.clone()]).unwrap_or_else(|e| {
                 panic!(
                     "Phase 1 Discovery failed for fixture '{}': {:?}",
                     crate_name, e
@@ -407,5 +443,12 @@ mod phase2_relation_tests {
             "crate",
             (0, 0),
         );
+        let code_graph_with_mod_two = code_graphs
+            .iter()
+            .find(|cg| find_node_id_name(cg, expect_mod_two_id).is_some());
+        assert!(code_graph_with_mod_two.is_some(), "module_two's expected NodeId not found in any CodeGraph:\n\tmodule_two_expected_id: {}",
+                expect_mod_two_id
+                );
+        print!("Looking for module_two in code_graphs...");
     }
 }
