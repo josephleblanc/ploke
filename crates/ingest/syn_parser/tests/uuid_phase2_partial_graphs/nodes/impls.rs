@@ -221,11 +221,13 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     );
     // NOTE: Skipping detailed check of the self_type's TypeNode kind and related_types
     // due to potential brittleness of TypeId lookup via to_string() for generics in Phase 2.
-    // let self_type_node = find_type_node(graph, impl_node.self_type);
-    // assert!(matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericStruct"]));
-    // assert_eq!(self_type_node.related_types.len(), 1); // T
-    // let related_self_t = find_type_node(graph, self_type_node.related_types[0]);
-    // assert!(matches!(&related_self_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
+    let self_type_node = find_type_node(graph, impl_node.self_type);
+    assert!(
+        matches!(&self_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericStruct"])
+    );
+    assert_eq!(self_type_node.related_types.len(), 1); // T
+    let related_self_t = find_type_node(graph, self_type_node.related_types[0]);
+    assert!(matches!(&related_self_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
 
     // Trait Type (GenericTrait<T>) - Check presence and that it's Synthetic
     let trait_type_id = impl_node
@@ -237,12 +239,17 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     );
     // NOTE: Skipping detailed check of the trait_type's TypeNode kind and related_types
     // due to potential brittleness of TypeId lookup via to_string() for generics in Phase 2.
-    // let trait_type_node = find_type_node(graph, trait_type_id);
-    // assert!(matches!(&trait_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericTrait"]));
-    // assert_eq!(trait_type_node.related_types.len(), 1); // T
-    // let related_trait_t = find_type_node(graph, trait_type_node.related_types[0]);
-    // assert!(matches!(&related_trait_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
-    // assert_eq!(self_type_node.related_types[0], trait_type_node.related_types[0], "TypeId for 'T' should be consistent");
+    let trait_type_node = find_type_node(graph, trait_type_id);
+    assert!(
+        matches!(&trait_type_node.kind, TypeKind::Named { path, .. } if path == &["GenericTrait"])
+    );
+    assert_eq!(trait_type_node.related_types.len(), 1); // T
+    let related_trait_t = find_type_node(graph, trait_type_node.related_types[0]);
+    assert!(matches!(&related_trait_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
+    assert_eq!(
+        self_type_node.related_types[0], trait_type_node.related_types[0],
+        "TypeId for 'T' should be consistent"
+    );
 
     // Methods (generic_trait_method)
     assert_eq!(impl_node.methods.len(), 1);
