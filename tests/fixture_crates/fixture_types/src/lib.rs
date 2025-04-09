@@ -2,6 +2,8 @@
 
 use std::fmt::Debug;
 
+mod func;
+
 // Basic named type (defined elsewhere or primitive)
 pub type NamedType = i32;
 pub type QualifiedPath = std::collections::HashMap<String, i32>;
