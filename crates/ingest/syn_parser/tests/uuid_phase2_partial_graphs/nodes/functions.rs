@@ -150,7 +150,7 @@ fn test_function_node_process_slice() {
         slice_type_node.kind
     );
 
-    #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"]
     {
         // Target state assertion for the underlying slice type (will fail until implemented)
         // assert!(matches!(param_type_node.kind, TypeKind::Slice { .. }));
@@ -544,7 +544,7 @@ fn test_function_node_process_const_ptr() {
         "Expected TypeKind::Unknown for '*const i32' currently, found {:?}",
         param_type_node.kind
     );
-    #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
     {
         // Target state assertion
         // assert!(matches!(param_type_node.kind, TypeKind::Pointer { is_mutable: false, .. }));
@@ -679,7 +679,7 @@ fn test_function_node_draw_object() {
         trait_object_type_node.kind
     );
 
-    #[ignore = "TypeKind::TraitObject not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::TraitObject not yet handled in type_processing.rs"]
     {
         // Target state assertion for the underlying trait object type
         // assert!(matches!(trait_object_type_node.kind, TypeKind::TraitObject { .. }));
@@ -742,7 +742,7 @@ fn test_function_node_process_impl_trait_arg() {
         param_type_node.kind
     );
 
-    #[ignore = "TypeKind::ImplTrait not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::ImplTrait not yet handled in type_processing.rs"]
     {
         // Target state assertion for the impl trait type
         // assert!(matches!(param_type_node.kind, TypeKind::ImplTrait { .. }));
@@ -807,7 +807,7 @@ fn test_function_node_create_impl_trait_return() {
         return_type_node.kind
     );
 
-    #[ignore = "TypeKind::ImplTrait not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::ImplTrait not yet handled in type_processing.rs"]
     {
         // Target state assertion for the impl trait type
         // assert!(matches!(return_type_node.kind, TypeKind::ImplTrait { .. }));
@@ -864,7 +864,7 @@ fn test_function_node_process_mut_ptr() {
         "Expected TypeKind::Unknown for '*mut i32' currently, found {:?}",
         param_type_node.kind
     );
-    #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
+    // #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
     {
         // Target state assertion
         // assert!(matches!(param_type_node.kind, TypeKind::Pointer { is_mutable: true, .. }));
@@ -976,8 +976,6 @@ fn test_function_node_process_slice_in_duplicate_names() {
         "Expected underlying type '[u8]' to be TypeKind::Unknown currently, found {:?}",
         slice_type_node.kind
     );
-    #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"]
-    {}
 
     // Return Type (usize)
     assert!(func_node.return_type.is_some());

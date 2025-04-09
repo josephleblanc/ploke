@@ -177,9 +177,23 @@ fn test_struct_node_sample_struct() {
     assert!(matches!(&field_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]));
 
     // Relations
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(struct_node.id()), RelationKind::Contains, "Module->Struct");
-    assert_relation_exists(graph, GraphId::Node(struct_node.id()), GraphId::Node(field_node.id), RelationKind::StructField, "Struct->Field");
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(struct_node.id()),
+        RelationKind::Contains,
+        "Module->Struct",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(struct_node.id()),
+        GraphId::Node(field_node.id),
+        RelationKind::StructField,
+        "Struct->Field",
+    );
 }
 
 #[test]
@@ -238,10 +252,30 @@ fn test_struct_node_tuple_struct() {
     assert!(matches!(&field1_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]));
 
     // Relations
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(struct_node.id()), RelationKind::Contains, "Module->Struct");
-    assert_relation_exists(graph, GraphId::Node(struct_node.id()), GraphId::Node(field0.id), RelationKind::StructField, "Struct->Field0");
-    assert_relation_exists(graph, GraphId::Node(struct_node.id()), GraphId::Node(field1.id), RelationKind::StructField, "Struct->Field1");
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(struct_node.id()),
+        RelationKind::Contains,
+        "Module->Struct",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(struct_node.id()),
+        GraphId::Node(field0.id),
+        RelationKind::StructField,
+        "Struct->Field0",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(struct_node.id()),
+        GraphId::Node(field1.id),
+        RelationKind::StructField,
+        "Struct->Field1",
+    );
 }
 
 #[test]
@@ -284,8 +318,16 @@ fn test_struct_node_unit_struct() {
     assert!(struct_node.fields.is_empty());
 
     // Relations
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(struct_node.id()), RelationKind::Contains, "Module->Struct");
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(struct_node.id()),
+        RelationKind::Contains,
+        "Module->Struct",
+    );
     // No StructField relations expected
 }
 
@@ -329,7 +371,12 @@ fn test_struct_node_attributed_struct() {
     let attribute = &struct_node.attributes[0];
     assert_eq!(attribute.name, "derive");
     assert_eq!(attribute.args, vec!["Debug"]); // Check derive argument
-    assert!(attribute.value.is_none());
+    assert_eq!(
+        Some("# [derive (Debug)]".to_string()),
+        attribute.value,
+        "Expected attribute \"# [derive (Debug)]\", found: {:?}",
+        attribute.value
+    );
 
     // Fields (pub field: String)
     assert_eq!(struct_node.fields.len(), 1);
@@ -342,9 +389,23 @@ fn test_struct_node_attributed_struct() {
     assert!(matches!(&field_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]));
 
     // Relations
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(struct_node.id()), RelationKind::Contains, "Module->Struct");
-    assert_relation_exists(graph, GraphId::Node(struct_node.id()), GraphId::Node(field_node.id), RelationKind::StructField, "Struct->Field");
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(struct_node.id()),
+        RelationKind::Contains,
+        "Module->Struct",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(struct_node.id()),
+        GraphId::Node(field_node.id),
+        RelationKind::StructField,
+        "Struct->Field",
+    );
 }
 
 #[test]
@@ -386,7 +447,7 @@ fn test_struct_node_documented_struct() {
     assert!(struct_node.docstring.is_some());
     assert_eq!(
         struct_node.docstring.as_deref(),
-        Some(" This is a documented struct") // Note leading space from ///
+        Some("This is a documented struct") // Note no leading space from ///
     );
 
     // Fields (pub field: String)
@@ -400,7 +461,21 @@ fn test_struct_node_documented_struct() {
     assert!(matches!(&field_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]));
 
     // Relations
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(struct_node.id()), RelationKind::Contains, "Module->Struct");
-    assert_relation_exists(graph, GraphId::Node(struct_node.id()), GraphId::Node(field_node.id), RelationKind::StructField, "Struct->Field");
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(struct_node.id()),
+        RelationKind::Contains,
+        "Module->Struct",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(struct_node.id()),
+        GraphId::Node(field_node.id),
+        RelationKind::StructField,
+        "Struct->Field",
+    );
 }
