@@ -25,9 +25,8 @@ fn test_struct_node_generic_struct_paranoid() {
 
     let struct_name = "GenericStruct";
     let relative_file_path = "src/structs.rs";
-    // Module path *within structs.rs* where the struct is defined
-    // Assuming structs.rs is declared via `mod structs;` in lib.rs
-    let module_path = vec!["crate".to_string(), "structs".to_string()];
+    // Module path *within structs.rs* during Phase 2 parse is just ["crate"]
+    let module_path = vec!["crate".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
