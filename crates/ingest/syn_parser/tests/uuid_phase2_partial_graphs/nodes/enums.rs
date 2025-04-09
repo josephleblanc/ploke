@@ -6,6 +6,8 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use syn_parser::parser::types::VisibilityKind;
+use syn_parser::parser::{nodes::EnumNode, types::TypeKind}; // Import EnumNode specifically
 use syn_parser::{
     discovery::{run_discovery_phase, DiscoveryOutput},
     parser::{
@@ -20,8 +22,6 @@ use syn_parser::{
         visitor::ParsedCodeGraph,
     },
 };
-use ploke_core::VisibilityKind;
-use syn_parser::parser::nodes::EnumNode; // Import EnumNode specifically
 use uuid::Uuid;
 
 // --- Test Cases ---
@@ -113,7 +113,6 @@ fn test_enum_node_sample_enum_paranoid() {
     assert!(variant3.discriminant.is_none());
     assert!(variant3.attributes.is_empty());
 
-
     // --- Paranoid Relation Checks ---
     let module_id = find_inline_module_by_path(graph, &module_path)
         .expect("Failed to find module node for relation check")
@@ -143,7 +142,7 @@ fn test_enum_node_sample_enum_paranoid() {
         RelationKind::EnumVariant,
         "Expected EnumNode to have EnumVariant relation to Variant2",
     );
-     assert_relation_exists(
+    assert_relation_exists(
         graph,
         GraphId::Node(enum_node.id()),
         GraphId::Node(variant3.id),
