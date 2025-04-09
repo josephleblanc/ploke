@@ -162,9 +162,8 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
         // Each case should:
         // 1. Identify nested types (like tuple elements, array/slice element type).
         // 2. For each nested type:
-        //    a. Call `type_to_string()` to get its string representation.
-        //    b. Call `get_or_create_type()` with the nested type and its string.
-        //    c. Push the returned TypeId into `related_types`.
+        //    a. Call `get_or_create_type()` with the nested type and its string.
+        //    b. Push the returned TypeId into `related_types`.
         // 3. Construct the appropriate `TypeKind` variant.
         // 4. Return `(type_kind, related_types)`.
 

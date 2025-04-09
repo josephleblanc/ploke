@@ -5,7 +5,7 @@ use ploke_core::{NodeId, TypeId};
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::relations::{GraphId, RelationKind};
-use syn_parser::parser::types::TypeNode;
+use syn_parser::parser::types::{TypeKind, TypeNode};
 use syn_parser::parser::visitor::ParsedCodeGraph;
 use syn_parser::parser::{analyze_files_parallel, nodes::*};
 
@@ -954,7 +954,10 @@ fn find_type_id_by_string(graph: &CodeGraph, type_str: &str) -> Option<TypeId> {
 
         // Let's try finding a TypeNode whose Unknown kind matches the string for now.
         // This will only work if the type wasn't successfully parsed into another Kind.
-        if let TypeKind::Unknown { type_str: stored_str } = &tn.kind {
+        if let TypeKind::Unknown {
+            type_str: stored_str,
+        } = &tn.kind
+        {
             if stored_str == type_str {
                 return Some(tn.id);
             }
@@ -965,7 +968,6 @@ fn find_type_id_by_string(graph: &CodeGraph, type_str: &str) -> Option<TypeId> {
     // A more reliable way might be needed if the above fails often, perhaps searching
     // function params/returns, struct fields etc. that use the type string.
 }
-
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ImplNode
 /// within that graph based on type info, performs paranoid checks, and returns a reference.
@@ -1001,29 +1003,38 @@ pub fn find_impl_node_paranoid<'a>(
     //    NOTE: This uses the potentially fragile find_type_id_by_string helper.
     let self_type_id = find_type_id_by_string(graph, self_type_str).unwrap_or_else(|| {
         // Attempt fallback: Find a TypeNode with a matching Named path if Unknown fails
-        graph.type_graph.iter().find_map(|tn| {
-             if let TypeKind::Named { path, .. } = &tn.kind {
-                 // Simple comparison assuming single segment path for basic types
-                 if path.len() == 1 && path[0] == self_type_str {
-                     return Some(tn.id);
-                 }
-                 // TODO: Handle multi-segment paths if needed
-             }
-             None
-        }).unwrap_or_else(|| panic!("TypeId not found for self_type_str: '{}'", self_type_str))
+        graph
+            .type_graph
+            .iter()
+            .find_map(|tn| {
+                if let TypeKind::Named { path, .. } = &tn.kind {
+                    // Simple comparison assuming single segment path for basic types
+                    if path.len() == 1 && path[0] == self_type_str {
+                        return Some(tn.id);
+                    }
+                    // TODO: Handle multi-segment paths if needed
+                }
+                None
+            })
+            .unwrap_or_else(|| panic!("TypeId not found for self_type_str: '{}'", self_type_str))
     });
 
     let trait_type_id: Option<TypeId> = trait_type_str.map(|tts| {
         find_type_id_by_string(graph, tts).unwrap_or_else(|| {
-             graph.type_graph.iter().find_map(|tn| {
-                 if let TypeKind::Named { path, .. } = &tn.kind {
-                     if path.len() == 1 && path[0] == tts { return Some(tn.id); }
-                 }
-                 None
-             }).unwrap_or_else(|| panic!("TypeId not found for trait_type_str: '{}'", tts))
+            graph
+                .type_graph
+                .iter()
+                .find_map(|tn| {
+                    if let TypeKind::Named { path, .. } = &tn.kind {
+                        if path.len() == 1 && path[0] == tts {
+                            return Some(tn.id);
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_else(|| panic!("TypeId not found for trait_type_str: '{}'", tts))
         })
     });
-
 
     // 4. Filter candidates by matching self_type and trait_type IDs
     let type_candidates: Vec<&ImplNode> = graph
@@ -1097,7 +1108,6 @@ pub fn find_impl_node_paranoid<'a>(
         "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' with span {:?}. Name generation might be the cause.",
         impl_id, regenerated_id, expected_name, file_path.display(), actual_span
     );
-
 
     // 8. Return the validated node
     impl_node
