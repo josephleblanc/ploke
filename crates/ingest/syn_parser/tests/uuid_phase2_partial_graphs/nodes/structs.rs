@@ -3,15 +3,13 @@
 
 // Imports mirrored from functions.rs, adjust as needed
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeId, VisibilityKind};
-use syn_parser::{
-    parser::{
-        graph::CodeGraph,
-        nodes::{FieldNode, FunctionNode, ParamData, StructNode, TypeDefNode, Visible},
-        relations::{GraphId, RelationKind}, // Added for relation checks
-        types::{GenericParamKind, TypeKind, TypeNode},
-        visitor::ParsedCodeGraph,
-    },
+use ploke_core::{NodeId, TypeId};
+use syn_parser::parser::{
+    graph::CodeGraph,
+    nodes::{FieldNode, FunctionNode, ParamData, StructNode, TypeDefNode, Visible},
+    relations::{GraphId, RelationKind}, // Added for relation checks
+    types::{GenericParamKind, TypeKind, TypeNode, VisibilityKind},
+    visitor::ParsedCodeGraph,
 };
 use uuid::Uuid;
 
@@ -62,12 +60,19 @@ fn test_struct_node_generic_struct_paranoid() {
     let generic_param = &struct_node.generic_params[0];
     // Check the generic param details (assuming it's a Type parameter named "T")
     match &generic_param.kind {
-        GenericParamKind::Type { name, bounds, default } => {
+        GenericParamKind::Type {
+            name,
+            bounds,
+            default,
+        } => {
             assert_eq!(name, "T");
             assert!(bounds.is_empty()); // No bounds specified in fixture
             assert!(default.is_none());
         }
-        _ => panic!("Expected GenericParamKind::Type, found {:?}", generic_param.kind),
+        _ => panic!(
+            "Expected GenericParamKind::Type, found {:?}",
+            generic_param.kind
+        ),
     }
 
     // Fields (pub field: T)
@@ -75,17 +80,24 @@ fn test_struct_node_generic_struct_paranoid() {
     let field_node = &struct_node.fields[0];
 
     // Field Properties
-    assert!(matches!(field_node.id, NodeId::Synthetic(_)), "Field ID should be Synthetic");
+    assert!(
+        matches!(field_node.id, NodeId::Synthetic(_)),
+        "Field ID should be Synthetic"
+    );
     assert_eq!(field_node.name.as_deref(), Some("field"));
     assert_eq!(field_node.visibility, VisibilityKind::Public); // Field is pub
     assert!(field_node.attributes.is_empty());
 
     // Field Type (T)
-    assert!(matches!(field_node.type_id, TypeId::Synthetic(_)), "Field TypeId should be Synthetic");
+    assert!(
+        matches!(field_node.type_id, TypeId::Synthetic(_)),
+        "Field TypeId should be Synthetic"
+    );
     let field_type_node = find_type_node(graph, field_node.type_id);
     assert!(
         matches!(&field_type_node.kind, TypeKind::Named { path, .. } if path == &["T"]),
-        "Expected field type 'T' (generic param), found {:?}", field_type_node.kind
+        "Expected field type 'T' (generic param), found {:?}",
+        field_type_node.kind
     );
     // Ensure the TypeId for the field matches the TypeId associated with the generic parameter 'T'
     // Note: Finding the TypeId associated with a GenericParamKind::Type might require another helper or careful lookup.
@@ -110,7 +122,7 @@ fn test_struct_node_generic_struct_paranoid() {
         graph,
         GraphId::Node(struct_node.id()),
         GraphId::Node(field_node.id), // FieldNode's ID
-        RelationKind::StructField, // Assuming this is the correct kind for struct -> field
+        RelationKind::StructField,    // Assuming this is the correct kind for struct -> field
         "Expected StructNode to have StructField relation to FieldNode",
     );
 
