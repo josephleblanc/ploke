@@ -22,17 +22,36 @@ use std::path::PathBuf;
 
 // Removed get_single_file_parse_output as it's incorrect for multi-file fixtures.
 
-/// Finds a FunctionNode, performs paranoid checks, and returns a reference.
-/// Panics if the node is not found or if uniqueness checks fail.
+/// Finds the specific ParsedCodeGraph for the target file, then finds the FunctionNode
+/// within that graph, performs paranoid checks, and returns a reference.
+/// Panics if the graph or node is not found, or if uniqueness checks fail.
 fn find_function_node_paranoid<'a>(
-    graph: &'a CodeGraph,
-    crate_namespace: Uuid,
-    file_path: &std::path::Path,
-    expected_module_path: &[String],
+    parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
+    fixture_name: &str, // Needed to construct expected path
+    relative_file_path: &str, // e.g., "src/lib.rs" or "src/func/return_types.rs"
+    expected_module_path: &[String], // Module path within the target file
     func_name: &str,
-    // expected_span: (usize, usize), // Use span from node itself
 ) -> &'a FunctionNode {
-    // 1. Filter candidates by name first
+    // 1. Construct the absolute expected file path
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join(relative_file_path);
+
+    // 2. Find the specific ParsedCodeGraph for the target file
+    let target_data = parsed_graphs
+        .iter()
+        .find(|data| data.file_path == target_file_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+
+    let graph = &target_data.graph;
+    let crate_namespace = target_data.crate_namespace;
+    let file_path = &target_data.file_path; // Use the path from the found graph data
+
+    // 3. Filter candidates by name within the target graph
     let name_candidates: Vec<&FunctionNode> = graph
         .functions
         .iter()
@@ -41,29 +60,37 @@ fn find_function_node_paranoid<'a>(
 
     assert!(
         !name_candidates.is_empty(),
-        "No FunctionNode found with name '{}'",
-        func_name
+        "No FunctionNode found with name '{}' in file '{}'",
+        func_name,
+        file_path.display()
     );
 
-    // 2. Filter further by module association (workaround for direct ID regen)
+    // 4. Filter further by module association within the target graph
     let module_node = graph
         .modules
         .iter()
         .find(|m| m.path == expected_module_path)
-        .unwrap_or_else(|| panic!("ModuleNode not found for path: {:?}", expected_module_path));
+        .unwrap_or_else(|| {
+            panic!(
+                "ModuleNode not found for path: {:?} in file '{}'",
+                expected_module_path,
+                file_path.display()
+            )
+        });
 
     let module_candidates: Vec<&FunctionNode> = name_candidates
         .into_iter()
         .filter(|f| module_node.items.contains(&f.id()))
         .collect();
 
-    // 3. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
+    // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
     assert_eq!(
         module_candidates.len(),
         1,
-        "Expected exactly one FunctionNode named '{}' associated with module path {:?}, found {}",
+        "Expected exactly one FunctionNode named '{}' associated with module path {:?} in file '{}', found {}",
         func_name,
         expected_module_path,
+        file_path.display(),
         module_candidates.len()
     );
 
@@ -71,10 +98,10 @@ fn find_function_node_paranoid<'a>(
     let func_id = func_node.id();
     let actual_span = func_node.span; // Get span from the found node
 
-    // 4. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path,
+        file_path, // Use the file_path from the target_data
         expected_module_path,
         func_name,
         actual_span, // Use the span from the node itself
@@ -82,11 +109,11 @@ fn find_function_node_paranoid<'a>(
 
     assert_eq!(
         func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' with span {:?}",
-        func_id, regenerated_id, func_name, actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' with span {:?}",
+        func_id, regenerated_id, func_name, file_path.display(), actual_span
     );
 
-    // 5. Return the validated node
+    // 7. Return the validated node
     func_node
 }
 
@@ -104,47 +131,29 @@ fn find_type_node<'a>(graph: &'a CodeGraph, type_id: TypeId) -> &'a TypeNode {
 #[test]
 fn test_function_node_process_tuple() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-
-    // Find the ParsedCodeGraph for src/lib.rs
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs");
-
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path; // Should match target_file_path
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed")) // Collect successful parses
+        .collect();
 
     let func_name = "process_tuple";
+    let relative_file_path = "src/lib.rs";
     let module_path = vec!["crate".to_string()];
 
     let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
+        &results,
+        fixture_name,
+        relative_file_path,
         &module_path,
         func_name,
-        // Span determined by find_function_node_paranoid
     );
 
     // Assertions
+    let graph = &results // Need graph for type lookups
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -190,39 +199,29 @@ fn test_function_node_process_tuple() {
 #[test]
 fn test_function_node_process_slice() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs");
-
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
     let func_name = "process_slice";
+    let relative_file_path = "src/lib.rs";
     let module_path = vec!["crate".to_string()];
 
-    let func_node =
-        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
 
     // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -273,39 +272,29 @@ fn test_function_node_process_slice() {
 #[test]
 fn test_function_node_process_array() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs");
-
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
     let func_name = "process_array";
+    let relative_file_path = "src/lib.rs";
     let module_path = vec!["crate".to_string()];
 
-    let func_node =
-        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
 
     // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -346,39 +335,29 @@ fn test_function_node_process_array() {
 #[test]
 fn test_function_node_process_ref() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs");
-
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
     let func_name = "process_ref";
+    let relative_file_path = "src/lib.rs";
     let module_path = vec!["crate".to_string()];
 
-    let func_node =
-        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
 
     // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -427,39 +406,29 @@ fn test_function_node_process_ref() {
 #[test]
 fn test_function_node_process_mut_ref() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs");
-
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path;
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
     let func_name = "process_mut_ref";
+    let relative_file_path = "src/lib.rs";
     let module_path = vec!["crate".to_string()];
 
-    let func_node =
-        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
 
     // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -503,41 +472,30 @@ fn test_function_node_process_mut_ref() {
 #[test]
 fn test_function_node_process_tuple_in_duplicate_names() {
     let fixture_name = "fixture_types";
-    let results = run_phase1_phase2(fixture_name);
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    let target_file_path = fixture_root.join("src").join("lib.rs"); // Still parsing lib.rs
-
-    // Find the ParsedCodeGraph for src/lib.rs
-    let parsed_data = results
-        .iter()
-        .find_map(|res| {
-            res.as_ref().ok().and_then(|data| {
-                if data.file_path == target_file_path {
-                    Some(data)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-
-    let graph = &parsed_data.graph;
-    let crate_namespace = parsed_data.crate_namespace;
-    let file_path = &parsed_data.file_path; // This is lib.rs path
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
     let func_name = "process_tuple";
-    // Module path as recorded during Phase 2 parse of lib.rs
+    let relative_file_path = "src/lib.rs"; // Function is defined in lib.rs
+    // Module path *within lib.rs* where the function is defined
     let module_path = vec!["crate".to_string(), "duplicate_names".to_string()];
 
-    let func_node =
-        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
 
     // Basic Assertions (should be similar to the top-level one)
+    let graph = &results // Need graph for type lookups
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
     assert!(
         func_node.tracking_hash.is_some(),
@@ -578,6 +536,181 @@ fn test_function_node_process_tuple_in_duplicate_names() {
     // etc.
 }
 
-// TODO: Add tests for apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example
-// TODO: Add tests for the private functions process_const_ptr, process_mut_ptr (check visibility is Inherited or Restricted)
+#[test]
+fn test_function_node_apply_op() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "apply_op";
+    let relative_file_path = "src/lib.rs";
+    let module_path = vec!["crate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Public);
+
+    // Parameters (a: i32, b: i32, op: MathOperation)
+    assert_eq!(func_node.parameters.len(), 3);
+    let param_a = &func_node.parameters[0];
+    let param_b = &func_node.parameters[1];
+    let param_op = &func_node.parameters[2];
+
+    assert_eq!(param_a.name.as_deref(), Some("a"));
+    assert_eq!(param_b.name.as_deref(), Some("b"));
+    assert_eq!(param_op.name.as_deref(), Some("op"));
+
+    let type_a = find_type_node(graph, param_a.type_id);
+    let type_b = find_type_node(graph, param_b.type_id);
+    let type_op = find_type_node(graph, param_op.type_id);
+
+    assert!(matches!(&type_a.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+    assert!(matches!(&type_b.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+    assert!(matches!(&type_op.kind, TypeKind::Named { path, .. } if path == &["MathOperation"]));
+    // TODO: Check underlying fn pointer type for MathOperation once alias resolution is better
+
+    // Return Type (i32)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+}
+
+#[test]
+fn test_function_node_process_const_ptr() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "process_const_ptr";
+    let relative_file_path = "src/lib.rs";
+    let module_path = vec!["crate".to_string()]; // Private function at top level
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    // Private functions default to Inherited visibility in the parser
+    assert_eq!(func_node.visibility(), VisibilityKind::Inherited);
+
+    // Parameters (p: *const i32)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("p"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Current state: Falls back to Unknown because TypeKind::Ptr not implemented
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "* const i32"),
+        "Expected TypeKind::Unknown for '*const i32' currently, found {:?}", param_type_node.kind
+    );
+    #[ignore = "TypeKind::Ptr not yet handled in type_processing.rs"]
+    {
+        // Target state assertion
+        // assert!(matches!(param_type_node.kind, TypeKind::Pointer { is_mutable: false, .. }));
+        // assert_eq!(param_type_node.related_types.len(), 1); // Should relate to i32
+    }
+
+    // Return Type (i32)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+}
+
+
+#[test]
+fn test_function_node_consumes_point_in_func_mod() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "consumes_point";
+    // Function is defined in src/func/return_types.rs
+    let relative_file_path = "src/func/return_types.rs";
+    // Module path *within return_types.rs*
+    let module_path = vec!["crate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    // pub(crate) -> Crate visibility
+    assert_eq!(func_node.visibility(), VisibilityKind::Crate);
+
+    // Parameters (point: Point)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("point"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Should resolve to the top-level Point alias
+    assert!(matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Point"]));
+
+    // Return Type (bool)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["bool"]));
+}
+
+
+// TODO: Add tests for draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example
+// TODO: Add tests for process_mut_ptr
 // TODO: Add tests for the corresponding functions inside duplicate_names module.
+// TODO: Add tests for functions inside src/func/return_types.rs (generic_func, math_operation_consumer, math_operation_producer)
+// TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate
