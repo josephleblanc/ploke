@@ -19,6 +19,8 @@ use {
 
 use ploke_common::{fixtures_crates_dir, fixtures_dir, malformed_fixtures_dir};
 
+pub mod uuid_ids_utils;
+
 #[cfg(feature = "uuid_ids")]
 pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
     let crate_path = fixtures_crates_dir().join(fixture_name);

@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod phase2_id_tests {
-    use crate::common::find_function_by_name;
+    use crate::common::{find_function_by_name, run_phase1_phase2};
     use ploke_common::fixtures_crates_dir;
     use ploke_core::{NodeId, TrackingHash, TypeId};
     use std::{
@@ -19,21 +19,6 @@ mod phase2_id_tests {
         },
     };
     use uuid::Uuid; // Import the helper function
-
-    // Helper function for single fixture
-    fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
-        let crate_path = fixtures_crates_dir().join(fixture_name);
-        // Use a dummy project root; discovery only needs crate paths for this setup
-        let project_root = fixtures_crates_dir();
-        let discovery_output =
-            run_discovery_phase(&project_root, &[crate_path]).unwrap_or_else(|e| {
-                panic!(
-                    "Phase 1 Discovery failed for fixture '{}': {:?}",
-                    fixture_name, e
-                )
-            });
-        analyze_files_parallel(&discovery_output, 0)
-    }
 
     // Helper function to run Phase 1 on multiple fixtures, then Phase 2
     // Returns results mapped by the original crate root path for easier lookup.

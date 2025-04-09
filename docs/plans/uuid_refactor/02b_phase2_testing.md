@@ -66,7 +66,7 @@
 
 ### 4.1 Core Functionality & Output Structure
 
-*   **[/] Test Basic Execution:** (Partially covered)
+*   **[x] Test Basic Execution:**
     *   Run on `simple_crate`. Verify output `Vec` has length 1. Verify the `Result` is `Ok`. (Covered by `basic::phase2_tests::test_simple_crate_phase2_output`)
     *   Run on `example_crate`. Verify output `Vec` has the correct length (number of `.rs` files). Verify all `Result`s are `Ok`. (Covered by `determinism::determinism_tests::test_phase2_determinism` setup)
     *   **[ ] Run on `file_dir_detection`. Verify output `Vec` has the correct length. Verify all `Result`s are `Ok`.**
@@ -77,6 +77,20 @@
 *   **[x] Test Determinism:** (Covered by `determinism::determinism_tests::test_phase2_determinism`)
     *   Run `run_phase1_phase2` multiple times on the *same* fixture crate.
     *   Assert that the resulting `CodeGraph` structures are identical (using `assert_eq!` if `CodeGraph` derives `PartialEq`, otherwise compare field by field, potentially skipping UUIDs if comparison is too complex).
+        * Covered: All current fixtures in the `tests/fixtures_crates_dir`: 
+            *  `tests/fixture_crates/duplicate_name_fixture_1`
+            *  `tests/fixture_crates/duplicate_name_fixture_2`
+            *  `tests/fixture_crates/subdir/duplicate_name_fixture_3`
+            *  `tests/fixture_crates/example_crate`
+            *  `tests/fixture_crates/file_dir_detection`
+            *  `tests/fixture_crates/fixture_attributes`
+            *  `tests/fixture_crates/fixture_cyclic_types`
+            *  `tests/fixture_crates/fixture_edge_cases`
+            *  `tests/fixture_crates/fixture_generics`
+            *  `tests/fixture_crates/fixture_macros`
+            *  `tests/fixture_crates/fixture_tracking_hash`
+            *  `tests/fixture_crates/fixture_types`
+            *  `tests/fixture_crates/simple_crate`
     *   **(Advanced):** If possible, capture and compare the actual generated UUIDs within a single run's output graph to ensure internal consistency (e.g., a specific function parameter always links to the same synthetic `TypeId`).
 
 ### 4.2 Graph Node Verification
