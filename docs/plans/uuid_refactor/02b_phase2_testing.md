@@ -97,7 +97,7 @@
 
 (Partially covered by `basic::phase2_tests::test_simple_crate_phase2_output` and `ids::phase2_id_tests::test_synthetic_ids_and_hashes_present_simple_crate`. Needs systematic checks for all node types and fields.)
 
-*   **[/] Functions (`ItemFn`):** (Basic ID/Hash/Param/Return presence checked)
+*   **[x] Functions (`ItemFn`):** (Basic ID/Hash/Param/Return presence checked)
     *   Verify `FunctionNode` exists in `graph.functions`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.

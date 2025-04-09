@@ -591,6 +591,10 @@ name = "fixture_macros"
 version = "0.1.0"
 
 [[package]]
+name = "fixture_nodes"
+version = "0.1.0"
+
+[[package]]
 name = "fixture_test_crate"
 version = "0.1.0"
 
