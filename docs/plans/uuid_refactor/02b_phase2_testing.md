@@ -97,21 +97,22 @@
 
 (Partially covered by `basic::phase2_tests::test_simple_crate_phase2_output` and `ids::phase2_id_tests::test_synthetic_ids_and_hashes_present_simple_crate`. Needs systematic checks for all node types and fields.)
 
-*   **[x] Functions (`ItemFn`):** (Basic ID/Hash/Param/Return presence checked)
+*   **✅  Functions (`ItemFn`):** (Extremely paranoid tests, see [functions test])
     *   Verify `FunctionNode` exists in `graph.functions`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Assert `parameters` contains correct `ParamData` with `TypeId::Synthetic(_)`.
     *   Assert `return_type` (if present) is `Some(TypeId::Synthetic(_))`.
-    *   **[ ] Verify other fields (name, visibility, generics, attributes, docstring, body string).**
-*   **[ ] Structs (`ItemStruct`):**
+    *   **✅  Verify other fields (name, visibility, generics, attributes, docstring, body string).**
+*  ✅  **Structs (`ItemStruct`):** (marked complete, see [structs test])
     *   Verify `TypeDefNode::Struct` exists in `graph.defined_types`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Verify `fields` contains `FieldNode`s.
         *   Assert `FieldNode.id` is `NodeId::Synthetic(_)`.
         *   Assert `FieldNode.type_id` is `TypeId::Synthetic(_)`.
-    *   Verify other fields (name, visibility, generics, attributes, docstring).
+    * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
+        * ✅  Each tested in isolation, verifying other fields empty, see structs test above.
 *   **[ ] Enums (`ItemEnum`):**
     *   Verify `TypeDefNode::Enum` exists.
     *   Assert `id` is `NodeId::Synthetic(_)`.
@@ -119,7 +120,7 @@
     *   Verify `variants` contains `VariantNode`s.
         *   Assert `VariantNode.id` is `NodeId::Synthetic(_)`.
         *   Verify `VariantNode.fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
-    *   Verify other fields (name, visibility, generics, attributes, docstring).
+    *    Verify other fields (name, visibility, generics, attributes, docstring).
 *   **[ ] Type Aliases (`ItemType`):**
     *   Verify `TypeDefNode::TypeAlias` exists.
     *   Assert `id` is `NodeId::Synthetic(_)`.
@@ -178,9 +179,14 @@
     *   Verify relation exists between module `NodeId::Synthetic` and contained item `NodeId::Synthetic`.
     *   Check `source` is `GraphId::Node(module_id)`.
     *   Check `target` is `GraphId::Node(item_id)`.
+    *   **Very Important Test**: The `RelationKind::Contains` is at the heart of our approach to Phase 3, so this should receive "Paranoid" level testing.
+    *   ❗ Verify that **all** of the nodes in 4.2 have *exactly one*
+    `RelationKind::Contains` relation, where their containing `ModuleNode` is
+    the source and the node is the target. 
 *   **[ ] `StructField` / `EnumVariant` Fields:**
     *   Verify relation exists between struct/enum/variant `NodeId::Synthetic` and field `NodeId::Synthetic`.
     *   Check `source` is `GraphId::Node(parent_id)`.
+        * Basic test for struct relations in [structs test]
     *   Check `target` is `GraphId::Node(field_id)`.
     *   **Crucially:** Test the case where `FieldNode.id` was generated via `generate_synthetic_node_id` directly, ensuring this relation is still created correctly.
 *   **[ ] `FunctionParameter` / `FunctionReturn`:**
@@ -276,3 +282,6 @@
 *   Mark tests that expose known limitations (like `TrackingHash` sensitivity) appropriately.
 
 This plan provides a comprehensive roadmap for testing Phase 2. We can refine and add more specific test cases as we proceed with implementation.
+
+[structs test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/structs.rs
+[functions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs
