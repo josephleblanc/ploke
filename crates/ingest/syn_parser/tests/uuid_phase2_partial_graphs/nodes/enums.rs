@@ -1,28 +1,12 @@
 #![cfg(feature = "uuid_ids")] // Gate the whole module
 use crate::common::uuid_ids_utils::*;
-use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::{NodeId, TypeId};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use syn_parser::parser::types::TypeKind; // Import EnumNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{nodes::EnumNode, types::TypeKind}; // Import EnumNode specifically
-use syn_parser::{
-    discovery::{run_discovery_phase, DiscoveryOutput},
-    parser::{
-        analyze_files_parallel,
-        graph::CodeGraph,
-        nodes::{
-            FieldNode, FunctionNode, ImplNode, ImportNode, ModuleNode, StructNode, TraitNode,
-            TypeDefNode, ValueNode, Visible,
-        },
-        relations::{GraphId, Relation, RelationKind},
-        types::{GenericParamKind, TypeNode},
-        visitor::ParsedCodeGraph,
-    },
+use syn_parser::parser::{
+    nodes::Visible,
+    relations::{GraphId, RelationKind},
 };
-use uuid::Uuid;
 
 // --- Test Cases ---
 
@@ -201,17 +185,44 @@ fn test_other_enum_nodes() {
     assert!(enum1_node.generic_params.is_empty());
     assert_eq!(enum1_node.variants.len(), 2);
 
-    let variant1_1 = enum1_node.variants.iter().find(|v| v.name == "Variant1").expect("Variant1 not found in SampleEnum1");
-    let variant1_2 = enum1_node.variants.iter().find(|v| v.name == "Variant2").expect("Variant2 not found in SampleEnum1");
+    let variant1_1 = enum1_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant1")
+        .expect("Variant1 not found in SampleEnum1");
+    let variant1_2 = enum1_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant2")
+        .expect("Variant2 not found in SampleEnum1");
     assert!(variant1_1.fields.is_empty());
     assert!(variant1_2.fields.is_empty());
 
     // Relations for SampleEnum1
-    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id();
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(enum1_node.id()), RelationKind::Contains, "Module->SampleEnum1");
-    assert_relation_exists(graph, GraphId::Node(enum1_node.id()), GraphId::Node(variant1_1.id), RelationKind::EnumVariant, "SampleEnum1->Variant1");
-    assert_relation_exists(graph, GraphId::Node(enum1_node.id()), GraphId::Node(variant1_2.id), RelationKind::EnumVariant, "SampleEnum1->Variant2");
-
+    let module_id = find_inline_module_by_path(graph, &module_path)
+        .unwrap()
+        .id();
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(enum1_node.id()),
+        RelationKind::Contains,
+        "Module->SampleEnum1",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum1_node.id()),
+        GraphId::Node(variant1_1.id),
+        RelationKind::EnumVariant,
+        "SampleEnum1->Variant1",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum1_node.id()),
+        GraphId::Node(variant1_2.id),
+        RelationKind::EnumVariant,
+        "SampleEnum1->Variant2",
+    );
 
     // --- Test EnumWithData ---
     let enum_data_name = "EnumWithData";
@@ -234,7 +245,11 @@ fn test_other_enum_nodes() {
     assert_eq!(enum_data_node.variants.len(), 2);
 
     // Variant1(i32)
-    let variant_data_1 = enum_data_node.variants.iter().find(|v| v.name == "Variant1").expect("Variant1 not found in EnumWithData");
+    let variant_data_1 = enum_data_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant1")
+        .expect("Variant1 not found in EnumWithData");
     assert_eq!(variant_data_1.fields.len(), 1);
     let field_data_1 = &variant_data_1.fields[0];
     assert!(field_data_1.name.is_none()); // Tuple variant field
@@ -243,7 +258,11 @@ fn test_other_enum_nodes() {
     assert!(matches!(&field_type_node_1.kind, TypeKind::Named { path, .. } if path == &["i32"]));
 
     // Variant2(String)
-    let variant_data_2 = enum_data_node.variants.iter().find(|v| v.name == "Variant2").expect("Variant2 not found in EnumWithData");
+    let variant_data_2 = enum_data_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant2")
+        .expect("Variant2 not found in EnumWithData");
     assert_eq!(variant_data_2.fields.len(), 1);
     let field_data_2 = &variant_data_2.fields[0];
     assert!(field_data_2.name.is_none()); // Tuple variant field
@@ -252,12 +271,41 @@ fn test_other_enum_nodes() {
     assert!(matches!(&field_type_node_2.kind, TypeKind::Named { path, .. } if path == &["String"]));
 
     // Relations for EnumWithData
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(enum_data_node.id()), RelationKind::Contains, "Module->EnumWithData");
-    assert_relation_exists(graph, GraphId::Node(enum_data_node.id()), GraphId::Node(variant_data_1.id), RelationKind::EnumVariant, "EnumWithData->Variant1");
-    assert_relation_exists(graph, GraphId::Node(enum_data_node.id()), GraphId::Node(variant_data_2.id), RelationKind::EnumVariant, "EnumWithData->Variant2");
-    assert_relation_exists(graph, GraphId::Node(variant_data_1.id), GraphId::Node(field_data_1.id), RelationKind::VariantField, "EnumWithData::Variant1->Field0");
-    assert_relation_exists(graph, GraphId::Node(variant_data_2.id), GraphId::Node(field_data_2.id), RelationKind::VariantField, "EnumWithData::Variant2->Field0");
-
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(enum_data_node.id()),
+        RelationKind::Contains,
+        "Module->EnumWithData",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum_data_node.id()),
+        GraphId::Node(variant_data_1.id),
+        RelationKind::EnumVariant,
+        "EnumWithData->Variant1",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum_data_node.id()),
+        GraphId::Node(variant_data_2.id),
+        RelationKind::EnumVariant,
+        "EnumWithData->Variant2",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(variant_data_1.id),
+        GraphId::Node(field_data_1.id),
+        RelationKind::VariantField,
+        "EnumWithData::Variant1->Field0",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(variant_data_2.id),
+        GraphId::Node(field_data_2.id),
+        RelationKind::VariantField,
+        "EnumWithData::Variant2->Field0",
+    );
 
     // --- Test DocumentedEnum ---
     let enum_doc_name = "DocumentedEnum";
@@ -282,16 +330,42 @@ fn test_other_enum_nodes() {
     assert!(enum_doc_node.docstring.is_some());
     assert_eq!(
         enum_doc_node.docstring.as_deref(),
-        Some(" This is a documented enum") // Note leading space
+        Some("This is a documented enum") // Note leading space
     );
 
-    let variant_doc_1 = enum_doc_node.variants.iter().find(|v| v.name == "Variant1").expect("Variant1 not found in DocumentedEnum");
-    let variant_doc_2 = enum_doc_node.variants.iter().find(|v| v.name == "Variant2").expect("Variant2 not found in DocumentedEnum");
+    let variant_doc_1 = enum_doc_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant1")
+        .expect("Variant1 not found in DocumentedEnum");
+    let variant_doc_2 = enum_doc_node
+        .variants
+        .iter()
+        .find(|v| v.name == "Variant2")
+        .expect("Variant2 not found in DocumentedEnum");
     assert!(variant_doc_1.fields.is_empty());
     assert!(variant_doc_2.fields.is_empty());
 
     // Relations for DocumentedEnum
-    assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(enum_doc_node.id()), RelationKind::Contains, "Module->DocumentedEnum");
-    assert_relation_exists(graph, GraphId::Node(enum_doc_node.id()), GraphId::Node(variant_doc_1.id), RelationKind::EnumVariant, "DocumentedEnum->Variant1");
-    assert_relation_exists(graph, GraphId::Node(enum_doc_node.id()), GraphId::Node(variant_doc_2.id), RelationKind::EnumVariant, "DocumentedEnum->Variant2");
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(enum_doc_node.id()),
+        RelationKind::Contains,
+        "Module->DocumentedEnum",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum_doc_node.id()),
+        GraphId::Node(variant_doc_1.id),
+        RelationKind::EnumVariant,
+        "DocumentedEnum->Variant1",
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(enum_doc_node.id()),
+        GraphId::Node(variant_doc_2.id),
+        RelationKind::EnumVariant,
+        "DocumentedEnum->Variant2",
+    );
 }

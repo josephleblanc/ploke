@@ -2,6 +2,7 @@
 mod enums;
 mod functions;
 mod structs;
+mod type_alias;
 // Add other node types here later:
 //   type_alias
 //   unions

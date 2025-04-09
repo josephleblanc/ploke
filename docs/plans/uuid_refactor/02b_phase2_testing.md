@@ -98,29 +98,30 @@
 (Partially covered by `basic::phase2_tests::test_simple_crate_phase2_output` and `ids::phase2_id_tests::test_synthetic_ids_and_hashes_present_simple_crate`. Needs systematic checks for all node types and fields.)
 
 *   **✅  Functions (`ItemFn`):** (Extremely paranoid tests, see [functions test])
-    *   Verify `FunctionNode` exists in `graph.functions`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Assert `parameters` contains correct `ParamData` with `TypeId::Synthetic(_)`.
-    *   Assert `return_type` (if present) is `Some(TypeId::Synthetic(_))`.
+    *  ✅  Verify `FunctionNode` exists in `graph.functions`.
+    *  ✅  Assert `id` is `NodeId::Synthetic(_)`.
+    *  ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    *  ✅  Assert `parameters` contains correct `ParamData` with `TypeId::Synthetic(_)`.
+    *  ✅  Assert `return_type` (if present) is `Some(TypeId::Synthetic(_))`.
     *   **✅  Verify other fields (name, visibility, generics, attributes, docstring, body string).**
 *  ✅  **Structs (`ItemStruct`):** (marked complete, see [structs test])
-    *   Verify `TypeDefNode::Struct` exists in `graph.defined_types`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Verify `fields` contains `FieldNode`s.
+    *  ✅  Verify `TypeDefNode::Struct` exists in `graph.defined_types`.
+    *  ✅  Assert `id` is `NodeId::Synthetic(_)`.
+    *  ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    *  ✅  Verify `fields` contains `FieldNode`s.
         *   Assert `FieldNode.id` is `NodeId::Synthetic(_)`.
         *   Assert `FieldNode.type_id` is `TypeId::Synthetic(_)`.
     * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
         * ✅  Each tested in isolation, verifying other fields empty, see structs test above.
-*   **[ ] Enums (`ItemEnum`):**
-    *   Verify `TypeDefNode::Enum` exists.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Verify `variants` contains `VariantNode`s.
-        *   Assert `VariantNode.id` is `NodeId::Synthetic(_)`.
-        *   Verify `VariantNode.fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
-    *    Verify other fields (name, visibility, generics, attributes, docstring).
+*  ✅  **  Enums (`ItemEnum`):** (marked complete, see [enums test])
+    *  ✅  Verify `TypeDefNode::Enum` exists.
+    *  ✅  Assert `id` is `NodeId::Synthetic(_)`.
+    *  ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    *  ✅  Verify `variants` contains `VariantNode`s.
+    *  ✅  Verify `variants` contains `FieldNode`s.
+        * ✅   Assert `VariantNode.id` is `NodeId::Synthetic(_)`.
+        * ✅   Verify `VariantNode.fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
+    *  ✅  Verify other fields (name, visibility, generics, attributes, docstring).
 *   **[ ] Type Aliases (`ItemType`):**
     *   Verify `TypeDefNode::TypeAlias` exists.
     *   Assert `id` is `NodeId::Synthetic(_)`.
@@ -184,10 +185,16 @@
     `RelationKind::Contains` relation, where their containing `ModuleNode` is
     the source and the node is the target. 
 *   **[ ] `StructField` / `EnumVariant` Fields:**
-    *   Verify relation exists between struct/enum/variant `NodeId::Synthetic` and field `NodeId::Synthetic`.
-    *   Check `source` is `GraphId::Node(parent_id)`.
+    * 👷 Verify relation exists between struct/enum/variant `NodeId::Synthetic` and field `NodeId::Synthetic`.
         * Basic test for struct relations in [structs test]
+            * ✅ StructField: `StructNode` (n) -> `FieldNode` (n)
+        * Basic test for EnumNode relations in [enums test]
+            * ✅ EnumVariant: `EnumNode` (n) -> `VariantNode` (n)
+            * ✅ VariantField: `VariantNode` (n) -> `FieldNode` (n)
+    *   Check `source` is `GraphId::Node(parent_id)`. (grouped with Check `target`)
     *   Check `target` is `GraphId::Node(field_id)`.
+        * ✅ Contains: `ModuleNode` (n) -> `StructNode` (n) [structs test]
+        * ✅ Contains: `ModuleNode` (n) -> `EnumNode` (n) [enums test]
     *   **Crucially:** Test the case where `FieldNode.id` was generated via `generate_synthetic_node_id` directly, ensuring this relation is still created correctly.
 *   **[ ] `FunctionParameter` / `FunctionReturn`:**
     *   Verify relation exists between function `NodeId::Synthetic` and parameter/return `TypeId::Synthetic`.
@@ -210,6 +217,8 @@
     *   Verify relation exists between module `NodeId::Synthetic` and `ImportNode` `NodeId::Synthetic`.
     *   Check `source` is `GraphId::Node(module_id)`.
     *   Check `target` is `GraphId::Node(import_id)`.
+    *   ❗ Verify that **all** of the `TypeNode`s in 4.2 are either defined in the same crate or have a `ModuleImports` statement that applies to them.
+        *  May or may not be possible for glob imports. 🤔
 *   **(Others):** Add checks for `Method`, `EnumVariant`, `Inherits`, `MacroUse` as applicable.
 
 ### 4.4 Type System Verification
@@ -285,3 +294,4 @@ This plan provides a comprehensive roadmap for testing Phase 2. We can refine an
 
 [structs test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/structs.rs
 [functions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs
+[enums test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/enums.rs 

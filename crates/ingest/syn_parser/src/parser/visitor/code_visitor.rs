@@ -853,7 +853,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
                             attributes: extract_attributes(&field.attrs),
-                        };
+                        }; // Add relation between variant and named field
+                        #[cfg(feature = "uuid_ids")]
+                        self.state.code_graph.relations.push(Relation {
+                            source: GraphId::Node(variant_id),
+                            target: GraphId::Node(field_id),
+                            kind: RelationKind::VariantField,
+                        });
 
                         fields.push(field_node);
                     }
@@ -880,6 +886,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             visibility: self.state.convert_visibility(&field.vis),
                             attributes: extract_attributes(&field.attrs),
                         };
+                        // Add relation between variant and unnamed field
+                        #[cfg(feature = "uuid_ids")]
+                        self.state.code_graph.relations.push(Relation {
+                            source: GraphId::Node(variant_id),
+                            target: GraphId::Node(field_id),
+                            kind: RelationKind::VariantField,
+                        });
 
                         fields.push(field_node);
                     }

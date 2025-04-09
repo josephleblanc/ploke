@@ -20,7 +20,7 @@ pub enum DocumentedEnum {
 }
 // Sample with various enum types
 
-// Regular enum
+// Newtype variants in fields
 pub enum SampleEnum {
     Variant1,
     Variant2 { value: i32 },

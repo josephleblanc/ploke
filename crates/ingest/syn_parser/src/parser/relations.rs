@@ -49,6 +49,7 @@ pub enum RelationKind {
     StructField,
     Method, // e.g. StructNode -> FunctionNode
     EnumVariant,
+    VariantField,
     ImplementsFor,
     ImplementsTrait,
     Inherits,
