@@ -1321,6 +1321,129 @@ fn test_function_node_math_operation_producer_in_func_mod() {
     // TODO: Check underlying fn pointer type once alias resolution is better
 }
 
+// --- Tests for functions inside src/func/return_types.rs/restricted_duplicate ---
+
+#[test]
+fn test_function_node_consumes_point_in_restricted_duplicate() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "consumes_point";
+    let relative_file_path = "src/func/return_types.rs";
+    // Module path *within return_types.rs* for the nested module
+    let module_path = vec!["crate".to_string(), "restricted_duplicate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions (should be identical to consumes_point_in_func_mod)
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    // pub(crate) is parsed as Restricted(["crate"]) currently
+    assert_eq!(
+        func_node.visibility(),
+        VisibilityKind::Restricted(vec!["crate".to_string()])
+    );
+
+    // Parameters (point: Point)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("point"));
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Should resolve to the top-level Point alias (defined outside this module)
+    assert!(matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Point"]));
+
+    // Return Type (bool)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["bool"]));
+}
+
+#[test]
+fn test_function_node_generic_func_in_restricted_duplicate() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
+
+    let func_name = "generic_func";
+    let relative_file_path = "src/func/return_types.rs";
+    let module_path = vec!["crate".to_string(), "restricted_duplicate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions (should be identical to generic_func_in_func_mod)
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(
+        func_node.visibility(),
+        VisibilityKind::Restricted(vec!["crate".to_string()]) // pub(crate)
+    );
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Generics <T: Display + Clone, S: Send + Sync>
+    assert_eq!(func_node.generic_params.len(), 2);
+    // TODO: Add detailed checks for GenericParamNode kinds and bounds once implemented/needed
+
+    // Parameters (first: T, unused_param: S)
+    assert_eq!(func_node.parameters.len(), 2);
+    let param_t = &func_node.parameters[0];
+    let param_s = &func_node.parameters[1];
+
+    assert_eq!(param_t.name.as_deref(), Some("first"));
+    assert_eq!(param_s.name.as_deref(), Some("unused_param"));
+
+    let type_t = find_type_node(graph, param_t.type_id);
+    let type_s = find_type_node(graph, param_s.type_id);
+
+    // Check parameter types refer to the generic names
+    assert!(matches!(&type_t.kind, TypeKind::Named { path, .. } if path == &["T"]));
+    assert!(matches!(&type_s.kind, TypeKind::Named { path, .. } if path == &["S"]));
+
+    // Return Type (T)
+    assert!(func_node.return_type.is_some());
+    let return_type_id = func_node.return_type.unwrap();
+    // Should be the same TypeId as the 'T' parameter
+    assert_eq!(return_type_id, param_t.type_id);
+    let return_type_node = find_type_node(graph, return_type_id);
+    assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["T"]));
+}
+
 
 // TODO: Add tests for the corresponding functions inside duplicate_names module (process_ref, process_mut_ref, process_const_ptr, process_mut_ptr, apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example).
-// TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate
+// TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate (math_operation_consumer, math_operation_producer)
