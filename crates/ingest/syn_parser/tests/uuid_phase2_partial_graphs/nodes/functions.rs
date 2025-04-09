@@ -3,10 +3,10 @@
 
 use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId}; // Remove VisibilityKind from here
+use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
 use syn_parser::{
     parser::{
         graph::CodeGraph,
-        nodes::VisibilityKind, // Import VisibilityKind from its correct location
         nodes::{FunctionNode, ParamData, TypeDefNode, Visible},
         types::{TypeKind, TypeNode},
         visitor::ParsedCodeGraph, // Use the correct existing struct
@@ -62,12 +62,7 @@ fn find_function_node_paranoid<'a>(
         .modules
         .iter()
         .find(|m| m.path == expected_module_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ModuleNode not found for path: {:?}",
-                expected_module_path
-            )
-        });
+        .unwrap_or_else(|| panic!("ModuleNode not found for path: {:?}", expected_module_path));
 
     let module_candidates: Vec<&FunctionNode> = name_candidates
         .into_iter()
@@ -159,7 +154,8 @@ fn test_function_node_process_tuple() {
     // Current state: Falls back to Unknown because TypeKind::Path processing doesn't fully resolve aliases yet
     assert!(
         matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Point"]),
-        "Expected TypeKind::Named for alias 'Point', found {:?}", param_type_node.kind
+        "Expected TypeKind::Named for alias 'Point', found {:?}",
+        param_type_node.kind
     );
     // TODO: Once alias resolution is deeper, this should check the underlying tuple type.
 
@@ -172,7 +168,8 @@ fn test_function_node_process_tuple() {
     let return_type_node = find_type_node(graph, return_type_id);
     assert!(
         matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]),
-       "Expected TypeKind::Named for 'i32', found {:?}", return_type_node.kind
+        "Expected TypeKind::Named for 'i32', found {:?}",
+        return_type_node.kind
     );
 }
 
@@ -187,13 +184,8 @@ fn test_function_node_process_slice() {
     let func_name = "process_slice";
     let module_path = vec!["crate".to_string()];
 
-    let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
-        &module_path,
-        func_name,
-    );
+    let func_node =
+        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
@@ -214,17 +206,17 @@ fn test_function_node_process_slice() {
     // Check parameter TypeNode (&[u8])
     let param_type_node = find_type_node(graph, param.type_id);
     // Current state: Falls back to Unknown because TypeKind::Slice not implemented
-     assert!(
-         matches!(param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "& [u8]"),
-         "Expected TypeKind::Unknown for '&[u8]' currently, found {:?}", param_type_node.kind
-     );
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Unknown { type_str } if type_str == "& [u8]"),
+        "Expected TypeKind::Unknown for '&[u8]' currently, found {:?}",
+        param_type_node.kind
+    );
     #[ignore = "TypeKind::Slice not yet handled in type_processing.rs"]
     {
         // Target state assertion (will fail until implemented)
         // assert!(matches!(param_type_node.kind, TypeKind::Slice { .. }));
         // assert_eq!(param_type_node.related_types.len(), 1); // Should relate to u8
     }
-
 
     // Return Type
     assert!(func_node.return_type.is_some());
@@ -233,10 +225,11 @@ fn test_function_node_process_slice() {
 
     // Check return TypeNode (usize)
     let return_type_node = find_type_node(graph, return_type_id);
-     assert!(
-         matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["usize"]),
-        "Expected TypeKind::Named for 'usize', found {:?}", return_type_node.kind
-     );
+    assert!(
+        matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["usize"]),
+        "Expected TypeKind::Named for 'usize', found {:?}",
+        return_type_node.kind
+    );
 }
 
 #[test]
@@ -250,13 +243,8 @@ fn test_function_node_process_array() {
     let func_name = "process_array";
     let module_path = vec!["crate".to_string()];
 
-    let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
-        &module_path,
-        func_name,
-    );
+    let func_node =
+        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
@@ -272,10 +260,11 @@ fn test_function_node_process_array() {
 
     // Check parameter TypeNode (Buffer -> [u8; 1024])
     let param_type_node = find_type_node(graph, param.type_id);
-     assert!(
-         matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Buffer"]),
-         "Expected TypeKind::Named for alias 'Buffer', found {:?}", param_type_node.kind
-     );
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Buffer"]),
+        "Expected TypeKind::Named for alias 'Buffer', found {:?}",
+        param_type_node.kind
+    );
     // TODO: Deeper check for underlying array type once alias resolution is better
 
     // Return Type
@@ -285,10 +274,11 @@ fn test_function_node_process_array() {
 
     // Check return TypeNode (u8)
     let return_type_node = find_type_node(graph, return_type_id);
-     assert!(
-         matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["u8"]),
-        "Expected TypeKind::Named for 'u8', found {:?}", return_type_node.kind
-     );
+    assert!(
+        matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["u8"]),
+        "Expected TypeKind::Named for 'u8', found {:?}",
+        return_type_node.kind
+    );
 }
 
 #[test]
@@ -302,13 +292,8 @@ fn test_function_node_process_ref() {
     let func_name = "process_ref";
     let module_path = vec!["crate".to_string()];
 
-    let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
-        &module_path,
-        func_name,
-    );
+    let func_node =
+        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
@@ -326,27 +311,32 @@ fn test_function_node_process_ref() {
     let param_type_node = find_type_node(graph, param.type_id);
     assert!(
         matches!(&param_type_node.kind, TypeKind::Reference { is_mutable, .. } if !*is_mutable),
-       "Expected TypeKind::Reference (immutable), found {:?}", param_type_node.kind
+        "Expected TypeKind::Reference (immutable), found {:?}",
+        param_type_node.kind
     );
-    assert_eq!(param_type_node.related_types.len(), 1, "Reference should have one related type (String)");
+    assert_eq!(
+        param_type_node.related_types.len(),
+        1,
+        "Reference should have one related type (String)"
+    );
     let referenced_type_id = param_type_node.related_types[0];
     let referenced_type_node = find_type_node(graph, referenced_type_id);
-     assert!(
-         matches!(&referenced_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]),
-        "Expected referenced type to be 'String', found {:?}", referenced_type_node.kind
-     );
-
+    assert!(
+        matches!(&referenced_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]),
+        "Expected referenced type to be 'String', found {:?}",
+        referenced_type_node.kind
+    );
 
     // Return Type (usize)
     assert!(func_node.return_type.is_some());
     let return_type_id = func_node.return_type.unwrap();
     let return_type_node = find_type_node(graph, return_type_id);
-     assert!(
-         matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["usize"]),
-        "Expected TypeKind::Named for 'usize', found {:?}", return_type_node.kind
-     );
+    assert!(
+        matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["usize"]),
+        "Expected TypeKind::Named for 'usize', found {:?}",
+        return_type_node.kind
+    );
 }
-
 
 #[test]
 fn test_function_node_process_mut_ref() {
@@ -359,13 +349,8 @@ fn test_function_node_process_mut_ref() {
     let func_name = "process_mut_ref";
     let module_path = vec!["crate".to_string()];
 
-    let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
-        &module_path,
-        func_name,
-    );
+    let func_node =
+        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
 
     // Assertions
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
@@ -383,20 +368,25 @@ fn test_function_node_process_mut_ref() {
     let param_type_node = find_type_node(graph, param.type_id);
     assert!(
         matches!(&param_type_node.kind, TypeKind::Reference { is_mutable, .. } if *is_mutable),
-       "Expected TypeKind::Reference (mutable), found {:?}", param_type_node.kind
+        "Expected TypeKind::Reference (mutable), found {:?}",
+        param_type_node.kind
     );
-     assert_eq!(param_type_node.related_types.len(), 1, "Reference should have one related type (String)");
-     let referenced_type_id = param_type_node.related_types[0];
-     let referenced_type_node = find_type_node(graph, referenced_type_id);
-      assert!(
-          matches!(&referenced_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]),
-         "Expected referenced type to be 'String', found {:?}", referenced_type_node.kind
-      );
+    assert_eq!(
+        param_type_node.related_types.len(),
+        1,
+        "Reference should have one related type (String)"
+    );
+    let referenced_type_id = param_type_node.related_types[0];
+    let referenced_type_node = find_type_node(graph, referenced_type_id);
+    assert!(
+        matches!(&referenced_type_node.kind, TypeKind::Named { path, .. } if path == &["String"]),
+        "Expected referenced type to be 'String', found {:?}",
+        referenced_type_node.kind
+    );
 
     // Return Type (implicit unit `()`)
     assert!(func_node.return_type.is_none()); // Implicit unit
 }
-
 
 // --- Tests for functions inside `duplicate_names` module ---
 
@@ -412,13 +402,8 @@ fn test_function_node_process_tuple_in_duplicate_names() {
     // Module path as recorded during Phase 2 parse of lib.rs
     let module_path = vec!["crate".to_string(), "duplicate_names".to_string()];
 
-    let func_node = find_function_node_paranoid(
-        graph,
-        crate_namespace,
-        file_path,
-        &module_path,
-        func_name,
-    );
+    let func_node =
+        find_function_node_paranoid(graph, crate_namespace, file_path, &module_path, func_name);
 
     // Basic Assertions (should be similar to the top-level one)
     assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
@@ -435,21 +420,22 @@ fn test_function_node_process_tuple_in_duplicate_names() {
     // Check type kind - should reference the 'Point' defined *within* duplicate_names
     // This requires checking the TypeNode's path or related types carefully.
     // For now, assert it's Named "Point". Phase 3 resolves which "Point" it is.
-     assert!(
-         matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Point"]),
-         "Expected TypeKind::Named for alias 'Point' (in duplicate_names), found {:?}", param_type_node.kind
-     );
-
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Named { path, .. } if path == &["Point"]),
+        "Expected TypeKind::Named for alias 'Point' (in duplicate_names), found {:?}",
+        param_type_node.kind
+    );
 
     // Return Type
     assert!(func_node.return_type.is_some());
     let return_type_id = func_node.return_type.unwrap();
     assert!(matches!(return_type_id, TypeId::Synthetic(_)));
     let return_type_node = find_type_node(graph, return_type_id);
-     assert!(
-         matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]),
-        "Expected TypeKind::Named for 'i32', found {:?}", return_type_node.kind
-     );
+    assert!(
+        matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["i32"]),
+        "Expected TypeKind::Named for 'i32', found {:?}",
+        return_type_node.kind
+    );
 
     // Add more assertions for other functions in duplicate_names...
     // test_function_node_process_slice_in_duplicate_names
