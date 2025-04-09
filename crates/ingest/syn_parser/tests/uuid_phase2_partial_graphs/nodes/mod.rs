@@ -1,6 +1,7 @@
 // Declare node-specific test modules
 mod enums;
 mod functions;
+mod impls;
 mod structs;
 mod traits;
 mod type_alias;
