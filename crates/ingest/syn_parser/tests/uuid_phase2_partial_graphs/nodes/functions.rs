@@ -722,8 +722,82 @@ fn test_function_node_consumes_point_in_func_mod() {
     assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["bool"]));
 }
 
+#[test]
+fn test_function_node_draw_object() {
+    let fixture_name = "fixture_types";
+    let results: Vec<_> = run_phase1_phase2(fixture_name)
+        .into_iter()
+        .map(|res| res.expect("Parsing failed"))
+        .collect();
 
-// TODO: Add tests for draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example
+    let func_name = "draw_object";
+    let relative_file_path = "src/lib.rs";
+    let module_path = vec!["crate".to_string()];
+
+    let func_node = find_function_node_paranoid(
+        &results,
+        fixture_name,
+        relative_file_path,
+        &module_path,
+        func_name,
+    );
+
+    // Assertions
+    let graph = &results
+        .iter()
+        .find(|data| data.file_path.ends_with(relative_file_path))
+        .unwrap()
+        .graph;
+    assert!(matches!(func_node.id(), NodeId::Synthetic(_)));
+    assert!(
+        func_node.tracking_hash.is_some(),
+        "Tracking hash should be present"
+    );
+    assert_eq!(func_node.name(), func_name);
+    assert_eq!(func_node.visibility(), VisibilityKind::Public);
+    assert!(func_node.generic_params.is_empty());
+    assert!(func_node.attributes.is_empty());
+    assert!(func_node.docstring.is_none());
+
+    // Parameters (obj: &dyn Drawable)
+    assert_eq!(func_node.parameters.len(), 1);
+    let param = &func_node.parameters[0];
+    assert_eq!(param.name.as_deref(), Some("obj"));
+    assert!(matches!(param.type_id, TypeId::Synthetic(_)));
+
+    // Check parameter TypeNode (&dyn Drawable)
+    let param_type_node = find_type_node(graph, param.type_id);
+    // Should be an immutable reference
+    assert!(
+        matches!(&param_type_node.kind, TypeKind::Reference { is_mutable, .. } if !*is_mutable),
+        "Expected TypeKind::Reference (immutable) for '&dyn Drawable', found {:?}",
+        param_type_node.kind
+    );
+    // Check the referenced type (dyn Drawable)
+    assert_eq!(param_type_node.related_types.len(), 1, "Reference should have one related type (dyn Drawable)");
+    let trait_object_type_id = param_type_node.related_types[0];
+    let trait_object_type_node = find_type_node(graph, trait_object_type_id);
+    // The underlying trait object type currently falls back to Unknown because TypeKind::TraitObject is not implemented
+    assert!(
+        matches!(&trait_object_type_node.kind, TypeKind::Unknown { type_str } if type_str == "dyn Drawable"),
+        "Expected underlying type 'dyn Drawable' to be TypeKind::Unknown currently, found {:?}",
+        trait_object_type_node.kind
+    );
+
+    #[ignore = "TypeKind::TraitObject not yet handled in type_processing.rs"]
+    {
+        // Target state assertion for the underlying trait object type
+        // assert!(matches!(trait_object_type_node.kind, TypeKind::TraitObject { .. }));
+        // assert_eq!(trait_object_type_node.related_types.len(), 1); // Should relate to Drawable trait TypeId
+    }
+
+
+    // Return Type (implicit unit `()`)
+    assert!(func_node.return_type.is_none());
+}
+
+
+// TODO: Add tests for process_impl_trait_arg, create_impl_trait_return, inferred_type_example
 // TODO: Add tests for process_mut_ptr
 // TODO: Add tests for the corresponding functions inside duplicate_names module.
 // TODO: Add tests for functions inside src/func/return_types.rs (generic_func, math_operation_consumer, math_operation_producer)
