@@ -103,13 +103,11 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
                             match arg {
                                 GenericArgument::Type(arg_type) => {
                                     // Recurse: Get TypeId for the generic argument type
-                                    let arg_type_str = type_to_string(arg_type); // Stringify nested type
                                     related_types.push(get_or_create_type(state, arg_type));
                                 }
                                 GenericArgument::AssocType(assoc_type) => {
                                     // Recurse: Get TypeId for the associated type
                                     let assoc_type_ty = &assoc_type.ty;
-                                    let assoc_type_str = type_to_string(assoc_type_ty); // Stringify nested type
                                     related_types.push(get_or_create_type(state, assoc_type_ty));
                                 }
                                 // TODO: Handle Lifetime and Const generic arguments if needed
