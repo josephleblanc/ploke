@@ -305,7 +305,9 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
 }
 
 #[test]
-#[should_panic(expected = "TypeId for Self in SimpleStruct::new should be different from TypeId for Self in GenericStruct::print_value parameter")] // Expecting this to fail currently
+#[should_panic(
+    expected = "TypeId for Self in SimpleStruct::new should be different from TypeId for Self in GenericStruct::print_value parameter"
+)] // Expecting this to fail currently
 fn test_impl_node_self_type_conflation_phase2() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -329,14 +331,20 @@ fn test_impl_node_self_type_conflation_phase2() {
     let type_id_simple_struct = impl_node_ss.self_type; // TypeId for SimpleStruct
 
     // Find the 'new' method and its return TypeId (which is Self)
-    let method_new = impl_node_ss.methods.iter().find(|m| m.name() == "new").expect("Method 'new' not found");
-    let type_id_self_return_ss = method_new.return_type.expect("Expected return type for new method");
+    let method_new = impl_node_ss
+        .methods
+        .iter()
+        .find(|m| m.name() == "new")
+        .expect("Method 'new' not found");
+    let type_id_self_return_ss = method_new
+        .return_type
+        .expect("Expected return type for new method");
 
     // --- Get Data for impl<T: Debug> GenericStruct<T> ---
     // Note: Finding this impl is tricky with the current helper because the self_type string is complex.
     // We might need to iterate manually or enhance the helper later.
     // For now, let's find the method directly and assume it belongs to the correct impl.
-     let graph = &results
+    let graph = &results
         .iter()
         .find(|data| data.file_path.ends_with(relative_file_path))
         .unwrap()
@@ -345,7 +353,9 @@ fn test_impl_node_self_type_conflation_phase2() {
     // Find the print_value function node
     // We need a way to reliably find this specific function node. Let's assume find_function_node_paranoid works.
     // We need its parent impl context to be sure, but let's try finding the function first.
-    let method_print_value_candidates: Vec<&FunctionNode> = graph.functions.iter()
+    let method_print_value_candidates: Vec<&FunctionNode> = graph
+        .functions
+        .iter()
         .filter(|f| f.name() == "print_value")
         .collect();
     // We expect this method to be associated with an ImplNode, not directly in the module.
@@ -353,22 +363,31 @@ fn test_impl_node_self_type_conflation_phase2() {
     let mut parent_impl_node_gs: Option<&ImplNode> = None;
     let mut method_print_value_node: Option<&FunctionNode> = None;
     for impl_node in graph.impls.iter() {
-         if let Some(method) = impl_node.methods.iter().find(|m| m.name() == "print_value") {
-             // PARANOID CHECK: Ensure only one impl contains this method name
-             assert!(parent_impl_node_gs.is_none(), "Found multiple impls containing 'print_value'");
-             parent_impl_node_gs = Some(impl_node);
-             method_print_value_node = Some(method);
-         }
+        if let Some(method) = impl_node.methods.iter().find(|m| m.name() == "print_value") {
+            // PARANOID CHECK: Ensure only one impl contains this method name
+            assert!(
+                parent_impl_node_gs.is_none(),
+                "Found multiple impls containing 'print_value'"
+            );
+            parent_impl_node_gs = Some(impl_node);
+            method_print_value_node = Some(method);
+        }
     }
-    let method_print_value = method_print_value_node.expect("Method 'print_value' not found in any impl block");
+    let method_print_value =
+        method_print_value_node.expect("Method 'print_value' not found in any impl block");
 
     // Get the TypeId for the `&self` parameter's underlying `Self` type
-    assert!(method_print_value.parameters[0].is_self, "'print_value' first param should be self");
+    assert!(
+        method_print_value.parameters[0].is_self,
+        "'print_value' first param should be self"
+    );
     let self_param_type_id_gs = method_print_value.parameters[0].type_id; // This is TypeId for `& Self`
     let self_param_type_node_gs = find_type_node(graph, self_param_type_id_gs); // This is TypeNode for `& Self`
-    assert!(matches!(self_param_type_node_gs.kind, TypeKind::Reference { .. }), "Expected &Self param type to be a Reference");
+    assert!(
+        matches!(self_param_type_node_gs.kind, TypeKind::Reference { .. }),
+        "Expected &Self param type to be a Reference"
+    );
     let type_id_self_param_gs = self_param_type_node_gs.related_types[0]; // This should be the TypeId for `Self`
-
 
     // --- Assertions ---
 
@@ -387,12 +406,28 @@ fn test_impl_node_self_type_conflation_phase2() {
         type_id_self_return_ss, type_id_self_param_gs,
         "TypeId for Self in SimpleStruct::new should be different from TypeId for Self in GenericStruct::print_value parameter" // This message is for the #[should_panic]
     );
+
     // If the above assert_ne! passes, it means the TypeIds were different, which is unexpected. Panic manually.
     // Note: This manual panic might not be hit if the assert_ne! itself panics due to equality.
     // The #[should_panic] attribute is the primary mechanism here.
     // panic!("TEST FAILED: TypeId for Self was unexpectedly different across impl blocks: {:?} vs {:?}", type_id_self_return_ss, type_id_self_param_gs);
 
+    // WARNING: If the previous test passed then this test MUST fail (assert_eq! vs assert_ne!)
+    // This is only here as a sanity check and debug temporarily. Delete one of the two assertions
+    // after debugging is over and tests are stable
+    //     assert_eq!(
+    //         // Use assert_ne! here because the test should panic if they ARE equal
+    //         type_id_self_return_ss,
+    //         type_id_self_param_gs,
+    //         "typid of self_id_self_return_ss: {type_id_self_return_ss}
+    // typeid of type_id_self_param_gs: {type_id_self_param_gs}
+    // CONFIRMED_NE type_id_simple_struct: {type_id_simple_struct}
+    //
+    // parent_impl_node_gs: {:#?}
+    // method_print_value: {:#?}",
+    //         parent_impl_node_gs,
+    //         method_print_value
+    //     );
 }
-
 
 // TODO: Add combined test for remaining impl blocks

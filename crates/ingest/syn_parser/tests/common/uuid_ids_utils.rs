@@ -186,9 +186,12 @@ pub fn find_type_id_name(graph: &CodeGraph, ty_id: TypeId) -> Option<String> {
                 .functions
                 .iter()
                 .find(|f| f.return_type.is_some_and(|ret| ret == ty_id))
-                .map(|f| format!("Return type of fn name: {}", f.name))
+                .map(|f| format!("Return type of fn name: {:?}", f.return_type))
         });
-    // I think complete?
+    // .or_else(|| graph.impls.iter().find(|imp| imp.self_type == ty_id)
+    //     .map(|imp| imp.methods.iter().find(|f| f.))
+    // ); // TODO: Build this out more.
+    // I think complete? Nope, not complete
     found_name
 }
 pub fn find_name_by_graph_id(graph: &CodeGraph, graph_id: GraphId) -> Option<String> {

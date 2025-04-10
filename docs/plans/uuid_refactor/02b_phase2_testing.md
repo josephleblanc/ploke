@@ -122,32 +122,34 @@
         * ✅   Assert `VariantNode.id` is `NodeId::Synthetic(_)`.
         * ✅   Verify `VariantNode.fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
     *  ✅  Verify other fields (name, visibility, generics, attributes, docstring).
-*   **[ ] Type Aliases (`ItemType`):**
-    *   Verify `TypeDefNode::TypeAlias` exists.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Assert `type_id` (the aliased type) is `TypeId::Synthetic(_)`.
-    *   Verify other fields (name, visibility, generics, attributes, docstring).
-*   **[ ] Unions (`ItemUnion`):**
-    *   Verify `TypeDefNode::Union` exists.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Verify `fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
-    *   Verify other fields (name, visibility, generics, attributes, docstring).
-*   **[ ] Traits (`ItemTrait`):**
-    *   Verify `TraitNode` exists in `graph.traits` (or `private_traits`).
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
-    *   Assert `super_traits` contains `TypeId::Synthetic(_)`.
-    *   Verify other fields (name, visibility, generics, attributes, docstring).
-*   **[ ] Impls (`ItemImpl`):**
-    *   Verify `ImplNode` exists in `graph.impls`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `self_type` is `TypeId::Synthetic(_)`.
-    *   Assert `trait_type` (if present) is `Some(TypeId::Synthetic(_))`.
-    *   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
-    *   Verify generics.
+*  ✅  **  Type Aliases (`ItemType`):**
+    * ✅   Verify `TypeDefNode::TypeAlias` exists.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    * ✅   Assert `type_id` (the aliased type) is `TypeId::Synthetic(_)`.
+    * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
+*  ✅  ** Unions (`ItemUnion`):**
+    * ✅   Verify `TypeDefNode::Union` exists.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    * ✅  Verify `fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
+    * ✅  Verify other fields (name, visibility, generics, attributes, docstring).
+*  ✅  **[ ] Traits (`ItemTrait`):**
+    * ✅   Verify `TraitNode` exists in `graph.traits` (or `private_traits`).
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    * ✅   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
+    * ✅   Assert `super_traits` contains `TypeId::Synthetic(_)`.
+    * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
+*  ✅  **[ ] Impls (`ItemImpl`):**
+    * ✅   Verify `ImplNode` exists in `graph.impls`.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `self_type` is `TypeId::Synthetic(_)`.
+    * ✅   Assert `trait_type` (if present) is `Some(TypeId::Synthetic(_))`.
+        * DANGER: Current implementation of `TypeId` FAILS for two blocks with `Self` and/or `self`
+        * See documented limitation of Phase 2 [type conflation]
+    * ✅   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
+    * ✅   Verify generics.
 *   **[ ] Modules (`ItemMod`):**
     *   Verify `ModuleNode` exists in `graph.modules`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
@@ -295,3 +297,4 @@ This plan provides a comprehensive roadmap for testing Phase 2. We can refine an
 [structs test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/structs.rs
 [functions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs
 [enums test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/enums.rs 
+[type conflation]:./90_type_id_self_conflation_phase2.md
