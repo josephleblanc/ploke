@@ -25,10 +25,28 @@ use syn_parser::{
     },
 };
 
+use std::path::PathBuf;
+
 #[test]
 fn test_module_node_top_pub_mod_paranoid() {
     let fixture_name = "file_dir_detection";
-    let results = run_phase1_phase2(fixture_name);
+
+    // --- Test Setup: Directly call Phase 1 & 2 ---
+    // Note: Departing from run_phase1_phase2 helper to directly test analyze_files_parallel output handling.
+    let crate_path = fixtures_crates_dir().join(fixture_name);
+    let project_root = workspace_root(); // Use workspace root for context
+    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+        .expect("Phase 1 Discovery failed");
+
+    let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
+        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
+
+    // Collect successful results, panicking if any file failed to parse in Phase 2
+    let results: Vec<ParsedCodeGraph> = results_with_errors
+        .into_iter()
+        .map(|res| res.expect("Phase 2 parsing failed for a file"))
+        .collect();
+    // --- End Test Setup ---
 
     // Target: `pub mod top_pub_mod;` declared in main.rs, defined in top_pub_mod.rs
     // Declaration file (for finding graph initially, though helper searches all)
