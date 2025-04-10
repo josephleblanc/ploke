@@ -336,6 +336,8 @@ pub struct ModuleNode {
     #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
+    #[cfg(feature = "uuid_ids")]
+    pub is_file: bool,
 }
 
 // Represents a constant or static variable

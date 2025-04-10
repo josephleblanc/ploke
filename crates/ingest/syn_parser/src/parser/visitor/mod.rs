@@ -201,6 +201,7 @@ pub fn analyze_file_phase2(
         exports: Vec::new(),
         path: logical_module_path.clone(), // Use derived path
         tracking_hash: None,               // Root module conceptual, no specific content hash
+        is_file: false, // only for file-level modules, handled by analyze_files_parallel
         span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
     });
 

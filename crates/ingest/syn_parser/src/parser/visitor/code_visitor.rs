@@ -1439,6 +1439,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             span, // Assign the extracted span
             #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
+            is_file: false, // only for file-level modules, handled by analyze_files_parallel
         };
 
         // Restore parent path after processing module

@@ -59,6 +59,7 @@ fn test_module_node_top_pub_mod_paranoid() {
         fixture_name,
         definition_file, // Check the graph associated with the definition file
         &module_path,
+        true,
     );
 
     // --- Assertions ---

@@ -1084,6 +1084,7 @@ pub fn find_module_node_paranoid<'a>(
     fixture_name: &str,                   // Needed to construct expected path
     relative_file_path: &str,             // File where the module is *declared* or defined inline
     expected_module_path: &[String],      // The full path of the module itself
+    expected_is_file: bool,
 ) -> &'a ModuleNode {
     // 1. Construct the absolute expected file path where the module is declared/defined
     let fixture_root = fixtures_crates_dir().join(fixture_name);
@@ -1105,7 +1106,7 @@ pub fn find_module_node_paranoid<'a>(
             data.graph
                 .modules
                 .iter()
-                .find(|m| m.path == expected_module_path)
+                .find(|m| m.is_file == expected_is_file && m.path == expected_module_path)
         })
         .unwrap_or_else(|| {
             panic!(
@@ -1168,7 +1169,6 @@ pub fn find_module_node_paranoid<'a>(
         "Mismatch between module's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') found in file '{}' with span {:?}.",
         module_id, regenerated_id, expected_module_path, module_name, file_path_where_found.display(), actual_span
     );
-
 
     // 6. Return the validated node reference
     target_module_node
