@@ -2,6 +2,7 @@
 mod enums;
 mod functions;
 mod impls;
+mod modules;
 mod structs;
 mod traits;
 mod type_alias;
