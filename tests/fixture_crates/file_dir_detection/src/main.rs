@@ -10,9 +10,19 @@ pub mod top_pub_mod;
 // Add a private top-level module declared via file
 mod top_priv_mod;
 
+// Add a crate-visible top-level module declared via file
+pub(crate) mod crate_visible_mod;
+
+// Add a module declared via #[path] attribute
+#[path = "custom_path/real_file.rs"]
+pub mod logical_name;
+
 // Add an inline public module
 pub mod inline_pub_mod {
     pub fn inline_pub_func() {}
+
+    // Function with a name duplicated elsewhere
+    pub fn duplicate_name() -> u8 { 1 }
 
     // Nested inline private module
     mod inline_nested_priv {
@@ -22,6 +32,11 @@ pub mod inline_pub_mod {
         pub mod inline_nested_pub_in_priv {
             pub fn deep_inline_pub_func() {}
         }
+    }
+
+    // Nested inline super-visible module
+    pub(super) mod super_visible_inline {
+        pub fn super_visible_func() {}
     }
 }
 
@@ -41,6 +56,9 @@ pub fn main_pub_func() {}
 // A top-level private function
 fn main_priv_func() {}
 
+// Function with a name duplicated elsewhere
+pub fn duplicate_name() -> u8 { 0 }
+
 // Main function (optional, but good practice for a binary crate root)
 fn main() {
     println!("File Dir Detection Fixture");
@@ -50,6 +68,16 @@ fn main() {
     // inline_priv_mod::inline_priv_func(); // Private
     inline_priv_mod::inline_nested_pub::inline_nested_pub_func(); // Public within private
     top_pub_mod::top_pub_func();
-    // top_priv_mod::top_priv_func(); // Private module
-    top_priv_mod::nested_pub_in_priv::nested_pub_func(); // Public within private
+    // top_priv_mod::top_priv_func(); // Private module function, but module is private
+    top_priv_mod::nested_pub_in_priv::nested_pub_func(); // Public function in public mod within private mod
+    crate_visible_mod::crate_vis_func(); // Crate visible module's function
+    logical_name::item_in_real_file(); // Item from module declared via #[path]
+
+    // Demonstrate name duplication is valid
+    let _val0 = duplicate_name(); // Calls crate::duplicate_name
+    let _val1 = inline_pub_mod::duplicate_name(); // Calls crate::inline_pub_mod::duplicate_name
+    let _val2 = top_pub_mod::duplicate_name(); // Calls crate::top_pub_mod::duplicate_name
+
+    // Access item in super-visible module
+    inline_pub_mod::super_visible_inline::super_visible_func();
 }
