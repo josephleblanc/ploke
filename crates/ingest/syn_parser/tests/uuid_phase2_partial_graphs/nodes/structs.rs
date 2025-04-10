@@ -23,7 +23,7 @@ fn test_struct_node_generic_struct_paranoid() {
     let struct_name = "GenericStruct";
     let relative_file_path = "src/structs.rs";
     // Module path *within structs.rs* during Phase 2 parse is just ["crate"]
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
@@ -137,7 +137,7 @@ fn test_struct_node_sample_struct() {
 
     let struct_name = "SampleStruct";
     let relative_file_path = "src/structs.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
@@ -203,7 +203,7 @@ fn test_struct_node_tuple_struct() {
 
     let struct_name = "TupleStruct";
     let relative_file_path = "src/structs.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
@@ -285,7 +285,7 @@ fn test_struct_node_unit_struct() {
 
     let struct_name = "UnitStruct";
     let relative_file_path = "src/structs.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
@@ -338,7 +338,7 @@ fn test_struct_node_attributed_struct() {
 
     let struct_name = "AttributedStruct";
     let relative_file_path = "src/structs.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,
@@ -422,7 +422,7 @@ fn test_struct_node_documented_struct() {
 
     let struct_name = "DocumentedStruct";
     let relative_file_path = "src/structs.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "structs".to_string()];
 
     let struct_node = find_struct_node_paranoid(
         &results,

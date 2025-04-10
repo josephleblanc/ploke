@@ -21,7 +21,7 @@ fn test_trait_node_simple_trait_paranoid() {
 
     let trait_name = "SimpleTrait";
     let relative_file_path = "src/traits.rs";
-    let module_path = vec!["crate".to_string()]; // Defined at top level of file
+    let module_path = vec!["crate".to_string(), "traits".to_string()]; // Defined at top level of file
 
     let trait_node = find_trait_node_paranoid(
         &results,
@@ -91,7 +91,7 @@ fn test_trait_node_complex_generic_trait_paranoid() {
 
     let trait_name = "ComplexGenericTrait";
     let relative_file_path = "src/traits.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "traits".to_string()];
 
     let trait_node = find_trait_node_paranoid(
         &results,
@@ -177,19 +177,26 @@ fn test_other_trait_nodes() {
         .expect("ParsedCodeGraph for traits.rs not found")
         .graph;
 
-    let module_id_crate = find_inline_module_by_path(graph, &["crate".to_string()])
-        .expect("Failed to find top-level module node")
-        .id();
-    let module_id_inner =
-        find_inline_module_by_path(graph, &["crate".to_string(), "inner".to_string()])
-            .expect("Failed to find inner module node")
+    let module_id_crate =
+        find_inline_module_by_path(graph, &["crate".to_string(), "traits".to_string()])
+            .expect("Failed to find top-level module node")
             .id();
+    let module_id_inner = find_inline_module_by_path(
+        graph,
+        &[
+            "crate".to_string(),
+            "traits".to_string(),
+            "inner".to_string(),
+        ],
+    )
+    .expect("Failed to find inner module node")
+    .id();
 
     // --- Test Individual Traits ---
 
     // InternalTrait (private)
     let trait_name = "InternalTrait";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "traits".to_string()];
     let node = find_trait_node_paranoid(
         &results,
         fixture_name,
@@ -475,7 +482,11 @@ fn test_other_trait_nodes() {
     );
 
     // --- Traits inside `inner` module ---
-    let module_path_inner = vec!["crate".to_string(), "inner".to_string()];
+    let module_path_inner = vec![
+        "crate".to_string(),
+        "traits".to_string(),
+        "inner".to_string(),
+    ];
 
     // InnerSecretTrait (private in private mod)
     let trait_name = "InnerSecretTrait";
@@ -539,7 +550,7 @@ fn test_other_trait_nodes() {
     );
 
     // --- Traits with Self usage ---
-    let module_path = vec!["crate".to_string()]; // Back to top level
+    let module_path = vec!["crate".to_string(), "traits".to_string()]; // Back to top level
 
     // SelfUsageTrait
     let trait_name = "SelfUsageTrait";

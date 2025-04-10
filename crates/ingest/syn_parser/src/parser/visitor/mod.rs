@@ -3,7 +3,22 @@ use syn::visit::Visit;
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
-// Helper function to derive the logical module path from a file path relative to src
+/// Helper function to derive the logical module path from a file path relative to src
+///
+/// Examples:
+///  `some/user/dir/crate_name/src/main.rs` -> ["crate"]
+///  `some/user/dir/crate_name/src/lib.rs` -> ["crate"]
+///  `some/user/dir/crate_name/src/mod_one.rs` -> ["crate", "mod_one"]
+///  `some/user/dir/crate_name/src/mod_two/mod.rs` -> ["crate", "mod_two"]
+///  `some/user/dir/crate_name/src/mod_two/some_mod.rs` -> ["crate", "mod_two", "some_mod"]
+///  `some/user/dir/crate_name/src/mod_two/mod_three/mod.rs` -> ["crate", "mod_two", "mod_three"]
+///  .. etc
+///  
+// Goes through the file path provided by Phase 1's DiscoveryOutput, and processes the string into
+// the module path for the given file. Note that this is a helpful step in later resolution
+// handled in Phase 3, but is not sufficient to develop a fully reliable module path due to the
+// possibility of the #[path = ..] attribute.
+// DO NOT USE FOR NodeId::Resolved CREATION OR TypeId::Resolved, defer resolution to Phase 3
 #[cfg(feature = "uuid_ids")]
 fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
     let mut logical_path = vec!["crate".to_string()];
@@ -22,7 +37,10 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
         if let Some(last) = components.last() {
             if last == "mod.rs" || last == "lib.rs" || last == "main.rs" {
                 components.pop(); // Remove "mod.rs", "lib.rs", or "main.rs"
-            } else if let Some(stem) = Path::new(last).file_stem().and_then(|s| s.to_str()) {
+            } else if let Some(stem) = Path::new(&last.clone())
+                .file_stem()
+                .and_then(|s| s.to_str())
+            {
                 // Replace the filename with its stem
                 if let Some(last_mut) = components.last_mut() {
                     *last_mut = stem.to_string();
@@ -43,7 +61,6 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
     logical_path
 }
 
-
 mod attribute_processing;
 mod code_visitor;
 mod state;
@@ -54,7 +71,6 @@ pub use state::VisitorState;
 
 use crate::parser::{channel::ParserMessage, graph::CodeGraph};
 use flume::{Receiver, Sender};
-use std::path::{Path, PathBuf};
 use std::thread;
 
 #[cfg(feature = "uuid_ids")]
@@ -136,7 +152,7 @@ pub struct ParsedCodeGraph {
 #[cfg(feature = "uuid_ids")]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
-    crate_namespace: Uuid,        // Context passed from caller
+    crate_namespace: Uuid,            // Context passed from caller
     logical_module_path: Vec<String>, // NEW: The derived logical path for this file
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
@@ -184,7 +200,7 @@ pub fn analyze_file_phase2(
         imports: Vec::new(),
         exports: Vec::new(),
         path: logical_module_path.clone(), // Use derived path
-        tracking_hash: None, // Root module conceptual, no specific content hash
+        tracking_hash: None,               // Root module conceptual, no specific content hash
         span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
     });
 
@@ -246,7 +262,7 @@ pub fn analyze_files_parallel(
             // For each crate, parallelize over its files
             // Assume CrateContext has a `root_dir` field or similar
             // If not, we might need to adjust how src_dir is found
-            let crate_root_dir = crate_context.root_dir.clone(); // Assuming CrateContext has root_dir
+            let crate_root_dir = crate_context.root_path.clone(); // Assuming CrateContext has root_dir
             let src_dir = crate_root_dir.join("src");
 
             crate_context.files.par_iter().map(move |file_path| {

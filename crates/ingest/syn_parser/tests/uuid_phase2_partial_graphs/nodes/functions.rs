@@ -570,7 +570,11 @@ fn test_function_node_consumes_point_in_func_mod() {
     // Function is defined in src/func/return_types.rs
     let relative_file_path = "src/func/return_types.rs";
     // Module path *within return_types.rs*
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+    ];
 
     let func_node = find_function_node_paranoid(
         &results,
@@ -1048,7 +1052,11 @@ fn test_function_node_generic_func_in_func_mod() {
 
     let func_name = "generic_func";
     let relative_file_path = "src/func/return_types.rs";
-    let module_path = vec!["crate".to_string()]; // Defined directly in the file
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+    ]; // Defined directly in the file
 
     let func_node = find_function_node_paranoid(
         &results,
@@ -1115,7 +1123,11 @@ fn test_function_node_math_operation_consumer_in_func_mod() {
 
     let func_name = "math_operation_consumer";
     let relative_file_path = "src/func/return_types.rs";
-    let module_path = vec!["crate".to_string()]; // Private function
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+    ]; // private function
 
     let func_node = find_function_node_paranoid(
         &results,
@@ -1177,7 +1189,11 @@ fn test_function_node_math_operation_producer_in_func_mod() {
 
     let func_name = "math_operation_producer";
     let relative_file_path = "src/func/return_types.rs";
-    let module_path = vec!["crate".to_string()]; // Private function
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+    ];
 
     let func_node = find_function_node_paranoid(
         &results,
@@ -1228,9 +1244,13 @@ fn test_function_node_consumes_point_in_restricted_duplicate() {
         .collect();
 
     let func_name = "consumes_point";
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+    ];
     let relative_file_path = "src/func/return_types.rs";
     // Module path *within return_types.rs* for the nested module
-    let module_path = vec!["crate".to_string(), "restricted_duplicate".to_string()];
 
     let func_node = find_function_node_paranoid(
         &results,
@@ -1283,7 +1303,13 @@ fn test_function_node_generic_func_in_restricted_duplicate() {
 
     let func_name = "generic_func";
     let relative_file_path = "src/func/return_types.rs";
-    let module_path = vec!["crate".to_string(), "restricted_duplicate".to_string()];
+
+    let module_path = vec![
+        "crate".to_string(),
+        "func".to_string(),
+        "return_types".to_string(),
+        "restricted_duplicate".to_string(),
+    ];
 
     let func_node = find_function_node_paranoid(
         &results,

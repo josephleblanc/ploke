@@ -21,7 +21,7 @@ fn test_enum_node_sample_enum_paranoid() {
     let enum_name = "SampleEnum";
     let relative_file_path = "src/enums.rs";
     // Module path *within enums.rs* during Phase 2 parse is just ["crate"]
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "enums".to_string()];
 
     let enum_node = find_enum_node_paranoid(
         &results,
@@ -156,7 +156,7 @@ fn test_other_enum_nodes() {
         .collect();
 
     let relative_file_path = "src/enums.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "enums".to_string()];
 
     // --- Find the relevant graph ---
     let graph = &results

@@ -23,7 +23,7 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
     let self_type_str = "SimpleStruct"; // Match the type name string
     let trait_type_str = None;
     let relative_file_path = "src/impls.rs";
-    let module_path = vec!["crate".to_string()]; // Defined at top level of file
+    let module_path = vec!["crate".to_string(), "impls".to_string()]; // Defined at top level of file
 
     let impl_node = find_impl_node_paranoid(
         &results,
@@ -149,7 +149,7 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     let self_type_str = "GenericStruct < T >";
     let trait_type_str = Some("GenericTrait < T >");
     let relative_file_path = "src/impls.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "impls".to_string()];
 
     let impl_node = find_impl_node_paranoid(
         &results,
@@ -298,7 +298,7 @@ fn test_impl_node_self_type_conflation_phase2() {
         .collect();
 
     let relative_file_path = "src/impls.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "impls".to_string()];
 
     // --- Get Data for impl SimpleStruct ---
     let self_type_str_ss = "SimpleStruct";

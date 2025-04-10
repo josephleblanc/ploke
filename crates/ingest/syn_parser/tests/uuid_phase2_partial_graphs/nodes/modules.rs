@@ -2,10 +2,7 @@
 use crate::common::uuid_ids_utils::*;
 use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::{NodeId, TypeId};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 use syn_parser::parser::nodes::Attribute;
 use syn_parser::parser::nodes::TypeAliasNode; // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
@@ -97,6 +94,32 @@ fn test_module_node_top_pub_mod_paranoid() {
         .find(|data| data.file_path.ends_with(definition_file))
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
+
+    println!("{:=^80}", " definition_graph.modules ");
+    println!("definition_graph.modules: {:#?}", definition_graph.modules);
+    println!(
+        "top_pub_func: {:#?}",
+        definition_graph
+            .functions
+            .iter()
+            .find(|f| f.name == "top_pub_func")
+    );
+    let module_path_crate_only = vec!["crate".to_string()];
+    let func_id_debug =
+        find_node_id_by_path_and_name(definition_graph, &module_path_crate_only, "top_pub_func");
+    println!(
+        "find_node_id_by_path_and_name(definition_graph, &module_path_crate_only, \"top_pub_func\"): {:?}",
+        func_id_debug
+    );
+    let find_relation = definition_graph
+        .relations
+        .iter()
+        .find(|r| r.target == GraphId::Node(func_id_debug.unwrap()));
+
+    println!(
+        "definition_graph.relations.iter().find(|r| r.target == GraphId::Node(func_id_debug)): {:?}",
+        find_relation
+    );
 
     // Find items expected to be defined *directly* within top_pub_mod.rs
     let func_id = find_node_id_by_path_and_name(definition_graph, &module_path, "top_pub_func")

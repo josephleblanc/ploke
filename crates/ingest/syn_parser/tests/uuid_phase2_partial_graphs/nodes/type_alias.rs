@@ -37,7 +37,7 @@ fn test_type_alias_node_simple_id_paranoid() {
 
     let alias_name = "SimpleId";
     let relative_file_path = "src/type_alias.rs";
-    let module_path = vec!["crate".to_string()]; // Defined at top level of file
+    let module_path = vec!["crate".to_string(), "type_alias".to_string()]; // Defined at top level of file
 
     let type_alias_node = find_type_alias_node_paranoid(
         &results,
@@ -107,7 +107,7 @@ fn test_type_alias_node_displayable_container_paranoid() {
 
     let alias_name = "DisplayableContainer";
     let relative_file_path = "src/type_alias.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "type_alias".to_string()];
 
     let type_alias_node = find_type_alias_node_paranoid(
         &results,
@@ -215,19 +215,26 @@ fn test_other_type_alias_nodes() {
         .expect("ParsedCodeGraph for type_alias.rs not found")
         .graph;
 
-    let module_id_crate = find_inline_module_by_path(graph, &["crate".to_string()])
-        .expect("Failed to find top-level module node")
-        .id();
-    let module_id_inner =
-        find_inline_module_by_path(graph, &["crate".to_string(), "inner".to_string()])
-            .expect("Failed to find inner module node")
+    let module_id_crate =
+        find_inline_module_by_path(graph, &["crate".to_string(), "type_alias".to_string()])
+            .expect("Failed to find top-level module node")
             .id();
+    let module_id_inner = find_inline_module_by_path(
+        graph,
+        &[
+            "crate".to_string(),
+            "type_alias".to_string(),
+            "inner".to_string(),
+        ],
+    )
+    .expect("Failed to find inner module node")
+    .id();
 
     // --- Test Individual Aliases ---
 
     // InternalCounter (private)
     let alias_name = "InternalCounter";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "type_alias".to_string()];
     let node = find_type_alias_node_paranoid(
         &results,
         fixture_name,
@@ -429,7 +436,11 @@ fn test_other_type_alias_nodes() {
     );
 
     // --- Aliases inside `inner` module ---
-    let module_path_inner = vec!["crate".to_string(), "inner".to_string()];
+    let module_path_inner = vec![
+        "crate".to_string(),
+        "type_alias".to_string(),
+        "inner".to_string(),
+    ];
 
     // InnerSecret (private in private mod)
     let alias_name = "InnerSecret";
@@ -497,7 +508,7 @@ fn test_other_type_alias_nodes() {
     );
 
     // --- Aliases using inner module types ---
-    let module_path = vec!["crate".to_string()]; // Back to top level
+    let module_path = vec!["crate".to_string(), "type_alias".to_string()]; // Back to top level
 
     // UseInner (private, uses pub type from private mod)
     let alias_name = "UseInner";

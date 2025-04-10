@@ -22,7 +22,7 @@ fn test_union_node_int_or_float_paranoid() {
 
     let union_name = "IntOrFloat";
     let relative_file_path = "src/unions.rs";
-    let module_path = vec!["crate".to_string()]; // Defined at top level of file
+    let module_path = vec!["crate".to_string(), "unions".to_string()]; // Defined at top level of file
 
     let union_node = find_union_node_paranoid(
         &results,
@@ -119,7 +119,7 @@ fn test_union_node_generic_union_paranoid() {
 
     let union_name = "GenericUnion";
     let relative_file_path = "src/unions.rs";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "unions".to_string()];
 
     let union_node = find_union_node_paranoid(
         &results,
@@ -242,19 +242,26 @@ fn test_other_union_nodes() {
         .expect("ParsedCodeGraph for unions.rs not found")
         .graph;
 
-    let module_id_crate = find_inline_module_by_path(graph, &["crate".to_string()])
-        .expect("Failed to find top-level module node")
-        .id();
-    let module_id_inner =
-        find_inline_module_by_path(graph, &["crate".to_string(), "inner".to_string()])
-            .expect("Failed to find inner module node")
+    let module_id_crate =
+        find_inline_module_by_path(graph, &["crate".to_string(), "unions".to_string()])
+            .expect("Failed to find top-level module node")
             .id();
+    let module_id_inner = find_inline_module_by_path(
+        graph,
+        &[
+            "crate".to_string(),
+            "unions".to_string(),
+            "inner".to_string(),
+        ],
+    )
+    .expect("Failed to find inner module node")
+    .id();
 
     // --- Test Individual Unions ---
 
     // SecretData (private)
     let union_name = "SecretData";
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "unions".to_string()];
     let node = find_union_node_paranoid(
         &results,
         fixture_name,
@@ -369,7 +376,11 @@ fn test_other_union_nodes() {
     );
 
     // --- Unions inside `inner` module ---
-    let module_path_inner = vec!["crate".to_string(), "inner".to_string()];
+    let module_path_inner = vec![
+        "crate".to_string(),
+        "unions".to_string(),
+        "inner".to_string(),
+    ];
 
     // InnerSecret (private in private mod)
     let union_name = "InnerSecret";
