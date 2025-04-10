@@ -1,5 +1,49 @@
 use serde::{Deserialize, Serialize};
 use syn::visit::Visit;
+
+use std::path::{Component, Path, PathBuf}; // Add Path and Component
+
+// Helper function to derive the logical module path from a file path relative to src
+#[cfg(feature = "uuid_ids")]
+fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
+    let mut logical_path = vec!["crate".to_string()];
+
+    // Get the path relative to the src directory
+    if let Ok(relative_path) = file_path.strip_prefix(crate_src_dir) {
+        let mut components: Vec<String> = relative_path
+            .components()
+            .filter_map(|comp| match comp {
+                Component::Normal(name) => name.to_str().map(|s| s.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        // Check if the last component is a filename like "mod.rs" or "lib.rs" or "main.rs"
+        if let Some(last) = components.last() {
+            if last == "mod.rs" || last == "lib.rs" || last == "main.rs" {
+                components.pop(); // Remove "mod.rs", "lib.rs", or "main.rs"
+            } else if let Some(stem) = Path::new(last).file_stem().and_then(|s| s.to_str()) {
+                // Replace the filename with its stem
+                if let Some(last_mut) = components.last_mut() {
+                    *last_mut = stem.to_string();
+                }
+            }
+        }
+        logical_path.extend(components);
+    } else {
+        // Fallback or error handling if strip_prefix fails
+        // For now, just return ["crate"] as a basic fallback
+        eprintln!(
+            "Warning: Could not strip prefix '{}' from '{}'. Falling back to ['crate'].",
+            crate_src_dir.display(),
+            file_path.display()
+        );
+    }
+
+    logical_path
+}
+
+
 mod attribute_processing;
 mod code_visitor;
 mod state;
@@ -92,7 +136,8 @@ pub struct ParsedCodeGraph {
 #[cfg(feature = "uuid_ids")]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
-    crate_namespace: Uuid, // Context passed from caller
+    crate_namespace: Uuid,        // Context passed from caller
+    logical_module_path: Vec<String>, // NEW: The derived logical path for this file
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
@@ -105,34 +150,42 @@ pub fn analyze_file_phase2(
 
     // 1. Create VisitorState with the provided context
     let mut state = state::VisitorState::new(crate_namespace, file_path.to_path_buf());
+    // Set the correct initial module path for the visitor
+    state.current_module_path = logical_module_path.clone();
 
-    // 2. Generate root module ID using context
-    // Context: crate_namespace, file_path, empty relative path [], name "crate"
+    // 2. Generate root module ID using the derived logical path context
+    let root_module_name = logical_module_path
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "crate".to_string()); // Use last segment as name, fallback to "crate"
+    let root_module_parent_path: Vec<String> = logical_module_path
+        .iter()
+        .take(logical_module_path.len().saturating_sub(1)) // Get parent path segments
+        .cloned()
+        .collect();
+
     let root_module_id = NodeId::generate_synthetic(
         crate_namespace,
         &file_path,
-        &[], // Empty relative path for crate root
-        "crate",
-        (0, 0), // Span, there should be no other items with a (0, 0) span and this makes sense for
-                // root crate (almost, probably would make more sense as (0, <file byte length>))
+        &root_module_parent_path, // Use parent path for ID generation context
+        &root_module_name,
+        (0, 0), // Span - still using (0,0) for root, might need refinement
     );
-    state.current_module_path = vec!["crate".to_string()];
 
-    // 3. Create the root module node
+    // 3. Create the root module node using the derived path and name
     state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
-        name: "crate".to_string(),
-        visibility: crate::parser::types::VisibilityKind::Public,
+        name: root_module_name, // Use derived name
+        visibility: crate::parser::types::VisibilityKind::Public, // Assume public for now, Phase 3 resolves
         attributes: Vec::new(),
         docstring: None,
         submodules: Vec::new(),
         items: Vec::new(),
         imports: Vec::new(),
         exports: Vec::new(),
-        path: vec!["crate".to_string()],
+        path: logical_module_path.clone(), // Use derived path
         tracking_hash: None, // Root module conceptual, no specific content hash
-        span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end
-                      // of the file's bytes.
+        span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
     });
 
     // 4. Create and run the visitor
@@ -191,13 +244,24 @@ pub fn analyze_files_parallel(
                 crate_context.files.len()
             );
             // For each crate, parallelize over its files
+            // Assume CrateContext has a `root_dir` field or similar
+            // If not, we might need to adjust how src_dir is found
+            let crate_root_dir = crate_context.root_dir.clone(); // Assuming CrateContext has root_dir
+            let src_dir = crate_root_dir.join("src");
+
             crate_context.files.par_iter().map(move |file_path| {
-                // Move namespace into the closure
-                // Call the single-file worker function with its specific context
-                analyze_file_phase2(file_path.to_owned(), crate_context.namespace)
+                // Derive the logical path for this file
+                let logical_path = derive_logical_path(&src_dir, file_path);
+
+                // Call the single-file worker function with its specific context + logical path
+                analyze_file_phase2(
+                    file_path.to_owned(),
+                    crate_context.namespace,
+                    logical_path, // Pass the derived path
+                )
             })
         })
-        .collect() // Collect all results (Result<CodeGraph, Error>) into a Vec
+        .collect() // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
 }
 
 /// Process multiple files in parallel using rayon (Non-UUID Path)
