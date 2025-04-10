@@ -131,6 +131,8 @@ pub fn analyze_file_phase2(
         exports: Vec::new(),
         path: vec!["crate".to_string()],
         tracking_hash: None, // Root module conceptual, no specific content hash
+        span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end
+                      // of the file's bytes.
     });
 
     // 4. Create and run the visitor
