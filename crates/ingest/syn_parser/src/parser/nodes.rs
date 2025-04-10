@@ -331,6 +331,8 @@ pub struct ModuleNode {
     pub imports: Vec<ImportNode>,
     pub exports: Vec<NodeId>, // TODO: Confirm if exports need tracking hash? Likely not.
     #[cfg(feature = "uuid_ids")]
+    pub span: (usize, usize), // Add span field
+    #[cfg(feature = "uuid_ids")]
     #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,

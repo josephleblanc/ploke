@@ -1436,6 +1436,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             imports: Vec::new(),
             exports: Vec::new(),
             #[cfg(feature = "uuid_ids")]
+            span, // Assign the extracted span
+            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
         };
 
