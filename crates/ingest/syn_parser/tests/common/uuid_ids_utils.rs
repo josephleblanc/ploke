@@ -1075,3 +1075,101 @@ pub fn find_impl_node_paranoid<'a>(
     // 8. Return the validated node
     impl_node
 }
+
+/// Finds the specific ParsedCodeGraph for the target file, then finds the ModuleNode
+/// within that graph, performs paranoid checks, and returns a reference.
+/// Panics if the graph or node is not found, or if uniqueness checks fail.
+pub fn find_module_node_paranoid<'a>(
+    parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
+    fixture_name: &str,                   // Needed to construct expected path
+    relative_file_path: &str,             // File where the module is *declared* or defined inline
+    expected_module_path: &[String],      // The full path of the module itself
+) -> &'a ModuleNode {
+    // 1. Construct the absolute expected file path where the module is declared/defined
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    // Note: For modules defined across files (mod foo;), the declaration point matters
+    // for finding the graph, but the module node itself might exist in multiple graphs
+    // if its content spans files. However, Phase 2 creates partial graphs per file.
+    // We need the graph corresponding to the file containing the module's *definition*
+    // or items if we want to check its contents accurately in Phase 2.
+    // Let's assume for now the relative_file_path points to where we expect to find
+    // the definitive ModuleNode entry for Phase 2 checks (often the mod.rs or the file itself).
+    let target_file_path = fixture_root.join(relative_file_path);
+
+    // 2. Find the specific ParsedCodeGraph for the target file
+    // It's possible a module declared in main.rs (mod foo;) has its items parsed
+    // in foo.rs. We need to search *all* graphs for the module by its path.
+    let target_module_node = parsed_graphs
+        .iter()
+        .find_map(|data| {
+            data.graph
+                .modules
+                .iter()
+                .find(|m| m.path == expected_module_path)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "ModuleNode not found for path: {:?} in any parsed graph for fixture '{}'",
+                expected_module_path, fixture_name
+            )
+        });
+
+    // 3. PARANOID CHECK: Ensure we found exactly one module with this path across all graphs.
+    //    (This might be too strict if a module's definition is split, but good for Phase 2 checks)
+    let count = parsed_graphs
+        .iter()
+        .flat_map(|data| &data.graph.modules)
+        .filter(|m| m.path == expected_module_path)
+        .count();
+
+    assert_eq!(
+        count, 1,
+        "Expected exactly one ModuleNode with path {:?}, found {}",
+        expected_module_path, count
+    );
+
+    // 4. Get context from the graph where the module was found
+    let defining_graph_data = parsed_graphs
+        .iter()
+        .find(|data| {
+            data.graph
+                .modules
+                .iter()
+                .any(|m| m.id == target_module_node.id)
+        })
+        .unwrap(); // Should always find it since we found the node
+
+    let crate_namespace = defining_graph_data.crate_namespace;
+    // Use the file path where the module node was actually found
+    let file_path_where_found = &defining_graph_data.file_path;
+
+    // 5. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    //    Use the module's name and the path *where it was found*.
+    //    Span for modules might be less reliable or consistent, especially for file-based mods.
+    //    Let's use (0,0) as a placeholder span for ID regeneration check, acknowledging this limitation.
+    //    The primary check is finding the unique module by path.
+    let module_id = target_module_node.id;
+    let module_name = target_module_node.name();
+    let actual_span = target_module_node.span; // Get span from the found node
+
+    // Regenerate using the context of the file where the node was found
+    let regenerated_id = NodeId::generate_synthetic(
+        crate_namespace,
+        file_path_where_found,
+        &expected_module_path[..expected_module_path.len() - 1], // Parent path for generation context
+        module_name,
+        actual_span, // Use the actual span from the node
+    );
+
+    // Compare IDs - This check might be less reliable for modules than other nodes due to span variations.
+    // Focus more on finding the unique node by path.
+    assert_eq!(
+        module_id, regenerated_id,
+        "Mismatch between module's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') found in file '{}' with span {:?}. Span differences or parent path context might be the cause.",
+        module_id, regenerated_id, expected_module_path, module_name, file_path_where_found.display(), actual_span
+    );
+
+
+    // 6. Return the validated node reference
+    target_module_node
+}
