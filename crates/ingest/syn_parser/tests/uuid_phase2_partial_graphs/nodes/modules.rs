@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
+use syn_parser::parser::nodes::Attribute;
 use syn_parser::parser::nodes::TypeAliasNode; // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{nodes::EnumNode, types::TypeKind}; // Import EnumNode specifically
@@ -23,7 +24,6 @@ use syn_parser::{
         visitor::ParsedCodeGraph,
     },
 };
-use syn_parser::parser::nodes::Attribute;
 
 #[test]
 fn test_module_node_top_pub_mod_paranoid() {
@@ -81,26 +81,16 @@ fn test_module_node_top_pub_mod_paranoid() {
     let definition_graph = &definition_graph_data.graph;
 
     // Find items expected to be defined *directly* within top_pub_mod.rs
-    let func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path,
-        "top_pub_func",
-    )
-    .expect("Failed to find NodeId for top_pub_func");
+    let func_id = find_node_id_by_path_and_name(definition_graph, &module_path, "top_pub_func")
+        .expect("Failed to find NodeId for top_pub_func");
 
-    let priv_func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path,
-        "top_pub_priv_func",
-    )
-    .expect("Failed to find NodeId for top_pub_priv_func");
+    let priv_func_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path, "top_pub_priv_func")
+            .expect("Failed to find NodeId for top_pub_priv_func");
 
-    let duplicate_func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path,
-        "duplicate_name",
-    )
-    .expect("Failed to find NodeId for duplicate_name in top_pub_mod");
+    let duplicate_func_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path, "duplicate_name")
+            .expect("Failed to find NodeId for duplicate_name in top_pub_mod");
 
     // Find submodule IDs declared within top_pub_mod.rs
     let nested_pub_mod_id = find_node_id_by_path_and_name(
@@ -110,19 +100,13 @@ fn test_module_node_top_pub_mod_paranoid() {
     )
     .expect("Failed to find NodeId for nested_pub module");
 
-    let nested_priv_mod_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path,
-        "nested_priv",
-    )
-    .expect("Failed to find NodeId for nested_priv module");
+    let nested_priv_mod_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path, "nested_priv")
+            .expect("Failed to find NodeId for nested_priv module");
 
-    let path_vis_mod_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path,
-        "path_visible_mod",
-    )
-    .expect("Failed to find NodeId for path_visible_mod module");
+    let path_vis_mod_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path, "path_visible_mod")
+            .expect("Failed to find NodeId for path_visible_mod module");
 
     // Check ModuleNode.items contains these IDs (order doesn't matter)
     let expected_item_ids = vec![
