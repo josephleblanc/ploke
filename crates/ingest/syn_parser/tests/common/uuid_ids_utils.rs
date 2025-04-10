@@ -1150,7 +1150,10 @@ pub fn find_module_node_paranoid<'a>(
     //    The primary check is finding the unique module by path.
     let module_id = target_module_node.id;
     let module_name = target_module_node.name();
-    let actual_span = target_module_node.span; // Get span from the found node
+    // NOTE: ModuleNode does not have a `span` field like other nodes.
+    // Using a placeholder span (0, 0) for the regeneration check.
+    // The primary validation comes from finding the unique node by path.
+    let placeholder_span = (0, 0);
 
     // Regenerate using the context of the file where the node was found
     let regenerated_id = NodeId::generate_synthetic(
@@ -1158,15 +1161,15 @@ pub fn find_module_node_paranoid<'a>(
         file_path_where_found,
         &expected_module_path[..expected_module_path.len() - 1], // Parent path for generation context
         module_name,
-        actual_span, // Use the actual span from the node
+        placeholder_span, // Use placeholder span
     );
 
-    // Compare IDs - This check might be less reliable for modules than other nodes due to span variations.
-    // Focus more on finding the unique node by path.
+    // Compare IDs - This check verifies ID generation consistency based on known context,
+    // acknowledging the span is a placeholder for ModuleNode.
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between module's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') found in file '{}' with span {:?}. Span differences or parent path context might be the cause.",
-        module_id, regenerated_id, expected_module_path, module_name, file_path_where_found.display(), actual_span
+        "Mismatch between module's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') found in file '{}' using placeholder span {:?}. Context mismatch might be the cause.",
+        module_id, regenerated_id, expected_module_path, module_name, file_path_where_found.display(), placeholder_span
     );
 
 
