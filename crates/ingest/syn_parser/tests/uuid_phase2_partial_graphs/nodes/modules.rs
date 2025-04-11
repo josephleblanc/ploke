@@ -46,8 +46,6 @@ fn test_module_node_top_pub_mod_paranoid() {
     // --- End Test Setup ---
 
     // Target: `pub mod top_pub_mod;` declared in main.rs, defined in top_pub_mod.rs
-    // Declaration file (for finding graph initially, though helper searches all)
-    let declaration_file = "src/main.rs";
     // Definition file (where items/submodules are likely parsed)
     let definition_file = "src/top_pub_mod.rs";
     let module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
@@ -63,27 +61,24 @@ fn test_module_node_top_pub_mod_paranoid() {
     );
 
     // --- Assertions ---
-    let graph = &results // Find the graph where this module node *actually* lives
-        .iter()
-        .find(|data| data.graph.modules.iter().any(|m| m.id == module_node.id))
-        .unwrap()
-        .graph;
 
     // Basic Properties
     assert_eq!(module_node.name(), module_name);
     assert_eq!(module_node.path, module_path);
-    assert_eq!(module_node.visibility(), VisibilityKind::Public); // Declared `pub mod`
+    assert_eq!(module_node.visibility(), VisibilityKind::Public); // File-level modules
+                                                                  // `VisibilityKind::Inherited by default`
+
     assert!(
         module_node.attributes.is_empty(),
-        "Expected no attributes on top_pub_mod"
+        "Expected no attributes on top_pub_mod definition"
     );
     assert!(
         module_node.docstring.is_none(),
-        "Expected no docstring on top_pub_mod"
+        "Expected no docstring on top_pub_mod definiton"
     );
     assert!(
-        module_node.tracking_hash.is_some(),
-        "Tracking hash should be present"
+        module_node.tracking_hash.is_none(),
+        "Tracking hash should be NOT present on top_pub_mod definition"
     );
 
     // Contents (Items and Submodules defined in top_pub_mod.rs)
@@ -97,17 +92,21 @@ fn test_module_node_top_pub_mod_paranoid() {
     let definition_graph = &definition_graph_data.graph;
 
     println!("{:=^80}", " definition_graph.modules ");
-    println!("definition_graph.modules: {:#?}", definition_graph.modules);
+    println!(
+        "definition_graph.modules: {:#?}\n",
+        definition_graph.modules
+    );
+    println!("{:=^80}", "top_pub_func found by name");
     println!(
         "top_pub_func: {:#?}",
         definition_graph
             .functions
             .iter()
-            .find(|f| f.name == "top_pub_func")
+            .find(|f| f.name == "top_pub_func"),
     );
-    let module_path_crate_only = vec!["crate".to_string()];
+    let top_pub_module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
     let func_id_debug =
-        find_node_id_by_path_and_name(definition_graph, &module_path_crate_only, "top_pub_func");
+        find_node_id_by_path_and_name(definition_graph, &top_pub_module_path, "top_pub_func");
     println!(
         "find_node_id_by_path_and_name(definition_graph, &module_path_crate_only, \"top_pub_func\"): {:?}",
         func_id_debug

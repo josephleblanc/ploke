@@ -68,6 +68,7 @@ impl CodeGraph {
             }
         }
     }
+
     #[cfg(feature = "uuid_ids")] // New version for uuid path using GraphId
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         // Find the module that contains this item
@@ -208,15 +209,14 @@ impl CodeGraph {
             })
     }
 
-    #[allow(dead_code, reason = "useful later")]
+    // #[allow(dead_code, reason = "useful later")]
     #[cfg(feature = "uuid_ids")]
     fn module_contains(&self, module_id: NodeId, item_id: NodeId) -> bool {
         // Check if module directly contains the item
-        if let Some(module) = self.modules.iter().find(|m| m.id == module_id) {
-            if module.items.contains(&item_id) {
-                return true;
-            }
-        }
+        self.modules
+            .iter()
+            .find(|m| m.id == module_id)
+            .map(|module| module.items().map_or(false, |m| m.contains(&item_id)));
 
         // Check if module contains the item through nested modules
         self.relations.iter().any(|r| {

@@ -156,6 +156,8 @@ pub fn analyze_file_phase2(
     logical_module_path: Vec<String>, // NEW: The derived logical path for this file
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
+
+    use super::nodes::ModuleDef;
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -195,14 +197,16 @@ pub fn analyze_file_phase2(
         visibility: crate::parser::types::VisibilityKind::Public, // Assume public for now, Phase 3 resolves
         attributes: Vec::new(),
         docstring: None,
-        submodules: Vec::new(),
-        items: Vec::new(),
         imports: Vec::new(),
         exports: Vec::new(),
         path: logical_module_path.clone(), // Use derived path
-        tracking_hash: None,               // Root module conceptual, no specific content hash
-        is_file: false, // only for file-level modules, handled by analyze_files_parallel
         span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
+        tracking_hash: None, // Root module conceptual, no specific content hash
+        module_def: ModuleDef::FileBased {
+            file_path: file_path.clone(),
+            file_attrs: todo!(),
+            file_docs: todo!(),
+        },
     });
 
     // 4. Create and run the visitor
@@ -224,7 +228,7 @@ pub fn analyze_file_phase2(
     // TODO: Add another debug_print_all_visible function under cfg "uuid_ids", since our recent
     // chagnes would break the normal version.
     // #[cfg(feature = "verbose_debug")]
-    // visitor_state.code_graph.debug_print_all_visible();
+    // visitor.state.code_graph.debug_print_all_visible();
 
     Ok(ParsedCodeGraph {
         graph: state.code_graph,

@@ -22,7 +22,9 @@ pub mod inline_pub_mod {
     pub fn inline_pub_func() {}
 
     // Function with a name duplicated elsewhere
-    pub fn duplicate_name() -> u8 { 1 }
+    pub fn duplicate_name() -> u8 {
+        1
+    }
 
     // Nested inline private module
     mod inline_nested_priv {
@@ -57,7 +59,9 @@ pub fn main_pub_func() {}
 fn main_priv_func() {}
 
 // Function with a name duplicated elsewhere
-pub fn duplicate_name() -> u8 { 0 }
+pub fn duplicate_name() -> u8 {
+    0
+}
 
 // Main function (optional, but good practice for a binary crate root)
 fn main() {

@@ -1093,8 +1093,9 @@ pub fn find_module_node_paranoid<'a>(
     // if its content spans files. However, Phase 2 creates partial graphs per file.
     // We need the graph corresponding to the file containing the module's *definition*
     // or items if we want to check its contents accurately in Phase 2.
-    // Let's assume for now the relative_file_path points to where we expect to find
-    // the definitive ModuleNode entry for Phase 2 checks (often the mod.rs or the file itself).
+    // Checking the module's definition vs. where it is called, potentially in multiple files, we
+    // first must check against the newly created `is_file` field of `ModuleNode` specifically to
+    // handle this situation.
     let target_file_path = fixture_root.join(relative_file_path);
 
     // 2. Find the specific ParsedCodeGraph for the target file
@@ -1120,7 +1121,7 @@ pub fn find_module_node_paranoid<'a>(
     let count = parsed_graphs
         .iter()
         .flat_map(|data| &data.graph.modules)
-        .filter(|m| m.path == expected_module_path)
+        .filter(|m| m.is_file == expected_is_file && m.path == expected_module_path)
         .count();
 
     assert_eq!(
@@ -1136,7 +1137,7 @@ pub fn find_module_node_paranoid<'a>(
             data.graph
                 .modules
                 .iter()
-                .any(|m| m.id == target_module_node.id)
+                .any(|m| m.is_file == expected_is_file && m.id == target_module_node.id)
         })
         .unwrap(); // Should always find it since we found the node
 

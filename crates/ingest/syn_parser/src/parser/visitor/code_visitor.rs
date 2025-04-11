@@ -15,6 +15,8 @@ use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::ExtractSpan;
 
+#[cfg(feature = "uuid_ids")]
+use crate::parser::nodes::ModuleDef;
 #[cfg(not(feature = "uuid_ids"))]
 use crate::{NodeId, TypeId};
 #[cfg(feature = "uuid_ids")]
@@ -159,10 +161,7 @@ impl<'a> CodeVisitor<'a> {
             println!("│   id: {:?}", current_mod.id);
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   items: {:?}", current_mod.items);
-            print!("{: <3}", "");
-            (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   submodules: {:?}", current_mod.submodules);
+            println!("│   items: {:?}", current_mod.items());
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
             println!("│   self.state.code_graph.modules names: {:?}", modules);
@@ -181,7 +180,10 @@ impl<'a> CodeVisitor<'a> {
 
             println!(
                 " {} -> pushing name {} (id: {:?}) to items: now items = {:?}",
-                current_mod.name, name, node_id, current_mod.items
+                current_mod.name,
+                name,
+                node_id,
+                current_mod.items()
             );
         }
     }
@@ -257,8 +259,6 @@ impl<'a> CodeVisitor<'a> {
             .map(|m| m.id);
 
         if let Some(parent_id) = parent_module_id {
-            // Add the new node's ID to the parent module's list of items
-            // We need a mutable borrow here, so find again mutably.
             if let Some(parent_mod) = self
                 .state
                 .code_graph
@@ -266,7 +266,17 @@ impl<'a> CodeVisitor<'a> {
                 .iter_mut()
                 .find(|m| m.id == parent_id)
             {
-                parent_mod.items.push(node_id);
+                if let Some(parent_mod) = self
+                    .state
+                    .code_graph
+                    .modules
+                    .iter_mut()
+                    .find(|m| m.id == parent_id)
+                {
+                    if let ModuleDef::Inline { items, .. } = &mut parent_mod.module_def {
+                        items.push(node_id);
+                    }
+                }
             }
 
             // Create the relation using GraphId wrappers
@@ -307,59 +317,6 @@ impl<'a> CodeVisitor<'a> {
         // 3. Return the newly generated NodeId enum
         node_id
     }
-
-    ///// Generates a new `NodeId::Synthetic` for the item being visited,
-    ///// ensuring it's immediately linked to the current module via a `Contains` relation.
-    ///// Requires the item's name and span for UUID generation.
-    ///// This version is active when the `uuid_ids` feature is enabled.
-    //#[cfg(feature = "uuid_ids")]
-    //fn add_contains_rel(&mut self, item_name: &str, item_span: (usize, usize)) -> NodeId {
-    //    // 1. Generate the Synthetic NodeId using context from state
-    //    //    Requires crate_namespace, current_file_path, current_module_path, item_name, item_span
-    //    let node_id = NodeId::generate_synthetic(
-    //        self.state.crate_namespace,      // Provided by VisitorState::new
-    //        &self.state.current_file_path,   // Provided by VisitorState::new
-    //        &self.state.current_module_path, // Tracked during visitation
-    //        item_name,                       // Passed as argument
-    //        item_span,                       // Passed as argument
-    //    );
-    //
-    //    // 2. Add the Contains relation using the new ID and GraphId wrapper
-    //    if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
-    //        // Ensure current_mod.id is also the correct NodeId type (it should be if modules are created correctly)
-    //        let current_module_id = current_mod.id; // This is already a NodeId enum
-    //
-    //        // Add the new node's ID to the current module's list of items
-    //        current_mod.items.push(node_id);
-    //
-    //        // Create the relation using GraphId wrappers
-    //        self.state.code_graph.relations.push(Relation {
-    //            source: GraphId::Node(current_module_id), // Wrap module ID
-    //            target: GraphId::Node(node_id),           // Wrap new item ID
-    //            kind: RelationKind::Contains,
-    //        });
-    //        #[cfg(feature = "verbose_debug")]
-    //        println!(
-    //            "REL_CREATE: Contains relation created for source: {} -> target: {},\n\tsource_id: {} -> target_id: {}",
-    //            current_mod.name, item_name, current_mod.id, node_id
-    //        );
-    //
-    //        // Keep the debug hook, assuming debug_mod_stack_push is updated
-    //        // to handle the NodeId enum (e.g., using its Display impl).
-    //        #[cfg(feature = "verbose_debug")]
-    //        self.debug_mod_stack_push(item_name.to_owned(), node_id);
-    //    } else {
-    //        // This case should ideally not happen after the root module is created in analyze_file_phase2,
-    //        // but log a warning just in case.
-    //        eprintln!(
-    //            "Warning: Attempted to add contains relation for item '{}', but no current module found in VisitorState.",
-    //            item_name
-    //        );
-    //    }
-    //
-    //    // 3. Return the newly generated NodeId enum
-    //    node_id
-    //}
 
     /// Returns a newly generated NodeId while also adding a new Contains relation from the current
     /// module (souce) to the node (target) whose NodeId is being generated.
@@ -1400,30 +1357,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.current_module_path.push(module_name.clone());
 
         // Process module contents
-        let mut submodules = Vec::new();
-        let mut items = Vec::new();
-
-        // TODO: Test and likely delete block after refactor.
-        // Pretty sure this entire block is leftover from a previous attempt.
-        //
-        // if let Some((_, mod_items)) = &module.content {
-        //     for _item in mod_items {
-        //         let item_id = self.state.next_node_id();
-        //         #[cfg(feature = "verbose_debug")]
-        //         self.debug_mod_stack_push("NO NAME".to_string(), item_id);
-        //         items.push(item_id);
-        //
-        //         // Store item-module relationship immediately
-        //         if matches!(_item, syn::Item::Mod(_)) {
-        //             submodules.push(item_id);
-        //             #[cfg(feature = "verbose_debug")]
-        //             self.debug_submodule("No name Maybe ok?", item_id);
-        //         }
-        //     }
-        // }
 
         // Create module node with proper path tracking
         // Create module node with proper hierarchy tracking
+        #[cfg(feature = "uuid_ids")]
+        let module_def = match &module.content {
+            Some(content) => ModuleDef::Inline {
+                items: Vec::new(),
+                span,
+            },
+            None => ModuleDef::Declaration {
+                declaration_span: span,
+                resolved_definition: None, // Resolved during phase 3 resolution
+            },
+        };
         let module_node = ModuleNode {
             id: module_id,
             name: module_name.clone(),
@@ -1431,15 +1378,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             visibility: self.state.convert_visibility(&module.vis),
             attributes: extract_attributes(&module.attrs),
             docstring: extract_docstring(&module.attrs),
-            submodules,
-            items,
             imports: Vec::new(),
             exports: Vec::new(),
             #[cfg(feature = "uuid_ids")]
             span, // Assign the extracted span
             #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
-            is_file: false, // only for file-level modules, handled by analyze_files_parallel
+            #[cfg(feature = "uuid_ids")]
+            module_def,
         };
 
         // Restore parent path after processing module

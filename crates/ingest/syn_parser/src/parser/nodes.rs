@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::parser::types::{GenericParamNode, VisibilityKind};
 #[cfg(not(feature = "uuid_ids"))]
 use crate::TypeId;
@@ -318,6 +320,36 @@ pub struct TraitNode {
 }
 //ANCHOR_END: TraitNode
 
+// Your detailed breakdown of the way cozo handles the search is well taken, and makes me want to
+// revisit the data structure we are currently using within our `CodeVisitor` struct implementation
+// of the `syn::Visit` trait. Let's drill down on the `ModuleNode` as an example of how to
+// structure our top-level node items, with an eye toward both how it would affect our
+// `visit_item_*` methods, e.g. `visit_item_mod` and toward how we will later need to transform
+// these data structures into the database.
+// A few additional points to keep in mind:
+// 1. We have not yet decided whether the transformation from the parser into the locally embedded,
+//    in-memory `cozo::Db` should be capable of going from `ModuleNode` to `cozo` database object
+//    and back again (there is a word for this but I forget, please remind me. I think it is the
+//    structure-preserving transformation, like isomorphic or homomorphic?)
+// 2. The structure of `ModuleNode` was primarily inspired by the `syn::ItemMod` initially, then
+//    adjusted to handle the needs of our `syn_parser` crate as it grew. While practical in the
+//    sense that this enabled our `syn_parser` project to rapidly develop, the desired end-state
+//    for the cozo database is still not well understood by me. In our design, we want to lean into
+//    the cozo database representation, but are not clear on how valuable it will be to have a
+//    different representation for analysis outside the cozo database. This lack of clarity carries
+//    over into the design below. However, I would like to take your example as an opportunity to
+//    consider how the data structure might be adjusted to better suit the cozo database
+//    downstream, and what the trade-offs might be for our parser implementation.
+// 3. Relation vs. ModuleNode field: This is the primary point that should likely be decided upon
+//    in the near future to clarify both the responsibility of the parser and and the as-yet
+//    undesigned cozo schema. I have a number of questions on this point:
+//    - What elements, currently represented as fields in the `ModuleNode` should be represented as
+//    a `Relation`?
+//    - What should we ensure the `ModuleNode` retains as direct properties of a `cozo`
+//    relation/object/node (the language is hard here) such as CozoScript
+//    `module_node { id: Uuid, name: String , ..}`
+//    - Does the answer to what should be an edge or node property change if we want to do analysis
+//    outside of cozo. Why would we want to do analysis outside/inside the cozo framework?
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModuleNode {
     pub id: NodeId,
@@ -326,8 +358,6 @@ pub struct ModuleNode {
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    pub submodules: Vec<NodeId>,
-    pub items: Vec<NodeId>,
     pub imports: Vec<ImportNode>,
     pub exports: Vec<NodeId>, // TODO: Confirm if exports need tracking hash? Likely not.
     #[cfg(feature = "uuid_ids")]
@@ -337,7 +367,118 @@ pub struct ModuleNode {
     #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
     #[cfg(feature = "uuid_ids")]
-    pub is_file: bool,
+    pub module_def: ModuleDef,
+}
+
+// - Simple getters should be named after the field (`items()`, `file_path()`, etc.)
+// - Boolean checks should use `is_` or `has_` prefixes
+// - Methods returning `Option` should indicate this in the name (like `try_get_items()`)
+#[cfg(feature = "uuid_ids")]
+impl ModuleNode {
+    /// Returns true if this is a file-based module
+    pub fn is_file_based(&self) -> bool {
+        matches!(self.module_def, ModuleDef::FileBased { .. })
+    }
+
+    /// Returns true if this is an inline module
+    pub fn is_inline(&self) -> bool {
+        matches!(self.module_def, ModuleDef::Inline { .. })
+    }
+
+    /// Returns true if this is just a module declaration
+    pub fn is_declaration(&self) -> bool {
+        matches!(self.module_def, ModuleDef::Declaration { .. })
+    }
+
+    /// Returns the items if this is an inline module, None otherwise
+    pub fn items(&self) -> Option<&[NodeId]> {
+        if let ModuleDef::Inline { items, .. } = &self.module_def {
+            Some(items)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the file path if this is a file-based module, None otherwise
+    pub fn file_path(&self) -> Option<&PathBuf> {
+        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+            Some(file_path)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the file attributes if this is a file-based module, None otherwise
+    pub fn file_attrs(&self) -> Option<&[Attribute]> {
+        if let ModuleDef::FileBased { file_attrs, .. } = &self.module_def {
+            Some(file_attrs)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the file docs if this is a file-based module, None otherwise
+    pub fn file_docs(&self) -> Option<&[String]> {
+        if let ModuleDef::FileBased { file_docs, .. } = &self.module_def {
+            Some(file_docs)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the span if this is an inline module, None otherwise
+    pub fn inline_span(&self) -> Option<(usize, usize)> {
+        if let ModuleDef::Inline { span, .. } = &self.module_def {
+            Some(*span)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the declaration span if this is a module declaration, None otherwise
+    pub fn declaration_span(&self) -> Option<(usize, usize)> {
+        if let ModuleDef::Declaration {
+            declaration_span, ..
+        } = &self.module_def
+        {
+            Some(*declaration_span)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the resolved definition if this is a module declaration, None otherwise
+    pub fn resolved_definition(&self) -> Option<NodeId> {
+        if let ModuleDef::Declaration {
+            resolved_definition,
+            ..
+        } = &self.module_def
+        {
+            *resolved_definition
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum ModuleDef {
+    /// File-based module (src/module/mod.rs)
+    FileBased {
+        file_path: PathBuf,
+        file_attrs: Vec<Attribute>, // #![...]
+        file_docs: Vec<String>,     // //!
+    },
+    /// Inline module (mod name { ... })
+    Inline {
+        items: Vec<NodeId>, // References to contained items
+        span: (usize, usize),
+    },
+    /// Declaration only (mod name;)
+    Declaration {
+        declaration_span: (usize, usize),
+        resolved_definition: Option<NodeId>, // Populated during resolution phase
+    },
 }
 
 // Represents a constant or static variable
