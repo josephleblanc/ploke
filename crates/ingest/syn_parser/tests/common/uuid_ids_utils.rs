@@ -29,7 +29,8 @@ pub fn find_node_id_by_path_and_name(
         .functions
         .iter()
         .find(|f| {
-            f.name() == name && target_module.items.contains(&f.id()) // Check name and module membership
+            f.name() == name && target_module.items().map_or(false, |m| m.contains(&f.id()))
+            // Check name and module membership
         })
         .map(|f| f.id());
 
@@ -40,7 +41,11 @@ pub fn find_node_id_by_path_and_name(
     // 3. Search defined types (Struct, Enum, Union, TypeAlias)
     let type_def_id = graph.defined_types.iter().find_map(|td| {
         // Use the Visible trait implemented by node types
-        if td.name() == name && target_module.items.contains(&td.id()) {
+        if td.name() == name
+            && target_module
+                .items()
+                .map_or(false, |m| m.contains(&td.id()))
+        {
             Some(td.id())
         } else {
             None
@@ -55,7 +60,7 @@ pub fn find_node_id_by_path_and_name(
     let trait_id = graph
         .traits
         .iter()
-        .find(|t| t.name() == name && target_module.items.contains(&t.id()))
+        .find(|t| t.name() == name && target_module.items().map_or(false, |m| m.contains(&t.id())))
         .map(|t| t.id());
 
     if trait_id.is_some() {
@@ -409,7 +414,7 @@ pub fn find_function_node_paranoid<'a>(
 
     let module_candidates: Vec<&FunctionNode> = name_candidates
         .into_iter()
-        .filter(|f| module_node.items.contains(&f.id()))
+        .filter(|f| module_node.items().map_or(false, |m| m.contains(&f.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -516,7 +521,7 @@ pub fn find_struct_node_paranoid<'a>(
 
     let module_candidates: Vec<&StructNode> = name_candidates
         .into_iter()
-        .filter(|s| module_node.items.contains(&s.id()))
+        .filter(|s| module_node.items().map_or(false, |m| m.contains(&s.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -614,7 +619,7 @@ pub fn find_enum_node_paranoid<'a>(
 
     let module_candidates: Vec<&EnumNode> = name_candidates
         .into_iter()
-        .filter(|e| module_node.items.contains(&e.id()))
+        .filter(|e| module_node.items().map_or(false, |m| m.contains(&e.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -712,7 +717,7 @@ pub fn find_type_alias_node_paranoid<'a>(
 
     let module_candidates: Vec<&TypeAliasNode> = name_candidates
         .into_iter()
-        .filter(|ta| module_node.items.contains(&ta.id()))
+        .filter(|ta| module_node.items().map_or(false, |m| m.contains(&ta.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -810,7 +815,7 @@ pub fn find_union_node_paranoid<'a>(
 
     let module_candidates: Vec<&UnionNode> = name_candidates
         .into_iter()
-        .filter(|u| module_node.items.contains(&u.id()))
+        .filter(|u| module_node.items().map_or(false, |m| m.contains(&u.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -907,7 +912,7 @@ pub fn find_trait_node_paranoid<'a>(
 
     let module_candidates: Vec<&TraitNode> = name_candidates
         .into_iter()
-        .filter(|t| module_node.items.contains(&t.id()))
+        .filter(|t| module_node.items().map_or(false, |m| m.contains(&t.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -1027,7 +1032,7 @@ pub fn find_impl_node_paranoid<'a>(
 
     let module_candidates: Vec<&ImplNode> = type_candidates
         .into_iter()
-        .filter(|imp| module_node.items.contains(&imp.id()))
+        .filter(|imp| module_node.items().map_or(false, |m| m.contains(&imp.id())))
         .collect();
 
     // 6. PARANOID CHECK: Assert exactly ONE candidate remains
@@ -1107,7 +1112,7 @@ pub fn find_module_node_paranoid<'a>(
             data.graph
                 .modules
                 .iter()
-                .find(|m| m.is_file == expected_is_file && m.path == expected_module_path)
+                .find(|m| m.is_file_based() == expected_is_file && m.path == expected_module_path)
         })
         .unwrap_or_else(|| {
             panic!(
@@ -1121,7 +1126,7 @@ pub fn find_module_node_paranoid<'a>(
     let count = parsed_graphs
         .iter()
         .flat_map(|data| &data.graph.modules)
-        .filter(|m| m.is_file == expected_is_file && m.path == expected_module_path)
+        .filter(|m| m.is_file_based() == expected_is_file && m.path == expected_module_path)
         .count();
 
     assert_eq!(
@@ -1137,7 +1142,7 @@ pub fn find_module_node_paranoid<'a>(
             data.graph
                 .modules
                 .iter()
-                .any(|m| m.is_file == expected_is_file && m.id == target_module_node.id)
+                .any(|m| m.is_file_based() == expected_is_file && m.id == target_module_node.id)
         })
         .unwrap(); // Should always find it since we found the node
 

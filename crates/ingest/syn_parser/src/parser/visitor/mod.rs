@@ -157,6 +157,8 @@ pub fn analyze_file_phase2(
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
 
+    use attribute_processing::{extract_file_level_attributes, extract_file_level_docstring};
+
     use super::nodes::ModuleDef;
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
@@ -204,8 +206,8 @@ pub fn analyze_file_phase2(
         tracking_hash: None, // Root module conceptual, no specific content hash
         module_def: ModuleDef::FileBased {
             file_path: file_path.clone(),
-            file_attrs: todo!(),
-            file_docs: todo!(),
+            file_attrs: extract_file_level_attributes(&file.attrs),
+            file_docs: extract_file_level_docstring(&file.attrs),
         },
     });
 

@@ -418,9 +418,10 @@ impl ModuleNode {
     }
 
     /// Returns the file docs if this is a file-based module, None otherwise
-    pub fn file_docs(&self) -> Option<&[String]> {
+    pub fn file_docs(&self) -> Option<&String> {
         if let ModuleDef::FileBased { file_docs, .. } = &self.module_def {
-            Some(file_docs)
+            // Want to return the reference to the inner type, not Option (using .as_ref())
+            file_docs.as_ref()
         } else {
             None
         }
@@ -467,7 +468,7 @@ pub enum ModuleDef {
     FileBased {
         file_path: PathBuf,
         file_attrs: Vec<Attribute>, // #![...]
-        file_docs: Vec<String>,     // //!
+        file_docs: Option<String>,  // //!
     },
     /// Inline module (mod name { ... })
     Inline {

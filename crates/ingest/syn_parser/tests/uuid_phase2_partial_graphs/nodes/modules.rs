@@ -159,14 +159,17 @@ fn test_module_node_top_pub_mod_paranoid() {
         path_vis_mod_id,
     ];
     assert_eq!(
-        module_node.items.len(),
+        module_node
+            .items()
+            .expect("Cannot take length of items for non-in-line modules")
+            .len(),
         expected_item_ids.len(),
         "Mismatch in number of items for module {}",
         module_name
     );
     for id in &expected_item_ids {
         assert!(
-            module_node.items.contains(id),
+            module_node.items().map_or(false, |m| m.contains(id)),
             "Expected item ID {:?} not found in module {}",
             id,
             module_name
@@ -176,11 +179,12 @@ fn test_module_node_top_pub_mod_paranoid() {
     // Check ModuleNode.submodules (Phase 2 might not populate this reliably, check items instead)
     // Let's assert it's empty for now, as `items` is the primary check in Phase 2.
     // We might revisit this if the visitor logic changes.
-    assert!(
-        module_node.submodules.is_empty(),
-        "Expected submodules list to be empty in Phase 2 for {}",
-        module_name
-    );
+    //
+    // assert!(
+    //     module_node.submodules.is_empty(),
+    //     "Expected submodules list to be empty in Phase 2 for {}",
+    //     module_name
+    // ); // Old implementation, `submodules` field no longer exists.
 
     // Check ModuleNode.imports (Should be empty for top_pub_mod.rs)
     assert!(
