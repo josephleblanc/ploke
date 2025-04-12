@@ -180,14 +180,14 @@
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Assert `type_id` is `TypeId::Synthetic(_)`.
     *   Verify other fields (name, visibility, kind, value string, attributes, docstring).
-    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Macros (`ItemMacro`, `ItemFn` proc macros):**
     *   Verify `MacroNode` exists in `graph.macros`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Verify kind (`DeclarativeMacro`, `ProcedureMacro`).
     *   Verify other fields (name, visibility, attributes, docstring, body string).
-    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Use Statements (`ItemUse`, `ItemExternCrate`):**
     *   Verify `ImportNode` exists in `graph.use_statements` and relevant `ModuleNode.imports`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
