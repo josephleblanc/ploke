@@ -3,16 +3,10 @@
 #[cfg(test)]
 mod determinism_tests {
     use crate::common::run_phase1_phase2; // Assuming this helper exists and works
-    use ploke_core::{NodeId, TrackingHash, TypeId};
+    use ploke_core::{NodeId, TypeId};
     use std::collections::{HashMap, HashSet};
-    use std::fmt::Debug;
-    use syn_parser::parser::{
-        graph::CodeGraph,
-        nodes::*, // Import all node types
-        relations::{GraphId, Relation, RelationKind},
-        types::TypeNode,
-    };
-    use uuid::Uuid;
+    use syn_parser::parser::nodes::*;
+    use syn_parser::parser::{graph::CodeGraph, types::TypeNode};
 
     #[test]
     fn test_phase2_determinism() {

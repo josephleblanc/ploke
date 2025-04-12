@@ -1,20 +1,19 @@
-use crate::types::TypeKind;
-use std::path::PathBuf;
-use syn_parser::parser::nodes::MacroKind;
-use syn_parser::parser::nodes::TypeDefNode;
-use syn_parser::parser::nodes::ValueKind;
-use syn_parser::parser::relations::RelationKind;
-use syn_parser::parser::types::GenericParamKind;
-use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::*;
-use syn_parser::save_to_ron;
-mod data;
-
 #[test]
 #[ignore = "Out of date, needs update for current model"]
 #[cfg(not(feature = "uuid_ids"))]
 fn test_analyzer() {
+    use crate::types::TypeKind;
+    use std::path::PathBuf;
     use syn_parser::analyze_code;
+    use syn_parser::parser::nodes::MacroKind;
+    use syn_parser::parser::nodes::TypeDefNode;
+    use syn_parser::parser::nodes::ValueKind;
+    use syn_parser::parser::relations::RelationKind;
+    use syn_parser::parser::types::GenericParamKind;
+    use syn_parser::parser::types::VisibilityKind;
+    use syn_parser::parser::*;
+    use syn_parser::save_to_ron;
+    mod data;
     let input_path = PathBuf::from("tests/data/sample.rs");
     let output_path = PathBuf::from("tests/data/code_graph.ron");
 

@@ -1459,11 +1459,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         let imports = self.process_use_tree(&use_item.tree, &base_path);
 
+        // --- DEBUGGING ---
+        let debug_current_path = self.state.current_module_path.clone();
+        let debug_use_item_str = use_item.to_token_stream().to_string();
+        eprintln!(
+            "VISIT_ITEM_USE: Path={:?}, Item='{}'",
+            debug_current_path, debug_use_item_str
+        );
+        // --- END DEBUGGING ---
+
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
+        let current_module_path = &self.state.current_module_path;
 
         // Add all imports to the current module
-        if let Some(module) = graph.modules.last_mut() {
+        if let Some(module) = graph
+            .modules
+            .iter_mut()
+            .find(|m| &m.path == current_module_path)
+        {
             let module_id = module.id;
 
             for import in imports {
@@ -1485,6 +1499,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Add to module's imports list
                 module.imports.push(import);
             }
+        } else {
+            // Is this else branch ever hit? Add a log/panic here.
+            eprintln!(
+                "WARNING: Could not find module for graph.modules.last_mut() {:?} during visit_item_use for item '{}'",
+                graph.modules.last_mut(),
+                debug_use_item_str
+            );
+            // Or panic!("Failed to find module for path {:?} in visit_item_use", current_path);
         }
         visit::visit_item_use(self, use_item);
     }

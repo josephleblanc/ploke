@@ -80,6 +80,7 @@ fn main() {
     println!("File Dir Detection Fixture");
     main_pub_func();
     main_priv_func();
+    #[cfg(test)] // Add module-level attribute
     inline_pub_mod::inline_pub_func();
     // inline_priv_mod::inline_priv_func(); // Private
     inline_priv_mod::inline_nested_pub::inline_nested_pub_func(); // Public within private
@@ -91,9 +92,11 @@ fn main() {
 
     // Demonstrate name duplication is valid
     let _val0 = duplicate_name(); // Calls crate::duplicate_name
+    #[cfg(test)] // Add module-level attribute
     let _val1 = inline_pub_mod::duplicate_name(); // Calls crate::inline_pub_mod::duplicate_name
     let _val2 = top_pub_mod::duplicate_name(); // Calls crate::top_pub_mod::duplicate_name
 
     // Access item in super-visible module
+    #[cfg(test)] // Add module-level attribute
     inline_pub_mod::super_visible_inline::super_visible_func();
 }

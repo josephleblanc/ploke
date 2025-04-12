@@ -8,6 +8,7 @@ use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
 
+pub mod debug_printers;
 pub mod paranoid;
 
 #[cfg(not(feature = "uuid_ids"))]
@@ -19,7 +20,7 @@ use {
     syn_parser::parser::analyze_files_parallel, syn_parser::parser::visitor::ParsedCodeGraph,
 };
 
-use ploke_common::{fixtures_crates_dir, fixtures_dir, malformed_fixtures_dir};
+use ploke_common::{fixtures_crates_dir, fixtures_dir};
 
 pub mod uuid_ids_utils;
 

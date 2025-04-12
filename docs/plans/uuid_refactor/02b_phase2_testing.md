@@ -26,8 +26,8 @@
     * ✅   `simple_crate`: For basic, minimal validation of core constructs.
     * ✅   `example_crate`: For testing interactions between modules and basic dependencies.
     * ✅   `file_dir_detection`: For testing complex module structures, visibility, and file organization scenarios.
-    *    `fixture_nodes`: For testing validity of different primary nodes, particularly for test in 4.2
-      *   Dedicated crate files for `functions.rs`, `unions.rs`, etc.
+    *   `fixture_nodes`: For testing validity of different primary nodes, particularly for test in 4.2
+      * ()  Dedicated crate files for `functions.rs`, `unions.rs`, etc.
     *   Potentially create new, targeted micro-fixtures for specific edge cases identified during test development.
 *   **Test Location:** New tests should reside primarily within `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/`. Unit tests for ID generation might reside closer to the implementation (e.g., in `ploke-core` or `syn_parser/src/parser/visitor/` test modules).
 *   **Helpers:** Leverage existing test helpers (`fixtures_crates_dir`, etc.) and potentially create new ones specific to Phase 2 validation (e.g., helpers to find nodes/types/relations with specific synthetic ID properties or structures).
@@ -108,7 +108,8 @@
     *  ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *  ✅  Assert `parameters` contains correct `ParamData` with `TypeId::Synthetic(_)`.
     *  ✅  Assert `return_type` (if present) is `Some(TypeId::Synthetic(_))`.
-    *   **✅  Verify other fields (name, visibility, generics, attributes, docstring, body string).**
+    *  ✅  Verify other fields (name, visibility, generics, attributes, docstring, body string).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *  ✅  **Structs (`ItemStruct`):** (marked complete, see [structs test])
     *  ✅  Verify `TypeDefNode::Struct` exists in `graph.defined_types`.
     *  ✅  Assert `id` is `NodeId::Synthetic(_)`.
@@ -118,7 +119,8 @@
         * ✅   Assert `FieldNode.type_id` is `TypeId::Synthetic(_)`.
     * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
         * ✅  Each tested in isolation, verifying other fields empty, see structs test above.
-*  ✅  **  Enums (`ItemEnum`):** (marked complete, see [enums test])
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Enums (`ItemEnum`):** (marked complete, see [enums test])
     *  ✅  Verify `TypeDefNode::Enum` exists.
     *  ✅  Assert `id` is `NodeId::Synthetic(_)`.
     *  ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
@@ -127,58 +129,70 @@
         * ✅   Assert `VariantNode.id` is `NodeId::Synthetic(_)`.
         * ✅   Verify `VariantNode.fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
     *  ✅  Verify other fields (name, visibility, generics, attributes, docstring).
-*  ✅  **  Type Aliases (`ItemType`):**
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Type Aliases (`ItemType`):**
     * ✅   Verify `TypeDefNode::TypeAlias` exists.
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     * ✅   Assert `type_id` (the aliased type) is `TypeId::Synthetic(_)`.
     * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
-*  ✅  ** Unions (`ItemUnion`):**
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Unions (`ItemUnion`):**
     * ✅   Verify `TypeDefNode::Union` exists.
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅  Assert `tracking_hash` is `Some(TrackingHash(_))`.
     * ✅  Verify `fields` contains `FieldNode`s with `NodeId::Synthetic` and `TypeId::Synthetic`.
     * ✅  Verify other fields (name, visibility, generics, attributes, docstring).
-*  ✅  **[ ] Traits (`ItemTrait`):**
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Traits (`ItemTrait`):**
     * ✅   Verify `TraitNode` exists in `graph.traits` (or `private_traits`).
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     * ✅   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
     * ✅   Assert `super_traits` contains `TypeId::Synthetic(_)`.
     * ✅   Verify other fields (name, visibility, generics, attributes, docstring).
-*  ✅  **[ ] Impls (`ItemImpl`):**
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Impls (`ItemImpl`):**
     * ✅   Verify `ImplNode` exists in `graph.impls`.
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅   Assert `self_type` is `TypeId::Synthetic(_)`.
     * ✅   Assert `trait_type` (if present) is `Some(TypeId::Synthetic(_))`.
-        * DANGER: Current implementation of `TypeId` FAILS for two blocks with `Self` and/or `self`
+        * DANGER: Current implementation of `TypeId` FAILS to discriminate two different blocks with `Self` and/or `self`
         * See documented limitation of Phase 2 [type conflation]
     * ✅   Verify `methods` contains `FunctionNode`s (check their IDs/hashes).
-    * ✅   Verify generics.
-*   ** Modules (`ItemMod`):**
-    *   Verify `ModuleNode` exists in `graph.modules`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))` (except maybe root).
-    *   Verify `path` is correct relative to crate root.
-    *   Verify `submodules` and `items` contain `NodeId::Synthetic(_)`.
-    *   Verify `imports` contains `ImportNode`s.
-    *   Verify other fields (name, visibility, attributes, docstring).
+    *    Verify generics. (needs confirmation)
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*  ✅  **Modules (`ItemMod`):**
+    * ✅   Verify `ModuleNode` exists in `graph.modules`.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))` (except maybe root).
+    * ✅   Verify `path` is correct relative to crate root.
+    * ✅   Verify `items` contain `NodeId::Synthetic(_)`.
+        * ✅  Verify contents of `items` (fields, etc.)
+    * ✅   Verify `imports` contains `ImportNode`s.
+        * ✅  Verify contents (name, path, etc.)
+    * ✅   Verify other fields (name, visibility, attributes, docstring).
+        * ✅  Verify for file-level, in-line, and declaration variants of `module_definition` field
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Constants/Statics (`ItemConst`, `ItemStatic`):**
     *   Verify `ValueNode` exists in `graph.values`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Assert `type_id` is `TypeId::Synthetic(_)`.
     *   Verify other fields (name, visibility, kind, value string, attributes, docstring).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Macros (`ItemMacro`, `ItemFn` proc macros):**
     *   Verify `MacroNode` exists in `graph.macros`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Verify kind (`DeclarativeMacro`, `ProcedureMacro`).
     *   Verify other fields (name, visibility, attributes, docstring, body string).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Use Statements (`ItemUse`, `ItemExternCrate`):**
     *   Verify `ImportNode` exists in `graph.use_statements` and relevant `ModuleNode.imports`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
     *   Verify fields (`path`, `kind`, `visible_name`, `original_name`, `is_glob`).
+    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 
 ### 4.3 Graph Relation Verification
 

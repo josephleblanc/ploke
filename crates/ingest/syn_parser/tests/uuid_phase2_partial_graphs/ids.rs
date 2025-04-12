@@ -5,20 +5,17 @@ mod phase2_id_tests {
     use crate::common::{find_function_by_name, run_phase1_phase2};
     use ploke_common::fixtures_crates_dir;
     use ploke_core::{NodeId, TrackingHash, TypeId};
-    use std::{
-        collections::HashMap,
-        path::{Path, PathBuf},
-    };
+    use std::{collections::HashMap, path::PathBuf};
     use syn_parser::{
-        discovery::{run_discovery_phase, CrateContext, DiscoveryOutput}, // Import CrateContext
+        discovery::run_discovery_phase, // Import CrateContext
         parser::{
             analyze_files_parallel,
             graph::CodeGraph,
-            nodes::{FunctionNode, StructNode, TypeDefNode},
+            nodes::TypeDefNode,
             visitor::ParsedCodeGraph, // Import StructNode, TypeDefNode
         },
     };
-    use uuid::Uuid; // Import the helper function
+    // Import the helper function
 
     // Helper function to run Phase 1 on multiple fixtures, then Phase 2
     // Returns results mapped by the original crate root path for easier lookup.

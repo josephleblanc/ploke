@@ -11,6 +11,7 @@ use syn_parser::parser::{analyze_files_parallel, nodes::*};
 
 /// Finds a node ID by its module path and name within a Phase 2 CodeGraph.
 /// Assumes ModuleNode.items is populated during Phase 2 parsing for nodes defined in that file.
+// NOTE: Cannot find import id reliably. Use `find_import_id` instead.
 pub fn find_node_id_by_path_and_name(
     graph: &CodeGraph,
     module_path: &[String], // e.g., ["crate", "outer", "inner"]
@@ -94,6 +95,42 @@ m.items() = {:#?}",
     // ... add searches for other relevant node types that implement Visible and belong in ModuleNode.items
 
     None
+}
+
+/// Find an import node in a graph using the graph's modules.items method.
+/// Requires an extra field over `find_node_id_by_path_and_name` due to the primary name only being
+/// the final token in the `use` statement.
+pub fn find_import_id(
+    graph: &CodeGraph,
+    module_path: &[String], // e.g., ["crate", "outer", "inner"]
+    visible_name: &str,
+    import_path: &[&str],
+) -> Option<NodeId> {
+    let parent_module = graph.modules.iter().find(|m| {
+        // #[cfg(feature = "verbose_debug")]
+        (m.defn_path() == module_path && m.is_inline())
+            || (m.defn_path() == module_path && m.is_file_based())
+    })?;
+    let import_id = graph
+        .use_statements
+        .iter()
+        .find(|import| {
+            import.path == import_path
+                && import
+                    .original_name
+                    .clone()
+                    .or_else(|| {
+                        eprintln!("2. ORIGINAL_NAME : {:?}", import.original_name);
+                        Some(import.visible_name.clone())
+                    })
+                    .map(|import_name| import_name == visible_name)
+                    .is_some()
+                && parent_module
+                    .items()
+                    .is_some_and(|items| items.contains(&import.id))
+        })
+        .map(|imp| imp.id);
+    import_id
 }
 
 pub fn find_node_id_container_mod_paranoid(graph: &CodeGraph, node_id: NodeId) -> Option<NodeId> {

@@ -1,9 +1,8 @@
-use crate::common::*;
-use syn_parser::parser::types::VisibilityKind;
-
 #[test]
 #[cfg(not(feature = "uuid_ids"))]
 fn test_enum_parsing() {
+    use crate::common::*;
+    use syn_parser::parser::types::VisibilityKind;
     let graph = parse_fixture("enums.rs").expect("Error parsing fixture 'enums.rs");
 
     let sample_enum = find_enum_by_name(&graph, "SampleEnum").expect("SampleEnum not found");

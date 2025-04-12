@@ -454,32 +454,27 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     let crate_path_vec = vec!["crate".to_string()];
     let logical_module_path_vec = vec!["crate".to_string(), module_name.to_string()];
     // The path derived from the file system for the definition file
-    let definition_file_derived_path_vec =
-        vec!["crate".to_string(), "custom_path".to_string(), "real_file".to_string()];
+    let definition_file_derived_path_vec = vec![
+        "crate".to_string(),
+        "custom_path".to_string(),
+        "real_file".to_string(),
+    ];
 
     // --- Find Nodes ---
     // Find declaration using its logical path
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        main_file,
-        &logical_module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, main_file, &logical_module_path_vec);
     // Find definition using its file-derived path
     let definition_node = find_file_module_node_paranoid(
         &results,
         fixture_name,
-        definition_file, // Use the actual file path here
+        definition_file,                   // Use the actual file path here
         &definition_file_derived_path_vec, // Use the file-derived path
     );
 
     // --- Assertions for DECLARATION Node (main.rs) ---
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, logical_module_path_vec); // Declaration has logical path
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
     assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
     assert!(declaration_node.is_declaration());
     assert!(declaration_node.declaration_span().is_some());
@@ -603,6 +598,13 @@ fn test_module_node_inline_pub_mod_paranoid() {
         .expect("Graph for main.rs not found");
     let main_graph = &main_graph_data.graph;
 
+    // Find `use std::collections::HashMap;` in inline_pub_mod
+    let hashmap_import_id = main_graph
+        .use_statements
+        .iter()
+        .find(|imp| imp.path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap")
+        .expect("Failed to find ImportNode for 'use std::collections::HashMap'")
+        .id;
     let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_pub_func")
         .expect("Failed to find NodeId for inline_pub_func");
     let duplicate_func_id =
@@ -616,6 +618,7 @@ fn test_module_node_inline_pub_mod_paranoid() {
             .expect("Failed to find NodeId for super_visible_inline declaration");
 
     let expected_item_ids = vec![
+        hashmap_import_id,
         func_id,
         duplicate_func_id,
         nested_priv_decl_id,
@@ -1004,9 +1007,7 @@ fn test_module_node_mod_attributes_and_docs() {
     );
     assert_eq!(inline_node.attributes[0].name, "cfg");
     assert!(
-        inline_node.attributes[0]
-            .args
-            .contains(&"test".to_string()),
+        inline_node.attributes[0].args.contains(&"test".to_string()),
         "Expected '#[cfg(test)]'"
     );
 
@@ -1020,12 +1021,8 @@ fn test_module_node_mod_attributes_and_docs() {
     // --- Check Declaration Node Docs (Example) ---
     let decl_module_name = "top_pub_mod";
     let decl_module_path_vec = vec!["crate".to_string(), decl_module_name.to_string()];
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        main_file,
-        &decl_module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, main_file, &decl_module_path_vec);
     // NOTE: Currently, doc comments on `mod item;` are NOT attached to the ModuleNode declaration.
     // This might be a visitor enhancement needed later if required.
     assert!(
@@ -1102,6 +1099,23 @@ fn test_module_node_items_list_comprehensiveness() {
         find_node_id_by_path_and_name(main_graph, &crate_path_vec, "inline_priv_mod")
             .expect("Failed to find NodeId for inline_priv_mod definition");
 
+    println!("imports: {:#?}", main_graph.use_statements);
+    // Imports
+    let import_std: _ = find_import_id(
+        main_graph,
+        &crate_path_vec,
+        "Path",
+        &["std", "path", "Path"],
+    )
+    .expect("Failed to find NodeId for `use std::path::Path;` definition");
+    let import_complex: _ = find_import_id(
+        main_graph,
+        &crate_path_vec,
+        "reexported_func",
+        &["crate", "top_pub_mod", "top_pub_func"],
+    ).expect("Failed to find NodeId for `pub use crate::top_pub_mod::top_pub_func as reexported_func;` definition");
+    // find_node_id_by_path_and_name(main_graph, &crate_path_vec, "reexported_func")
+
     // --- Assert Items List ---
     let expected_item_ids = vec![
         // Functions
@@ -1118,7 +1132,10 @@ fn test_module_node_items_list_comprehensiveness() {
         // Inline Module Definitions
         inline_pub_mod_def_id,
         inline_priv_mod_def_id,
-        // Note: Imports, Macros, Constants, Statics, etc., would also be included here if present in main.rs
+        // Imports
+        import_std,
+        import_complex,
+        // Note: Macros, Constants, Statics, etc., would also be included here if present in main.rs
     ];
 
     let crate_items = crate_module_node
@@ -1174,9 +1191,14 @@ fn test_module_node_imports_list() {
         .expect("Failed to find ImportNode for 'use std::path::Path'");
 
     // Find `pub use crate::top_pub_mod::top_pub_func as reexported_func;` in crate root
-    let pub_use_node = main_graph.use_statements.iter().find(|imp| {
-        imp.path == ["crate", "top_pub_mod", "top_pub_func"] && imp.visible_name == "reexported_func"
-    }).expect("Failed to find ImportNode for 'pub use ... as reexported_func'");
+    let pub_use_node = main_graph
+        .use_statements
+        .iter()
+        .find(|imp| {
+            imp.path == ["crate", "top_pub_mod", "top_pub_func"]
+                && imp.visible_name == "reexported_func"
+        })
+        .expect("Failed to find ImportNode for 'pub use ... as reexported_func'");
 
     // Find `use std::collections::HashMap;` in inline_pub_mod
     let hashmap_import_node = main_graph
@@ -1186,15 +1208,30 @@ fn test_module_node_imports_list() {
         .expect("Failed to find ImportNode for 'use std::collections::HashMap'");
 
     // --- Assert Crate Module Imports/Items ---
-    let crate_imports = &crate_module_node.imports;
+    let crate_imports = &crate_module_node
+        .imports
+        .iter()
+        .map(|imp| imp.id)
+        .collect::<Vec<NodeId>>();
     let crate_items = crate_module_node
         .items()
         .expect("Crate module node should have items");
 
+    let debug_crate_imports = &crate_module_node
+        .imports
+        .iter()
+        .collect::<Vec<&ImportNode>>();
+    let debug_graph = &crate_module_node.imports;
     assert_eq!(
         crate_imports.len(),
         2,
-        "Expected 2 imports in crate module"
+        "Expected 2 imports in crate module with name: {}, path: {:?}
+All imports for crate ModuleNode: {:#?}
+All imports in CodeGraph:{:#?}",
+        &crate_module_node.name,
+        &crate_module_node.path,
+        debug_crate_imports,
+        debug_graph
     );
     assert!(
         crate_imports.contains(&path_import_node.id),
@@ -1214,7 +1251,11 @@ fn test_module_node_imports_list() {
     );
 
     // --- Assert Inline Module Imports/Items ---
-    let inline_imports = &inline_module_node.imports;
+    let inline_imports = &inline_module_node
+        .imports
+        .iter()
+        .map(|imp| imp.id)
+        .collect::<Vec<NodeId>>();
     let inline_items = inline_module_node
         .items()
         .expect("Inline module node should have items");
@@ -1233,18 +1274,6 @@ fn test_module_node_imports_list() {
         "Inline items should contain HashMap import ID"
     );
 }
-
-// #[test] // TODO: Add a fixture with imports inside modules // REMOVE THIS OLD STUB
-// fn test_module_node_imports_list() {
-//     // Requires a fixture with `use` statements inside a module.
-//     // e.g., Add `use std::collections::HashMap;` inside `inline_pub_mod`.
-//     // Verify:
-//     // 1. Find the module definition node (FileBased or Inline).
-//     // 2. Find the NodeId of the expected ImportNode for the `use` statement.
-//     // 3. Assert that the module node's `imports` list contains exactly this ImportNode ID.
-//     // 4. Assert that the module node's `items` list *also* contains this ImportNode ID.
-//     todo!("Implement test_module_node_imports_list");
-// }
 
 #[test]
 fn test_module_contains_relation_inline() {
@@ -1358,9 +1387,7 @@ fn test_module_node_sibling_file_exists() {
     assert!(sibling_module_node.is_file_based());
     assert_eq!(
         sibling_module_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(sibling_file)
+        &fixtures_crates_dir().join(fixture_name).join(sibling_file)
     );
 
     // --- Assert Items (Example) ---
