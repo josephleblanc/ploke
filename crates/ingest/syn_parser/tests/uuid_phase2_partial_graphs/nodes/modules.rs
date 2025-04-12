@@ -53,185 +53,176 @@ fn test_module_node_top_pub_mod_paranoid() {
     let definition_file = "src/top_pub_mod.rs";
     let module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
     let module_name = "top_pub_mod";
+    let crate_path_vec = vec!["crate".to_string()];
+    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
 
-    // Find the module node using the helper
-    let module_node = find_module_node_paranoid(&results, fixture_name, &module_path, true);
+    // --- Find Nodes ---
+    // Find the DEFINITION node (in src/top_pub_mod.rs)
+    let definition_node = find_file_module_node_paranoid(
+        &results,
+        fixture_name,
+        definition_file, // "src/top_pub_mod.rs"
+        &module_path_vec,
+    );
 
-    // --- Assertions ---
+    // Find the DECLARATION node (in src/main.rs)
+    let declaration_node = find_declaration_node_paranoid(
+        &results,
+        fixture_name,
+        "src/main.rs",
+        &module_path_vec, // The path of the module being declared
+    );
+
+    // --- Assertions for DEFINITION Node (src/top_pub_mod.rs) ---
 
     // Basic Properties
-    assert_eq!(module_node.name(), module_name);
-    assert_eq!(module_node.path, module_path);
-    assert_eq!(module_node.visibility(), VisibilityKind::Public); // File-level modules
-                                                                  // `VisibilityKind::Inherited by default`
-
+    assert_eq!(definition_node.name(), module_name);
+    assert_eq!(definition_node.path, module_path_vec);
+    // The file-level module node itself is considered Public within its own file context in Phase 2
+    assert_eq!(definition_node.visibility(), VisibilityKind::Public);
     assert!(
-        module_node.attributes.is_empty(),
-        "Expected no attributes on top_pub_mod definition"
+        definition_node.attributes.is_empty(),
+        "Expected no attributes on top_pub_mod definition node"
     );
     assert!(
-        module_node.docstring.is_none(),
-        "Expected no docstring on top_pub_mod definiton"
+        definition_node.docstring.is_none(),
+        "Expected no docstring on top_pub_mod definition node"
     );
+    // File-level root modules don't have a separate tracking hash in current impl
     assert!(
-        module_node.tracking_hash.is_none(),
-        "Tracking hash should be NOT present on top_pub_mod definition"
+        definition_node.tracking_hash.is_none(),
+        "Tracking hash should be None for file-level root module definition"
+    );
+    assert!(definition_node.is_file_based());
+    assert_eq!(
+        definition_node.file_path().unwrap(),
+        &fixtures_crates_dir()
+            .join(fixture_name)
+            .join(definition_file)
     );
 
-    // Contents (Items and Submodules defined in top_pub_mod.rs)
-    // Note: Phase 2 populates ModuleNode.items based on what's parsed *in that specific file*.
-    // So, we check the graph corresponding to top_pub_mod.rs for these items.
-
+    // Contents (Items defined in top_pub_mod.rs)
     let definition_graph_data = results
         .iter()
         .find(|data| data.file_path.ends_with(definition_file))
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
-    #[cfg(feature = "verbose_debug")]
-    {
-        println!("{:=^80}", " definition_graph.modules ");
-        println!(
-            "definition_graph.modules: {:#?}\n",
-            definition_graph.modules
-        );
-        println!("{:=^80}", "top_pub_func found by name");
-        println!(
-            "top_pub_func: {:#?}",
-            definition_graph
-                .functions
-                .iter()
-                .find(|f| f.name == "top_pub_func"),
-        );
-    }
-    let top_pub_module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
-    let func_id_debug =
-        find_node_id_by_path_and_name(definition_graph, &top_pub_module_path, "top_pub_func");
-    println!(
-        "find_node_id_by_path_and_name(definition_graph, &module_path_crate_only, \"top_pub_func\"): {:?}",
-        func_id_debug
-    );
-    let find_relation = definition_graph
-        .relations
-        .iter()
-        .find(|r| r.target == GraphId::Node(func_id_debug.unwrap()));
-
-    #[cfg(feature = "verbose_debug")]
-    println!(
-        "definition_graph.relations.iter().find(|r| r.target == GraphId::Node(func_id_debug)): {:?}",
-        find_relation
-    );
-
-    // Find items expected to be defined *directly* within top_pub_mod.rs
-    let func_id = find_node_id_by_path_and_name(definition_graph, &module_path, "top_pub_func")
-        .expect("Failed to find NodeId for top_pub_func");
-
+    // Find item IDs expected to be defined *directly* within top_pub_mod.rs
+    let func_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_func")
+            .expect("Failed to find NodeId for top_pub_func");
     let priv_func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path, "top_pub_priv_func")
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_priv_func")
             .expect("Failed to find NodeId for top_pub_priv_func");
-
     let duplicate_func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path, "duplicate_name")
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "duplicate_name")
             .expect("Failed to find NodeId for duplicate_name in top_pub_mod");
 
-    // Find submodule IDs declared within top_pub_mod.rs
-    let nested_pub_mod_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path, // Parent path
-        "nested_pub", // Submodule name
-    )
-    .expect("Failed to find NodeId for nested_pub module");
+    // Find submodule declaration IDs within top_pub_mod.rs
+    let nested_pub_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_pub")
+            .expect("Failed to find NodeId for nested_pub module declaration");
+    let nested_priv_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv")
+            .expect("Failed to find NodeId for nested_priv module declaration");
+    let path_vis_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "path_visible_mod")
+            .expect("Failed to find NodeId for path_visible_mod module declaration");
 
-    let nested_priv_mod_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path, "nested_priv")
-            .expect("Failed to find NodeId for nested_priv module");
-
-    let path_vis_mod_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path, "path_visible_mod")
-            .expect("Failed to find NodeId for path_visible_mod module");
-
-    // Check ModuleNode.items contains these IDs (order doesn't matter)
+    // Check definition_node.items contains these IDs (order doesn't matter)
     let expected_item_ids = vec![
         func_id,
         priv_func_id,
         duplicate_func_id,
-        nested_pub_mod_id,
-        nested_priv_mod_id,
-        path_vis_mod_id,
+        nested_pub_decl_id, // Declaration ID from top_pub_mod.rs
+        nested_priv_decl_id, // Declaration ID from top_pub_mod.rs
+        path_vis_decl_id, // Declaration ID from top_pub_mod.rs
     ];
+    let definition_items = definition_node
+        .items()
+        .expect("FileBased module node should have items");
     assert_eq!(
-        module_node
-            .items()
-            .expect("Cannot take length of items for non-in-line modules")
-            .len(),
+        definition_items.len(),
         expected_item_ids.len(),
-        "Mismatch in number of items for module {}",
+        "Mismatch in number of items for module definition {}",
         module_name
     );
     for id in &expected_item_ids {
         assert!(
-            module_node.items().is_some_and(|m| m.contains(id)),
-            "Expected item ID {:?} not found in module {}",
+            definition_items.contains(id),
+            "Expected item ID {:?} not found in module definition {}",
             id,
             module_name
         );
     }
 
-    // Check ModuleNode.submodules (Phase 2 might not populate this reliably, check items instead)
-    // Let's assert it's empty for now, as `items` is the primary check in Phase 2.
-    // We might revisit this if the visitor logic changes.
-    //
-    // assert!(
-    //     module_node.submodules.is_empty(),
-    //     "Expected submodules list to be empty in Phase 2 for {}",
-    //     module_name
-    // ); // Old implementation, `submodules` field no longer exists.
-
-    // Check ModuleNode.imports (Should be empty for top_pub_mod.rs)
+    // Check definition_node.imports (Should be empty for top_pub_mod.rs)
     assert!(
-        module_node.imports.is_empty(),
-        "Expected imports list to be empty for {}",
+        definition_node.imports.is_empty(),
+        "Expected imports list to be empty for definition node {}",
         module_name
     );
 
-    // Check ModuleNode.exports (Should be empty)
+    // Check definition_node.exports (Should be empty)
     assert!(
-        module_node.exports.is_empty(),
-        "Expected exports list to be empty for {}",
+        definition_node.exports.is_empty(),
+        "Expected exports list to be empty for definition node {}",
         module_name
     );
 
-    // --- Basic Relation Check ---
-    // Check that the 'crate' module (from main.rs graph) contains a declaration for this module
-    // We only know this because we wrote the fixtures, for testing purposes this is equivalent to
-    // testing that a given target module declaration, e.g. `pub mod some_mod;` exists in main.rs
-    //
-    // The relation from the file main.rs as a file-level module to the file-level module
-    // top_pub_mod can only be known in phase 3 (since main.rs may or may not have a module
-    // declaration for top_pub_mod), once we merge the partial code graphs.
-    // For now, this is just a basic check that the module declaration exists in the fixture as we
-    // expect.
+    // --- Assertions for DECLARATION Node (src/main.rs) ---
+    assert_eq!(declaration_node.name(), module_name);
+    assert_eq!(declaration_node.path, module_path_vec);
+    assert_eq!(declaration_node.visibility(), VisibilityKind::Public); // Visibility from `pub mod ...;`
+    assert!(
+        declaration_node.attributes.is_empty(),
+        "Expected no attributes on top_pub_mod declaration node"
+    );
+    assert!(
+        declaration_node.docstring.is_none(),
+        "Expected no docstring on top_pub_mod declaration node"
+    );
+    // Declarations don't have their own content hash
+    assert!(
+        declaration_node.tracking_hash.is_none(),
+        "Tracking hash should be None for declaration node"
+    );
+    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.declaration_span().is_some()); // Should have the span of `mod ...;`
+    assert!(declaration_node.resolved_definition().is_none()); // Not resolved in Phase 2
+
+    // --- Relation Check (Declaration Containment) ---
+    // Check that the 'crate' module (from main.rs graph) contains the declaration for this module.
     let main_graph_data = results
         .iter()
         .find(|data| data.file_path.ends_with("src/main.rs"))
         .expect("Graph for main.rs not found");
     let main_graph = &main_graph_data.graph;
 
-    let main_module_debug = &main_graph_data
-        .graph
-        .modules
-        .iter()
-        .filter(|m| m.name() == "top_pub_mod" && m.is_declaration());
+    // Find the 'crate' module node (file-level root of main.rs)
+    let crate_module_node = find_file_module_node_paranoid(
+        &results,
+        fixture_name,
+        "src/main.rs",
+        &crate_path_vec, // ["crate"]
+    );
 
-    let crate_module =
-        find_mod_decl_by_path_and_name(main_graph, &["crate".to_string()], "top_pub_mod")
-            .expect("top_pub_mod module declaration not found in main.rs graph");
-
+    // Assert the 'crate' module node contains the 'top_pub_mod' declaration node
     assert_relation_exists(
-        main_graph, // Check in the graph where the declaration happens
-        GraphId::Node(crate_module.id()),
-        GraphId::Node(module_node.id()),
+        main_graph, // Check in the graph where the declaration happens (main.rs)
+        GraphId::Node(crate_module_node.id()), // Source: crate module in main.rs
+        GraphId::Node(declaration_node.id()),  // Target: top_pub_mod declaration in main.rs
         RelationKind::Contains,
-        "Expected 'crate' module in main.rs to Contain 'top_pub_mod'",
+        "Expected 'crate' module in main.rs to Contain 'top_pub_mod' declaration",
+    );
+
+    // Also check the declaration node's ID is in the crate module's items list
+    assert!(
+        crate_module_node
+            .items()
+            .expect("crate module node items failed")
+            .contains(&declaration_node.id()),
+        "Expected crate module items list to contain top_pub_mod declaration ID"
     );
 }
