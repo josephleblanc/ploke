@@ -27,26 +27,34 @@ use crate::common::paranoid::{
     find_inline_module_node_paranoid,
 };
 
-#[test]
-fn test_module_node_top_pub_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-
-    // --- Test Setup: Directly call Phase 1 & 2 ---
-    // Note: Departing from run_phase1_phase2 helper to directly test analyze_files_parallel output handling.
+// Helper function to run Phase 1 & 2 and collect results
+fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
     let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
-        .expect("Phase 1 Discovery failed");
+        .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
     let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
 
     // Collect successful results, panicking if any file failed to parse in Phase 2
-    let results: Vec<ParsedCodeGraph> = results_with_errors
+    results_with_errors
         .into_iter()
-        .map(|res| res.expect("Phase 2 parsing failed for a file"))
-        .collect();
-    // --- End Test Setup ---
+        .map(|res| {
+            res.unwrap_or_else(|e| {
+                panic!(
+                    "Phase 2 parsing failed for a file in fixture {}: {:?}",
+                    fixture_name, e
+                )
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn test_module_node_top_pub_mod_paranoid() {
+    let fixture_name = "file_dir_detection";
+    let results = run_phases_and_collect(fixture_name);
 
     // Target: `pub mod top_pub_mod;` declared in main.rs, defined in top_pub_mod.rs
     // Definition file (where items/submodules are likely parsed)
@@ -182,10 +190,10 @@ fn test_module_node_top_pub_mod_paranoid() {
         declaration_node.docstring.is_none(),
         "Expected no docstring on top_pub_mod declaration node"
     );
-    // Declarations don't have their own content hash
+    // Declarations have a tracking hash based on the `mod name;` item itself
     assert!(
-        declaration_node.tracking_hash.is_none(),
-        "Tracking hash should be None for declaration node"
+        declaration_node.tracking_hash.is_some(),
+        "Tracking hash should be Some for declaration node"
     );
     assert!(declaration_node.is_declaration());
     assert!(declaration_node.declaration_span().is_some()); // Should have the span of `mod ...;`
