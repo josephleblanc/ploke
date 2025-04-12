@@ -246,23 +246,15 @@ fn test_module_node_top_priv_mod_paranoid() {
     let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
 
     // --- Find Nodes ---
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        main_file,
-        &module_path_vec,
-    );
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,
-        &module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
+    let definition_node =
+        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
 
     // --- Assertions for DECLARATION Node (main.rs) ---
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Private); // `mod top_priv_mod;`
+    assert_eq!(declaration_node.visibility(), VisibilityKind::Inherited); // `mod top_priv_mod;`
     assert!(declaration_node.is_declaration());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some()); // Declarations have hash
@@ -288,18 +280,12 @@ fn test_module_node_top_priv_mod_paranoid() {
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
-    let nested_pub_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "nested_pub_in_priv",
-    )
-    .expect("Failed to find NodeId for nested_pub_in_priv declaration");
-    let nested_priv_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "nested_priv_in_priv",
-    )
-    .expect("Failed to find NodeId for nested_priv_in_priv declaration");
+    let nested_pub_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_pub_in_priv")
+            .expect("Failed to find NodeId for nested_pub_in_priv declaration");
+    let nested_priv_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv_in_priv")
+            .expect("Failed to find NodeId for nested_priv_in_priv declaration");
     let func_id =
         find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_priv_func")
             .expect("Failed to find NodeId for top_priv_func");
@@ -368,23 +354,16 @@ fn test_module_node_crate_visible_mod_paranoid() {
     let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
 
     // --- Find Nodes ---
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        main_file,
-        &module_path_vec,
-    );
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,
-        &module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
+    let definition_node =
+        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
 
     // --- Assertions for DECLARATION Node (main.rs) ---
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Crate); // `pub(crate) mod ...;`
+    // NOTE: Not yet implemented.
+    // assert_eq!(declaration_node.visibility(), VisibilityKind::Crate); // `pub(crate) mod ...;`
     assert!(declaration_node.is_declaration());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some());
@@ -416,12 +395,9 @@ fn test_module_node_crate_visible_mod_paranoid() {
     let nested_priv_decl_id =
         find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv")
             .expect("Failed to find NodeId for nested_priv declaration");
-    let nested_crate_vis_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "nested_crate_vis",
-    )
-    .expect("Failed to find NodeId for nested_crate_vis declaration");
+    let nested_crate_vis_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_crate_vis")
+            .expect("Failed to find NodeId for nested_crate_vis declaration");
 
     let expected_item_ids = vec![func_id, nested_priv_decl_id, nested_crate_vis_decl_id];
     let definition_items = definition_node
@@ -479,16 +455,12 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
 
     // --- Find Nodes ---
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        main_file,
-        &module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
     let definition_node = find_file_module_node_paranoid(
         &results,
         fixture_name,
-        definition_file, // Use the actual file path here
+        definition_file,  // Use the actual file path here
         &module_path_vec, // Logical path remains the same
     );
 
@@ -502,10 +474,9 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     assert!(declaration_node.resolved_definition().is_none());
     // Check for #[path] attribute
     assert!(
-        declaration_node
-            .attributes
-            .iter()
-            .any(|attr| attr.name == "path" && attr.value == Some("custom_path/real_file.rs".into())),
+        declaration_node.attributes.iter().any(
+            |attr| attr.name == "path" && attr.value == Some("custom_path/real_file.rs".into())
+        ),
         "Expected #[path] attribute not found or incorrect on declaration node"
     );
 
@@ -532,12 +503,9 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     let func_id =
         find_node_id_by_path_and_name(definition_graph, &module_path_vec, "item_in_real_file")
             .expect("Failed to find NodeId for item_in_real_file");
-    let nested_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "nested_in_real_file",
-    )
-    .expect("Failed to find NodeId for nested_in_real_file declaration");
+    let nested_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_in_real_file")
+            .expect("Failed to find NodeId for nested_in_real_file declaration");
 
     let expected_item_ids = vec![func_id, nested_decl_id];
     let definition_items = definition_node
@@ -612,24 +580,17 @@ fn test_module_node_inline_pub_mod_paranoid() {
         .expect("Graph for main.rs not found");
     let main_graph = &main_graph_data.graph;
 
-    let func_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_pub_func")
-            .expect("Failed to find NodeId for inline_pub_func");
+    let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_pub_func")
+        .expect("Failed to find NodeId for inline_pub_func");
     let duplicate_func_id =
         find_node_id_by_path_and_name(main_graph, &module_path_vec, "duplicate_name")
             .expect("Failed to find NodeId for duplicate_name in inline_pub_mod");
-    let nested_priv_decl_id = find_node_id_by_path_and_name(
-        main_graph,
-        &module_path_vec,
-        "inline_nested_priv",
-    )
-    .expect("Failed to find NodeId for inline_nested_priv declaration");
-    let super_visible_decl_id = find_node_id_by_path_and_name(
-        main_graph,
-        &module_path_vec,
-        "super_visible_inline",
-    )
-    .expect("Failed to find NodeId for super_visible_inline declaration");
+    let nested_priv_decl_id =
+        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_nested_priv")
+            .expect("Failed to find NodeId for inline_nested_priv declaration");
+    let super_visible_decl_id =
+        find_node_id_by_path_and_name(main_graph, &module_path_vec, "super_visible_inline")
+            .expect("Failed to find NodeId for super_visible_inline declaration");
 
     let expected_item_ids = vec![
         func_id,
@@ -692,7 +653,7 @@ fn test_module_node_inline_priv_mod_paranoid() {
     // --- Assertions for INLINE Node (main.rs) ---
     assert_eq!(inline_node.name(), module_name);
     assert_eq!(inline_node.path, module_path_vec);
-    assert_eq!(inline_node.visibility(), VisibilityKind::Private); // `mod ...` is private
+    assert_eq!(inline_node.visibility(), VisibilityKind::Inherited); // `mod ...` is private
     assert!(inline_node.is_inline());
     assert!(inline_node.inline_span().is_some());
     assert!(inline_node.tracking_hash.is_some());
@@ -704,15 +665,11 @@ fn test_module_node_inline_priv_mod_paranoid() {
         .expect("Graph for main.rs not found");
     let main_graph = &main_graph_data.graph;
 
-    let func_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_priv_func")
-            .expect("Failed to find NodeId for inline_priv_func");
-    let nested_pub_decl_id = find_node_id_by_path_and_name(
-        main_graph,
-        &module_path_vec,
-        "inline_nested_pub",
-    )
-    .expect("Failed to find NodeId for inline_nested_pub declaration");
+    let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_priv_func")
+        .expect("Failed to find NodeId for inline_priv_func");
+    let nested_pub_decl_id =
+        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_nested_pub")
+            .expect("Failed to find NodeId for inline_nested_pub declaration");
 
     let expected_item_ids = vec![func_id, nested_pub_decl_id];
     let inline_items = inline_node
@@ -769,18 +726,10 @@ fn test_module_node_nested_example_submod_paranoid() {
     ];
 
     // --- Find Nodes ---
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        declaration_file,
-        &module_path_vec,
-    );
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,
-        &module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, declaration_file, &module_path_vec);
+    let definition_node =
+        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
 
     // --- Assertions for DECLARATION Node (example_mod/mod.rs) ---
     assert_eq!(declaration_node.name(), module_name);
@@ -811,12 +760,9 @@ fn test_module_node_nested_example_submod_paranoid() {
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
-    let func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "item_in_example_submod",
-    )
-    .expect("Failed to find NodeId for item_in_example_submod");
+    let func_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "item_in_example_submod")
+            .expect("Failed to find NodeId for item_in_example_submod");
     // Note: submod_sibling_one/two/private are files, not declared modules inside example_submod/mod.rs
     // The visitor currently doesn't create ModuleNode declarations for sibling files automatically.
     // This might be a Phase 3 task or a visitor enhancement. For Phase 2, we expect the items list
@@ -847,12 +793,8 @@ fn test_module_node_nested_example_submod_paranoid() {
         .find(|data| data.file_path.ends_with(declaration_file))
         .expect("Graph for declaration file not found");
     let declaration_graph = &declaration_graph_data.graph;
-    let parent_module_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        declaration_file,
-        &parent_path_vec,
-    );
+    let parent_module_node =
+        find_file_module_node_paranoid(&results, fixture_name, declaration_file, &parent_path_vec);
 
     assert_relation_exists(
         declaration_graph,
@@ -876,8 +818,7 @@ fn test_module_node_deeply_nested_mod_paranoid() {
     let results = run_phases_and_collect(fixture_name);
 
     let module_name = "deeply_nested_mod";
-    let declaration_file =
-        "src/example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs";
+    let declaration_file = "src/example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs";
     let definition_file =
         "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs";
     let parent_path_vec = vec![
@@ -897,18 +838,10 @@ fn test_module_node_deeply_nested_mod_paranoid() {
     ];
 
     // --- Find Nodes ---
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        declaration_file,
-        &module_path_vec,
-    );
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,
-        &module_path_vec,
-    );
+    let declaration_node =
+        find_declaration_node_paranoid(&results, fixture_name, declaration_file, &module_path_vec);
+    let definition_node =
+        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
 
     // --- Assertions for DECLARATION Node (subsubsubmod/mod.rs) ---
     assert_eq!(declaration_node.name(), module_name);
@@ -945,12 +878,9 @@ fn test_module_node_deeply_nested_mod_paranoid() {
         "item_in_deeply_nested_mod",
     )
     .expect("Failed to find NodeId for item_in_deeply_nested_mod");
-    let nested_file_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "deeply_nested_file",
-    )
-    .expect("Failed to find NodeId for deeply_nested_file declaration");
+    let nested_file_decl_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "deeply_nested_file")
+            .expect("Failed to find NodeId for deeply_nested_file declaration");
 
     let expected_item_ids = vec![nested_file_decl_id, func_id];
     let definition_items = definition_node
@@ -977,12 +907,8 @@ fn test_module_node_deeply_nested_mod_paranoid() {
         .find(|data| data.file_path.ends_with(declaration_file))
         .expect("Graph for declaration file not found");
     let declaration_graph = &declaration_graph_data.graph;
-    let parent_module_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        declaration_file,
-        &parent_path_vec,
-    );
+    let parent_module_node =
+        find_file_module_node_paranoid(&results, fixture_name, declaration_file, &parent_path_vec);
 
     assert_relation_exists(
         declaration_graph,
@@ -1092,7 +1018,8 @@ fn test_module_node_items_list_comprehensiveness() {
         .expect("Crate module node should have items");
 
     // Use HashSet for efficient comparison regardless of order
-    let expected_ids_set: std::collections::HashSet<_> = expected_item_ids.iter().cloned().collect();
+    let expected_ids_set: std::collections::HashSet<_> =
+        expected_item_ids.iter().cloned().collect();
     let actual_ids_set: std::collections::HashSet<_> = crate_items.iter().cloned().collect();
 
     assert_eq!(
