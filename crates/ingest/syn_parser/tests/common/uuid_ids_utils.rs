@@ -6,7 +6,7 @@ use quote::ToTokens;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::relations::{GraphId, RelationKind};
-use syn_parser::parser::types::{TypeKind, TypeNode};
+use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::visitor::ParsedCodeGraph;
 use syn_parser::parser::{analyze_files_parallel, nodes::*};
 
@@ -18,20 +18,34 @@ pub fn find_node_id_by_path_and_name(
     name: &str,
 ) -> Option<NodeId> {
     // 1. Find the module node corresponding to the path in *this* graph
-    let target_module = graph.modules.iter().find(|m| m.path == module_path)?;
+    let parent_module = graph.modules.iter().find(|m| {
+        #[cfg(feature = "verbose_debug")]
+        println!(
+            "searching for: {:?}\nm.defn_path() = {:?}\nm.path = {:?}
+m.name = {}\nm.id = {}\nm.is_file_based() = {}
+m.items() = {:#?}",
+            module_path,
+            m.defn_path(),
+            m.path,
+            m.name,
+            m.id,
+            m.is_file_based(),
+            m.items()
+        );
+        (m.defn_path() == module_path && m.is_inline())
+            || (m.defn_path() == module_path && m.is_file_based())
+    })?;
 
     // Convert items Vec<NodeId> to a HashSet for faster lookups if needed,
     // though for typical module sizes, linear scan might be fine.
-    // let module_item_ids: std::collections::HashSet<_> = target_module.items.iter().collect();
+    // NO, DO NOT DO THIS WITHOUT FIRST CHECKING ONLY ONE MATCH
+    // let module_item_ids: std::collections::HashSet<_> = parent_module.items.iter().collect();
 
     // 2. Search functions
     let func_id = graph
         .functions
         .iter()
-        .find(|f| {
-            f.name() == name && target_module.items().map_or(false, |m| m.contains(&f.id()))
-            // Check name and module membership
-        })
+        .find(|f| f.name() == name && parent_module.items().is_some_and(|m| m.contains(&f.id())))
         .map(|f| f.id());
 
     if func_id.is_some() {
@@ -41,11 +55,7 @@ pub fn find_node_id_by_path_and_name(
     // 3. Search defined types (Struct, Enum, Union, TypeAlias)
     let type_def_id = graph.defined_types.iter().find_map(|td| {
         // Use the Visible trait implemented by node types
-        if td.name() == name
-            && target_module
-                .items()
-                .map_or(false, |m| m.contains(&td.id()))
-        {
+        if td.name() == name && parent_module.items().is_some_and(|m| m.contains(&td.id())) {
             Some(td.id())
         } else {
             None
@@ -60,17 +70,56 @@ pub fn find_node_id_by_path_and_name(
     let trait_id = graph
         .traits
         .iter()
-        .find(|t| t.name() == name && target_module.items().map_or(false, |m| m.contains(&t.id())))
+        .find(|t| t.name() == name && parent_module.items().is_some_and(|m| m.contains(&t.id())))
         .map(|t| t.id());
 
     if trait_id.is_some() {
         return trait_id;
     }
 
+    let module_id = graph
+        .modules
+        .iter()
+        .find(|target_m| {
+            target_m.name() == name
+                && parent_module
+                    .items()
+                    .is_some_and(|m| m.contains(&target_m.id()))
+        })
+        .map(|target_m| target_m.id());
+
+    if module_id.is_some() {
+        return module_id;
+    }
+
     // ... add searches for other relevant node types that implement Visible and belong in ModuleNode.items
 
     None
 }
+
+pub fn find_node_id_container_mod_paranoid(graph: &CodeGraph, node_id: NodeId) -> Option<NodeId> {
+    let count = graph
+        .relations
+        .iter()
+        .filter(|m| m.target == GraphId::Node(node_id))
+        .map(|r| match r.source {
+            GraphId::Node(node_id) => node_id,
+            GraphId::Type(_type_id) => panic!("Should never have type containing node"),
+        })
+        .count();
+    if count != 1 {
+        panic!("More than one containing module");
+    }
+    graph
+        .relations
+        .iter()
+        .find(|m| m.target == GraphId::Node(node_id))
+        .map(|r| match r.source {
+            GraphId::Node(node_id) => node_id,
+            GraphId::Type(_type_id) => panic!("Should never have type containing node"),
+        })
+}
+
 pub fn find_import_longname_by_id(graph: &CodeGraph, node_id: NodeId) -> Option<String> {
     graph
         .use_statements
@@ -216,12 +265,9 @@ pub fn print_all_relations(graph: &CodeGraph) {
     for rel in &graph.relations {
         println!("{:?}: {} -> {}", rel.kind, rel.source, rel.target);
         println!(
-            "{}\n",
-            format!(
-                "{} -> {}",
-                find_name_by_graph_id(graph, rel.source).unwrap_or("Not Found".to_string()),
-                find_name_by_graph_id(graph, rel.target).unwrap_or("Not Found".to_string())
-            )
+            "{} -> {}",
+            find_name_by_graph_id(graph, rel.source).unwrap_or("Not Found".to_string()),
+            find_name_by_graph_id(graph, rel.target).unwrap_or("Not Found".to_string())
         );
     }
 }
@@ -339,15 +385,43 @@ pub fn find_inline_module_by_path<'a>(
     graph: &'a CodeGraph,
     module_path: &[String],
 ) -> Option<&'a ModuleNode> {
-    let mut modules = graph.modules.iter().filter(|m| m.path == module_path);
+    let mut modules = graph
+        .modules
+        .iter()
+        .filter(|m| m.defn_path() == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
-    while let Some(unexpected_module) = modules.next() {
+    for unexpected_module in modules {
         errs.push(unexpected_module);
     }
     if !errs.is_empty() {
         panic!(
             "Mutiple modules found with same path.
+  First module found: {:?}
+  Other modules found: {:?}",
+            found, errs
+        );
+    }
+    found
+}
+
+pub fn find_mod_decl_by_path_and_name<'a>(
+    graph: &'a CodeGraph,
+    module_path: &[String],
+    name: &str,
+) -> Option<&'a ModuleNode> {
+    let mut modules = graph
+        .modules
+        .iter()
+        .filter(|m| m.is_declaration() && m.name() == name && m.path == module_path);
+    let found = modules.next();
+    let mut errs = Vec::new();
+    for unexpected_module in modules {
+        errs.push(unexpected_module);
+    }
+    if !errs.is_empty() {
+        panic!(
+            "Mutiple module declarations found with same path.
   First module found: {:?}
   Other modules found: {:?}",
             found, errs
@@ -414,7 +488,7 @@ pub fn find_function_node_paranoid<'a>(
 
     let module_candidates: Vec<&FunctionNode> = name_candidates
         .into_iter()
-        .filter(|f| module_node.items().map_or(false, |m| m.contains(&f.id())))
+        .filter(|f| module_node.items().is_some_and(|m| m.contains(&f.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -452,7 +526,7 @@ pub fn find_function_node_paranoid<'a>(
 }
 
 /// Helper to find a TypeNode by its ID. Panics if not found.
-pub fn find_type_node<'a>(graph: &'a CodeGraph, type_id: TypeId) -> &'a TypeNode {
+pub fn find_type_node(graph: &CodeGraph, type_id: TypeId) -> &TypeNode {
     graph
         .type_graph
         .iter()
@@ -521,7 +595,7 @@ pub fn find_struct_node_paranoid<'a>(
 
     let module_candidates: Vec<&StructNode> = name_candidates
         .into_iter()
-        .filter(|s| module_node.items().map_or(false, |m| m.contains(&s.id())))
+        .filter(|s| module_node.items().is_some_and(|m| m.contains(&s.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -619,7 +693,7 @@ pub fn find_enum_node_paranoid<'a>(
 
     let module_candidates: Vec<&EnumNode> = name_candidates
         .into_iter()
-        .filter(|e| module_node.items().map_or(false, |m| m.contains(&e.id())))
+        .filter(|e| module_node.items().is_some_and(|m| m.contains(&e.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -717,7 +791,7 @@ pub fn find_type_alias_node_paranoid<'a>(
 
     let module_candidates: Vec<&TypeAliasNode> = name_candidates
         .into_iter()
-        .filter(|ta| module_node.items().map_or(false, |m| m.contains(&ta.id())))
+        .filter(|ta| module_node.items().is_some_and(|m| m.contains(&ta.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -815,7 +889,7 @@ pub fn find_union_node_paranoid<'a>(
 
     let module_candidates: Vec<&UnionNode> = name_candidates
         .into_iter()
-        .filter(|u| module_node.items().map_or(false, |m| m.contains(&u.id())))
+        .filter(|u| module_node.items().is_some_and(|m| m.contains(&u.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -912,7 +986,7 @@ pub fn find_trait_node_paranoid<'a>(
 
     let module_candidates: Vec<&TraitNode> = name_candidates
         .into_iter()
-        .filter(|t| module_node.items().map_or(false, |m| m.contains(&t.id())))
+        .filter(|t| module_node.items().is_some_and(|m| m.contains(&t.id())))
         .collect();
 
     // 5. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by module
@@ -1032,7 +1106,7 @@ pub fn find_impl_node_paranoid<'a>(
 
     let module_candidates: Vec<&ImplNode> = type_candidates
         .into_iter()
-        .filter(|imp| module_node.items().map_or(false, |m| m.contains(&imp.id())))
+        .filter(|imp| module_node.items().is_some_and(|m| m.contains(&imp.id())))
         .collect();
 
     // 6. PARANOID CHECK: Assert exactly ONE candidate remains
@@ -1087,22 +1161,9 @@ pub fn find_impl_node_paranoid<'a>(
 pub fn find_module_node_paranoid<'a>(
     parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
     fixture_name: &str,                   // Needed to construct expected path
-    relative_file_path: &str,             // File where the module is *declared* or defined inline
     expected_module_path: &[String],      // The full path of the module itself
     expected_is_file: bool,
 ) -> &'a ModuleNode {
-    // 1. Construct the absolute expected file path where the module is declared/defined
-    let fixture_root = fixtures_crates_dir().join(fixture_name);
-    // Note: For modules defined across files (mod foo;), the declaration point matters
-    // for finding the graph, but the module node itself might exist in multiple graphs
-    // if its content spans files. However, Phase 2 creates partial graphs per file.
-    // We need the graph corresponding to the file containing the module's *definition*
-    // or items if we want to check its contents accurately in Phase 2.
-    // Checking the module's definition vs. where it is called, potentially in multiple files, we
-    // first must check against the newly created `is_file` field of `ModuleNode` specifically to
-    // handle this situation.
-    let target_file_path = fixture_root.join(relative_file_path);
-
     // 2. Find the specific ParsedCodeGraph for the target file
     // It's possible a module declared in main.rs (mod foo;) has its items parsed
     // in foo.rs. We need to search *all* graphs for the module by its path.
@@ -1112,7 +1173,7 @@ pub fn find_module_node_paranoid<'a>(
             data.graph
                 .modules
                 .iter()
-                .find(|m| m.is_file_based() == expected_is_file && m.path == expected_module_path)
+                .find(|m| (m.is_file_based() == expected_is_file && m.path == expected_module_path))
         })
         .unwrap_or_else(|| {
             panic!(
