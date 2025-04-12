@@ -109,9 +109,8 @@ fn test_module_node_top_pub_mod_paranoid() {
     let definition_graph = &definition_graph_data.graph;
 
     // Find item IDs expected to be defined *directly* within top_pub_mod.rs
-    let func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_func")
-            .expect("Failed to find NodeId for top_pub_func");
+    let func_id = find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_func")
+        .expect("Failed to find NodeId for top_pub_func");
     let priv_func_id =
         find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_priv_func")
             .expect("Failed to find NodeId for top_pub_priv_func");
@@ -135,9 +134,9 @@ fn test_module_node_top_pub_mod_paranoid() {
         func_id,
         priv_func_id,
         duplicate_func_id,
-        nested_pub_decl_id, // Declaration ID from top_pub_mod.rs
+        nested_pub_decl_id,  // Declaration ID from top_pub_mod.rs
         nested_priv_decl_id, // Declaration ID from top_pub_mod.rs
-        path_vis_decl_id, // Declaration ID from top_pub_mod.rs
+        path_vis_decl_id,    // Declaration ID from top_pub_mod.rs
     ];
     let definition_items = definition_node
         .items()
@@ -212,7 +211,7 @@ fn test_module_node_top_pub_mod_paranoid() {
     assert_relation_exists(
         main_graph, // Check in the graph where the declaration happens (main.rs)
         GraphId::Node(crate_module_node.id()), // Source: crate module in main.rs
-        GraphId::Node(declaration_node.id()),  // Target: top_pub_mod declaration in main.rs
+        GraphId::Node(declaration_node.id()), // Target: top_pub_mod declaration in main.rs
         RelationKind::Contains,
         "Expected 'crate' module in main.rs to Contain 'top_pub_mod' declaration",
     );
