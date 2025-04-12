@@ -481,8 +481,11 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     );
 
     // --- Assertions for DEFINITION Node (real_file.rs) ---
-    assert_eq!(definition_node.name(), module_name); // Name comes from declaration
-    assert_eq!(definition_node.path, module_path_vec); // Logical path derived correctly
+    // NOTE: In Phase 2, the definition node parsed from real_file.rs gets its name
+    // from the file stem ("real_file") and its path from the file system derivation.
+    // The link to "logical_name" happens in Phase 3.
+    assert_eq!(definition_node.name(), "real_file"); // Name derived from file stem
+    assert_eq!(definition_node.path, definition_file_derived_path_vec); // Path derived from file system
     assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
@@ -926,8 +929,93 @@ fn test_module_node_deeply_nested_mod_paranoid() {
     );
 }
 
+#[test]
+fn test_module_node_file_attributes_and_docs() {
+    let fixture_name = "file_dir_detection";
+    let results = run_phases_and_collect(fixture_name);
+
+    let main_file = "src/main.rs";
+    let crate_path_vec = vec!["crate".to_string()];
+
+    // --- Find Node (crate module in main.rs) ---
+    let crate_module_node =
+        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
+
+    // --- Assert File-Level Attributes ---
+    let file_attrs = crate_module_node
+        .file_attrs()
+        .expect("FileBased module should provide file_attrs");
+    assert_eq!(
+        file_attrs.len(),
+        1,
+        "Expected 1 file-level attribute in main.rs"
+    );
+    assert_eq!(file_attrs[0].name, "allow");
+    assert!(
+        file_attrs[0].args.contains(&"unused".to_string()),
+        "Expected '#![allow(unused)]'"
+    );
+
+    // --- Assert File-Level Docs ---
+    let file_docs = crate_module_node
+        .file_docs()
+        .expect("FileBased module should provide file_docs");
+    assert_eq!(file_docs.trim(), "This is the crate root doc comment.");
+}
+
+#[test]
+fn test_module_node_mod_attributes_and_docs() {
+    let fixture_name = "file_dir_detection";
+    let results = run_phases_and_collect(fixture_name);
+
+    let module_name = "inline_pub_mod";
+    let main_file = "src/main.rs";
+    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
+
+    // --- Find Node (inline_pub_mod in main.rs) ---
+    let inline_node =
+        find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
+
+    // --- Assert Module-Level Attributes ---
+    assert_eq!(
+        inline_node.attributes.len(),
+        1,
+        "Expected 1 attribute on inline_pub_mod"
+    );
+    assert_eq!(inline_node.attributes[0].name, "cfg");
+    assert!(
+        inline_node.attributes[0]
+            .args
+            .contains(&"test".to_string()),
+        "Expected '#[cfg(test)]'"
+    );
+
+    // --- Assert Module-Level Docs ---
+    let docstring = inline_node
+        .docstring
+        .as_ref()
+        .expect("Expected docstring on inline_pub_mod");
+    assert_eq!(docstring.trim(), "An inline public module doc comment.");
+
+    // --- Check Declaration Node Docs (Example) ---
+    let decl_module_name = "top_pub_mod";
+    let decl_module_path_vec = vec!["crate".to_string(), decl_module_name.to_string()];
+    let declaration_node = find_declaration_node_paranoid(
+        &results,
+        fixture_name,
+        main_file,
+        &decl_module_path_vec,
+    );
+    // NOTE: Currently, doc comments on `mod item;` are NOT attached to the ModuleNode declaration.
+    // This might be a visitor enhancement needed later if required.
+    assert!(
+        declaration_node.docstring.is_none(),
+        "Expected no docstring on top_pub_mod declaration (current limitation)"
+    );
+}
+
 // #[test] // TODO: Add a fixture with attributes/docs on modules
-// fn test_module_node_with_attributes_and_docs() {
+// fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
 //     // Requires a fixture with modules having attributes (#![...]) and doc comments (//! or /// mod)
 //     // e.g., Add attributes/docs to `inline_pub_mod` or a file-based module.
 //     // Verify:
@@ -1034,7 +1122,99 @@ fn test_module_node_items_list_comprehensiveness() {
     );
 }
 
-// #[test] // TODO: Add a fixture with imports inside modules
+#[test]
+fn test_module_node_imports_list() {
+    let fixture_name = "file_dir_detection";
+    let results = run_phases_and_collect(fixture_name);
+
+    let main_file = "src/main.rs";
+    let crate_path_vec = vec!["crate".to_string()];
+    let inline_mod_name = "inline_pub_mod";
+    let inline_mod_path_vec = vec!["crate".to_string(), inline_mod_name.to_string()];
+
+    // --- Find Nodes ---
+    let crate_module_node =
+        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
+    let inline_module_node =
+        find_inline_module_node_paranoid(&results, fixture_name, main_file, &inline_mod_path_vec);
+
+    // --- Find Graph ---
+    let main_graph_data = results
+        .iter()
+        .find(|data| data.file_path.ends_with(main_file))
+        .expect("Graph for main.rs not found");
+    let main_graph = &main_graph_data.graph;
+
+    // --- Find Import Node IDs ---
+    // Find `use std::path::Path;` in crate root
+    let path_import_node = main_graph
+        .use_statements
+        .iter()
+        .find(|imp| imp.path == ["std", "path", "Path"] && imp.visible_name == "Path")
+        .expect("Failed to find ImportNode for 'use std::path::Path'");
+
+    // Find `pub use crate::top_pub_mod::top_pub_func as reexported_func;` in crate root
+    let pub_use_node = main_graph.use_statements.iter().find(|imp| {
+        imp.path == ["crate", "top_pub_mod", "top_pub_func"] && imp.visible_name == "reexported_func"
+    }).expect("Failed to find ImportNode for 'pub use ... as reexported_func'");
+
+    // Find `use std::collections::HashMap;` in inline_pub_mod
+    let hashmap_import_node = main_graph
+        .use_statements
+        .iter()
+        .find(|imp| imp.path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap")
+        .expect("Failed to find ImportNode for 'use std::collections::HashMap'");
+
+    // --- Assert Crate Module Imports/Items ---
+    let crate_imports = &crate_module_node.imports;
+    let crate_items = crate_module_node
+        .items()
+        .expect("Crate module node should have items");
+
+    assert_eq!(
+        crate_imports.len(),
+        2,
+        "Expected 2 imports in crate module"
+    );
+    assert!(
+        crate_imports.contains(&path_import_node.id),
+        "Crate imports should contain Path import ID"
+    );
+    assert!(
+        crate_imports.contains(&pub_use_node.id),
+        "Crate imports should contain pub use import ID"
+    );
+    assert!(
+        crate_items.contains(&path_import_node.id),
+        "Crate items should contain Path import ID"
+    );
+    assert!(
+        crate_items.contains(&pub_use_node.id),
+        "Crate items should contain pub use import ID"
+    );
+
+    // --- Assert Inline Module Imports/Items ---
+    let inline_imports = &inline_module_node.imports;
+    let inline_items = inline_module_node
+        .items()
+        .expect("Inline module node should have items");
+
+    assert_eq!(
+        inline_imports.len(),
+        1,
+        "Expected 1 import in inline_pub_mod"
+    );
+    assert!(
+        inline_imports.contains(&hashmap_import_node.id),
+        "Inline imports should contain HashMap import ID"
+    );
+    assert!(
+        inline_items.contains(&hashmap_import_node.id),
+        "Inline items should contain HashMap import ID"
+    );
+}
+
+// #[test] // TODO: Add a fixture with imports inside modules // REMOVE THIS OLD STUB
 // fn test_module_node_imports_list() {
 //     // Requires a fixture with `use` statements inside a module.
 //     // e.g., Add `use std::collections::HashMap;` inside `inline_pub_mod`.
@@ -1133,5 +1313,58 @@ fn test_module_contains_relation_declaration_nested() {
             .expect("parent module node items failed")
             .contains(&child_declaration_node.id()),
         "Expected top_pub_mod module items list to contain nested_pub declaration ID"
+    );
+}
+
+#[test]
+fn test_module_node_sibling_file_exists() {
+    let fixture_name = "file_dir_detection";
+    let results = run_phases_and_collect(fixture_name);
+
+    let sibling_file = "src/sibling_of_main.rs";
+    let sibling_module_path_vec = vec!["crate".to_string(), "sibling_of_main".to_string()];
+
+    // --- Find Node (File-level module for sibling_of_main.rs) ---
+    let sibling_module_node = find_file_module_node_paranoid(
+        &results,
+        fixture_name,
+        sibling_file,
+        &sibling_module_path_vec,
+    );
+
+    // --- Assert Basic Properties ---
+    assert_eq!(sibling_module_node.name(), "sibling_of_main");
+    assert_eq!(sibling_module_node.path, sibling_module_path_vec);
+    assert!(sibling_module_node.is_file_based());
+    assert_eq!(
+        sibling_module_node.file_path().unwrap(),
+        &fixtures_crates_dir()
+            .join(fixture_name)
+            .join(sibling_file)
+    );
+
+    // --- Assert Items (Example) ---
+    // Find the graph for this specific file
+    let sibling_graph_data = results
+        .iter()
+        .find(|data| data.file_path.ends_with(sibling_file))
+        .expect("Graph for sibling_of_main.rs not found");
+    let sibling_graph = &sibling_graph_data.graph;
+
+    // Find an item defined within sibling_of_main.rs
+    let sibling_func_id = find_node_id_by_path_and_name(
+        sibling_graph,
+        &sibling_module_path_vec,
+        "sibling_outer_function",
+    )
+    .expect("Failed to find NodeId for sibling_outer_function");
+
+    // Assert the file module node contains this item
+    assert!(
+        sibling_module_node
+            .items()
+            .expect("Sibling module node items failed")
+            .contains(&sibling_func_id),
+        "Expected sibling_of_main module items list to contain sibling_outer_function ID"
     );
 }

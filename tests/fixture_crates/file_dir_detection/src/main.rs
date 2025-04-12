@@ -1,5 +1,11 @@
 // fixture_test_crate/src/main.rs
+#![allow(unused)] // Add file-level attribute
+//! This is the crate root doc comment.
+
+// fixture_test_crate/src/main.rs
 // Main entry point for file_dir_detection fixture
+
+use std::path::Path; // Add a use statement
 
 // Keep the existing complex module structure for deep nesting tests
 pub mod example_mod;
@@ -17,8 +23,11 @@ pub(crate) mod crate_visible_mod;
 #[path = "custom_path/real_file.rs"]
 pub mod logical_name;
 
-// Add an inline public module
+/// An inline public module doc comment.
+#[cfg(test)] // Add module-level attribute
 pub mod inline_pub_mod {
+    use std::collections::HashMap; // Add use statement inside module
+
     pub fn inline_pub_func() {}
 
     // Function with a name duplicated elsewhere
@@ -57,6 +66,9 @@ pub fn main_pub_func() {}
 
 // A top-level private function
 fn main_priv_func() {}
+
+// Re-export
+pub use crate::top_pub_mod::top_pub_func as reexported_func;
 
 // Function with a name duplicated elsewhere
 pub fn duplicate_name() -> u8 {
