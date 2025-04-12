@@ -2,7 +2,7 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::uuid_ids_utils::*;
+use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*};
 use ploke_core::{NodeId, TypeId};
 use syn_parser::parser::{
     nodes::Visible,

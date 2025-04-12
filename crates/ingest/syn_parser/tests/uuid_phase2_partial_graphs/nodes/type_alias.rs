@@ -1,29 +1,14 @@
 #![cfg(feature = "uuid_ids")] // Gate the whole module
-use crate::common::uuid_ids_utils::*;
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
 use ploke_core::{NodeId, TypeId};
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
-use syn_parser::parser::nodes::TypeAliasNode; // Import TypeAliasNode specifically
+// Import TypeAliasNode specifically
+use syn_parser::parser::types::TypeKind; // Import EnumNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{nodes::EnumNode, types::TypeKind}; // Import EnumNode specifically
-use syn_parser::{
-    discovery::{run_discovery_phase, DiscoveryOutput},
-    parser::{
-        analyze_files_parallel,
-        graph::CodeGraph,
-        nodes::{
-            FieldNode, FunctionNode, ImplNode, ImportNode, ModuleNode, StructNode, TraitNode,
-            TypeDefNode, ValueNode, Visible,
-        },
-        relations::{GraphId, Relation, RelationKind},
-        types::{GenericParamKind, TypeNode},
-        visitor::ParsedCodeGraph,
-    },
+use syn_parser::parser::{
+    nodes::Visible,
+    relations::{GraphId, RelationKind},
+    types::GenericParamKind,
 };
-use uuid::Uuid;
 
 // --- Test Cases ---
 
@@ -295,7 +280,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "(i32 , i32)")
     ); // Tuple not implemented
-    #[ignore = "TypeKind::Tuple not yet handled"]
+       // #[ignore = "TypeKind::Tuple not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -363,7 +348,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "fn (i32 , i32) -> i32")
     ); // Fn Ptr not implemented
-    #[ignore = "TypeKind::Function not yet handled"]
+       // #[ignore = "TypeKind::Function not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -624,7 +609,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "* const u8")
     ); // Ptr not implemented
-    #[ignore = "TypeKind::Ptr not yet handled"]
+       // #[ignore = "TypeKind::Ptr not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -652,7 +637,7 @@ fn test_other_type_alias_nodes() {
         expected_type_str,
         &aliased_type.kind
     ); // Ptr not implemented
-    #[ignore = "TypeKind::Ptr not yet handled"]
+       // #[ignore = "TypeKind::Ptr not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -677,7 +662,7 @@ fn test_other_type_alias_nodes() {
     assert!(
         matches!(&aliased_type.kind, TypeKind::Unknown { type_str } if type_str == "[u8 ; 256]")
     ); // Array not implemented
-    #[ignore = "TypeKind::Array not yet handled"]
+       // #[ignore = "TypeKind::Array not yet handled"]
     {}
     assert_relation_exists(
         graph,
@@ -704,7 +689,7 @@ fn test_other_type_alias_nodes() {
         expected_type_str,
         &aliased_type.kind
     ); // TraitObject not implemented
-    #[ignore = "TypeKind::TraitObject not yet handled"]
+       // #[ignore = "TypeKind::TraitObject not yet handled"]
     {}
     assert_relation_exists(
         graph,

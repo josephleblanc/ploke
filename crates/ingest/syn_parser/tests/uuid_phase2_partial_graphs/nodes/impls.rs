@@ -1,4 +1,5 @@
 #![cfg(feature = "uuid_ids")] // Gate the whole module
+use crate::common::paranoid::find_impl_node_paranoid;
 use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId};
 use syn_parser::parser::nodes::ImplNode; // Import UnionNode specifically
@@ -335,11 +336,11 @@ fn test_impl_node_self_type_conflation_phase2() {
     // Find the print_value function node
     // We need a way to reliably find this specific function node. Let's assume find_function_node_paranoid works.
     // We need its parent impl context to be sure, but let's try finding the function first.
-    let method_print_value_candidates: Vec<&FunctionNode> = graph
-        .functions
-        .iter()
-        .filter(|f| f.name() == "print_value")
-        .collect();
+    // let method_print_value_candidates: Vec<&FunctionNode> = graph
+    //     .functions
+    //     .iter()
+    //     .filter(|f| f.name() == "print_value")
+    //     .collect();
     // We expect this method to be associated with an ImplNode, not directly in the module.
     // Let's find the ImplNode that contains this method.
     let mut parent_impl_node_gs: Option<&ImplNode> = None;

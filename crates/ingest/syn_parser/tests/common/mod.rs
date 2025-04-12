@@ -8,7 +8,7 @@ use syn_parser::parser::visitor::analyze_code;
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
 
-mod paranoid;
+pub mod paranoid;
 
 #[cfg(not(feature = "uuid_ids"))]
 use syn_parser::parser::nodes::NodeId;

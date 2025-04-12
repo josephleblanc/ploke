@@ -1,4 +1,6 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
+#![cfg(feature = "uuid_ids")]
+use crate::common::paranoid::find_trait_node_paranoid;
+// Gate the whole module
 use crate::common::uuid_ids_utils::*;
 use ploke_core::NodeId;
 // Import UnionNode specifically

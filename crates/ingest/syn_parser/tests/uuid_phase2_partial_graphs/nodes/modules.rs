@@ -21,6 +21,11 @@ use syn_parser::{
         visitor::ParsedCodeGraph,
     },
 };
+// ----- paranoid helper functions ------
+use crate::common::paranoid::{
+    find_declaration_node_paranoid, find_file_module_node_paranoid,
+    find_inline_module_node_paranoid,
+};
 
 #[test]
 fn test_module_node_top_pub_mod_paranoid() {
