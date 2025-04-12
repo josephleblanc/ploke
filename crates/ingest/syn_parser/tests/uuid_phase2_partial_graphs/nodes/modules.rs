@@ -59,7 +59,6 @@ fn test_module_node_top_pub_mod_paranoid() {
     // Target: `pub mod top_pub_mod;` declared in main.rs, defined in top_pub_mod.rs
     // Definition file (where items/submodules are likely parsed)
     let definition_file = "src/top_pub_mod.rs";
-    let module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
     let module_name = "top_pub_mod";
     let crate_path_vec = vec!["crate".to_string()];
     let module_path_vec = vec!["crate".to_string(), module_name.to_string()];

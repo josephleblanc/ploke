@@ -33,3 +33,14 @@ temp.md
 *.back
 
 CARGO_TEST_OUTPUT.txt
+
+# deprecated files
+crates/ingest/syn_parser/tests/data
+crates/ingest/syn_parser/tests/fixtures
+crates/ingest/syn_parser/tests/integration
+
+# deprecated data output files
+crates/ingest/syn_parser/code_graph.ron
+
+# ai workflow documents
+ai_workflow
