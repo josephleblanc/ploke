@@ -516,12 +516,19 @@ fn test_module_node_logical_name_path_attr_paranoid() {
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
-    let func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "item_in_real_file")
-            .expect("Failed to find NodeId for item_in_real_file");
-    let nested_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_in_real_file")
-            .expect("Failed to find NodeId for nested_in_real_file declaration");
+    // Find items using the definition node's file-derived path
+    let func_id = find_node_id_by_path_and_name(
+        definition_graph,
+        &definition_file_derived_path_vec, // Use file-derived path
+        "item_in_real_file",
+    )
+    .expect("Failed to find NodeId for item_in_real_file");
+    let nested_decl_id = find_node_id_by_path_and_name(
+        definition_graph,
+        &definition_file_derived_path_vec, // Use file-derived path
+        "nested_in_real_file",
+    )
+    .expect("Failed to find NodeId for nested_in_real_file declaration");
 
     let expected_item_ids = vec![func_id, nested_decl_id];
     let definition_items = definition_node
