@@ -56,7 +56,7 @@
 ### 3.2 Core Implementation (Gated by `uuid_ids`)
 
 -   **[ ] 3.2.1. Implement UUID-based Identifier Types**
-    -   **Purpose**: Define the actual `enum NodeId { Path(Uuid), Synthetic(Uuid) }`, `struct TypeId { ... }`, etc., under `#[cfg(feature = "uuid_ids")]`. Define the `usize` versions under `#[cfg(not(feature = "uuid_ids"))]`.
+    -   **Purpose**: Define the actual `enum NodeId { Resolved(Uuid), Synthetic(Uuid) }`, `struct TypeId { ... }`, etc., under `#[cfg(feature = "uuid_ids")]`. Define the `usize` versions under `#[cfg(not(feature = "uuid_ids"))]`.
     -   **Files to Modify**: `crates/ingest/syn_parser/src/parser/types.rs` (or new `ids.rs`).
     -   **Testing Approach**: Compile check with and without the flag.
 
@@ -197,7 +197,7 @@
     -   `tests/fixture_crates/simple_crate/src/mod1.rs` (Optional)
     -   New test file for Phase 2 integration tests (e.g., `tests/integration/phase2_tests.rs`)
 -   **Key Data Structures:**
-    -   `NodeId` (Enum: `Path`/`Synthetic`)
+    -   `NodeId` (Enum: `Resolved`/`Synthetic`)
     -   `TypeId` (Struct: `crate_id`, `type_id` - both Uuid)
     -   `LogicalTypeId` (Uuid)
     -   `TrackingHash` (Uuid)

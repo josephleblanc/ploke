@@ -6,7 +6,8 @@ Refactor the `ploke` codebase, primarily `syn_parser`, to use stable, determinis
 
 ## 2. Core Identifier Strategy (See ADR-001)
 
--   **Identifiers:** `NodeId` (Enum: `Path(Uuid)`/`Synthetic(Uuid)`), `TypeId` (Struct: `crate_id: Uuid`, `type_id: Uuid`), `LogicalTypeId` (Uuid), `TrackingHash` (Uuid).
+-   **Identifiers:** `NodeId` (Enum: `Resolved(Uuid)`/`Synthetic(Uuid)`), `TypeId` (Struct: `crate_id: Uuid`, `type_id: Uuid`), `LogicalTypeId` (Uuid), `TrackingHash` (Uuid).
+    - Edit: `NodeId` variants now `Resolved(Uuid)`/`Synthetic(Uuid)`, previous `NodeId::Path(Uuid)` naming was found to be a source of confusion.
 -   **Generation:** UUIDv5 based on hierarchical namespaces (`PROJECT -> CRATE -> ITEM/TYPE`).
 -   **Storage:** Native `cozo::DataValue::Uuid` in CozoDB.
 -   **Feature Flag:** `uuid_ids`.
@@ -38,7 +39,7 @@ This model breaks down the parsing, resolution, and database insertion process i
     1.  Each worker parses its assigned `.rs` file using `syn`.
     2.  A `VisitorState` tracks context *within the current file* (e.g., relative module path).
     3.  **`NodeId` Generation:**
-        -   For defined items (functions, structs, etc.), generate a *temporary* `NodeId::Synthetic(Uuid)` using `CRATE_NAMESPACE`, file path, relative path/span, and item name. Store the context needed for final `Path` ID calculation (relative path, name) with the node.
+        -   For defined items (functions, structs, etc.), generate a *temporary* `NodeId::Synthetic(Uuid)` using `CRATE_NAMESPACE`, file path, relative path/span, and item name. Store the context needed for final `Resolved` ID calculation (relative path, name) with the node.
     4.  **`TypeId` Generation:**
         -   When encountering type paths (`syn::TypePath`), attempt local resolution.
         -   If unresolved locally (e.g., it's an import `use other_crate::Foo;` or defined later in the crate), store the path string (e.g., `foo::Bar`, `other_crate::Foo`) as an unresolved reference marker within the node using it (e.g., field, parameter). Generate a *temporary* `TypeId::Synthetic(Uuid)` based on the unresolved string + `CRATE_NAMESPACE`. Ensure the synthetic ID or marker retains the original path string for later resolution attempts.
@@ -82,6 +83,7 @@ This model breaks down the parsing, resolution, and database insertion process i
     -   **Persisted State:** The definitive module tree and the `TemporarySynthId -> FinalPathId` maps *for the resolved items*.
 
 ### Phase 4: Embedding Generation (Async I/O)
+- Note: Deferring Phase 4 in favor of establishing full pipeline for end-to-end testing.
 
 -   **Input:** Resolved `CodeGraph` (specifically, nodes with code content and their `LogicalTypeId`).
 -   **Process (using `tokio`):**
@@ -120,7 +122,7 @@ This model provides a structured way to implement the UUID refactor while enabli
 
 | Identifier      | Type Definition                               | Generation Basis                                                                 | Purpose                                                                                                |
 | :-------------- | :-------------------------------------------- | :------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------- |
-| `NodeId`        | `enum { Path(Uuid), Synthetic(Uuid) }`        | `Path`: `CRATE_NAMESPACE` + Absolute Item Path<br>`Synthetic`: Contextual Info | Unique, stable (for `Path`) identifier for code elements (functions, structs, modules, etc.) in the graph. |
+| `NodeId`        | `enum { Resolved(Uuid), Synthetic(Uuid) }`        | `Resolved`: `CRATE_NAMESPACE` + Absolute Item Resolved<br>`Synthetic`: Contextual Info | Unique, stable (for `Resolved`) identifier for code elements (functions, structs, modules, etc.) in the graph. |
 | `TypeId`        | `struct { crate_id: Uuid, type_id: Uuid }`    | `CRATE_NAMESPACE` + Canonical Type String                                        | Unique identifier for a specific type structure *within a specific crate version*.                       |
 | `LogicalTypeId` | `Uuid`                                        | `PROJECT_NAMESPACE` + Crate Name + Type Path within Crate                        | Stable identifier for a type's logical identity across crate versions, primarily for linking embeddings. |
 | `TrackingHash`  | `Uuid` (or `Bytes`/`u128`)                    | `CRATE_NAMESPACE` + File Path + AST Token Hash                                   | Detects meaningful content changes in a node, ignoring formatting, for incremental processing.         |
@@ -174,7 +176,7 @@ flowchart TD
     subgraph Phase3["Phase 3: Batch Resolution"]
         P2_Output --> P3_Merge["Merge Partial Graphs"]
         P3_Merge --> P3_BuildTree["Build Module Tree"]
-        P3_BuildTree --> P3_ResolveNodeID["Resolve NodeId::Synthetic to NodeId::Path"]
+        P3_BuildTree --> P3_ResolveNodeID["Resolve NodeId::Synthetic to NodeId::Resolved"]
         P3_ResolveNodeID --> P3_ResolveTypes["Resolve Type Refs to Final TypeId / LogicalTypeId"]
         P3_ResolveTypes --> P3_UpdateRelations["Update Relations w/ Final IDs"]
         P3_UpdateRelations --> P3_Output["Resolved CodeGraph"]
@@ -243,7 +245,7 @@ flowchart TD
         Input3 --> LoadState["Load Persisted State"]
         Merge --> BuildTree["Build Definitive Module Tree"]
         LoadState --> BuildTree
-        BuildTree --> ResolveNodeId["Resolve NodeId::Path (Local)"]
+        BuildTree --> ResolveNodeId["Resolve NodeId::Resolved (Local)"]
         LoadState --> ResolveNodeId
         ResolveNodeId --> ResolveTypes["Resolve Type Refs -> TypeId/LogicalTypeId (Local)"]
         LoadState --> ResolveTypes
@@ -292,7 +294,7 @@ flowchart TD
     -   Any downstream code in `ploke-graph`, `ploke-db`, `test-utils` that expects `usize` IDs.
 -   **Testing Strategy:**
     -   **Unit Tests:** Verify UUID generation logic (namespaces, path hashing, type string hashing, synthetic ID format). Test `NodeId`/`TypeId` struct/enum behavior.
-    -   **Integration Tests (`syn_parser`):** Adapt existing fixture tests (`parse_fixture`) to work under the `uuid_ids` flag. Assertions will need to check for the *presence* and basic format of UUIDs rather than specific values initially. Add tests verifying that the same logical item gets the same `NodeId::Path` across different (simulated) runs or file orderings (using persisted state). Test `TrackingHash` generation and change detection.
+    -   **Integration Tests (`syn_parser`):** Adapt existing fixture tests (`parse_fixture`) to work under the `uuid_ids` flag. Assertions will need to check for the *presence* and basic format of UUIDs rather than specific values initially. Add tests verifying that the same logical item gets the same `NodeId::Resolved` across different (simulated) runs or file orderings (using persisted state). Test `TrackingHash` generation and change detection.
     -   **Cross-Crate Tests:** Once `ploke-graph` and `ploke-db` are updated, integration tests spanning parsing, transformation, and database insertion/querying are crucial to verify the end-to-end flow with native `Uuid` types.
     -   **Migration:** Develop a strategy or script to migrate existing CozoDB data if necessary (likely involves dropping and recreating relations with the new schema). For RON files, consider them incompatible artifacts of the old system.
 -   **Risk Areas & Mitigation:**
@@ -307,7 +309,7 @@ flowchart TD
 While `syn_parser` is responsible for generating relations directly derivable from the Rust AST during Phase 2 (using temporary IDs) and finalizing them in Phase 3, it is not the sole source of graph edges.
 
 -   **Parser-Generated Relations (Examples):** `Contains`, `StructField`, `FunctionParameter`, `FunctionReturn`, `ImplementsTrait`, `ImplementsFor`, `Uses`.
--   **Future Relation Sources:** The system architecture anticipates that other components may add relations to the CozoDB graph later, using the stable `NodeId::Path` and `TypeId` identifiers generated by the parser. Examples:
+-   **Future Relation Sources:** The system architecture anticipates that other components may add relations to the CozoDB graph later, using the stable `NodeId::Resolved` and `TypeId` identifiers generated by the parser. Examples:
     -   `ploke-lsp`: Could add relations representing "references" or "definition/declaration" links derived from LSP data.
     -   `ploke-analyze`: Could add relations representing control flow, data flow, or code quality metrics.
     -   `ploke-db` (or a dedicated service): Could infer relations based on database queries (e.g., "similar embedding").
