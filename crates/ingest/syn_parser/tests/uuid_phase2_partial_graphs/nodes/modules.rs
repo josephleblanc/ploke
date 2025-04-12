@@ -362,7 +362,7 @@ fn test_module_node_crate_visible_mod_paranoid() {
     // --- Assertions for DECLARATION Node (main.rs) ---
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
-    // NOTE: Not yet implemented.
+    // TODO: Fix visibility parsing/testing - currently `pub(crate)` might be parsed as Restricted or Public.
     // assert_eq!(declaration_node.visibility(), VisibilityKind::Crate); // `pub(crate) mod ...;`
     assert!(declaration_node.is_declaration());
     assert!(declaration_node.declaration_span().is_some());
@@ -452,19 +452,32 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     let main_file = "src/main.rs";
     let definition_file = "src/custom_path/real_file.rs"; // Note the actual file path
     let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
+    let logical_module_path_vec = vec!["crate".to_string(), module_name.to_string()];
+    // The path derived from the file system for the definition file
+    let definition_file_derived_path_vec =
+        vec!["crate".to_string(), "custom_path".to_string(), "real_file".to_string()];
 
     // --- Find Nodes ---
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
+    // Find declaration using its logical path
+    let declaration_node = find_declaration_node_paranoid(
+        &results,
+        fixture_name,
+        main_file,
+        &logical_module_path_vec,
+    );
+    // Find definition using its file-derived path
     let definition_node = find_file_module_node_paranoid(
         &results,
         fixture_name,
-        definition_file,  // Use the actual file path here
-        &module_path_vec, // Logical path remains the same
+        definition_file, // Use the actual file path here
+        &definition_file_derived_path_vec, // Use the file-derived path
     );
 
     // --- Assertions for DECLARATION Node (main.rs) ---
+    assert_eq!(declaration_node.name(), module_name);
+    assert_eq!(declaration_node.path, logical_module_path_vec); // Declaration has logical path
+    assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
+    assert!(declaration_node.is_declaration());
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
     assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
