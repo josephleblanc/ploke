@@ -82,7 +82,7 @@ mod phase2_relation_tests {
         let expect_mod_two_id = NodeId::generate_synthetic(
             expect_crate_namespace,
             &expect_mod_two_path,
-            &["crate".to_string()],
+            expected_mod_two_rel_path,
             "module_two",
             (0, 0),
         );
@@ -92,8 +92,19 @@ mod phase2_relation_tests {
         assert!(
             code_graph_with_mod_two_option.is_some(),
             "module_two's expected NodeId not found in any CodeGraph:
-\tmodule_two_expected_id: {}",
-            expect_mod_two_id
+\tmodule_two_expected_id: {}
+derived using:
+    expected_crate_namespace:   {}
+    expect_mod_two_path:        {:?}
+    expected_mod_two_rel_path:  {:?}
+    name:                       {}
+    span:                       {:?}",
+            expect_mod_two_id,
+            expect_crate_namespace,
+            &expect_mod_two_path,
+            expected_mod_two_rel_path,
+            "module_two",
+            (0, 0),
         );
 
         #[cfg(feature = "verbose_debug")]
@@ -105,21 +116,60 @@ mod phase2_relation_tests {
             mod_two_graph.file_path,
         );
 
-        let mod_two_func_id = find_node_id_by_path_and_name(
-            &mod_two_graph.graph,
-            &["crate".to_string(), "module_two".to_string()],
-            "mod_two_func",
-        ).expect("Failed to find mod_two_func in same code graph as 'module_two' using 'crate' as module path");
+        // .expect("Failed to find mod_two_func_id in same code graph as 'module_two' using 'crate' as module path");
 
-        let found = mod_two_graph.graph.relations.iter().find(|r| {
-            r.source == GraphId::Node(expect_mod_two_id)
-                && r.target == GraphId::Node(mod_two_func_id)
-                && r.kind == RelationKind::Contains
+        let candidate_rels: Vec<&Relation> = mod_two_graph
+            .graph
+            .relations
+            .iter()
+            .filter(|r| {
+                r.source == GraphId::Node(expect_mod_two_id)
+                    && r.kind == RelationKind::Contains
+                    && matches!(r.target, GraphId::Node(_))
+            })
+            .collect();
+        let mut candidate_funcs = mod_two_graph.graph.functions.iter().filter(|f| {
+            candidate_rels
+                .iter()
+                .any(|r| r.target == GraphId::Node(f.id))
         });
+        let debug_candidate_funcs = candidate_funcs.clone().collect::<Vec<_>>();
+        let found = candidate_funcs.next();
+
+        let func_node =
+            found.expect("Did not find Contains relation between module_two -> mod_two_func");
 
         assert!(
             found.is_some(),
             "Did not find Contains relation between module_two -> mod_two_func"
+        );
+        assert!(
+            debug_candidate_funcs.len() == 1,
+            // candidate_funcs.next().is_none(),
+            "Found more than one match of RelationKind::Contains Relation between:
+\tsource module id: {},
+\tfunc module id: {},
+\tnumber of candidate funcs: {},
+relation: {:#?},
+func: {:#?},
+debug_candidate_funcs: {:#?}",
+            candidate_rels
+                .iter()
+                .find(|r| r.source == GraphId::Node(expect_mod_two_id)
+                    && r.target == GraphId::Node(func_node.id)
+                    && r.kind == RelationKind::Contains)
+                .map(|r| r.source)
+                .unwrap(),
+            func_node.id,
+            debug_candidate_funcs.len(),
+            candidate_rels
+                .iter()
+                .find(|r| r.source == GraphId::Node(expect_mod_two_id)
+                    && r.target == GraphId::Node(func_node.id)
+                    && r.kind == RelationKind::Contains)
+                .unwrap(),
+            func_node,
+            debug_candidate_funcs
         );
     }
 }

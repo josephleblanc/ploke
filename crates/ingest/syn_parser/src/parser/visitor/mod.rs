@@ -192,6 +192,16 @@ pub fn analyze_file_phase2(
         (0, 0), // Span - still using (0,0) for root, might need refinement
     );
 
+    eprintln!(
+        "root_module_id: {}\ncreated by:\n\tcrate_namespace: {}
+    \tfile_path: {:?}\n\troot_module_parent_path: {:?}\n\troot_module_name: {}\n",
+        root_module_id,
+        crate_namespace,
+        file_path.as_os_str(),
+        root_module_parent_path,
+        root_module_name
+    );
+
     // 3. Create the root module node using the derived path and name
     state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
@@ -205,6 +215,7 @@ pub fn analyze_file_phase2(
         span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
         tracking_hash: None, // Root module conceptual, no specific content hash
         module_def: ModuleDef::FileBased {
+            items: Vec::new(),
             file_path: file_path.clone(),
             file_attrs: extract_file_level_attributes(&file.attrs),
             file_docs: extract_file_level_docstring(&file.attrs),

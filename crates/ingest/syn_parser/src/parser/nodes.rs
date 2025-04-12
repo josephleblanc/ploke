@@ -320,36 +320,6 @@ pub struct TraitNode {
 }
 //ANCHOR_END: TraitNode
 
-// Your detailed breakdown of the way cozo handles the search is well taken, and makes me want to
-// revisit the data structure we are currently using within our `CodeVisitor` struct implementation
-// of the `syn::Visit` trait. Let's drill down on the `ModuleNode` as an example of how to
-// structure our top-level node items, with an eye toward both how it would affect our
-// `visit_item_*` methods, e.g. `visit_item_mod` and toward how we will later need to transform
-// these data structures into the database.
-// A few additional points to keep in mind:
-// 1. We have not yet decided whether the transformation from the parser into the locally embedded,
-//    in-memory `cozo::Db` should be capable of going from `ModuleNode` to `cozo` database object
-//    and back again (there is a word for this but I forget, please remind me. I think it is the
-//    structure-preserving transformation, like isomorphic or homomorphic?)
-// 2. The structure of `ModuleNode` was primarily inspired by the `syn::ItemMod` initially, then
-//    adjusted to handle the needs of our `syn_parser` crate as it grew. While practical in the
-//    sense that this enabled our `syn_parser` project to rapidly develop, the desired end-state
-//    for the cozo database is still not well understood by me. In our design, we want to lean into
-//    the cozo database representation, but are not clear on how valuable it will be to have a
-//    different representation for analysis outside the cozo database. This lack of clarity carries
-//    over into the design below. However, I would like to take your example as an opportunity to
-//    consider how the data structure might be adjusted to better suit the cozo database
-//    downstream, and what the trade-offs might be for our parser implementation.
-// 3. Relation vs. ModuleNode field: This is the primary point that should likely be decided upon
-//    in the near future to clarify both the responsibility of the parser and and the as-yet
-//    undesigned cozo schema. I have a number of questions on this point:
-//    - What elements, currently represented as fields in the `ModuleNode` should be represented as
-//    a `Relation`?
-//    - What should we ensure the `ModuleNode` retains as direct properties of a `cozo`
-//    relation/object/node (the language is hard here) such as CozoScript
-//    `module_node { id: Uuid, name: String , ..}`
-//    - Does the answer to what should be an edge or node property change if we want to do analysis
-//    outside of cozo. Why would we want to do analysis outside/inside the cozo framework?
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ModuleNode {
     pub id: NodeId,
@@ -370,11 +340,22 @@ pub struct ModuleNode {
     pub module_def: ModuleDef,
 }
 
-// - Simple getters should be named after the field (`items()`, `file_path()`, etc.)
-// - Boolean checks should use `is_` or `has_` prefixes
-// - Methods returning `Option` should indicate this in the name (like `try_get_items()`)
 #[cfg(feature = "uuid_ids")]
 impl ModuleNode {
+    /// Definition path to file as it would be called by a `use` statement,
+    /// Examples:
+    ///     module declaration in project/main.rs
+    ///         "mod module_one;" -> ["crate", "module_one"]
+    ///     file module:
+    ///         project/module_one/mod.rs -> ["crate", "module_one"]
+    ///     in-line module in project/module_one/mod.rs
+    ///         `mod module_two {}` -> ["crate", "module_one", "module_two"]
+    pub fn defn_path(&self) -> Vec<String> {
+        let path = self.path.clone();
+        path.to_vec().push(self.name.clone());
+        path
+    }
+
     /// Returns true if this is a file-based module
     pub fn is_file_based(&self) -> bool {
         matches!(self.module_def, ModuleDef::FileBased { .. })
@@ -392,11 +373,16 @@ impl ModuleNode {
 
     /// Returns the items if this is an inline module, None otherwise
     pub fn items(&self) -> Option<&[NodeId]> {
-        if let ModuleDef::Inline { items, .. } = &self.module_def {
-            Some(items)
-        } else {
-            None
+        match &self.module_def {
+            ModuleDef::Inline { items, .. } => Some(items),
+            ModuleDef::FileBased { items, .. } => Some(items),
+            ModuleDef::Declaration { .. } => None,
         }
+        // if let ModuleDef::Inline { items, .. } = &self.module_def {
+        //     Some(items)
+        // } else {
+        //     None
+        // }
     }
 
     /// Returns the file path if this is a file-based module, None otherwise
@@ -466,6 +452,7 @@ impl ModuleNode {
 pub enum ModuleDef {
     /// File-based module (src/module/mod.rs)
     FileBased {
+        items: Vec<NodeId>, // Probably temporary while gaining confidence in Relation::Contains
         file_path: PathBuf,
         file_attrs: Vec<Attribute>, // #![...]
         file_docs: Option<String>,  // //!

@@ -22,8 +22,6 @@ use syn_parser::{
     },
 };
 
-use std::path::PathBuf;
-
 #[test]
 fn test_module_node_top_pub_mod_paranoid() {
     let fixture_name = "file_dir_detection";
@@ -52,13 +50,7 @@ fn test_module_node_top_pub_mod_paranoid() {
     let module_name = "top_pub_mod";
 
     // Find the module node using the helper
-    let module_node = find_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file, // Check the graph associated with the definition file
-        &module_path,
-        true,
-    );
+    let module_node = find_module_node_paranoid(&results, fixture_name, &module_path, true);
 
     // --- Assertions ---
 
@@ -91,19 +83,22 @@ fn test_module_node_top_pub_mod_paranoid() {
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
-    println!("{:=^80}", " definition_graph.modules ");
-    println!(
-        "definition_graph.modules: {:#?}\n",
-        definition_graph.modules
-    );
-    println!("{:=^80}", "top_pub_func found by name");
-    println!(
-        "top_pub_func: {:#?}",
-        definition_graph
-            .functions
-            .iter()
-            .find(|f| f.name == "top_pub_func"),
-    );
+    #[cfg(feature = "verbose_debug")]
+    {
+        println!("{:=^80}", " definition_graph.modules ");
+        println!(
+            "definition_graph.modules: {:#?}\n",
+            definition_graph.modules
+        );
+        println!("{:=^80}", "top_pub_func found by name");
+        println!(
+            "top_pub_func: {:#?}",
+            definition_graph
+                .functions
+                .iter()
+                .find(|f| f.name == "top_pub_func"),
+        );
+    }
     let top_pub_module_path = vec!["crate".to_string(), "top_pub_mod".to_string()];
     let func_id_debug =
         find_node_id_by_path_and_name(definition_graph, &top_pub_module_path, "top_pub_func");
@@ -116,6 +111,7 @@ fn test_module_node_top_pub_mod_paranoid() {
         .iter()
         .find(|r| r.target == GraphId::Node(func_id_debug.unwrap()));
 
+    #[cfg(feature = "verbose_debug")]
     println!(
         "definition_graph.relations.iter().find(|r| r.target == GraphId::Node(func_id_debug)): {:?}",
         find_relation
@@ -169,7 +165,7 @@ fn test_module_node_top_pub_mod_paranoid() {
     );
     for id in &expected_item_ids {
         assert!(
-            module_node.items().map_or(false, |m| m.contains(id)),
+            module_node.items().is_some_and(|m| m.contains(id)),
             "Expected item ID {:?} not found in module {}",
             id,
             module_name
@@ -201,19 +197,35 @@ fn test_module_node_top_pub_mod_paranoid() {
     );
 
     // --- Basic Relation Check ---
-    // Check that the 'crate' module (from main.rs graph) contains this module
+    // Check that the 'crate' module (from main.rs graph) contains a declaration for this module
+    // We only know this because we wrote the fixtures, for testing purposes this is equivalent to
+    // testing that a given target module declaration, e.g. `pub mod some_mod;` exists in main.rs
+    //
+    // The relation from the file main.rs as a file-level module to the file-level module
+    // top_pub_mod can only be known in phase 3 (since main.rs may or may not have a module
+    // declaration for top_pub_mod), once we merge the partial code graphs.
+    // For now, this is just a basic check that the module declaration exists in the fixture as we
+    // expect.
     let main_graph_data = results
         .iter()
         .find(|data| data.file_path.ends_with("src/main.rs"))
         .expect("Graph for main.rs not found");
     let main_graph = &main_graph_data.graph;
-    let crate_module = find_inline_module_by_path(main_graph, &["crate".to_string()])
-        .expect("Crate module not found in main.rs graph");
+
+    let main_module_debug = &main_graph_data
+        .graph
+        .modules
+        .iter()
+        .filter(|m| m.name() == "top_pub_mod" && m.is_declaration());
+
+    let crate_module =
+        find_mod_decl_by_path_and_name(main_graph, &["crate".to_string()], "top_pub_mod")
+            .expect("top_pub_mod module declaration not found in main.rs graph");
 
     assert_relation_exists(
         main_graph, // Check in the graph where the declaration happens
         GraphId::Node(crate_module.id()),
-        GraphId::Node(module_node.id()), // Use the ID found by the paranoid helper
+        GraphId::Node(module_node.id()),
         RelationKind::Contains,
         "Expected 'crate' module in main.rs to Contain 'top_pub_mod'",
     );

@@ -259,7 +259,7 @@ impl<'a> CodeVisitor<'a> {
             .map(|m| m.id);
 
         if let Some(parent_id) = parent_module_id {
-            if let Some(parent_mod) = self
+            if let Some(_parent_mod) = self
                 .state
                 .code_graph
                 .modules
@@ -273,8 +273,15 @@ impl<'a> CodeVisitor<'a> {
                     .iter_mut()
                     .find(|m| m.id == parent_id)
                 {
-                    if let ModuleDef::Inline { items, .. } = &mut parent_mod.module_def {
-                        items.push(node_id);
+                    // if let ModuleDef::Inline { items, .. } = &mut parent_mod.module_def {
+                    //     items.push(node_id);
+                    // }
+                    // match for both Inline and FileBased, since either can contain the target
+                    // items.
+                    match &mut parent_mod.module_def {
+                        ModuleDef::Inline { items, .. } => items.push(node_id),
+                        ModuleDef::FileBased { items, .. } => items.push(node_id),
+                        ModuleDef::Declaration { .. } => (),
                     }
                 }
             }

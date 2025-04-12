@@ -155,6 +155,18 @@ impl CodeGraph {
         }
     }
 
+    pub fn find_containing_mod_id(&self, node_id: NodeId) -> Option<NodeId> {
+        self.relations
+            .iter()
+            .find(|m| m.target == GraphId::Node(node_id))
+            .map(|r| match r.source {
+                GraphId::Node(node_id) => node_id,
+                GraphId::Type(_type_id) => {
+                    panic!("ModuleNode should never have TypeId for containing node")
+                }
+            })
+    }
+
     pub fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
         // Check all node collections for matching ID
 
@@ -211,12 +223,12 @@ impl CodeGraph {
 
     // #[allow(dead_code, reason = "useful later")]
     #[cfg(feature = "uuid_ids")]
-    fn module_contains(&self, module_id: NodeId, item_id: NodeId) -> bool {
+    pub fn module_contains_node(&self, module_id: NodeId, item_id: NodeId) -> bool {
         // Check if module directly contains the item
         self.modules
             .iter()
             .find(|m| m.id == module_id)
-            .map(|module| module.items().map_or(false, |m| m.contains(&item_id)));
+            .map(|module| module.items().is_some_and(|m| m.contains(&item_id)));
 
         // Check if module contains the item through nested modules
         self.relations.iter().any(|r| {
@@ -251,10 +263,10 @@ impl CodeGraph {
             if is_glob {
                 // For glob imports, check if item is in the imported module
                 match rel.target {
-                    GraphId::Node(node_id) => {
+                    GraphId::Node(_node_id) => {
                         return VisibilityResult::Direct;
                     }
-                    GraphId::Type(type_id) => {
+                    GraphId::Type(_type_id) => {
                         panic!("implement me!")
                     }
                 }
