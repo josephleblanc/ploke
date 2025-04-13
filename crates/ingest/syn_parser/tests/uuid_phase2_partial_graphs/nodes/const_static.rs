@@ -1123,7 +1123,7 @@ fn test_value_node_paranoid_const_doc_attr() {
 //      - type_id is Synthetic
 //      - kind == Static { is_mutable: true }
 //      - value == Some("false")
-//      - attributes is empty
+//      - attributes contains #[allow(dead_code)]
 //      - docstring is None
 //      - tracking_hash is Some
 //  - Verify TypeId:
@@ -1196,7 +1196,14 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         Some("false"),
         "Value string mismatch"
     );
-    assert!(node.attributes.is_empty(), "Attributes should be empty");
+    // Check for the specific #[allow(dead_code)] attribute
+    assert_eq!(node.attributes.len(), 1, "Expected exactly one attribute");
+    let attr = &node.attributes[0];
+    assert_eq!(attr.name, "allow", "Attribute name should be 'allow'");
+    assert!(
+        attr.args.contains(&"dead_code".to_string()),
+        "Attribute args should contain 'dead_code'"
+    );
     assert!(node.docstring.is_none(), "Docstring should be None");
     assert!(node.tracking_hash.is_some(), "Tracking hash should be Some");
 
