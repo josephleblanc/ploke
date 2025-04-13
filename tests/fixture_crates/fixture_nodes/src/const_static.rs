@@ -104,12 +104,49 @@ mod inner_mod {
     pub(super) static mut INNER_MUT_STATIC: bool = false;
 }
 
-// --- Main function (optional, makes it runnable) ---
-fn main() {
-    println!("Constant: {}", TOP_LEVEL_INT);
+// --- Usage function (to ensure items are used and fixture compiles) ---
+#[allow(unused_variables, clippy::let_unit_value)]
+pub fn use_all_const_static() {
+    // Top Level
+    let _int = TOP_LEVEL_INT;
+    let _bool = TOP_LEVEL_BOOL;
+    let _str = TOP_LEVEL_STR;
+    let _crate_static = TOP_LEVEL_CRATE_STATIC;
+
+    // Type Variations
+    let _arr = ARRAY_CONST;
+    let _tuple = TUPLE_STATIC;
+    let _struct = STRUCT_CONST;
+    let _aliased = ALIASED_CONST;
+
+    // Initializer Variations
+    let _expr = EXPR_CONST;
+    let _fn_call = FN_CALL_CONST;
+
+    // Attributes and Docs
+    let _doc_attr = doc_attr_const;
+    #[cfg(target_os = "linux")]
+    let _doc_attr_static = DOC_ATTR_STATIC;
+
+    // Associated Constants
+    let _impl_const = Container::IMPL_CONST;
+    let _trait_const = <Container as ExampleTrait>::TRAIT_REQ_CONST;
+
+    // Inline Module Items
+    let _inner_const = inner_mod::INNER_CONST;
+
     // Accessing mutable statics requires unsafe block
     unsafe {
         TOP_LEVEL_COUNTER += 1;
-        println!("Static mut: {}", TOP_LEVEL_COUNTER);
+        let _counter = TOP_LEVEL_COUNTER;
+
+        inner_mod::INNER_MUT_STATIC = !inner_mod::INNER_MUT_STATIC;
+        let _inner_mut = inner_mod::INNER_MUT_STATIC;
     }
+
+    // Println to potentially use some values and avoid unused warnings further
+    println!(
+        "Used: {}, {}, {}, {}",
+        _int, _bool, _str, _crate_static
+    );
 }
