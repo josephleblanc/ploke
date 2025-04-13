@@ -493,6 +493,8 @@ pub struct ValueNode {
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     #[cfg(feature = "uuid_ids")]
+    pub span: (usize, usize),
+    #[cfg(feature = "uuid_ids")]
     #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
     #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,

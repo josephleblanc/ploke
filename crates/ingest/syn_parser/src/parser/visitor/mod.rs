@@ -192,6 +192,7 @@ pub fn analyze_file_phase2(
         (0, 0), // Span - still using (0,0) for root, might need refinement
     );
 
+    #[cfg(feature = "verbose_debug")]
     eprintln!(
         "root_module_id: {}\ncreated by:\n\tcrate_namespace: {}
     \tfile_path: {:?}\n\troot_module_parent_path: {:?}\n\troot_module_name: {}\n",
@@ -271,6 +272,7 @@ pub fn analyze_files_parallel(
         .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
         .flat_map(|crate_context| {
             // Process each crate in parallel
+            #[cfg(feature = "verbose_debug")]
             println!(
                 // Temporary debug print
                 "  Processing crate '{}' with {} files...",

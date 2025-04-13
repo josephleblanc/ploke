@@ -149,7 +149,7 @@ impl VisitorState {
 
     // --- End Conditional Methods ---
 
-    pub(crate) fn convert_visibility(&self, vis: &Visibility) -> VisibilityKind {
+    pub(crate) fn convert_visibility(&self, vis: &syn::Visibility) -> VisibilityKind {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
             Visibility::Restricted(restricted) => {

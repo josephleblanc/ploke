@@ -174,10 +174,10 @@
     * ✅   Verify other fields (name, visibility, attributes, docstring).
         * ✅  Verify for file-level, in-line, and declaration variants of `module_definition` field
     * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
-*   **[ ] Constants/Statics (`ItemConst`, `ItemStatic`):**
-    *   Verify `ValueNode` exists in `graph.values`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
+*   ** Constants/Statics (`ItemConst`, `ItemStatic`):**
+    * ✅   Verify `ValueNode` exists in `graph.values`.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     *   Assert `type_id` is `TypeId::Synthetic(_)`.
     *   Verify other fields (name, visibility, kind, value string, attributes, docstring).
     *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.

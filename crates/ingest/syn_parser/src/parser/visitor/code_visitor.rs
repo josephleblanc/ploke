@@ -1464,6 +1464,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // --- DEBUGGING ---
         let debug_current_path = self.state.current_module_path.clone();
         let debug_use_item_str = use_item.to_token_stream().to_string();
+
+        #[cfg(feature = "verbose_debug")]
         eprintln!(
             "VISIT_ITEM_USE: Path={:?}, Item='{}'",
             debug_current_path, debug_use_item_str
@@ -1614,6 +1616,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             attributes,
             docstring,
             #[cfg(feature = "uuid_ids")]
+            span,
+            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_const.to_token_stream()),
@@ -1676,7 +1680,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             value,
             attributes,
             docstring,
-
+            #[cfg(feature = "uuid_ids")]
+            span,
             #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(
                 self.state
