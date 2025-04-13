@@ -2,14 +2,12 @@ use super::attribute_processing::extract_attributes;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
-use crate::parser::nodes;
 use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ValueKind;
 use crate::parser::nodes::ValueNode;
 use crate::parser::nodes::{
     EnumNode, FieldNode, FunctionNode, ImplNode, ImportKind, ImportNode, MacroKind, MacroNode,
-    MacroRuleNode, ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode,
-    VariantNode,
+    ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
 };
 use crate::parser::relations::*;
 use crate::parser::types::*;
@@ -53,23 +51,31 @@ impl<'a> CodeVisitor<'a> {
             syn::UseTree::Name(name) => {
                 let mut full_path = base_path.to_vec();
                 let use_name = name.ident.to_string();
+                let mut is_self_import = false;
 
                 let span = name.extract_span_bytes();
                 #[cfg(not(feature = "uuid_ids"))]
                 let import_id = self.add_contains_rel(Some(&use_name));
-                #[cfg(feature = "uuid_ids")]
-                let import_id = self.add_contains_rel(&use_name, span);
 
-                full_path.push(use_name);
+                #[cfg(feature = "uuid_ids")]
+                let checked_name = if use_name == "self" {
+                    is_self_import = true;
+                    full_path.last().unwrap().clone()
+                } else {
+                    full_path.push(use_name.clone());
+                    use_name
+                };
+                let import_id = self.add_contains_rel(&checked_name, span);
 
                 imports.push(ImportNode {
                     id: import_id,
                     path: full_path,
                     kind: ImportKind::UseStatement,
-                    visible_name: name.ident.to_string(),
+                    visible_name: checked_name,
                     original_name: None,
                     is_glob: false,
                     span,
+                    is_self_import,
                 });
             }
             syn::UseTree::Rename(rename) => {
@@ -92,6 +98,7 @@ impl<'a> CodeVisitor<'a> {
                     original_name: Some(rename.ident.to_string()),
                     is_glob: false,
                     span,
+                    is_self_import: false,
                 });
             }
             syn::UseTree::Glob(star) => {
@@ -111,6 +118,7 @@ impl<'a> CodeVisitor<'a> {
                     original_name: None,
                     is_glob: true,
                     span: tree.extract_span_bytes(),
+                    is_self_import: false,
                 });
             }
             syn::UseTree::Group(group) => {
@@ -162,10 +170,9 @@ impl<'a> CodeVisitor<'a> {
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
             print!("│   items: ",);
-            current_mod
-                .items()
-                .as_ref()
-                .map(|item| item.iter().for_each(|i| print!("|{}|", i)));
+            if let Some(item) = current_mod.items().as_ref() {
+                item.iter().for_each(|i| print!("|{}|", i))
+            }
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
             println!("│   self.state.code_graph.modules names: {:?}", modules);
@@ -191,11 +198,10 @@ impl<'a> CodeVisitor<'a> {
                 " current mod: \"{}\" -> pushing name {} (id: {}) to items: now items = ",
                 current_mod.name, name, node_id,
             );
-            current_mod
-                .items()
-                .as_ref()
-                .map(|item| item.iter().for_each(|i| print!("|{}|", i)));
-            println!("");
+            if let Some(item) = current_mod.items().as_ref() {
+                item.iter().for_each(|i| print!("|{}|", i))
+            }
+            println!();
         } else {
             panic!(
                 "Could not find containing module for node with name {}, id {}",
@@ -216,23 +222,6 @@ impl<'a> CodeVisitor<'a> {
 
             println!(
                 " in {} ++ new id created name: \"{}\" (id: {:?})",
-                current_mod.name, name, node_id
-            );
-        }
-    }
-    #[cfg(feature = "verbose_debug")]
-    fn debug_submodule(&mut self, name: &str, node_id: NodeId) {
-        if let Some(current_mod) = self.state.code_graph.modules.last() {
-            let depth = self.state.code_graph.modules.len();
-
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│");
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            print!("└");
-            print!("{:─<3}", "");
-
-            println!(
-                " {} -> pushing new submodule to submodules : \"{}\" (id: {:?})",
                 current_mod.name, name, node_id
             );
         }
@@ -851,7 +840,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         #[cfg(not(feature = "uuid_ids"))]
                         let field_id = self.state.next_node_id();
                         #[cfg(feature = "uuid_ids")]
-                        let unnamed = format!("Tuple field");
+                        let unnamed = "Tuple field".to_string();
                         #[cfg(feature = "uuid_ids")]
                         let field_id = self.state.generate_synthetic_node_id(&unnamed, span);
                         let type_id = get_or_create_type(self.state, &field.ty);
@@ -1389,7 +1378,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Create module node with proper hierarchy tracking
         #[cfg(feature = "uuid_ids")]
         let module_def = match &module.content {
-            Some(content) => ModuleDef::Inline {
+            Some(_) => ModuleDef::Inline {
                 items: Vec::new(),
                 span,
             },
@@ -1479,19 +1468,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         let imports = self.process_use_tree(&use_item.tree, &base_path);
 
-        // --- DEBUGGING ---
-        let debug_current_path = self.state.current_module_path.clone();
-        let debug_use_item_str = use_item.to_token_stream().to_string();
-
-        #[cfg(feature = "verbose_debug")]
-        eprintln!(
-            "VISIT_ITEM_USE: Path={:?}, Item='{}', imports: {:#?}",
-            debug_current_path,
-            debug_use_item_str,
-            imports.clone()
-        );
-        // --- END DEBUGGING ---
-
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
         let current_module_path = &self.state.current_module_path;
@@ -1523,14 +1499,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Add to module's imports list
                 module.imports.push(import);
             }
-        } else {
-            // Is this else branch ever hit? Add a log/panic here.
-            eprintln!(
-                "WARNING: Could not find module for graph.modules.last_mut() {:?} during visit_item_use for item '{}'",
-                graph.modules.last_mut(),
-                debug_use_item_str
-            );
-            // Or panic!("Failed to find module for path {:?} in visit_item_use", current_path);
         }
         visit::visit_item_use(self, use_item);
     }
@@ -1568,6 +1536,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Original name, only Some if item is renamed, otherwise None
             original_name: extern_crate.rename.as_ref().map(|_| crate_name.clone()),
             is_glob: false,
+            is_self_import: false,
         };
         let module_id = if let Some(module) = self
             .state
@@ -1980,9 +1949,9 @@ fn name_impl(item_impl: &ItemImpl) -> String {
         .trait_
         .as_ref()
         .map(|(_, path, _)| path.to_token_stream().to_string());
-    let impl_name = match trait_str {
+
+    match trait_str {
         Some(t) => format!("impl {} for {}", t, self_type_str),
         None => format!("impl {}", self_type_str),
-    };
-    impl_name
+    }
 }

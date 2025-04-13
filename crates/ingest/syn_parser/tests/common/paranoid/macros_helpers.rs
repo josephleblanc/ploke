@@ -1,13 +1,9 @@
 #![cfg(feature = "uuid_ids")]
 
-use ploke_common::{fixtures_crates_dir, workspace_root};
-use ploke_core::{NodeId, TypeId};
-use syn_parser::discovery::run_discovery_phase;
-use syn_parser::parser::graph::CodeGraph;
-use syn_parser::parser::relations::{GraphId, RelationKind};
-use syn_parser::parser::types::TypeNode;
-use syn_parser::parser::visitor::ParsedCodeGraph;
-use syn_parser::parser::{analyze_files_parallel, nodes::*}; // Added MacroNode, Visible
+use ploke_common::fixtures_crates_dir;
+use ploke_core::NodeId;
+use syn_parser::parser::nodes::*;
+use syn_parser::parser::visitor::ParsedCodeGraph; // Added MacroNode, Visible
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the MacroNode
 /// within that graph corresponding to the given module path and name,
@@ -17,8 +13,8 @@ pub fn find_macro_node_paranoid<'a>(
     parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
     fixture_name: &str,                   // Needed to construct expected path
     relative_file_path: &str,             // e.g., "src/macros.rs"
-    expected_module_path: &[String],      // Module path within the target file (e.g., ["crate"] or ["crate", "inner_macros"])
-    macro_name: &str,                     // Name of the macro item
+    expected_module_path: &[String], // Module path within the target file (e.g., ["crate"] or ["crate", "inner_macros"])
+    macro_name: &str,                // Name of the macro item
 ) -> &'a MacroNode {
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(fixture_name);
@@ -101,7 +97,7 @@ pub fn find_macro_node_paranoid<'a>(
     // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path, // Use the file_path from the target_data
+        file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
         macro_name,
         actual_span, // Use the span from the node itself

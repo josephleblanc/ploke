@@ -3,7 +3,7 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
 use syn_parser::parser::{
-    nodes::{ImportNode, ModuleNode, Visible}, // Added ImportNode
+    nodes::ImportNode, // Added ImportNode
     visitor::ParsedCodeGraph,
 };
 
@@ -11,6 +11,7 @@ use syn_parser::parser::{
 /// within that graph corresponding to the given module path and import details,
 /// performs paranoid checks, and returns a reference.
 /// Panics if the graph or node is not found, or if uniqueness or ID checks fail.
+#[allow(clippy::too_many_arguments)]
 pub fn find_import_node_paranoid<'a>(
     parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
     fixture_name: &str,                   // Needed to construct expected path
@@ -116,7 +117,7 @@ pub fn find_import_node_paranoid<'a>(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
-        &id_gen_name,         // Use visible_name or "*" for ID generation
+        id_gen_name,          // Use visible_name or "*" for ID generation
         actual_span,          // Use the span from the node itself
     );
 

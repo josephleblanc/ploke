@@ -1,12 +1,12 @@
+#[cfg(feature = "uuid_ids")]
+// use ploke_core::TypeId; // Use compat type when feature is disabled
+//
+// #[cfg(feature = "uuid_ids")]
+use crate::parser::relations::GraphId;
 #[cfg(not(feature = "uuid_ids"))]
 use crate::NodeId;
 #[cfg(feature = "uuid_ids")]
-use ploke_core::NodeId; // Use new type when feature is enabled
-#[cfg(feature = "uuid_ids")]
-use ploke_core::TypeId; // Use compat type when feature is disabled
-                        //
-#[cfg(feature = "uuid_ids")]
-use crate::parser::relations::GraphId; // Import GraphId under the feature
+use ploke_core::NodeId; // Use new type when feature is enabled // Import GraphId under the feature
 
 use super::nodes::Visible;
 use super::relations::RelationKind;

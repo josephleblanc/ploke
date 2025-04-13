@@ -321,17 +321,17 @@ pub fn analyze_files_parallel(
 // start_parser_worker remains unchanged as it uses the non-UUID analyze_code
 pub fn start_parser_worker(
     receiver: Receiver<ParserMessage>,
-    sender: Sender<ParserMessage>,
+    _sender: Sender<ParserMessage>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         for message in receiver.iter() {
             match message {
-                ParserMessage::ParseFile(path) => {
+                ParserMessage::ParseFile(_path) => {
                     #[cfg(not(feature = "uuid_ids"))]
                     // Only run this worker logic if not using UUIDs
                     {
-                        let result = analyze_code(&path);
-                        if sender.send(ParserMessage::ParseResult(result)).is_err() {
+                        let result = analyze_code(&_path);
+                        if _sender.send(ParserMessage::ParseResult(result)).is_err() {
                             break; // Channel closed
                         }
                     }

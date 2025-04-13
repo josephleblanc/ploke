@@ -1093,14 +1093,14 @@ fn test_module_node_items_list_comprehensiveness() {
 
     println!("imports: {:#?}", main_graph.use_statements);
     // Imports
-    let import_std: _ = find_import_id(
+    let import_std = find_import_id(
         main_graph,
         &crate_path_vec,
         "Path",
         &["std", "path", "Path"],
     )
     .expect("Failed to find NodeId for `use std::path::Path;` definition");
-    let import_complex: _ = find_import_id(
+    let import_complex = find_import_id(
         main_graph,
         &crate_path_vec,
         "reexported_func",

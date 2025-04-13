@@ -32,7 +32,7 @@ use syn::{
 // `TypeId`.
 //   * Duplicate TypeId == Bad
 pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId {
-    let type_str = type_to_string(&ty);
+    let type_str = type_to_string(ty);
     // --- Cache Check ---
     // Check if the type string already exists in the map
     if let Some(entry) = state.type_map.get(&type_str) {

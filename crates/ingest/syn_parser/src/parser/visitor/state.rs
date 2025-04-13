@@ -1,10 +1,5 @@
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::{Attribute, ImportNode, ModuleNode, Visible};
-use crate::parser::types::{
-    GenericParamKind, GenericParamNode, TypeKind, TypeNode, VisibilityKind,
-};
-use crate::parser::utils::type_to_string;
-use quote::ToTokens;
+use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use dashmap::DashMap;
@@ -16,9 +11,9 @@ use super::type_processing::get_or_create_type;
 #[cfg(feature = "uuid_ids")]
 use {
     crate::parser::nodes::ParamData,
-    ploke_core::{LogicalTypeId, NodeId, TrackingHash, TypeId, PROJECT_NAMESPACE_UUID},
-    std::path::{Path, PathBuf}, // Needed for new fields
-    uuid::Uuid,                 // Needed for new fields
+    ploke_core::{NodeId, TrackingHash, TypeId},
+    std::path::PathBuf, // Needed for new fields
+    uuid::Uuid,         // Needed for new fields
 };
 
 #[cfg(not(feature = "uuid_ids"))]
@@ -179,8 +174,6 @@ impl VisitorState {
     pub(crate) fn process_fn_arg(&mut self, arg: &FnArg) -> Option<ParamData> {
         match arg {
             FnArg::Typed(PatType { pat, ty, .. }) => {
-                // Get the string representation for the type
-                let type_str = type_to_string(ty);
                 // Get the TypeId for the parameter's type
                 let type_id = get_or_create_type(self, ty);
 
@@ -371,7 +364,7 @@ impl VisitorState {
                         path: trait_bound.path.clone(),
                     }),
                 );
-                return Some(type_id);
+                Some(type_id)
             }
             // TODO: How should lifetime bounds be represented in the type graph?
             // For now, create a placeholder type ID. Revisit during Phase 3 resolution.

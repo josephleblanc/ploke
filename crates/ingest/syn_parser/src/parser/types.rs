@@ -93,14 +93,10 @@ pub struct GenericParamNode {
 impl GenericParamNode {
     pub fn name_if_type_id(&self, ty_id: TypeId) -> Option<&str> {
         match &self.kind {
-            GenericParamKind::Type {
-                name,
-                bounds,
-                default,
-            } => {
+            GenericParamKind::Type { name, default, .. } => {
                 if let Some(type_id) = r#default {
                     if type_id == &ty_id {
-                        Some(&name)
+                        Some(name)
                     } else {
                         None
                     }
@@ -108,10 +104,10 @@ impl GenericParamNode {
                     None
                 }
             }
-            GenericParamKind::Lifetime { name, bounds } => None,
+            GenericParamKind::Lifetime { .. } => None,
             GenericParamKind::Const { name, type_id } => {
                 if type_id == &ty_id {
-                    Some(&name)
+                    Some(name)
                 } else {
                     None
                 }

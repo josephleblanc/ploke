@@ -1,3 +1,4 @@
+#![allow(clippy::duplicated_attributes)]
 #![cfg(feature = "uuid_ids")] // Gate the entire module
 
 use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
@@ -140,7 +141,7 @@ pub struct DiscoveryOutput {
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
 pub fn run_discovery_phase(
-    _project_root: &PathBuf,   // Keep for potential future use
+    _project_root: &Path,      // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     // Reverted return type
@@ -195,7 +196,7 @@ pub fn run_discovery_phase(
             match entry_result {
                 Ok(entry) => {
                     if entry.file_type().is_file()
-                        && entry.path().extension().map_or(false, |ext| ext == "rs")
+                        && entry.path().extension().is_some_and(|ext| ext == "rs")
                     {
                         // Ensure we store absolute paths if target_crates might be relative
                         // Assuming target_crates provides absolute paths for simplicity here.

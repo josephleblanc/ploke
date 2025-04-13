@@ -652,6 +652,9 @@ pub struct ImportNode {
 
     /// Whether this is a glob import (`use some::path::*`)
     pub is_glob: bool,
+
+    /// Whether this is a 'self' import, e.g. `std::fs::{self}`
+    pub is_self_import: bool,
 }
 
 impl ImportNode {

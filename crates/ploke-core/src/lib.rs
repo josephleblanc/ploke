@@ -8,7 +8,7 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 
 #[cfg(feature = "uuid_ids")]
 mod ids {
-    use std::{path::Path, str::Bytes};
+    use std::path::Path;
 
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;

@@ -4,26 +4,15 @@
 mod phase2_relation_tests {
     use crate::common::uuid_ids_utils::*;
     use ploke_common::{fixtures_crates_dir, workspace_root};
-    use ploke_core::{NodeId, TypeId};
-    use std::{
-        collections::HashMap,
-        path::{Path, PathBuf},
-    };
+    use ploke_core::NodeId;
     use syn_parser::{
         discovery::{run_discovery_phase, DiscoveryOutput},
         parser::{
             analyze_files_parallel,
-            graph::CodeGraph,
-            nodes::{
-                FieldNode, FunctionNode, ImplNode, ImportNode, ModuleNode, StructNode, TraitNode,
-                TypeDefNode, ValueNode, Visible,
-            },
             relations::{GraphId, Relation, RelationKind},
-            types::{GenericParamKind, TypeNode},
             visitor::ParsedCodeGraph,
         },
     };
-    use uuid::Uuid;
 
     // --- Test Setup Helpers ---
 

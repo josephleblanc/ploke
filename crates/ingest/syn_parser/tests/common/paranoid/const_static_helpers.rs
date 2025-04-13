@@ -3,7 +3,7 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
 use syn_parser::parser::{
-    nodes::{ModuleNode, ValueNode, Visible}, // Added ValueNode, Visible
+    nodes::{ValueNode, Visible}, // Added ValueNode, Visible
     visitor::ParsedCodeGraph,
 };
 
@@ -15,8 +15,8 @@ pub fn find_value_node_paranoid<'a>(
     parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
     fixture_name: &str,                   // Needed to construct expected path
     relative_file_path: &str,             // e.g., "src/const_static.rs"
-    expected_module_path: &[String],      // Module path within the target file (e.g., ["crate"] or ["crate", "inner_mod"])
-    value_name: &str,                     // Name of the const/static item
+    expected_module_path: &[String], // Module path within the target file (e.g., ["crate"] or ["crate", "inner_mod"])
+    value_name: &str,                // Name of the const/static item
 ) -> &'a ValueNode {
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(fixture_name);
@@ -99,7 +99,7 @@ pub fn find_value_node_paranoid<'a>(
     // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path, // Use the file_path from the target_data
+        file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
         value_name,
         actual_span, // Use the span from the node itself

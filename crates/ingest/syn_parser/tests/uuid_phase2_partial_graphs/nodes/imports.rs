@@ -5,12 +5,10 @@ use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
 use syn_parser::parser::nodes::ImportKind; // Import ImportKind
-use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{ImportNode, Visible}, // Import ImportNode
     relations::{GraphId, RelationKind},
-    visitor::ParsedCodeGraph,
 };
 
 // Test Plan: docs/plans/uuid_refactor/testing/imports_testing.md
@@ -58,7 +56,6 @@ fn find_import_node_basic<'a>(
             )
         })
 }
-
 // --- Tier 1: Basic Smoke Tests ---
 #[test]
 fn test_import_node_basic_smoke_test_full_parse() {
@@ -281,6 +278,8 @@ fn test_import_node_basic_smoke_test_full_parse() {
         let node = graph
             .use_statements
             .iter()
+            .inspect(|i| {println!("SEARCHING USE STMT Is self? {}, ImportNode name '{}', original_name {:?} ending with path {:?} in graph.use_statements", 
+                i.is_self_import, i.visible_name, i.original_name, i.path())})
             .find(|i| i.visible_name == name && i.path().ends_with(&path_suffix))
             .unwrap_or_else(|| {
                 panic!(
@@ -305,13 +304,10 @@ fn test_import_node_basic_smoke_test_full_parse() {
             node.span
         );
 
-        let use_statement = "UseStatement".to_string();
-        let extern_crate = "ExternCrate".to_string();
-
         // Check Kind Discriminant
         match (&node.kind, &kind_disc) {
-            (ImportKind::UseStatement, use_statement) => {} // Match
-            (ImportKind::ExternCrate, extern_crate) => {}   // Match
+            (ImportKind::UseStatement, _) => {} // Match
+            (ImportKind::ExternCrate, _) => {}  // Match
             _ => panic!(
                 "Node '{}' path={:?}: Kind mismatch. Expected discriminant '{}', found {:?}",
                 name, node.path, kind_disc, node.kind

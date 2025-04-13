@@ -3,14 +3,13 @@
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
-use ploke_core::{NodeId, TrackingHash, TypeId};
+use ploke_core::{NodeId, TrackingHash};
 use syn_parser::parser::nodes::{MacroKind, ProcMacroKind}; // Import macro kinds
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{MacroNode, Visible}, // Import MacroNode
     relations::{GraphId, RelationKind},
-    visitor::ParsedCodeGraph,
 };
 
 // Test Plan: docs/plans/uuid_refactor/testing/macros_testing.md
@@ -114,9 +113,24 @@ fn test_macro_node_basic_smoke_test_full_parse() {
         // Check Kind Discriminant
         match (&node.kind, kind_disc) {
             (MacroKind::DeclarativeMacro, "Declarative") => {} // Match
-            (MacroKind::ProcedureMacro { kind: ProcMacroKind::Function }, "ProcFunc") => {} // Match
-            (MacroKind::ProcedureMacro { kind: ProcMacroKind::Derive }, "ProcDerive") => {} // Match
-            (MacroKind::ProcedureMacro { kind: ProcMacroKind::Attribute }, "ProcAttr") => {} // Match
+            (
+                MacroKind::ProcedureMacro {
+                    kind: ProcMacroKind::Function,
+                },
+                "ProcFunc",
+            ) => {} // Match
+            (
+                MacroKind::ProcedureMacro {
+                    kind: ProcMacroKind::Derive,
+                },
+                "ProcDerive",
+            ) => {} // Match
+            (
+                MacroKind::ProcedureMacro {
+                    kind: ProcMacroKind::Attribute,
+                },
+                "ProcAttr",
+            ) => {} // Match
             _ => panic!(
                 "Node '{}': Kind mismatch. Expected discriminant '{}', found {:?}",
                 name, kind_disc, node.kind
@@ -125,7 +139,7 @@ fn test_macro_node_basic_smoke_test_full_parse() {
 
         // Check Visibility Discriminant
         match (&node.visibility, vis_disc) {
-            (VisibilityKind::Public, "Public") => {} // Match
+            (VisibilityKind::Public, "Public") => {}       // Match
             (VisibilityKind::Inherited, "Inherited") => {} // Match
             _ => panic!(
                 "Node '{}': Visibility mismatch. Expected discriminant '{}', found {:?}",
@@ -412,7 +426,10 @@ fn test_macro_node_field_attributes() {
         node2.attributes.len()
     );
     assert!(
-        node2.attributes.iter().any(|a| a.name == "proc_macro_derive"),
+        node2
+            .attributes
+            .iter()
+            .any(|a| a.name == "proc_macro_derive"),
         "Node '{}': Missing 'proc_macro_derive' attribute",
         macro_name2
     );
@@ -446,7 +463,8 @@ fn test_macro_node_field_docstring() {
         macro_name1
     );
     assert!(
-        node1.docstring
+        node1
+            .docstring
             .as_deref()
             .unwrap_or("")
             .contains("documented macro_rules"),
@@ -463,7 +481,8 @@ fn test_macro_node_field_docstring() {
         macro_name2
     );
     assert!(
-        node2.docstring
+        node2
+            .docstring
             .as_deref()
             .unwrap_or("")
             .contains("documented procedural macro"),
@@ -582,14 +601,17 @@ fn test_macro_node_field_span() {
 
     // Basic check: span start and end should not be zero
     assert_ne!(
-        node.span, (0, 0),
+        node.span,
+        (0, 0),
         "Node '{}': Span should not be (0, 0). Actual: {:?}",
-        macro_name, node.span
+        macro_name,
+        node.span
     );
     assert!(
         node.span.1 > node.span.0,
         "Node '{}': Span end should be greater than start. Actual: {:?}",
-        macro_name, node.span
+        macro_name,
+        node.span
     );
 }
 
@@ -730,11 +752,7 @@ fn test_macro_node_paranoid_declarative() {
         VisibilityKind::Public,
         "Visibility mismatch"
     );
-    assert_eq!(
-        node.kind,
-        MacroKind::DeclarativeMacro,
-        "Kind mismatch"
-    );
+    assert_eq!(node.kind, MacroKind::DeclarativeMacro, "Kind mismatch");
     assert_eq!(
         node.attributes.len(),
         1, // #[macro_export]
@@ -836,7 +854,9 @@ fn test_macro_node_paranoid_procedural() {
         "Attribute count mismatch"
     );
     assert!(
-        node.attributes.iter().any(|a| a.name == "proc_macro_derive"),
+        node.attributes
+            .iter()
+            .any(|a| a.name == "proc_macro_derive"),
         "Missing 'proc_macro_derive' attribute"
     );
     assert!(
