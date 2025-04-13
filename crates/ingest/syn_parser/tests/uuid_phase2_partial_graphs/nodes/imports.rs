@@ -27,7 +27,7 @@ fn find_import_node_basic<'a>(
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == module_path)
+        .find(|m| m.defn_path().as_slice() == module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for definition path: {:?} while looking for import '{}'",
@@ -46,7 +46,7 @@ fn find_import_node_basic<'a>(
     graph
         .use_statements // Check the global list
         .iter()
-        .find(|i| {
+        .find(|i| -> bool {
             i.visible_name == visible_name
                 && i.path.ends_with(expected_path_suffix)
                 && module_items.contains(&i.id)
@@ -82,31 +82,193 @@ fn test_import_node_basic_smoke_test_full_parse() {
 
     // (visible_name, path_suffix, expected_kind_discriminant)
     let expected_items = vec![
-        ("HashMap", &["std", "collections", "HashMap"], "UseStatement"),
-        ("fmt", &["std", "fmt"], "UseStatement"),
-        ("IoResult", &["std", "io", "Result"], "UseStatement"),
-        ("MySimpleStruct", &["crate", "structs", "SimpleStruct"], "UseStatement"),
-        ("fs", &["std", "fs"], "UseStatement"),
-        ("File", &["std", "fs", "File"], "UseStatement"),
-        ("Path", &["std", "path", "Path"], "UseStatement"),
-        ("PathBuf", &["std", "path", "PathBuf"], "UseStatement"),
-        ("EnumWithData", &["crate", "enums", "EnumWithData"], "UseStatement"),
-        ("SampleEnum1", &["crate", "enums", "SampleEnum1"], "UseStatement"),
-        ("DefaultTrait", &["crate", "traits", "DefaultTrait"], "UseStatement"),
-        ("MyGenTrait", &["crate", "traits", "GenericTrait"], "UseStatement"),
-        ("*", &["std", "env"], "UseStatement"), // Glob
-        ("SubItem", &["self", "sub_imports", "SubItem"], "UseStatement"),
-        ("AttributedStruct", &["super", "structs", "AttributedStruct"], "UseStatement"),
-        ("MyId", &["crate", "type_alias", "MyId"], "UseStatement"),
-        ("Duration", &["std", "time", "Duration"], "UseStatement"), // Absolute path ::std::...
-        ("serde", &["serde"], "ExternCrate"),
-        ("SerdeAlias", &["serde"], "ExternCrate"), // Renamed extern crate
+        (
+            "HashMap".to_string(),
+            [
+                "std".to_string(),
+                "collections".to_string(),
+                "HashMap".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "fmt".to_string(),
+            ["std".to_string(), "fmt".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "IoResult".to_string(),
+            ["std".to_string(), "io".to_string(), "Result".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "MySimpleStruct".to_string(),
+            [
+                "crate".to_string(),
+                "structs".to_string(),
+                "SimpleStruct".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "fs".to_string(),
+            ["std".to_string(), "fs".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "File".to_string(),
+            ["std".to_string(), "fs".to_string(), "File".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "Path".to_string(),
+            ["std".to_string(), "path".to_string(), "Path".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "PathBuf".to_string(),
+            ["std".to_string(), "path".to_string(), "PathBuf".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "EnumWithData".to_string(),
+            [
+                "crate".to_string(),
+                "enums".to_string(),
+                "EnumWithData".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "SampleEnum1".to_string(),
+            [
+                "crate".to_string(),
+                "enums".to_string(),
+                "SampleEnum1".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "DefaultTrait".to_string(),
+            [
+                "crate".to_string(),
+                "traits".to_string(),
+                "DefaultTrait".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "MyGenTrait".to_string(),
+            [
+                "crate".to_string(),
+                "traits".to_string(),
+                "GenericTrait".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "*".to_string(),
+            ["std".to_string(), "env".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ), // Glob
+        (
+            "SubItem".to_string(),
+            [
+                "self".to_string(),
+                "sub_imports".to_string(),
+                "SubItem".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "AttributedStruct".to_string(),
+            [
+                "super".to_string(),
+                "structs".to_string(),
+                "AttributedStruct".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "MyId".to_string(),
+            [
+                "crate".to_string(),
+                "type_alias".to_string(),
+                "MyId".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ),
+        (
+            "Duration".to_string(),
+            [
+                "std".to_string(),
+                "time".to_string(),
+                "Duration".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ), // Absolute path ::std::...
+        (
+            "serde".to_string(),
+            ["serde".to_string()].to_vec(),
+            "ExternCrate".to_string(),
+        ),
+        (
+            "SerdeAlias".to_string(),
+            ["serde".to_string()].to_vec(),
+            "ExternCrate".to_string(),
+        ), // Renamed extern crate
         // Nested module imports
-        ("fmt", &["super", "fmt"], "UseStatement"), // sub_imports::use super::fmt;
-        ("DocumentedEnum", &["crate", "enums", "DocumentedEnum"], "UseStatement"), // sub_imports::use crate::...
-        ("Arc", &["std", "sync", "Arc"], "UseStatement"), // sub_imports::use std::...
-        ("NestedItem", &["self", "nested_sub", "NestedItem"], "UseStatement"), // sub_imports::use self::...
-        ("TupleStruct", &["super", "super", "structs", "TupleStruct"], "UseStatement"), // sub_imports::use super::super::...
+        (
+            "fmt".to_string(),
+            ["super".to_string(), "fmt".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ), // sub_imports::use super::fmt;
+        (
+            "DocumentedEnum".to_string(),
+            [
+                "crate".to_string(),
+                "enums".to_string(),
+                "DocumentedEnum".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ), // sub_imports::use crate::...
+        (
+            "Arc".to_string(),
+            ["std".to_string(), "sync".to_string(), "Arc".to_string()].to_vec(),
+            "UseStatement".to_string(),
+        ), // sub_imports::use std::...
+        (
+            "NestedItem".to_string(),
+            [
+                "self".to_string(),
+                "nested_sub".to_string(),
+                "NestedItem".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ), // sub_imports::use self::...
+        (
+            "TupleStruct".to_string(),
+            [
+                "super".to_string(),
+                "super".to_string(),
+                "structs".to_string(),
+                "TupleStruct".to_string(),
+            ]
+            .to_vec(),
+            "UseStatement".to_string(),
+        ), // sub_imports::use super::super::...
     ];
 
     assert!(
@@ -119,7 +281,7 @@ fn test_import_node_basic_smoke_test_full_parse() {
         let node = graph
             .use_statements
             .iter()
-            .find(|i| i.visible_name == name && i.path.ends_with(path_suffix))
+            .find(|i| i.visible_name == name && i.path().ends_with(&path_suffix))
             .unwrap_or_else(|| {
                 panic!(
                     "ImportNode '{}' ending with path {:?} not found in graph.use_statements",
@@ -135,15 +297,21 @@ fn test_import_node_basic_smoke_test_full_parse() {
             node.id
         );
         assert_ne!(
-            node.span, (0, 0),
+            node.span,
+            (0, 0),
             "Node '{}' path={:?}: Span should not be (0,0), found {:?}",
-            name, node.path, node.span
+            name,
+            node.path,
+            node.span
         );
 
+        let use_statement = "UseStatement".to_string();
+        let extern_crate = "ExternCrate".to_string();
+
         // Check Kind Discriminant
-        match (&node.kind, kind_disc) {
-            (ImportKind::UseStatement, "UseStatement") => {} // Match
-            (ImportKind::ExternCrate, "ExternCrate") => {} // Match
+        match (&node.kind, &kind_disc) {
+            (ImportKind::UseStatement, use_statement) => {} // Match
+            (ImportKind::ExternCrate, extern_crate) => {}   // Match
             _ => panic!(
                 "Node '{}' path={:?}: Kind mismatch. Expected discriminant '{}', found {:?}",
                 name, node.path, kind_disc, node.kind
@@ -171,7 +339,11 @@ fn test_import_node_field_id_regeneration() {
     let file_path = &target_data.file_path;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
     let actual_span = node.span;
@@ -213,19 +385,22 @@ fn test_import_node_field_span() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "fmt";
-    let expected_path_suffix = &["std", "fmt"];
+    let expected_path_suffix = &["std".to_string(), "fmt".to_string()];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
     assert_ne!(
-        node.span, (0, 0),
+        node.span,
+        (0, 0),
         "Node '{}': Span should not be (0, 0). Actual: {:?}",
-        visible_name, node.span
+        visible_name,
+        node.span
     );
     assert!(
         node.span.1 > node.span.0,
         "Node '{}': Span end should be greater than start. Actual: {:?}",
-        visible_name, node.span
+        visible_name,
+        node.span
     );
 }
 
@@ -245,44 +420,64 @@ fn test_import_node_field_path() {
 
     // Target 1: HashMap
     let visible_name1 = "HashMap";
-    let expected_path1 = vec!["std", "collections", "HashMap"];
+    let expected_path1 = vec![
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
     let node1 = find_import_node_basic(graph, &module_path, visible_name1, &expected_path1);
     assert_eq!(
         node1.path,
-        expected_path1.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        expected_path1
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         "Path mismatch for '{}'",
         visible_name1
     );
 
     // Target 2: File (grouped)
     let visible_name2 = "File";
-    let expected_path2 = vec!["std", "fs", "File"];
+    let expected_path2 = vec!["std".to_string(), "fs".to_string(), "File".to_string()];
     let node2 = find_import_node_basic(graph, &module_path, visible_name2, &expected_path2);
     assert_eq!(
         node2.path,
-        expected_path2.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        expected_path2
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         "Path mismatch for '{}'",
         visible_name2
     );
 
     // Target 3: SubItem (self)
     let visible_name3 = "SubItem";
-    let expected_path3 = vec!["self", "sub_imports", "SubItem"];
+    let expected_path3 = vec![
+        "self".to_string(),
+        "sub_imports".to_string(),
+        "SubItem".to_string(),
+    ];
     let node3 = find_import_node_basic(graph, &module_path, visible_name3, &expected_path3);
     assert_eq!(
         node3.path,
-        expected_path3.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        expected_path3
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         "Path mismatch for '{}'",
         visible_name3
     );
 
     // Target 4: serde (extern crate)
     let visible_name4 = "serde";
-    let expected_path4 = vec!["serde"];
+    let expected_path4 = vec!["serde".to_string()];
     let node4 = find_import_node_basic(graph, &module_path, visible_name4, &expected_path4);
     assert_eq!(
         node4.path,
-        expected_path4.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+        expected_path4
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         "Path mismatch for '{}'",
         visible_name4
     );
@@ -303,7 +498,11 @@ fn test_import_node_field_kind_use() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
     let expected_kind = ImportKind::UseStatement;
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
@@ -330,7 +529,7 @@ fn test_import_node_field_kind_extern_crate() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "serde";
-    let expected_path_suffix = &["serde"];
+    let expected_path_suffix = &["serde".to_string()];
     let expected_kind = ImportKind::ExternCrate;
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
@@ -357,7 +556,11 @@ fn test_import_node_field_visible_name_simple() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
@@ -380,15 +583,21 @@ fn test_import_node_field_visible_name_renamed() {
 
     // Target 1: IoResult
     let visible_name1 = "IoResult";
-    let expected_path_suffix1 = &["std", "io", "Result"];
+    let expected_path_suffix1 = &["std".to_string(), "io".to_string(), "Result".to_string()];
     let node1 = find_import_node_basic(graph, &module_path, visible_name1, expected_path_suffix1);
-    assert_eq!(node1.visible_name, visible_name1, "Visible name mismatch for IoResult");
+    assert_eq!(
+        node1.visible_name, visible_name1,
+        "Visible name mismatch for IoResult"
+    );
 
     // Target 2: SerdeAlias
     let visible_name2 = "SerdeAlias";
-    let expected_path_suffix2 = &["serde"];
+    let expected_path_suffix2 = &["serde".to_string()];
     let node2 = find_import_node_basic(graph, &module_path, visible_name2, expected_path_suffix2);
-    assert_eq!(node2.visible_name, visible_name2, "Visible name mismatch for SerdeAlias");
+    assert_eq!(
+        node2.visible_name, visible_name2,
+        "Visible name mismatch for SerdeAlias"
+    );
 }
 
 #[test]
@@ -406,11 +615,14 @@ fn test_import_node_field_visible_name_glob() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "*"; // Glob uses "*" as visible name
-    let expected_path_suffix = &["std", "env"];
+    let expected_path_suffix = &["std".to_string(), "env".to_string()];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch for glob");
+    assert_eq!(
+        node.visible_name, visible_name,
+        "Visible name mismatch for glob"
+    );
 }
 
 #[test]
@@ -428,11 +640,18 @@ fn test_import_node_field_original_name_simple() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
-    assert!(node.original_name.is_none(), "Original name should be None for simple import");
+    assert!(
+        node.original_name.is_none(),
+        "Original name should be None for simple import"
+    );
 }
 
 #[test]
@@ -451,17 +670,23 @@ fn test_import_node_field_original_name_renamed() {
 
     // Target 1: IoResult (Result as IoResult)
     let visible_name1 = "IoResult";
-    let expected_path_suffix1 = &["std", "io", "Result"];
+    let expected_path_suffix1 = &["std".to_string(), "io".to_string(), "Result".to_string()];
     let expected_original1 = Some("Result".to_string());
     let node1 = find_import_node_basic(graph, &module_path, visible_name1, expected_path_suffix1);
-    assert_eq!(node1.original_name, expected_original1, "Original name mismatch for IoResult");
+    assert_eq!(
+        node1.original_name, expected_original1,
+        "Original name mismatch for IoResult"
+    );
 
     // Target 2: SerdeAlias (serde as SerdeAlias)
     let visible_name2 = "SerdeAlias";
-    let expected_path_suffix2 = &["serde"];
+    let expected_path_suffix2 = &["serde".to_string()];
     let expected_original2 = Some("serde".to_string());
     let node2 = find_import_node_basic(graph, &module_path, visible_name2, expected_path_suffix2);
-    assert_eq!(node2.original_name, expected_original2, "Original name mismatch for SerdeAlias");
+    assert_eq!(
+        node2.original_name, expected_original2,
+        "Original name mismatch for SerdeAlias"
+    );
 }
 
 #[test]
@@ -479,7 +704,7 @@ fn test_import_node_field_is_glob_true() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "*";
-    let expected_path_suffix = &["std", "env"];
+    let expected_path_suffix = &["std".to_string(), "env".to_string()];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
@@ -501,7 +726,11 @@ fn test_import_node_field_is_glob_false() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
@@ -517,7 +746,11 @@ fn test_import_node_relation_contains_file_module() {
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let successful_graphs = run_phases_and_collect(fixture_name);
 
@@ -534,7 +767,8 @@ fn test_import_node_relation_contains_file_module() {
         &module_path,
     );
     let module_id = module_node.id();
-    let import_node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
+    let import_node =
+        find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
     let import_id = import_node.id;
 
     assert_relation_exists(
@@ -566,7 +800,11 @@ fn test_import_node_relation_module_imports_file_module() {
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path_suffix = &["std", "collections", "HashMap"];
+    let expected_path_suffix = &[
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let successful_graphs = run_phases_and_collect(fixture_name);
 
@@ -583,7 +821,8 @@ fn test_import_node_relation_module_imports_file_module() {
         &module_path,
     );
     let module_id = module_node.id();
-    let import_node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
+    let import_node =
+        find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
     let import_id = import_node.id;
 
     assert_relation_exists(
@@ -609,7 +848,11 @@ fn test_import_node_relation_contains_inline_module() {
         "sub_imports".to_string(),
     ];
     let visible_name = "Arc";
-    let expected_path_suffix = &["std", "sync", "Arc"];
+    let expected_path_suffix = &[
+        "std".to_string().to_string(),
+        "sync".to_string().to_string(),
+        "Arc".to_string().to_string(),
+    ];
 
     let successful_graphs = run_phases_and_collect(fixture_name);
 
@@ -626,7 +869,8 @@ fn test_import_node_relation_contains_inline_module() {
         &module_path,
     );
     let module_id = module_node.id();
-    let import_node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
+    let import_node =
+        find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
     let import_id = import_node.id;
 
     assert_relation_exists(
@@ -662,7 +906,7 @@ fn test_import_node_relation_module_imports_inline_module() {
         "sub_imports".to_string(),
     ];
     let visible_name = "Arc";
-    let expected_path_suffix = &["std", "sync", "Arc"];
+    let expected_path_suffix = &["std".to_string(), "sync".to_string(), "Arc".to_string()];
 
     let successful_graphs = run_phases_and_collect(fixture_name);
 
@@ -679,7 +923,8 @@ fn test_import_node_relation_module_imports_inline_module() {
         &module_path,
     );
     let module_id = module_node.id();
-    let import_node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
+    let import_node =
+        find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
     let import_id = import_node.id;
 
     assert_relation_exists(
@@ -701,7 +946,11 @@ fn test_import_node_in_module_imports_list() {
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path = vec!["std".to_string(), "collections".to_string(), "HashMap".to_string()];
+    let expected_path = vec![
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
 
     let successful_graphs = run_phases_and_collect(fixture_name);
 
@@ -720,9 +969,7 @@ fn test_import_node_in_module_imports_list() {
     assert!(
         found_in_list,
         "ImportNode for '{}' with path {:?} not found in ModuleNode imports list: {:?}",
-        visible_name,
-        expected_path,
-        module_node.imports
+        visible_name, expected_path, module_node.imports
     );
 }
 
@@ -735,7 +982,11 @@ fn test_import_node_paranoid_simple() {
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "HashMap";
-    let expected_path = vec!["std".to_string(), "collections".to_string(), "HashMap".to_string()];
+    let expected_path = vec![
+        "std".to_string(),
+        "collections".to_string(),
+        "HashMap".to_string(),
+    ];
     let expected_original_name = None;
     let expected_is_glob = false;
 
@@ -761,7 +1012,11 @@ fn test_import_node_paranoid_simple() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -788,7 +1043,9 @@ fn test_import_node_paranoid_simple() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -797,7 +1054,11 @@ fn test_import_node_paranoid_simple() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",
@@ -839,7 +1100,11 @@ fn test_import_node_paranoid_renamed() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -866,7 +1131,9 @@ fn test_import_node_paranoid_renamed() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -875,7 +1142,11 @@ fn test_import_node_paranoid_renamed() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",
@@ -916,7 +1187,11 @@ fn test_import_node_paranoid_glob() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -943,7 +1218,9 @@ fn test_import_node_paranoid_glob() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -952,7 +1229,11 @@ fn test_import_node_paranoid_glob() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",
@@ -967,7 +1248,11 @@ fn test_import_node_paranoid_self() {
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
     let visible_name = "SubItem";
-    let expected_path = vec!["self".to_string(), "sub_imports".to_string(), "SubItem".to_string()];
+    let expected_path = vec![
+        "self".to_string(),
+        "sub_imports".to_string(),
+        "SubItem".to_string(),
+    ];
     let expected_original_name = None;
     let expected_is_glob = false;
 
@@ -993,7 +1278,11 @@ fn test_import_node_paranoid_self() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -1020,7 +1309,9 @@ fn test_import_node_paranoid_self() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -1029,7 +1320,11 @@ fn test_import_node_paranoid_self() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",
@@ -1070,7 +1365,11 @@ fn test_import_node_paranoid_extern_crate() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::ExternCrate, "Kind mismatch"); // Check kind
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -1097,7 +1396,9 @@ fn test_import_node_paranoid_extern_crate() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -1106,7 +1407,11 @@ fn test_import_node_paranoid_extern_crate() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",
@@ -1147,7 +1452,11 @@ fn test_import_node_paranoid_extern_crate_renamed() {
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
-    assert_eq!(node.original_name, expected_original_name.map(|s| s.to_string()), "Original name mismatch");
+    assert_eq!(
+        node.original_name,
+        expected_original_name.map(|s| s.to_string()),
+        "Original name mismatch"
+    );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
     assert_eq!(node.kind, ImportKind::ExternCrate, "Kind mismatch"); // Check kind
     assert_ne!(node.span, (0, 0), "Span should not be default");
@@ -1174,7 +1483,9 @@ fn test_import_node_paranoid_extern_crate_renamed() {
         "Missing ModuleImports relation",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id)),
         "ImportNode ID not found in module items list"
     );
     assert!(
@@ -1183,7 +1494,11 @@ fn test_import_node_paranoid_extern_crate_renamed() {
     );
 
     // 4. Verify Uniqueness
-    let duplicate_id_count = graph.use_statements.iter().filter(|i| i.id == node.id).count();
+    let duplicate_id_count = graph
+        .use_statements
+        .iter()
+        .filter(|i| i.id == node.id)
+        .count();
     assert_eq!(
         duplicate_id_count, 1,
         "Found duplicate ImportNode ID {} in graph.use_statements",

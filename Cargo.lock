@@ -593,6 +593,9 @@ version = "0.1.0"
 [[package]]
 name = "fixture_nodes"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "fixture_test_crate"

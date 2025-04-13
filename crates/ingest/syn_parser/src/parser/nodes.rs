@@ -654,6 +654,12 @@ pub struct ImportNode {
     pub is_glob: bool,
 }
 
+impl ImportNode {
+    pub fn path(&self) -> &[String] {
+        &self.path
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ImportKind {
     ImportNode,
