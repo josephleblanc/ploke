@@ -17,10 +17,10 @@ pub fn find_import_node_paranoid<'a>(
     relative_file_path: &str,             // e.g., "src/imports.rs"
     expected_module_path: &[String],      // Module path where the import is defined
     // --- Parameters to uniquely identify the import ---
-    visible_name: &str,                   // Name used in scope (e.g., "HashMap", "IoResult", "*")
-    expected_path: &[String],             // Expected path segments stored in ImportNode.path
+    visible_name: &str, // Name used in scope (e.g., "HashMap", "IoResult", "*")
+    expected_path: &[String], // Expected path segments stored in ImportNode.path
     expected_original_name: Option<&str>, // Expected original name if renamed
-    expected_is_glob: bool,               // Expected glob status
+    expected_is_glob: bool, // Expected glob status
 ) -> &'a ImportNode {
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(fixture_name);
@@ -104,13 +104,20 @@ pub fn find_import_node_paranoid<'a>(
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
     //    The ID is generated based on the visible_name (or "*" for glob) and span.
-    let id_gen_name = if import_node.is_glob { "*" } else { &import_node.visible_name };
+    let id_gen_name = if import_node.is_glob {
+        "*"
+    } else {
+        import_node
+            .original_name
+            .as_deref()
+            .unwrap_or(&import_node.visible_name)
+    };
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path, // Use the file_path from the target_data
+        file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
-        id_gen_name, // Use visible_name or "*" for ID generation
-        actual_span, // Use the span from the node itself
+        &id_gen_name,         // Use visible_name or "*" for ID generation
+        actual_span,          // Use the span from the node itself
     );
 
     assert_eq!(

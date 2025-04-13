@@ -158,10 +158,14 @@ impl<'a> CodeVisitor<'a> {
             println!(" current_mod.name: {:?}", current_mod.name);
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   id: {:?}", current_mod.id);
+            println!("│   id: {}", current_mod.id);
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   items: {:?}", current_mod.items());
+            print!("│   items: ",);
+            current_mod
+                .items()
+                .as_ref()
+                .map(|item| item.iter().for_each(|i| print!("|{}|", i)));
             print!("{: <3}", "");
             (0..depth).for_each(|_| print!("{: <3}", ""));
             println!("│   self.state.code_graph.modules names: {:?}", modules);
@@ -169,21 +173,33 @@ impl<'a> CodeVisitor<'a> {
     }
     #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
-        if let Some(current_mod) = self.state.code_graph.modules.last() {
-            let depth = self.state.code_graph.modules.len();
-
+        let depth = self.state.code_graph.modules.len();
+        if let Some(current_mod) = self
+            .state
+            .code_graph
+            .modules
+            .iter()
+            .find(|m| m.items().is_some_and(|items| items.contains(&node_id)))
+        {
             (1..depth).for_each(|_| print!("{: <3}", ""));
             println!("│");
             (1..depth).for_each(|_| print!("{: <3}", ""));
             print!("└");
             print!("{:─<3}", "");
 
-            println!(
-                " {} -> pushing name {} (id: {:?}) to items: now items = {:?}",
-                current_mod.name,
-                name,
-                node_id,
-                current_mod.items()
+            print!(
+                " current mod: \"{}\" -> pushing name {} (id: {}) to items: now items = ",
+                current_mod.name, name, node_id,
+            );
+            current_mod
+                .items()
+                .as_ref()
+                .map(|item| item.iter().for_each(|i| print!("|{}|", i)));
+            println!("");
+        } else {
+            panic!(
+                "Could not find containing module for node with name {}, id {}",
+                name, node_id
             );
         }
     }
@@ -1469,8 +1485,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         #[cfg(feature = "verbose_debug")]
         eprintln!(
-            "VISIT_ITEM_USE: Path={:?}, Item='{}'",
-            debug_current_path, debug_use_item_str
+            "VISIT_ITEM_USE: Path={:?}, Item='{}', imports: {:#?}",
+            debug_current_path,
+            debug_use_item_str,
+            imports.clone()
         );
         // --- END DEBUGGING ---
 
@@ -1518,7 +1536,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
     // Continue visiting
 
-    // Inside visit_item_extern_crate
+    /// Visit extern crate item, e.g. `extern crate serde;`
+    /// Note that these may be renamed, e.g. `extern crate serde as MySerde;`
+    /// This visit method will:
+    ///     - Create an `ImportNode` for the extern crate and add it to current_module.imports
+    ///     - Adds a new `Contains` relation with current module (through `add_contains_rel`)
+    ///     - `NodeId::Synthetic` created through `add_contains_rel`
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
         let crate_name = extern_crate.ident.to_string();
         let span = extern_crate.extract_span_bytes();
@@ -1530,6 +1553,43 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&crate_name, import_id);
+
+        let import_node = ImportNode {
+            id: import_id,
+            span,
+            path: vec![crate_name.clone()], // Path is just crate name
+            kind: ImportKind::ExternCrate,  // <<< Correct kind
+            // Name used by `use` statements
+            visible_name: extern_crate
+                .rename
+                .as_ref()
+                .map(|(_, id)| id.to_string())
+                .unwrap_or_else(|| crate_name.clone()),
+            // Original name, only Some if item is renamed, otherwise None
+            original_name: extern_crate.rename.as_ref().map(|_| crate_name.clone()),
+            is_glob: false,
+        };
+        let module_id = if let Some(module) = self
+            .state
+            .code_graph
+            .modules
+            .iter_mut()
+            .find(|m| m.items().is_some_and(|items| items.contains(&import_id)))
+        {
+            module.imports.push(import_node.clone());
+            module.id
+        } else {
+            panic!(
+                "Could not find containing module for import_node: {:#?}",
+                import_node
+            );
+        };
+        self.state.code_graph.use_statements.push(import_node);
+        self.state.code_graph.relations.push(Relation {
+            source: GraphId::Node(module_id),
+            target: GraphId::Node(import_id),
+            kind: RelationKind::ModuleImports,
+        });
 
         // --- TypeId Generation ---
         #[cfg(not(feature = "uuid_ids"))]
@@ -1574,6 +1634,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             target: type_id,
             kind: RelationKind::Uses,
         });
+        // TODO: Remove this relation
+        // I did not really understand that an `extern crate some_crate` statement actually worked
+        // on the entire crate namespace itself, and cannot be specific enough to import a type
+        // directly. Therefore, the `TypeId` generation doesn't make sense here. `TypeId` is
+        // reserved for actual types.
         #[cfg(feature = "uuid_ids")]
         self.state.code_graph.relations.push(Relation {
             source: GraphId::Node(import_id),
