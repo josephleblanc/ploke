@@ -854,10 +854,6 @@ fn test_value_node_relation_contains_file_module() {
         &module_path,
     );
     let module_id = module_node.id();
-            res.as_ref()
-                .ok()
-                .filter(|d| d.file_path.ends_with(file_path_rel))
-        })
     // Find the value node (using basic helper for now)
     let value_node = find_value_node_basic(graph, &module_path, value_name);
     let value_id = value_node.id();
@@ -937,10 +933,6 @@ fn test_value_node_relation_contains_inline_module() {
         &module_path,
     );
     let module_id = module_node.id();
-            res.as_ref()
-                .ok()
-                .filter(|d| d.file_path.ends_with(file_path_rel))
-        })
     // Find the value node (using basic helper)
     let value_node = find_value_node_basic(graph, &module_path, value_name);
     let value_id = value_node.id();
