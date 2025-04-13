@@ -848,7 +848,7 @@ fn test_value_node_relation_contains_file_module() {
 
     // Find the file-level module node using the processed graphs
     let module_node = find_file_module_node_paranoid(
-        &successful_graphs, // Pass the slice of successful graphs
+        successful_graphs.as_slice(), // Pass as slice
         fixture_name,
         file_path_rel,
         &module_path,
@@ -927,7 +927,7 @@ fn test_value_node_relation_contains_inline_module() {
 
     // Find the inline module node using the processed graphs
     let module_node = find_inline_module_node_paranoid(
-        &successful_graphs, // Pass the slice of successful graphs
+        successful_graphs.as_slice(), // Pass as slice
         fixture_name,
         file_path_rel,
         &module_path,
