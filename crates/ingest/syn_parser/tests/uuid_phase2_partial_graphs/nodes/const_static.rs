@@ -813,15 +813,117 @@ fn test_value_node_field_tracking_hash_presence() {
 //  - Find ValueNode for TOP_LEVEL_INT.
 //  - Assert relation exists: assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(value_id), RelationKind::Contains, "...");
 //  - Assert value_id is in module_node.items().
+#[test]
+fn test_value_node_relation_contains_file_module() {
+    // Target: TOP_LEVEL_INT in "crate::const_static" module (const_static.rs)
+    let fixture_name = "fixture_nodes";
+    let file_path_rel = "src/const_static.rs";
+    let module_path = vec!["crate".to_string(), "const_static".to_string()];
+    let value_name = "TOP_LEVEL_INT";
+
+    let results = run_phase1_phase2(fixture_name);
+    let target_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref()
+                .ok()
+                .filter(|d| d.file_path.ends_with(file_path_rel))
+        })
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+
+    // Find the file-level module node
+    let module_node =
+        find_file_module_node_paranoid(&results, fixture_name, file_path_rel, &module_path);
+    let module_id = module_node.id();
+
+    // Find the value node (using basic helper for now)
+    let value_node = find_value_node_basic(graph, &module_path, value_name);
+    let value_id = value_node.id();
+
+    // Assert Contains relation exists
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(value_id),
+        RelationKind::Contains,
+        &format!(
+            "Expected Module '{}' ({}) to Contain Value '{}' ({})",
+            module_node.name, module_id, value_name, value_id
+        ),
+    );
+
+    // Assert value_id is in module_node.items()
+    assert!(
+        module_node.items().is_some_and(|items| items.contains(&value_id)),
+        "ValueNode ID {} not found in items list for Module '{}' ({})",
+        value_id,
+        module_node.name,
+        module_id
+    );
+}
 
 // #[test] fn test_value_node_relation_contains_inline_module()
 //  - Target: INNER_CONST in "crate::inner_mod"
 //  - Use full parse.
 //  - Find ParsedCodeGraph for const_static.rs.
-//  - Find inline module node for inner_mod (using find_inline_module_by_path or similar helper).
+//  - Find inline module node for inner_mod (using find_inline_module_node_paranoid).
 //  - Find ValueNode for INNER_CONST.
 //  - Assert relation exists: assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(value_id), RelationKind::Contains, "...");
 //  - Assert value_id is in module_node.items().
+#[test]
+fn test_value_node_relation_contains_inline_module() {
+    // Target: INNER_CONST in "crate::const_static::inner_mod"
+    let fixture_name = "fixture_nodes";
+    let file_path_rel = "src/const_static.rs"; // INNER_CONST is defined in this file
+    let module_path = vec![
+        "crate".to_string(),
+        "const_static".to_string(),
+        "inner_mod".to_string(),
+    ];
+    let value_name = "INNER_CONST";
+
+    let results = run_phase1_phase2(fixture_name);
+    let target_data = results
+        .iter()
+        .find_map(|res| {
+            res.as_ref()
+                .ok()
+                .filter(|d| d.file_path.ends_with(file_path_rel))
+        })
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+
+    // Find the inline module node
+    let module_node =
+        find_inline_module_node_paranoid(&results, fixture_name, file_path_rel, &module_path);
+    let module_id = module_node.id();
+
+    // Find the value node (using basic helper)
+    let value_node = find_value_node_basic(graph, &module_path, value_name);
+    let value_id = value_node.id();
+
+    // Assert Contains relation exists
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_id),
+        GraphId::Node(value_id),
+        RelationKind::Contains,
+        &format!(
+            "Expected Module '{}' ({}) to Contain Value '{}' ({})",
+            module_node.name, module_id, value_name, value_id
+        ),
+    );
+
+    // Assert value_id is in module_node.items()
+    assert!(
+        module_node.items().is_some_and(|items| items.contains(&value_id)),
+        "ValueNode ID {} not found in items list for Module '{}' ({})",
+        value_id,
+        module_node.name,
+        module_id
+    );
+}
 
 // Tier 5: Extreme Paranoia Tests
 // Goal: Perform exhaustive checks on one complex const and one complex static,
