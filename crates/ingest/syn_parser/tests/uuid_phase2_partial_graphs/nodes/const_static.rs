@@ -89,11 +89,11 @@ fn test_const_static_basic_smoke_test_full_parse() {
         ("FN_CALL_CONST", ValueKind::Constant, false), // private
         ("doc_attr_const", ValueKind::Constant, true), // pub
         ("DOC_ATTR_STATIC", ValueKind::Static { is_mutable: false }, false), // private
-        ("IMPL_CONST", ValueKind::Constant, true),     // pub (in impl)
-        ("TRAIT_REQ_CONST", ValueKind::Constant, false), // private (in trait impl)
+        // ("IMPL_CONST", ValueKind::Constant, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
+        // ("TRAIT_REQ_CONST", ValueKind::Constant, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
         ("INNER_CONST", ValueKind::Constant, true),    // pub(crate) (in mod)
         (
-            "INNER_MUT_STATIC",
+            "INNER_MUT_STATIC", // pub(super) (in mod)
             ValueKind::Static { is_mutable: true },
             true,
         ), // pub(super) (in mod)
@@ -367,6 +367,57 @@ fn test_const_static_basic_smoke_test_full_parse() {
 //   - Takes context (namespace, file, mod path, name, span).
 //   - Calls NodeId::generate_synthetic.
 //   - Returns the ID.
+
+// --- Tests for Known Limitations ---
+
+// #[ignore = "Known Limitation: Associated const in impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
+#[test]
+fn test_associated_const_found_in_impl() {
+    let results = run_phase1_phase2("fixture_nodes");
+    let fixture_path = fixtures_crates_dir()
+        .join("fixture_nodes")
+        .join("src")
+        .join("const_static.rs");
+    let target_data = results
+        .iter()
+        .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+
+    // This assertion is expected to FAIL until the limitation is addressed.
+    assert!(
+        graph.values.iter().any(|v| v.name == "IMPL_CONST"),
+        "ValueNode 'IMPL_CONST' (associated const in impl) was not found in graph.values"
+    );
+    // TODO: Add further checks once the node is found (e.g., visibility, kind, relation to impl block)
+}
+
+// #[ignore = "Known Limitation: Associated const in trait impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
+#[test]
+fn test_associated_const_found_in_trait_impl() {
+    // Note: The fixture defines TRAIT_REQ_CONST within an `impl ExampleTrait for Container` block.
+    let results = run_phase1_phase2("fixture_nodes");
+    let fixture_path = fixtures_crates_dir()
+        .join("fixture_nodes")
+        .join("src")
+        .join("const_static.rs");
+    let target_data = results
+        .iter()
+        .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+
+    // This assertion is expected to FAIL until the limitation is addressed.
+    assert!(
+        graph.values.iter().any(|v| v.name == "TRAIT_REQ_CONST"),
+        "ValueNode 'TRAIT_REQ_CONST' (associated const in trait impl) was not found in graph.values"
+    );
+    // TODO: Add further checks once the node is found
+}
+
+// NOTE: Tests for associated types (`test_associated_type_found_in_impl`, `test_associated_type_found_in_trait`)
+// are omitted for now as the current `const_static.rs` fixture does not contain associated types.
+// They should be added when fixtures are updated or when testing traits/impls specifically.
 
 // fn regenerate_type_id(...) -> TypeId
 //   - Helper for paranoid tests to verify TypeId.
