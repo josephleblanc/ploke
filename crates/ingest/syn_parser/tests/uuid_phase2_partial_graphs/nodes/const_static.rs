@@ -217,21 +217,17 @@ fn test_value_node_field_id_regeneration() {
     let value_name = "TOP_LEVEL_INT";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
-
-    // TODO: This test is incomplete until ValueNode has a `span` field.
-    //       We cannot accurately regenerate the ID without the span.
-    // let actual_span = node.span; // Get span from the found node
-    let placeholder_span = (0, 0); // <<<< TEMPORARY PLACEHOLDER
+    let actual_span = node.span; // Get span from the found node
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
         value_name,
-        placeholder_span, // Use placeholder span
+        actual_span, // Use actual span
     );
 
-    // Assert the ID is synthetic (basic check)
+    // Assert the ID is synthetic (basic check) - still useful
     assert!(
         matches!(node.id, NodeId::Synthetic(_)),
         "Node '{}': ID should be Synthetic, found {:?}",
@@ -239,15 +235,11 @@ fn test_value_node_field_id_regeneration() {
         node.id
     );
 
-    // TODO: Re-enable full assert_eq! once span is available on ValueNode.
-    // assert_eq!(
-    //     node.id, regenerated_id,
-    //     "Mismatch for ID field. Expected (regen): {}, Actual: {}",
-    //     regenerated_id, node.id
-    // );
-    println!(
-        "WARN: ID regeneration check for '{}' skipped due to missing span on ValueNode. Found ID: {}",
-        value_name, node.id
+    // Now perform the full ID comparison
+    assert_eq!(
+        node.id, regenerated_id,
+        "Mismatch for ID field. Expected (regen): {}, Actual: {}",
+        regenerated_id, node.id
     );
 }
 

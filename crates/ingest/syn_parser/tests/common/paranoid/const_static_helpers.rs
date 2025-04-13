@@ -94,32 +94,23 @@ pub fn find_value_node_paranoid<'a>(
 
     let value_node = module_candidates[0];
     let value_id = value_node.id();
-    // TODO: ValueNode currently lacks a span field. Need to add it to nodes.rs first.
-    // For now, we'll use a placeholder span for ID regeneration, but this check will be weak.
-    // let actual_span = value_node.span; // Get span from the found node
-    let placeholder_span = (0, 0); // <<<< TEMPORARY PLACEHOLDER
+    let actual_span = value_node.span; // Get span from the found node
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
-    //    NOTE: Using placeholder span until ValueNode gets a span field.
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
         value_name,
-        placeholder_span, // Use the placeholder span
-                          // actual_span, // Use the span from the node itself once available
+        actual_span, // Use the span from the node itself
     );
 
-    // TODO: Re-enable this assert once ValueNode has a span and the placeholder is removed.
-    // assert_eq!(
-    //     value_id, regenerated_id,
-    //     "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}' with span {:?}",
-    //     value_id, regenerated_id, value_name, expected_module_path, file_path.display(), placeholder_span // actual_span
-    // );
-    // Temporary check just to ensure the node found *has* an ID.
-    assert!(matches!(value_id, NodeId::Synthetic(_)), "ValueNode ID is not Synthetic: {:?}", value_id);
+    assert_eq!(
+        value_id, regenerated_id,
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}' with span {:?}",
+        value_id, regenerated_id, value_name, expected_module_path, file_path.display(), actual_span
+    );
 
-
-    // 8. Return the validated node (even with the weakened ID check for now)
+    // 8. Return the validated node
     value_node
 }
