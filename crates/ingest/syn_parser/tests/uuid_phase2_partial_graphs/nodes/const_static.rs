@@ -370,7 +370,7 @@ fn test_const_static_basic_smoke_test_full_parse() {
 
 // --- Tests for Known Limitations ---
 
-// #[ignore = "Known Limitation: Associated const in impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
+#[ignore = "Known Limitation: Associated const in impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
 #[test]
 fn test_associated_const_found_in_impl() {
     let results = run_phase1_phase2("fixture_nodes");
@@ -392,7 +392,7 @@ fn test_associated_const_found_in_impl() {
     // TODO: Add further checks once the node is found (e.g., visibility, kind, relation to impl block)
 }
 
-// #[ignore = "Known Limitation: Associated const in trait impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
+#[ignore = "Known Limitation: Associated const in trait impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
 #[test]
 fn test_associated_const_found_in_trait_impl() {
     // Note: The fixture defines TRAIT_REQ_CONST within an `impl ExampleTrait for Container` block.
