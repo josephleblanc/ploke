@@ -822,21 +822,42 @@ fn test_value_node_relation_contains_file_module() {
     let value_name = "TOP_LEVEL_INT";
 
     let results = run_phase1_phase2(fixture_name);
-    let target_data = results
+    // Process results: Filter out errors and collect Ok values
+    let successful_graphs: Vec<&ParsedCodeGraph> = results
         .iter()
-        .find_map(|res| {
+        .filter_map(|res| match res {
+            Ok(graph) => Some(graph),
+            Err(e) => {
+                // Fail the test if any parsing error occurred in the fixture
+                panic!(
+                    "Fixture '{}' failed to parse file: {:?}. Error: {}",
+                    fixture_name,
+                    e, // Assuming syn::Error might give file context, otherwise add manually
+                    e
+                );
+                // None // Or skip errors: None
+            }
+        })
+        .collect();
+
+    let target_data = successful_graphs
+        .iter()
+        .find(|d| d.file_path.ends_with(file_path_rel))
+        .unwrap_or_else(|| panic!("ParsedCodeGraph for const_static.rs not found"));
+    let graph = &target_data.graph;
+
+    // Find the file-level module node using the processed graphs
+    let module_node = find_file_module_node_paranoid(
+        &successful_graphs, // Pass the slice of successful graphs
+        fixture_name,
+        file_path_rel,
+        &module_path,
+    );
+    let module_id = module_node.id();
             res.as_ref()
                 .ok()
                 .filter(|d| d.file_path.ends_with(file_path_rel))
         })
-        .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph;
-
-    // Find the file-level module node
-    let module_node =
-        find_file_module_node_paranoid(&results, fixture_name, file_path_rel, &module_path);
-    let module_id = module_node.id();
-
     // Find the value node (using basic helper for now)
     let value_node = find_value_node_basic(graph, &module_path, value_name);
     let value_id = value_node.id();
@@ -884,21 +905,42 @@ fn test_value_node_relation_contains_inline_module() {
     let value_name = "INNER_CONST";
 
     let results = run_phase1_phase2(fixture_name);
-    let target_data = results
+    // Process results: Filter out errors and collect Ok values
+    let successful_graphs: Vec<&ParsedCodeGraph> = results
         .iter()
-        .find_map(|res| {
+        .filter_map(|res| match res {
+            Ok(graph) => Some(graph),
+            Err(e) => {
+                // Fail the test if any parsing error occurred in the fixture
+                panic!(
+                    "Fixture '{}' failed to parse file: {:?}. Error: {}",
+                    fixture_name,
+                    e, // Assuming syn::Error might give file context, otherwise add manually
+                    e
+                );
+                // None // Or skip errors: None
+            }
+        })
+        .collect();
+
+    let target_data = successful_graphs
+        .iter()
+        .find(|d| d.file_path.ends_with(file_path_rel))
+        .unwrap_or_else(|| panic!("ParsedCodeGraph for const_static.rs not found"));
+    let graph = &target_data.graph;
+
+    // Find the inline module node using the processed graphs
+    let module_node = find_inline_module_node_paranoid(
+        &successful_graphs, // Pass the slice of successful graphs
+        fixture_name,
+        file_path_rel,
+        &module_path,
+    );
+    let module_id = module_node.id();
             res.as_ref()
                 .ok()
                 .filter(|d| d.file_path.ends_with(file_path_rel))
         })
-        .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph;
-
-    // Find the inline module node
-    let module_node =
-        find_inline_module_node_paranoid(&results, fixture_name, file_path_rel, &module_path);
-    let module_id = module_node.id();
-
     // Find the value node (using basic helper)
     let value_node = find_value_node_basic(graph, &module_path, value_name);
     let value_id = value_node.id();
