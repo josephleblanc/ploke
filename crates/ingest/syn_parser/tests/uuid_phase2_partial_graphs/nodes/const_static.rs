@@ -1289,8 +1289,8 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     );
 }
 
-// --- Helper Functions (To be created in common/paranoid/const_static_helpers.rs) ---
-// fn find_value_node_paranoid<'a>(...) -> &'a ValueNode
+// --- Helper Functions (Now defined) ---
+// find_value_node_paranoid in common/paranoid/const_static_helpers.rs
 //   - Takes parsed_graphs, fixture_name, relative_file_path, expected_module_path, value_name.
 //   - Finds the ParsedCodeGraph.
 //   - Finds the ModuleNode for the expected_module_path within that graph.
