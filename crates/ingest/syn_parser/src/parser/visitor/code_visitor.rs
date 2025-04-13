@@ -996,6 +996,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process methods
         let mut methods = Vec::new();
         for item in &item_impl.items {
+            // NOTE: There are NO other match arms or if-let chains here
+            //       to handle syn::ImplItem::Const or syn::ImplItem::Type
             if let syn::ImplItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
                 let method_span = method.extract_span_bytes();
