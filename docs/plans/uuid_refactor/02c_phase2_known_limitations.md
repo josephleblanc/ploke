@@ -21,4 +21,21 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
+## 2. Associated Items in `trait` Definitions Not Parsed
+
+*   **Limitation:** The parser currently does not create nodes or relations for associated constants (`const NAME: Type = ...;`) or associated types (`type Name = ...;`) defined within `trait` blocks. Only associated functions (methods) are processed.
+*   **Discovery:** This was noted via comments (`NOTE: Associated types are not stored directly on TraitNode yet`) in the tests within [`crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/traits.rs`](../../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/traits.rs). Examination of the visitor confirmed the lack of implementation.
+*   **Root Cause:** Similar to the limitation with `impl` blocks, the `visit_item_trait` method in [`crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs`](../../../../crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs) iterates through `item_trait.items` but only contains logic to handle the `syn::TraitItem::Fn` variant. It lacks handlers for `syn::TraitItem::Const` and `syn::TraitItem::Type`.
+*   **Affected Code:**
+    *   `crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs` (primarily `visit_item_trait`)
+    *   Potentially `crates/ingest/syn_parser/src/parser/nodes.rs` (e.g., `TraitNode` might need fields to store associated item IDs, or new node types might be needed).
+    *   Potentially `crates/ingest/syn_parser/src/parser/relations.rs` (if new relation kinds are needed to link associated items to their `TraitNode`).
+*   **Future Ignored Tests (Examples):**
+    *   `test_associated_const_found_in_trait`
+    *   `test_associated_type_found_in_trait`
+    *   `test_relation_trait_contains_associated_const`
+    *   `test_relation_trait_contains_associated_type`
+
+---
+
 *(Add subsequent limitations below this line)*
