@@ -397,10 +397,7 @@ fn test_value_node_field_visibility_super() {
     let module_path = vec!["crate".to_string(), "inner_mod".to_string()]; // Path to inner_mod
     let value_name = "INNER_MUT_STATIC";
     // Expecting Restricted variant with "super" path
-    let expected_visibility = VisibilityKind::Restricted {
-        path: vec!["super".to_string()],
-        resolved_path: None, // Phase 2 doesn't resolve paths
-    };
+    let expected_visibility = VisibilityKind::Restricted(vec!["super".to_string()]);
 
     let node = find_value_node_basic(graph, &module_path, value_name);
 
