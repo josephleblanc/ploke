@@ -3,10 +3,10 @@
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
-use syn_parser::parser::types::TypeKind; // Import TypeKind
 use ploke_core::{NodeId, TrackingHash, TypeId};
 use std::{collections::HashMap, path::Path};
 use syn_parser::parser::nodes::{Attribute, ValueKind};
+use syn_parser::parser::types::TypeKind; // Import TypeKind
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::{
     discovery::{run_discovery_phase, DiscoveryOutput},
@@ -67,7 +67,11 @@ fn test_const_static_basic_smoke_test_full_parse() {
     let expected_items = vec![
         ("TOP_LEVEL_INT", ValueKind::Constant, false), // private
         ("TOP_LEVEL_BOOL", ValueKind::Constant, true), // pub
-        ("TOP_LEVEL_STR", ValueKind::Static { is_mutable: false }, false), // private
+        (
+            "TOP_LEVEL_STR",
+            ValueKind::Static { is_mutable: false },
+            false,
+        ), // private
         (
             "TOP_LEVEL_COUNTER",
             ValueKind::Static { is_mutable: true },
@@ -89,10 +93,14 @@ fn test_const_static_basic_smoke_test_full_parse() {
         ("EXPR_CONST", ValueKind::Constant, false),    // private
         ("FN_CALL_CONST", ValueKind::Constant, false), // private
         ("doc_attr_const", ValueKind::Constant, true), // pub
-        ("DOC_ATTR_STATIC", ValueKind::Static { is_mutable: false }, false), // private
+        (
+            "DOC_ATTR_STATIC",
+            ValueKind::Static { is_mutable: false },
+            false,
+        ), // private
         // ("IMPL_CONST", ValueKind::Constant, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
         // ("TRAIT_REQ_CONST", ValueKind::Constant, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
-        ("INNER_CONST", ValueKind::Constant, true),    // pub(crate) (in mod)
+        ("INNER_CONST", ValueKind::Constant, true), // pub(crate) (in mod)
         (
             "INNER_MUT_STATIC", // pub(super) (in mod)
             ValueKind::Static { is_mutable: true },
@@ -100,10 +108,7 @@ fn test_const_static_basic_smoke_test_full_parse() {
         ), // pub(super) (in mod)
     ];
 
-    assert!(
-        !graph.values.is_empty(),
-        "CodeGraph contains no ValueNodes"
-    );
+    assert!(!graph.values.is_empty(), "CodeGraph contains no ValueNodes");
 
     for (name, expected_kind, should_not_be_inherited) in expected_items {
         let node = graph
@@ -438,7 +443,8 @@ fn test_value_node_field_type_id_presence() {
     assert!(
         matches!(node.type_id, TypeId::Synthetic(_)),
         "type_id field for '{}' should be Synthetic. Actual: {:?}",
-        value_name, node.type_id
+        value_name,
+        node.type_id
     );
 }
 
@@ -645,7 +651,8 @@ fn test_value_node_field_attributes_single() {
     assert!(
         attr.value.is_none(),
         "Node '{}': Attribute value should be None for #[cfg(...)]. Found: {:?}",
-        value_name, attr.value
+        value_name,
+        attr.value
     );
 }
 
@@ -788,12 +795,14 @@ fn test_value_node_field_tracking_hash_presence() {
     assert!(
         node.tracking_hash.is_some(),
         "Node '{}': tracking_hash field should be Some. Actual: {:?}",
-        value_name, node.tracking_hash
+        value_name,
+        node.tracking_hash
     );
     assert!(
         matches!(node.tracking_hash, Some(TrackingHash(_))),
         "Node '{}': tracking_hash should contain a Uuid. Actual: {:?}",
-        value_name, node.tracking_hash
+        value_name,
+        node.tracking_hash
     );
 }
 
@@ -822,24 +831,9 @@ fn test_value_node_relation_contains_file_module() {
     let module_path = vec!["crate".to_string(), "const_static".to_string()];
     let value_name = "TOP_LEVEL_INT";
 
-    let results = run_phase1_phase2(fixture_name);
+    // let results = run_phase1_phase2(fixture_name);
     // Process results: Filter out errors and collect Ok values
-    let successful_graphs: Vec<&ParsedCodeGraph> = results
-        .iter()
-        .filter_map(|res| match res {
-            Ok(graph) => Some(graph),
-            Err(e) => {
-                // Fail the test if any parsing error occurred in the fixture
-                panic!(
-                    "Fixture '{}' failed to parse file: {:?}. Error: {}",
-                    fixture_name,
-                    e, // Assuming syn::Error might give file context, otherwise add manually
-                    e
-                );
-                // None // Or skip errors: None
-            }
-        })
-        .collect();
+    let successful_graphs = run_phases_and_collect(fixture_name);
 
     let target_data = successful_graphs
         .iter()
@@ -873,7 +867,9 @@ fn test_value_node_relation_contains_file_module() {
 
     // Assert value_id is in module_node.items()
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&value_id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&value_id)),
         "ValueNode ID {} not found in items list for Module '{}' ({})",
         value_id,
         module_node.name,
@@ -903,22 +899,7 @@ fn test_value_node_relation_contains_inline_module() {
 
     let results = run_phase1_phase2(fixture_name);
     // Process results: Filter out errors and collect Ok values
-    let successful_graphs: Vec<&ParsedCodeGraph> = results
-        .iter()
-        .filter_map(|res| match res {
-            Ok(graph) => Some(graph),
-            Err(e) => {
-                // Fail the test if any parsing error occurred in the fixture
-                panic!(
-                    "Fixture '{}' failed to parse file: {:?}. Error: {}",
-                    fixture_name,
-                    e, // Assuming syn::Error might give file context, otherwise add manually
-                    e
-                );
-                // None // Or skip errors: None
-            }
-        })
-        .collect();
+    let successful_graphs = run_phases_and_collect(fixture_name);
 
     let target_data = successful_graphs
         .iter()
@@ -952,7 +933,9 @@ fn test_value_node_relation_contains_inline_module() {
 
     // Assert value_id is in module_node.items()
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&value_id)),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&value_id)),
         "ValueNode ID {} not found in items list for Module '{}' ({})",
         value_id,
         module_node.name,
@@ -998,18 +981,18 @@ fn test_value_node_paranoid_const_doc_attr() {
 
     // 2. Assert all fields have expected values
     assert_eq!(node.name, value_name, "Name mismatch");
-    assert_eq!(node.visibility, VisibilityKind::Public, "Visibility mismatch");
+    assert_eq!(
+        node.visibility,
+        VisibilityKind::Public,
+        "Visibility mismatch"
+    );
     assert!(
         matches!(node.type_id, TypeId::Synthetic(_)),
         "TypeId should be Synthetic"
     );
     assert_eq!(node.kind, ValueKind::Constant, "Kind mismatch");
     // Note: Value representation might depend on syn/quote formatting. Adjust if needed.
-    assert_eq!(
-        node.value.as_deref(),
-        Some("3.14"),
-        "Value string mismatch"
-    );
+    assert_eq!(node.value.as_deref(), Some("3.14"), "Value string mismatch");
     assert_eq!(node.attributes.len(), 2, "Attribute count mismatch");
     assert!(
         node.attributes.iter().any(|a| a.name == "deprecated"),
@@ -1019,10 +1002,7 @@ fn test_value_node_paranoid_const_doc_attr() {
         node.attributes.iter().any(|a| a.name == "allow"),
         "Missing 'allow' attribute"
     );
-    assert!(
-        node.docstring.is_some(),
-        "Expected docstring, found None"
-    );
+    assert!(node.docstring.is_some(), "Expected docstring, found None");
     assert!(
         node.docstring
             .as_deref()
@@ -1030,10 +1010,7 @@ fn test_value_node_paranoid_const_doc_attr() {
             .contains("This is a documented constant."),
         "Docstring content mismatch"
     );
-    assert!(
-        node.tracking_hash.is_some(),
-        "Tracking hash should be Some"
-    );
+    assert!(node.tracking_hash.is_some(), "Tracking hash should be Some");
 
     // 3. Verify TypeId
     let type_node = find_type_node(graph, node.type_id);
@@ -1045,10 +1022,7 @@ fn test_value_node_paranoid_const_doc_attr() {
             assert_eq!(path, &["f64"], "TypeNode path mismatch for f64");
         }
         // Add other arms if f64 might be represented differently
-        _ => panic!(
-            "Unexpected TypeKind for f64: {:?}",
-            type_node.kind
-        ),
+        _ => panic!("Unexpected TypeKind for f64: {:?}", type_node.kind),
     }
     assert!(
         type_node.related_types.is_empty(),
@@ -1077,7 +1051,9 @@ fn test_value_node_paranoid_const_doc_attr() {
         "Missing Contains relation from module to value node",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id())),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id())),
         "ValueNode ID not found in module items list"
     );
 
@@ -1223,10 +1199,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     );
     assert!(node.attributes.is_empty(), "Attributes should be empty");
     assert!(node.docstring.is_none(), "Docstring should be None");
-    assert!(
-        node.tracking_hash.is_some(),
-        "Tracking hash should be Some"
-    );
+    assert!(node.tracking_hash.is_some(), "Tracking hash should be Some");
 
     // 3. Verify TypeId
     let type_node = find_type_node(graph, node.type_id);
@@ -1236,10 +1209,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         TypeKind::Named { path, .. } => {
             assert_eq!(path, &["bool"], "TypeNode path mismatch for bool");
         }
-        _ => panic!(
-            "Unexpected TypeKind for bool: {:?}",
-            type_node.kind
-        ),
+        _ => panic!("Unexpected TypeKind for bool: {:?}", type_node.kind),
     }
     assert!(
         type_node.related_types.is_empty(),
@@ -1268,7 +1238,9 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         "Missing Contains relation from module to value node",
     );
     assert!(
-        module_node.items().is_some_and(|items| items.contains(&node.id())),
+        module_node
+            .items()
+            .is_some_and(|items| items.contains(&node.id())),
         "ValueNode ID not found in module items list"
     );
 
