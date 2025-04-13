@@ -213,7 +213,7 @@ fn test_value_node_field_id_regeneration() {
     let graph = &target_data.graph;
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_INT";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
@@ -275,7 +275,7 @@ fn test_value_node_field_name() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_BOOL";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
@@ -304,7 +304,7 @@ fn test_value_node_field_visibility_public() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_BOOL";
     let expected_visibility = VisibilityKind::Public;
 
@@ -334,7 +334,7 @@ fn test_value_node_field_visibility_inherited() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_INT";
     let expected_visibility = VisibilityKind::Inherited;
 
@@ -364,7 +364,12 @@ fn test_value_node_field_visibility_crate() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string(), "inner_mod".to_string()]; // Path to inner_mod
+    // Path to inner_mod within const_static module
+    let module_path = vec![
+        "crate".to_string(),
+        "const_static".to_string(),
+        "inner_mod".to_string(),
+    ];
     let value_name = "INNER_CONST";
     let expected_visibility = VisibilityKind::Crate; // Expecting Crate variant
 
@@ -394,7 +399,12 @@ fn test_value_node_field_visibility_super() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string(), "inner_mod".to_string()]; // Path to inner_mod
+    // Path to inner_mod within const_static module
+    let module_path = vec![
+        "crate".to_string(),
+        "const_static".to_string(),
+        "inner_mod".to_string(),
+    ];
     let value_name = "INNER_MUT_STATIC";
     // Expecting Restricted variant with "super" path
     let expected_visibility = VisibilityKind::Restricted(vec!["super".to_string()]);
@@ -425,7 +435,7 @@ fn test_value_node_field_type_id_presence() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "ARRAY_CONST";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
@@ -454,7 +464,7 @@ fn test_value_node_field_kind_const() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_INT";
     let expected_kind = ValueKind::Constant;
 
@@ -484,7 +494,7 @@ fn test_value_node_field_kind_static_imm() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_STR";
     let expected_kind = ValueKind::Static { is_mutable: false };
 
@@ -514,7 +524,7 @@ fn test_value_node_field_kind_static_mut() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_COUNTER";
     let expected_kind = ValueKind::Static { is_mutable: true };
 
@@ -546,7 +556,7 @@ fn test_value_node_field_value_string() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
 
     // Target 1: TOP_LEVEL_INT (= 10)
     let value_name1 = "TOP_LEVEL_INT";
@@ -608,7 +618,7 @@ fn test_value_node_field_attributes_single() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "DOC_ATTR_STATIC";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
@@ -664,7 +674,7 @@ fn test_value_node_field_attributes_multiple() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "doc_attr_const";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
@@ -725,7 +735,7 @@ fn test_value_node_field_docstring() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_INT";
     let expected_substring = "top-level private constant";
 
@@ -775,7 +785,7 @@ fn test_value_node_field_tracking_hash_presence() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string()];
+    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "ALIASED_CONST";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
