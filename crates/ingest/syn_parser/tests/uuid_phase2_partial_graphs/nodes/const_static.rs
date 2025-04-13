@@ -963,6 +963,141 @@ fn test_value_node_relation_contains_inline_module() {
 // Goal: Perform exhaustive checks on one complex const and one complex static,
 //       mirroring the rigor of ModuleNode tests. Use paranoid helpers.
 // ---------------------------------------------------------------------------------
+#[test]
+fn test_value_node_paranoid_const_doc_attr() {
+    // Target: pub const doc_attr_const: f64 = 3.14; (in "crate::const_static" module)
+    let fixture_name = "fixture_nodes";
+    let file_path_rel = "src/const_static.rs";
+    let module_path = vec!["crate".to_string(), "const_static".to_string()];
+    let value_name = "doc_attr_const";
+
+    let results = run_phase1_phase2(fixture_name);
+    let successful_graphs: Vec<&ParsedCodeGraph> = results
+        .iter()
+        .filter_map(|res| res.as_ref().ok())
+        .collect();
+
+    let target_data = successful_graphs
+        .iter()
+        .find(|d| d.file_path.ends_with(file_path_rel))
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+    let crate_namespace = target_data.crate_namespace;
+    let file_path = &target_data.file_path;
+
+    // 1. Find node using paranoid helper (includes ID check)
+    let node = find_value_node_paranoid(
+        successful_graphs.as_slice(),
+        fixture_name,
+        file_path_rel,
+        &module_path,
+        value_name,
+    );
+
+    // 2. Assert all fields have expected values
+    assert_eq!(node.name, value_name, "Name mismatch");
+    assert_eq!(node.visibility, VisibilityKind::Public, "Visibility mismatch");
+    assert!(
+        matches!(node.type_id, TypeId::Synthetic(_)),
+        "TypeId should be Synthetic"
+    );
+    assert_eq!(node.kind, ValueKind::Constant, "Kind mismatch");
+    // Note: Value representation might depend on syn/quote formatting. Adjust if needed.
+    assert_eq!(
+        node.value.as_deref(),
+        Some("3.14"),
+        "Value string mismatch"
+    );
+    assert_eq!(node.attributes.len(), 2, "Attribute count mismatch");
+    assert!(
+        node.attributes.iter().any(|a| a.name == "deprecated"),
+        "Missing 'deprecated' attribute"
+    );
+    assert!(
+        node.attributes.iter().any(|a| a.name == "allow"),
+        "Missing 'allow' attribute"
+    );
+    assert!(
+        node.docstring.is_some(),
+        "Expected docstring, found None"
+    );
+    assert!(
+        node.docstring
+            .as_deref()
+            .unwrap_or("")
+            .contains("This is a documented constant."),
+        "Docstring content mismatch"
+    );
+    assert!(
+        node.tracking_hash.is_some(),
+        "Tracking hash should be Some"
+    );
+
+    // 3. Verify TypeId
+    let type_node = find_type_node(graph, node.type_id);
+    // Assuming f64 is parsed as a Named path for now. Adjust if it's Primitive.
+    // TODO: Confirm how primitive types like f64 are represented in TypeKind.
+    //       If it's TypeKind::Primitive { name: "f64" }, adjust assertion.
+    match &type_node.kind {
+        TypeKind::Named { path, .. } => {
+            assert_eq!(path, &["f64"], "TypeNode path mismatch for f64");
+        }
+        // Add other arms if f64 might be represented differently
+        _ => panic!(
+            "Unexpected TypeKind for f64: {:?}",
+            type_node.kind
+        ),
+    }
+    assert!(
+        type_node.related_types.is_empty(),
+        "f64 TypeNode should have no related types"
+    );
+    // Regenerate TypeId (basic check for now)
+    let expected_type_id = TypeId::generate_synthetic(crate_namespace, file_path, "f64");
+    assert_eq!(
+        node.type_id, expected_type_id,
+        "TypeId mismatch. Expected (regen): {}, Actual: {}",
+        expected_type_id, node.type_id
+    );
+
+    // 4. Verify Relation
+    let module_node = find_file_module_node_paranoid(
+        successful_graphs.as_slice(),
+        fixture_name,
+        file_path_rel,
+        &module_path,
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_node.id()),
+        GraphId::Node(node.id()),
+        RelationKind::Contains,
+        "Missing Contains relation from module to value node",
+    );
+    assert!(
+        module_node.items().is_some_and(|items| items.contains(&node.id())),
+        "ValueNode ID not found in module items list"
+    );
+
+    // 5. Verify Uniqueness (within this file's graph)
+    let duplicate_id_count = graph.values.iter().filter(|v| v.id == node.id).count();
+    assert_eq!(
+        duplicate_id_count, 1,
+        "Found duplicate ValueNode ID {} in graph.values",
+        node.id
+    );
+    // Note: Name uniqueness check is implicitly handled by the paranoid helper's module filtering.
+    let duplicate_type_id_count = graph
+        .type_graph
+        .iter()
+        .filter(|t| t.id == node.type_id)
+        .count();
+    assert_eq!(
+        duplicate_type_id_count, 1,
+        "Found duplicate TypeNode ID {} in graph.type_graph",
+        node.type_id
+    );
+}
 // #[test] fn test_value_node_paranoid_const_doc_attr()
 //  - Target: pub const doc_attr_const: f64 = 3.14; (in "crate" module)
 //  - Use full parse.
@@ -1027,10 +1162,135 @@ fn test_value_node_relation_contains_inline_module() {
 //      - Assert no other ValueNode has the same ID.
 //      - Assert no other ValueNode has the same name AND module path.
 //      - Assert no other TypeNode has the same TypeId (unless it's bool again).
+#[test]
+fn test_value_node_paranoid_static_mut_inner_mod() {
+    // Target: pub(super) static mut INNER_MUT_STATIC: bool = false; (in "crate::const_static::inner_mod")
+    let fixture_name = "fixture_nodes";
+    let file_path_rel = "src/const_static.rs";
+    let module_path = vec![
+        "crate".to_string(),
+        "const_static".to_string(),
+        "inner_mod".to_string(),
+    ];
+    let value_name = "INNER_MUT_STATIC";
+
+    let results = run_phase1_phase2(fixture_name);
+    let successful_graphs: Vec<&ParsedCodeGraph> = results
+        .iter()
+        .filter_map(|res| res.as_ref().ok())
+        .collect();
+
+    let target_data = successful_graphs
+        .iter()
+        .find(|d| d.file_path.ends_with(file_path_rel))
+        .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph;
+    let crate_namespace = target_data.crate_namespace;
+    let file_path = &target_data.file_path;
+
+    // 1. Find node using paranoid helper (includes ID check)
+    let node = find_value_node_paranoid(
+        successful_graphs.as_slice(),
+        fixture_name,
+        file_path_rel,
+        &module_path,
+        value_name,
+    );
+
+    // 2. Assert all fields
+    assert_eq!(node.name, value_name, "Name mismatch");
+    assert_eq!(
+        node.visibility,
+        VisibilityKind::Restricted(vec!["super".to_string()]),
+        "Visibility mismatch"
+    );
+    assert!(
+        matches!(node.type_id, TypeId::Synthetic(_)),
+        "TypeId should be Synthetic"
+    );
+    assert_eq!(
+        node.kind,
+        ValueKind::Static { is_mutable: true },
+        "Kind mismatch"
+    );
+    assert_eq!(
+        node.value.as_deref(),
+        Some("false"),
+        "Value string mismatch"
+    );
+    assert!(node.attributes.is_empty(), "Attributes should be empty");
+    assert!(node.docstring.is_none(), "Docstring should be None");
+    assert!(
+        node.tracking_hash.is_some(),
+        "Tracking hash should be Some"
+    );
+
+    // 3. Verify TypeId
+    let type_node = find_type_node(graph, node.type_id);
+    // Assuming bool is parsed as a Named path. Adjust if Primitive.
+    // TODO: Confirm how primitive types like bool are represented in TypeKind.
+    match &type_node.kind {
+        TypeKind::Named { path, .. } => {
+            assert_eq!(path, &["bool"], "TypeNode path mismatch for bool");
+        }
+        _ => panic!(
+            "Unexpected TypeKind for bool: {:?}",
+            type_node.kind
+        ),
+    }
+    assert!(
+        type_node.related_types.is_empty(),
+        "bool TypeNode should have no related types"
+    );
+    // Regenerate TypeId
+    let expected_type_id = TypeId::generate_synthetic(crate_namespace, file_path, "bool");
+    assert_eq!(
+        node.type_id, expected_type_id,
+        "TypeId mismatch. Expected (regen): {}, Actual: {}",
+        expected_type_id, node.type_id
+    );
+
+    // 4. Verify Relation
+    let module_node = find_inline_module_node_paranoid(
+        successful_graphs.as_slice(),
+        fixture_name,
+        file_path_rel,
+        &module_path,
+    );
+    assert_relation_exists(
+        graph,
+        GraphId::Node(module_node.id()),
+        GraphId::Node(node.id()),
+        RelationKind::Contains,
+        "Missing Contains relation from module to value node",
+    );
+    assert!(
+        module_node.items().is_some_and(|items| items.contains(&node.id())),
+        "ValueNode ID not found in module items list"
+    );
+
+    // 5. Verify Uniqueness (within this file's graph)
+    let duplicate_id_count = graph.values.iter().filter(|v| v.id == node.id).count();
+    assert_eq!(
+        duplicate_id_count, 1,
+        "Found duplicate ValueNode ID {} in graph.values",
+        node.id
+    );
+    // Check for duplicate TypeId for 'bool' - might exist if other bools are present
+    let duplicate_type_id_count = graph
+        .type_graph
+        .iter()
+        .filter(|t| t.id == node.type_id)
+        .count();
+    assert_eq!(
+        duplicate_type_id_count, 1,
+        "Found duplicate TypeNode ID {} for 'bool' in graph.type_graph",
+        node.type_id
+    );
+}
 
 // --- Helper Functions (To be created in common/paranoid/const_static_helpers.rs) ---
 // fn find_value_node_paranoid<'a>(...) -> &'a ValueNode
-//   - Similar structure to find_function_node_paranoid or find_module_node_paranoid.
 //   - Takes parsed_graphs, fixture_name, relative_file_path, expected_module_path, value_name.
 //   - Finds the ParsedCodeGraph.
 //   - Finds the ModuleNode for the expected_module_path within that graph.
@@ -1041,17 +1301,9 @@ fn test_value_node_relation_contains_inline_module() {
 //   - Asserts found ID == regenerated ID.
 //   - Returns the validated ValueNode reference.
 
-// fn find_value_node_basic<'a>(graph: &'a CodeGraph, module_path: &[String], value_name: &str) -> Option<&'a ValueNode>
-//   - Non-paranoid helper for simpler tests.
-//   - Finds module node by path.
-//   - Finds value node by name within that module's items.
-//   - Returns Option<&ValueNode>. (Maybe add to uuid_ids_utils.rs instead?)
+// find_value_node_basic defined earlier in this file.
 
-// fn regenerate_value_node_id(...) -> NodeId
-//   - Helper specifically for test_value_node_field_id_regeneration.
-//   - Takes context (namespace, file, mod path, name, span).
-//   - Calls NodeId::generate_synthetic.
-//   - Returns the ID.
+// regenerate_value_node_id - Handled inline within test_value_node_field_id_regeneration.
 
 // --- Tests for Known Limitations ---
 
@@ -1104,8 +1356,4 @@ fn test_associated_const_found_in_trait_impl() {
 // are omitted for now as the current `const_static.rs` fixture does not contain associated types.
 // They should be added when fixtures are updated or when testing traits/impls specifically.
 
-// fn regenerate_type_id(...) -> TypeId
-//   - Helper for paranoid tests to verify TypeId.
-//   - Takes context (namespace, file, type_string).
-//   - Calls TypeId::generate_synthetic.
-//   - Returns the ID.
+// regenerate_type_id - Handled inline within paranoid tests.
