@@ -13,21 +13,24 @@ const TOP_LEVEL_INT: i32 = 10;
 /// A top-level public constant with a boolean type.
 pub const TOP_LEVEL_BOOL: bool = true;
 
-/// A top-level private static string slice.
+// A top-level private static string slice (no doc comment).
 static TOP_LEVEL_STR: &str = "hello world";
 
 /// A top-level public mutable static counter.
 pub static mut TOP_LEVEL_COUNTER: u32 = 0;
 
+/// A top-level crate-visible static string.
+pub(crate) static TOP_LEVEL_CRATE_STATIC: &str = "crate visible";
+
 // --- Type Variations ---
 
-/// Constant array.
+// Constant array (no doc comment).
 const ARRAY_CONST: [u8; 3] = [1, 2, 3];
 
-/// Static tuple.
+// Static tuple (no doc comment).
 static TUPLE_STATIC: (i32, bool) = (5, false);
 
-/// A simple struct used for const/static types.
+// A simple struct used for const/static types (no doc comment).
 struct SimpleStruct {
     x: i32,
     y: bool,
@@ -44,10 +47,10 @@ const ALIASED_CONST: MyInt = -5;
 
 // --- Initializer Variations ---
 
-/// Constant initialized with a basic arithmetic expression.
+// Constant initialized with a basic arithmetic expression (no doc comment).
 const EXPR_CONST: i32 = 5 * 2 + 1;
 
-/// A const function needed to initialize another const.
+// A const function needed to initialize another const (no doc comment).
 const fn five() -> i32 {
     5
 }
@@ -88,6 +91,17 @@ trait ExampleTrait {
 impl ExampleTrait for Container {
     /// Implementation of the trait's associated constant.
     const TRAIT_REQ_CONST: bool = true;
+}
+
+// --- Inline Module ---
+
+mod inner_mod {
+    // Constant visible only within the crate, defined inside an inline module.
+    pub(crate) const INNER_CONST: u8 = 1;
+
+    // Static mutable boolean visible only to the parent module (`crate`), defined inside an inline module.
+    #[allow(dead_code)] // Allow unused for fixture simplicity
+    pub(super) static mut INNER_MUT_STATIC: bool = false;
 }
 
 // --- Main function (optional, makes it runnable) ---
