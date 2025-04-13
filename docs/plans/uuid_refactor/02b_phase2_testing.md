@@ -178,9 +178,9 @@
     * ✅   Verify `ValueNode` exists in `graph.values`.
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Assert `type_id` is `TypeId::Synthetic(_)`.
-    *   Verify other fields (name, visibility, kind, value string, attributes, docstring).
-    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+    * ✅   Assert `type_id` is `TypeId::Synthetic(_)`.
+    * ✅   Verify other fields (name, visibility, kind, value string, attributes, docstring).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 *   **[ ] Macros (`ItemMacro`, `ItemFn` proc macros):**
     *   Verify `MacroNode` exists in `graph.macros`.
     *   Assert `id` is `NodeId::Synthetic(_)`.
@@ -208,6 +208,7 @@
         * ✅ Contains: `ModuleNode` (n) -> `UnionNode` (n) [unions test]
         * ✅ Contains: `ModuleNode` (n) -> `TraitNode` (n) [traits test]
         * ✅ Contains: `ModuleNode` (n) -> `ImplNode` (n) [impls test]
+        * ✅ Contains: `ModuleNode` (n) -> `ValueNode` (n) [const_static test]
     *   **Very Important Test**: The `RelationKind::Contains` is at the heart of our approach to Phase 3, so this should receive "Paranoid" level testing.
     *   ❗ Verify that **all** of the nodes in 4.2 have *exactly one*
     `RelationKind::Contains` relation, where their containing `ModuleNode` is
@@ -330,7 +331,6 @@
 
 ## 6. Test Implementation Notes
 
-*   Focus assertions on the *structure* and *presence* of synthetic IDs/hashes initially. Asserting specific UUID values is difficult and brittle.
 *   Develop helper functions to navigate the `CodeGraph` and find specific nodes/types/relations based on names and paths (NOT only names) to simplify assertions.
 *   Use "paranoid" tests on **at least** one instance of each test. See [uuids test utils]
 *   Clearly document the purpose of each test and the specific aspect of Phase 2 it verifies.
@@ -345,6 +345,7 @@ This plan provides a comprehensive roadmap for testing Phase 2. We can refine an
 [unions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/union.rs 
 [traits test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/traits.rs 
 [type_alias test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/type_alias.rs
+[const_static test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/const_static.rs  
 [determinism test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/determinism.rs 
 [ids test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/determinism.rs 
 [uuids test utils]:../../../crates/ingest/syn_parser/tests/common/uuid_ids_utils.rs

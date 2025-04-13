@@ -4,19 +4,14 @@ use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{NodeId, TrackingHash, TypeId};
-use std::{collections::HashMap, path::Path};
-use syn_parser::parser::nodes::{Attribute, ValueKind};
+use syn_parser::parser::nodes::ValueKind;
 use syn_parser::parser::types::TypeKind; // Import TypeKind
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::{
-    discovery::{run_discovery_phase, DiscoveryOutput},
-    parser::{
-        analyze_files_parallel,
-        graph::CodeGraph,
-        nodes::{ModuleNode, ValueNode, Visible},
-        relations::{GraphId, RelationKind},
-        visitor::ParsedCodeGraph,
-    },
+use syn_parser::parser::{
+    graph::CodeGraph,
+    nodes::{ValueNode, Visible},
+    relations::{GraphId, RelationKind},
+    visitor::ParsedCodeGraph,
 };
 
 // Test Plan for ValueNode (const/static) in Phase 2 (uuid_ids)

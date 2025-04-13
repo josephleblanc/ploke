@@ -3,6 +3,7 @@ mod const_static;
 mod enums;
 mod functions;
 mod impls;
+mod macros;
 mod modules;
 mod structs;
 mod traits;
