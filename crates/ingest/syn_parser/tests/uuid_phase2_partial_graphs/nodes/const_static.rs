@@ -1,9 +1,8 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
+#![cfg(feature = "uuid_ids")]
 
-use crate::common::paranoid::const_static_helpers::*; // TODO: Create this helper
-use crate::common::paranoid::find_file_module_node_paranoid; // Use module helper
+use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 use ploke_core::{NodeId, TrackingHash, TypeId};
 use std::{collections::HashMap, path::Path};
 use syn_parser::parser::nodes::{Attribute, ValueKind};
@@ -41,7 +40,120 @@ use syn_parser::{
 //      - Assert node.tracking_hash is Some(TrackingHash(_)).
 //      - Assert node.type_id is TypeId::Synthetic(_).
 //      - Assert node.kind matches (Constant or Static { is_mutable }).
-//      - Assert node.visibility is not Unknown (basic check).
+//      - Assert node.visibility is not Inherited if it should be something else (basic check).
+#[test]
+fn test_const_static_basic_smoke_test_full_parse() {
+    let results = run_phase1_phase2("fixture_nodes");
+    assert!(!results.is_empty(), "Phase 1 & 2 failed to produce results");
+
+    let fixture_path = fixtures_crates_dir()
+        .join("fixture_nodes")
+        .join("src")
+        .join("const_static.rs");
+
+    let target_data = results
+        .iter()
+        .find_map(|res| match res {
+            Ok(data) if data.file_path == fixture_path => Some(data),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("ParsedCodeGraph for '{}' not found", fixture_path.display()));
+
+    let graph = &target_data.graph;
+
+    // Define expected items: (name, kind, visibility_check)
+    // Visibility check is basic: true if it should NOT be Inherited
+    let expected_items = vec![
+        ("TOP_LEVEL_INT", ValueKind::Constant, false), // private
+        ("TOP_LEVEL_BOOL", ValueKind::Constant, true), // pub
+        ("TOP_LEVEL_STR", ValueKind::Static { is_mutable: false }, false), // private
+        (
+            "TOP_LEVEL_COUNTER",
+            ValueKind::Static { is_mutable: true },
+            true,
+        ), // pub
+        (
+            "TOP_LEVEL_CRATE_STATIC",
+            ValueKind::Static { is_mutable: false },
+            true,
+        ), // pub(crate)
+        ("ARRAY_CONST", ValueKind::Constant, false),   // private
+        (
+            "TUPLE_STATIC",
+            ValueKind::Static { is_mutable: false },
+            false,
+        ), // private
+        ("STRUCT_CONST", ValueKind::Constant, false),  // private
+        ("ALIASED_CONST", ValueKind::Constant, false), // private
+        ("EXPR_CONST", ValueKind::Constant, false),    // private
+        ("FN_CALL_CONST", ValueKind::Constant, false), // private
+        ("doc_attr_const", ValueKind::Constant, true), // pub
+        ("DOC_ATTR_STATIC", ValueKind::Static { is_mutable: false }, false), // private
+        ("IMPL_CONST", ValueKind::Constant, true),     // pub (in impl)
+        ("TRAIT_REQ_CONST", ValueKind::Constant, false), // private (in trait impl)
+        ("INNER_CONST", ValueKind::Constant, true),    // pub(crate) (in mod)
+        (
+            "INNER_MUT_STATIC",
+            ValueKind::Static { is_mutable: true },
+            true,
+        ), // pub(super) (in mod)
+    ];
+
+    assert!(
+        !graph.values.is_empty(),
+        "CodeGraph contains no ValueNodes"
+    );
+
+    for (name, expected_kind, should_not_be_inherited) in expected_items {
+        let node = graph
+            .values
+            .iter()
+            .find(|v| v.name == name)
+            .unwrap_or_else(|| panic!("ValueNode '{}' not found in graph.values", name));
+
+        assert!(
+            matches!(node.id, NodeId::Synthetic(_)),
+            "Node '{}': ID should be Synthetic, found {:?}",
+            name,
+            node.id
+        );
+        assert!(
+            matches!(node.tracking_hash, Some(TrackingHash(_))),
+            "Node '{}': tracking_hash should be Some(TrackingHash), found {:?}",
+            name,
+            node.tracking_hash
+        );
+        assert!(
+            matches!(node.type_id, TypeId::Synthetic(_)),
+            "Node '{}': type_id should be Synthetic, found {:?}",
+            name,
+            node.type_id
+        );
+        assert_eq!(
+            node.kind, expected_kind,
+            "Node '{}': Kind mismatch. Expected {:?}, found {:?}",
+            name, expected_kind, node.kind
+        );
+
+        if should_not_be_inherited {
+            assert_ne!(
+                node.visibility,
+                VisibilityKind::Inherited,
+                "Node '{}': Visibility should not be Inherited, but it was.",
+                name
+            );
+        } else {
+            // Basic check for private items
+            assert_eq!(
+                node.visibility,
+                VisibilityKind::Inherited,
+                "Node '{}': Expected Inherited visibility, found {:?}",
+                name,
+                node.visibility
+            );
+        }
+    }
+}
 
 // Tier 2: Targeted Field Verification
 // Goal: Verify each field of the ValueNode struct individually for specific examples.
