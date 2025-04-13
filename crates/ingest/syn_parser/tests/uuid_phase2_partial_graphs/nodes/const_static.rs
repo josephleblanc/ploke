@@ -897,7 +897,6 @@ fn test_value_node_relation_contains_inline_module() {
     ];
     let value_name = "INNER_CONST";
 
-    let results = run_phase1_phase2(fixture_name);
     // Process results: Filter out errors and collect Ok values
     let successful_graphs = run_phases_and_collect(fixture_name);
 
