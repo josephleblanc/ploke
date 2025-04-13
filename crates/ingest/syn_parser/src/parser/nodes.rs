@@ -517,6 +517,8 @@ impl Visible for MacroNode {
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
+    #[cfg(feature = "uuid_ids")]
+    pub span: (usize, usize), // Add span field
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
     #[cfg(not(feature = "uuid_ids"))]
