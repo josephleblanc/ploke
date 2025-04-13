@@ -12,7 +12,8 @@ pub mod union_helpers;
 pub use const_static_helpers::find_value_node_paranoid;
 pub use enum_helpers::find_enum_node_paranoid;
 pub use impl_helpers::find_impl_node_paranoid;
-pub use macros_helpers::find_macro_node_paranoid; // Export new helper
+pub use import_helpers::find_import_node_paranoid; // Export import helper
+pub use macros_helpers::find_macro_node_paranoid;
 pub use module_helpers::{
     find_declaration_node_paranoid, find_file_module_node_paranoid,
     find_inline_module_node_paranoid,
