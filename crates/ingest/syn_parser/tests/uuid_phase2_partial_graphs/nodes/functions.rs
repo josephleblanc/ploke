@@ -9,10 +9,6 @@ use syn_parser::parser::{
     types::TypeKind, // Use the correct existing struct
 };
 
-// Import helper to construct fixture paths
-
-// --- Helper Functions ---
-
 // --- Test Cases ---
 
 #[test]
@@ -1365,6 +1361,3 @@ fn test_function_node_generic_func_in_restricted_duplicate() {
     let return_type_node = find_type_node(graph, return_type_id);
     assert!(matches!(&return_type_node.kind, TypeKind::Named { path, .. } if path == &["T"]));
 }
-
-// TODO: Add tests for the corresponding functions inside duplicate_names module (process_ref, process_mut_ref, process_const_ptr, process_mut_ptr, apply_op, draw_object, process_impl_trait_arg, create_impl_trait_return, inferred_type_example).
-// TODO: Add tests for functions inside src/func/return_types.rs/restricted_duplicate (math_operation_consumer, math_operation_producer)

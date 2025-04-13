@@ -14,7 +14,6 @@ use walkdir::WalkDir;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
-/*
 // Define a stable PROJECT_NAMESPACE UUID.
 // This UUID acts as a root namespace for deriving crate-specific namespaces.
 // Its purpose is to ensure that the *same crate name + version* combination
@@ -31,8 +30,6 @@ use walkdir::WalkDir;
 //  * Explore ideas on this at leisure, in case there is easy groundwork to lay.
 // * Currently uses same namespace for all crates with no project.
 //  * Fine for now. Evaluate potential for pros/cons of this approach another time.
-*/
-// pub const PROJECT_NAMESPACE_UUID: Uuid = ...; // MOVED to ploke-core
 
 /// Errors that can occur during the discovery phase.
 #[derive(Error, Debug)]

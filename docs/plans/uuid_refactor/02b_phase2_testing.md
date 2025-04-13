@@ -51,17 +51,17 @@
     * ✅  **Uniqueness (Sensitivity):**
         * ✅  Different `crate_namespace` -> different ID. (Implicitly tested by node ID tests across crates)
         * ✅  Different `file_path` -> different ID. (Verified by `ids::phase2_id_tests::test_synthetic_ids_differ_across_files_same_crate_name` - param type ID differs)
-        *   Different `type_string_repr` -> different ID. (Needs specific test)
-    *   **Edge Cases:** Test with complex `type_string_repr` (generics, lifetimes, paths), empty string (if possible).
-* ✅ ** Test `TrackingHash::generate`:** (Covered indirectly by integration tests showing hash presence and determinism)
+        * [ ]  Different `type_string_repr` -> different ID. (Needs specific test)
+    * [ ]  **Edge Cases:** Test with complex `type_string_repr` (generics, lifetimes, paths), empty string (if possible).
+* ✅ **Test `TrackingHash::generate`:** (Covered indirectly by integration tests showing hash presence and determinism)
     *   **Consistency:** Same inputs (`crate_namespace`, `file_path`, `item_tokens`) produce the same `TrackingHash(Uuid)`. (Verified by `determinism::determinism_tests::test_phase2_determinism`)
-    *   **Uniqueness (Sensitivity):**
+    *  [ ] **Uniqueness (Sensitivity):**
         *   Different `crate_namespace` -> different Hash. (Needs specific test)
         *   Different `file_path` -> different Hash. (Needs specific test)
         *   Different `item_tokens` (content change) -> different Hash. (Needs specific test)
-    *   **[ ] Insensitivity (Current Limitation):** Verify that changes *only* in whitespace or comments *do* currently change the hash (due to `to_string()`). Document this limitation. (Needs specific test)
-    *   **Robustness:** Test with various token streams (empty, simple, complex). (Needs specific test)
-        * NOTE: We will likely soon improve `TrackingHash` to be less sensitive to whitespace. When that refactor occurs, we may revisit the whitespace-only `TrackingHash` sensitive, and invert these tests to verify that whitespace does not cause the `TrackingHash` to change.
+    *  [ ]  **Insensitivity (Current Limitation):** Verify that changes *only* in whitespace or comments *do* currently change the hash (due to `to_string()`). Document this limitation. (Needs specific test)
+    * [ ]  **Robustness:** Test with various token streams (empty, simple, complex). (Needs specific test)
+        * NOTE: We will likely soon improve `TrackingHash` to be less sensitive to whitespace. When that refactor occurs, we may revisit the whitespace-only `TrackingHash` sensitive tests, and invert these tests to verify that whitespace does not cause the `TrackingHash` to change.
 
 ## 4. Integration Tests (`analyze_files_parallel`)
 
@@ -98,7 +98,7 @@
         * ✅  Manual verification done for [functions test]
         * ❗  See known limitation regarding `Self` and `self` types for `ImplNode` and `TraitNode` [type conflation]
 
-### 4.2 Graph Node Verification
+### ✅ 🙌  4.2 Graph Node Verification  🙌 ✅
 
 (Partially covered by `basic::phase2_tests::test_simple_crate_phase2_output` and `ids::phase2_id_tests::test_synthetic_ids_and_hashes_present_simple_crate`. Needs systematic checks for all node types and fields.)
 
@@ -174,46 +174,51 @@
     * ✅   Verify other fields (name, visibility, attributes, docstring).
         * ✅  Verify for file-level, in-line, and declaration variants of `module_definition` field
     * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
-*   ** Constants/Statics (`ItemConst`, `ItemStatic`):**
+* ✅   **Constants/Statics (`ItemConst`, `ItemStatic`):**
     * ✅   Verify `ValueNode` exists in `graph.values`.
     * ✅   Assert `id` is `NodeId::Synthetic(_)`.
     * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
     * ✅   Assert `type_id` is `TypeId::Synthetic(_)`.
     * ✅   Verify other fields (name, visibility, kind, value string, attributes, docstring).
     * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
-*   **[ ] Macros (`ItemMacro`, `ItemFn` proc macros):**
-    *   Verify `MacroNode` exists in `graph.macros`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Assert `tracking_hash` is `Some(TrackingHash(_))`.
-    *   Verify kind (`DeclarativeMacro`, `ProcedureMacro`).
-    *   Verify other fields (name, visibility, attributes, docstring, body string).
-    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
-*   **[ ] Use Statements (`ItemUse`, `ItemExternCrate`):**
-    *   Verify `ImportNode` exists in `graph.use_statements` and relevant `ModuleNode.imports`.
-    *   Assert `id` is `NodeId::Synthetic(_)`.
-    *   Verify fields (`path`, `kind`, `visible_name`, `original_name`, `is_glob`).
-    *   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+*   **Macros (`ItemMacro`, `ItemFn` proc macros):**
+    * ✅   Verify `MacroNode` exists in `graph.macros`.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Assert `tracking_hash` is `Some(TrackingHash(_))`.
+    * ✅   Verify kind (`DeclarativeMacro`, `ProcedureMacro`).
+    * ✅   Verify other fields (name, visibility, attributes, docstring, body string).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
+* ✅   **Use Statements (`ItemUse`, `ItemExternCrate`):**
+    * ✅   Verify `ImportNode` exists in `graph.use_statements` and relevant `ModuleNode.imports`.
+    * ✅   Assert `id` is `NodeId::Synthetic(_)`.
+    * ✅   Verify fields (`path`, `kind`, `visible_name`, `original_name`, `is_glob`).
+    * ✅   Verify `id` expected hash value `NodeId::Synthetic(_)` by comparing to generated v5 hash from inputs.
 
 ### 4.3 Graph Relation Verification
 
 **(No specific tests implemented yet)**
-*   **[ ] `Contains`:**
-    *   Verify relation exists between module `NodeId::Synthetic` and contained item `NodeId::Synthetic`.
-    *   Check `source` is `GraphId::Node(module_id)`. (grouped with Check `target`)
-    *   Check `target` is `GraphId::Node(item_id)`.
+* [ ]  **`Contains`:**
+    * [ ]  Verify relation exists between module `NodeId::Synthetic` and contained item `NodeId::Synthetic`.
+    * [~] (10/11) Check `source` is `GraphId::Node(module_id)`. (grouped with Check `target`)
+    * [~] (10/11) Check `target` is `GraphId::Node(item_id)`.
         * Note: FunctionNode relations untested
-        * ✅ Contains: `ModuleNode` (n) -> `StructNode` (n) [structs test]
+        * ✅ Contains: `ModuleNode` (n) -> `ValueNode` (n) [const_static test]
         * ✅ Contains: `ModuleNode` (n) -> `EnumNode` (n) [enums test]
+        * ✅ Contains: `ModuleNode` (n) -> `ImplNode` (n) [impls test]
+        * ✅ Contains: `ModuleNode` (n) -> `ImportNode` (n) [imports test]
+        * ✅ Contains: `ModuleNode` (n) -> `MacroNode` (n) [macros test]
+        * ✅ Contains: `ModuleNode` (n) -> `ModuleNode` (n) [modules test] (for in-line and declaration mods) 
+        * ✅ Contains: `ModuleNode` (n) -> `StructNode` (n) [structs test]
+        * ✅ Contains: `ModuleNode` (n) -> `TraitNode` (n) [traits test]
         * ✅ Contains: `ModuleNode` (n) -> `TypeAliasNode` (n) [type_alias test]
         * ✅ Contains: `ModuleNode` (n) -> `UnionNode` (n) [unions test]
-        * ✅ Contains: `ModuleNode` (n) -> `TraitNode` (n) [traits test]
-        * ✅ Contains: `ModuleNode` (n) -> `ImplNode` (n) [impls test]
-        * ✅ Contains: `ModuleNode` (n) -> `ValueNode` (n) [const_static test]
-    *   **Very Important Test**: The `RelationKind::Contains` is at the heart of our approach to Phase 3, so this should receive "Paranoid" level testing.
-    *   ❗ Verify that **all** of the nodes in 4.2 have *exactly one*
+    * [ ]  **Very Important Test**: The `RelationKind::Contains` is at the heart of our approach to Phase 3, so this should receive "Paranoid" level testing.
+    * ✅   **Very Important Test**: The `ModuleNode.items` is at the heart of verifying `Relation`, should receive "Paranoid" level testing.
+        * ✅  Each primary node tested and verified
+    * ❗ [ ] Verify that **all** of the nodes in 4.2 have *exactly one*
     `RelationKind::Contains` relation, where their containing `ModuleNode` is
     the source and the node is the target. 
-*   **[ ] `StructField` / `EnumVariant` Fields:**
+* [ ] **`StructField` / `EnumVariant` Fields:**
     * 👷 Verify relation exists between struct/enum/variant `NodeId::Synthetic` and field `NodeId::Synthetic`.
         * Note FunctionNode relations untested
         * Basic test for struct relations in [structs test]
@@ -234,25 +239,28 @@
     *   Check `source` is `GraphId::Node(parent_id)`. (grouped with Check `target`)
     *   Check `target` is `GraphId::Node(field_id)`.
     *   **Crucially:** Test the case where `FieldNode.id` was generated via `generate_synthetic_node_id` directly, ensuring this relation is still created correctly.
-*   **[ ] `FunctionParameter` / `FunctionReturn`:**
+* [ ]  **`FunctionParameter` / `FunctionReturn`:**
     *    Verify relation exists between function `NodeId::Synthetic` and parameter/return `TypeId::Synthetic`.
     *    Check `source` is `GraphId::Node(function_id)`.
     *    Check `target` is `GraphId::Type(type_id)`.
-* ✅   ** `ImplementsFor` / `ImplementsTrait`:**
+* ✅   **`ImplementsFor` / `ImplementsTrait`:**
     * ✅   Verify relation exists between impl `NodeId::Synthetic` and self `TypeId::Synthetic`.
     * ✅   If trait impl, verify relation exists between impl `NodeId::Synthetic` and trait `TypeId::Synthetic`.
     * ✅   Check `source` is `GraphId::Node(impl_id)`.
     * 👷   Check `target` is `GraphId::Type(type_id)`.
         * Note: Known limitation encountered and verified for 'Self' type. See [type conflation].
-*   ** `Uses` (for `extern crate` and potentially `use`):**
-    *   Verify relation exists between `ImportNode` `NodeId::Synthetic` and the corresponding external crate/item `TypeId::Synthetic`.
-    *   Check `source` is `GraphId::Node(import_id)`.
-    *   Check `target` is `GraphId::Type(type_id)`.
-*   **[ ] `ValueType`:**
+*   **`Uses` (for `extern crate` and potentially `use`):**
+    *   Deprecated: Verify relation exists between `ImportNode` `NodeId::Synthetic` and the corresponding external crate/item `TypeId::Synthetic`.
+    *   Deprecated: Check `source` is `GraphId::Node(import_id)`.
+    *   Deprecated: Check `target` is `GraphId::Type(type_id)`.
+        * Note: After reviewing `extern crate` functionality in more detail, determined to remove `TypeId` for `extern crate`
+        * TODO: Remove relation added for `TypeId` from `visit_item_extern_crate`
+* [~]   **`ValueType`:**
     *   Verify relation exists between const/static `NodeId::Synthetic` and its `TypeId::Synthetic`.
     *   Check `source` is `GraphId::Node(value_id)`.
     *   Check `target` is `GraphId::Type(type_id)`.
-*   **[ ] `ModuleImports`:**
+    *   Note: Verified in [const_static test], do again in dedicated relations tests.
+* [ ] **`ModuleImports`:**
     *   Verify relation exists between module `NodeId::Synthetic` and `ImportNode` `NodeId::Synthetic`.
     *   Check `source` is `GraphId::Node(module_id)`.
     *   Check `target` is `GraphId::Node(import_id)`.
@@ -286,7 +294,7 @@
 ### 4.5 Tracking Hash Verification
 
 (Partially covered by `ids::phase2_id_tests::test_synthetic_ids_and_hashes_present_simple_crate` checking for presence)
-*   **[/] Hash Generation:** Verify `tracking_hash` is `Some` for all expected node types. (Presence checked)
+*   **[~] Hash Generation:** Verify `tracking_hash` is `Some` for all expected node types. (Presence checked)
 *   **[ ] Hash Sensitivity (Basic):**
     *   Parse a fixture file.
     *   Create a modified version with a meaningful code change (e.g., change function body logic, add a field). Parse it.
@@ -300,7 +308,7 @@
 **(No specific tests implemented yet)**
 *   **[ ] Syntax Errors:**
     *   Create a fixture file with invalid Rust syntax.
-    *   Run `run_phase1_phase2`.
+    *   Run `run_phase1_phase2` or `run_phases_and_collect`
     *   Assert that the `Vec` contains a `Result::Err(syn::Error)` for that specific file.
     *   Assert that results for other valid files (if any in the batch) are `Ok`.
 *   **[ ] File I/O Errors:**
@@ -310,9 +318,9 @@
 ### 4.7 Feature Flag Interaction
 
 **(Assumed working based on test setup, no dedicated tests)**
-*   **[ ] Run Phase 2 Tests:** Execute all tests developed above using `cargo test -p syn_parser --features uuid_ids`. Ensure they pass.
-*   **[ ] Run Non-UUID Tests:** Execute the existing test suite using `cargo test -p syn_parser --no-default-features`. Ensure they still pass (verifying the non-UUID path isn't broken).
-*   **[ ] Compile Checks:** Ensure `cargo check -p syn_parser --features uuid_ids` and `cargo check -p syn_parser --no-default-features` both succeed.
+*  [ ] ** Run Phase 2 Tests:** Execute all tests developed above using `cargo test -p syn_parser --features uuid_ids`. Ensure they pass.
+*  [ ] ** Run Non-UUID Tests:** Execute the existing test suite using `cargo test -p syn_parser --no-default-features`. Ensure they still pass (verifying the non-UUID path isn't broken).
+*  [ ] ** Compile Checks:** Ensure `cargo check -p syn_parser --features uuid_ids` and `cargo check -p syn_parser --no-default-features` both succeed.
 
 ## 5. Fixture Requirements
 
@@ -338,14 +346,18 @@
 
 This plan provides a comprehensive roadmap for testing Phase 2. We can refine and add more specific test cases as we proceed with implementation.
 
-[structs test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/structs.rs
-[functions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs
+[const_static test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/const_static.rs  
 [enums test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/enums.rs 
+[functions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs
 [impls test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/impls.rs 
-[unions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/union.rs 
+[imports test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/imports.rs
+[macros test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/macros.rs
+[modules test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/modules.rs
+[structs test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/structs.rs
 [traits test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/traits.rs 
 [type_alias test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/type_alias.rs
-[const_static test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/const_static.rs  
+[unions test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/union.rs 
+[type_alias test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/type_alias.rs
 [determinism test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/determinism.rs 
 [ids test]:../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/determinism.rs 
 [uuids test utils]:../../../crates/ingest/syn_parser/tests/common/uuid_ids_utils.rs
