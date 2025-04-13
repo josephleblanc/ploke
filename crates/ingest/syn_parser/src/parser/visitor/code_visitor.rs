@@ -423,6 +423,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 docstring,
                 body,
                 #[cfg(feature = "uuid_ids")]
+                span,
+                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
             };
 
@@ -1759,6 +1761,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             attributes,
             docstring,
             body,
+            #[cfg(feature = "uuid_ids")]
+            span,
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_macro.to_token_stream()),
