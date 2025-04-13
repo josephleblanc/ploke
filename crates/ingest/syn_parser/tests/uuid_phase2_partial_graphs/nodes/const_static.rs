@@ -3,6 +3,7 @@
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
+use syn_parser::parser::types::TypeKind; // Import TypeKind
 use ploke_core::{NodeId, TrackingHash, TypeId};
 use std::{collections::HashMap, path::Path};
 use syn_parser::parser::nodes::{Attribute, ValueKind};
@@ -972,9 +973,10 @@ fn test_value_node_paranoid_const_doc_attr() {
     let value_name = "doc_attr_const";
 
     let results = run_phase1_phase2(fixture_name);
-    let successful_graphs: Vec<&ParsedCodeGraph> = results
-        .iter()
-        .filter_map(|res| res.as_ref().ok())
+    // Collect owned graphs, consuming the Ok results
+    let successful_graphs: Vec<ParsedCodeGraph> = results
+        .into_iter() // Use into_iter to consume
+        .filter_map(|res| res.ok()) // Use ok() to get owned value
         .collect();
 
     let target_data = successful_graphs
@@ -1175,9 +1177,10 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     let value_name = "INNER_MUT_STATIC";
 
     let results = run_phase1_phase2(fixture_name);
-    let successful_graphs: Vec<&ParsedCodeGraph> = results
-        .iter()
-        .filter_map(|res| res.as_ref().ok())
+    // Collect owned graphs, consuming the Ok results
+    let successful_graphs: Vec<ParsedCodeGraph> = results
+        .into_iter() // Use into_iter to consume
+        .filter_map(|res| res.ok()) // Use ok() to get owned value
         .collect();
 
     let target_data = successful_graphs
