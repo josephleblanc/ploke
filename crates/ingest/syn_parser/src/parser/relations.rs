@@ -1,10 +1,4 @@
-#[cfg(not(feature = "uuid_ids"))]
-#[cfg(not(feature = "uuid_ids"))]
-use crate::TypeId;
-#[cfg(feature = "uuid_ids")]
-use ploke_core::NodeId; // Use new type when feature is enabled // Use compat type when feature is disabled
-
-#[cfg(feature = "uuid_ids")]
+use ploke_core::NodeId;
 use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 
@@ -25,16 +19,9 @@ impl std::fmt::Display for GraphId {
 
 // ANCHOR: Relation
 // Represents a relation between nodes
-
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Relation {
-    #[cfg(not(feature = "uuid_ids"))]
-    pub source: NodeId,
-    #[cfg(not(feature = "uuid_ids"))]
-    pub target: NodeId,
-    #[cfg(feature = "uuid_ids")]
     pub source: GraphId,
-    #[cfg(feature = "uuid_ids")]
     pub target: GraphId,
 
     pub kind: RelationKind,

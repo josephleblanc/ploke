@@ -1,14 +1,8 @@
 use std::path::PathBuf;
 
 use crate::parser::types::{GenericParamNode, VisibilityKind};
-#[cfg(not(feature = "uuid_ids"))]
-use crate::TypeId;
-#[cfg(feature = "uuid_ids")]
 use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled
 use serde::{Deserialize, Serialize};
-
-#[cfg(not(feature = "uuid_ids"))]
-pub type NodeId = usize;
 
 // ANCHOR: ItemFn
 // Represents a function definition
@@ -30,18 +24,12 @@ pub struct FunctionNode {
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
-    #[cfg(feature = "uuid_ids")]
     pub parameters: Vec<ParamData>,
-    #[cfg(not(feature = "uuid_ids"))]
-    pub parameters: Vec<ParameterNode>,
     pub return_type: Option<TypeId>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub body: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 //ANCHOR_END: ItemFn
@@ -64,17 +52,6 @@ impl Visible for FunctionNode {
 pub struct ParamData {
     pub name: Option<String>,
     pub type_id: TypeId, // The ID of the parameter's type
-    pub is_mutable: bool,
-    pub is_self: bool,
-}
-
-// Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[cfg(not(feature = "uuid_ids"))]
-pub struct ParameterNode {
-    pub id: NodeId,
-    pub name: Option<String>,
-    pub type_id: TypeId,
     pub is_mutable: bool,
     pub is_self: bool,
 }
@@ -222,9 +199,6 @@ pub struct TypeAliasNode {
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 
@@ -250,11 +224,7 @@ pub struct UnionNode {
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
-    #[cfg(feature = "uuid_ids")]
     pub span: (usize, usize),
 }
 
@@ -313,9 +283,6 @@ pub struct TraitNode {
     pub super_traits: Vec<TypeId>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 //ANCHOR_END: TraitNode
@@ -330,17 +297,11 @@ pub struct ModuleNode {
     pub docstring: Option<String>,
     pub imports: Vec<ImportNode>,
     pub exports: Vec<NodeId>, // TODO: Confirm if exports need tracking hash? Likely not.
-    #[cfg(feature = "uuid_ids")]
     pub span: (usize, usize), // Add span field
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
-    #[cfg(feature = "uuid_ids")]
     pub module_def: ModuleDef,
 }
 
-#[cfg(feature = "uuid_ids")]
 impl ModuleNode {
     /// Definition path to file as it would be called by a `use` statement,
     /// Examples:
@@ -492,11 +453,7 @@ pub struct ValueNode {
     pub value: Option<String>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
     pub span: (usize, usize),
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 
@@ -517,7 +474,6 @@ impl Visible for MacroNode {
 pub struct MacroNode {
     pub id: NodeId,
     pub name: String,
-    #[cfg(feature = "uuid_ids")]
     pub span: (usize, usize), // Add span field
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
@@ -526,9 +482,6 @@ pub struct MacroNode {
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub body: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 

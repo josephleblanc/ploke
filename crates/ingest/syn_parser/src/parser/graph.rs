@@ -1,12 +1,6 @@
 #[cfg(feature = "uuid_ids")]
-// use ploke_core::TypeId; // Use compat type when feature is disabled
-//
-// #[cfg(feature = "uuid_ids")]
 use crate::parser::relations::GraphId;
-#[cfg(not(feature = "uuid_ids"))]
-use crate::NodeId;
-#[cfg(feature = "uuid_ids")]
-use ploke_core::NodeId; // Use new type when feature is enabled // Import GraphId under the feature
+use ploke_core::NodeId;
 
 use super::nodes::Visible;
 use super::relations::RelationKind;
@@ -24,19 +18,6 @@ use super::nodes::ImportNode;
 impl CodeGraph {
     pub fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
         self.modules.iter().find(|m| m.path == path)
-    }
-
-    /// Extremely simple sanity check for visibility
-    #[cfg(not(feature = "uuid_ids"))] // Keep old version for non-uuid path
-    pub fn resolve_visibility(&self, item_id: NodeId, context_module_id: NodeId) -> bool {
-        let item_module = self.get_item_module(item_id);
-        // Only handle same-module cases
-        // Basic same-module rules
-        // This comparison works because NodeId is usize here
-        match self.find_node(item_id) {
-            Some(_node) => item_module.id == context_module_id,
-            None => false,
-        }
     }
 
     /// Gets the full module path for an item by searching through all modules
@@ -92,49 +73,6 @@ impl CodeGraph {
         }
     }
 
-    /// Gets the full module path for an item by searching through all modules
-    /// Returns ["crate"] if item not found in any module (should only happen for crate root items)
-    /// Gets the full module path for an item by following Contains relations
-    #[cfg(not(feature = "uuid_ids"))] // Keep old version for non-uuid path
-    pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
-        // Find the module that contains this item
-        let module_id = self
-            .relations
-            .iter()
-            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
-            .map(|r| r.source);
-
-        if let Some(mod_id) = module_id {
-            // Get the module's path
-            self.modules
-                .iter()
-                .find(|m| m.id == mod_id)
-                .map(|m| m.path.clone())
-                .unwrap_or_else(|| vec!["crate".to_string()])
-        } else {
-            // Item not in any module (crate root)
-            vec!["crate".to_string()]
-        }
-    }
-    #[cfg(not(feature = "uuid_ids"))]
-    pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
-        // Find the module that contains this item
-        let module_id = self
-            .relations
-            .iter()
-            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
-            .map(|r| r.source);
-
-        if let Some(mod_id) = module_id {
-            // Get the module's path
-            self.modules
-                .iter()
-                .find(|m| m.id == mod_id)
-                .unwrap_or_else(|| panic!("No containing module found"))
-        } else {
-            panic!("No containing module found");
-        }
-    }
     #[cfg(feature = "uuid_ids")]
     pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
         // Find the module that contains this item

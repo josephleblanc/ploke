@@ -13,11 +13,7 @@ use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::ExtractSpan;
 
-#[cfg(feature = "uuid_ids")]
 use crate::parser::nodes::ModuleDef;
-#[cfg(not(feature = "uuid_ids"))]
-use crate::{NodeId, TypeId};
-#[cfg(feature = "uuid_ids")]
 use ploke_core::{NodeId, TypeId};
 
 use quote::ToTokens;
@@ -54,10 +50,7 @@ impl<'a> CodeVisitor<'a> {
                 let mut is_self_import = false;
 
                 let span = name.extract_span_bytes();
-                #[cfg(not(feature = "uuid_ids"))]
-                let import_id = self.add_contains_rel(Some(&use_name));
 
-                #[cfg(feature = "uuid_ids")]
                 let checked_name = if use_name == "self" {
                     is_self_import = true;
                     full_path.last().unwrap().clone()
@@ -83,9 +76,6 @@ impl<'a> CodeVisitor<'a> {
                 let use_rename = rename.ident.to_string();
 
                 let span = rename.extract_span_bytes();
-                #[cfg(not(feature = "uuid_ids"))]
-                let import_id = self.add_contains_rel(Some(&use_rename));
-                #[cfg(feature = "uuid_ids")]
                 let import_id = self.add_contains_rel(&use_rename, span);
 
                 full_path.push(use_rename);
@@ -103,9 +93,6 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Glob(star) => {
                 let span = star.extract_span_bytes();
-                #[cfg(not(feature = "uuid_ids"))]
-                let import_id = self.add_contains_rel(Some("*"));
-                #[cfg(feature = "uuid_ids")]
                 let import_id = self.add_contains_rel("*", span);
 
                 let mut full_path = base_path.to_vec();
@@ -134,15 +121,6 @@ impl<'a> CodeVisitor<'a> {
     #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack(&mut self) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
-            #[cfg(not(feature = "uuid_ids"))]
-            let modules: Vec<(usize, String)> = self
-                .state
-                .code_graph
-                .modules
-                .iter()
-                .map(|m| (m.id, m.name.clone()))
-                .collect();
-            #[cfg(feature = "uuid_ids")]
             let modules: Vec<(NodeId, String)> = self
                 .state
                 .code_graph
@@ -241,7 +219,6 @@ impl<'a> CodeVisitor<'a> {
     /// ensuring it's immediately linked to the current module via a `Contains` relation.
     /// Requires the item's name and span for UUID generation.
     /// This version is active when the `uuid_ids` feature is enabled.
-    #[cfg(feature = "uuid_ids")]
     fn add_contains_rel(&mut self, item_name: &str, item_span: (usize, usize)) -> NodeId {
         // 1. Generate the Synthetic NodeId using context from state
         //    Requires crate_namespace, current_file_path, current_module_path, item_name, item_span
@@ -329,36 +306,6 @@ impl<'a> CodeVisitor<'a> {
         // 3. Return the newly generated NodeId enum
         node_id
     }
-
-    /// Returns a newly generated NodeId while also adding a new Contains relation from the current
-    /// module (souce) to the node (target) whose NodeId is being generated.
-    /// - Follows the pattern of generating a NodeId only at the time the Relation is added to
-    ///     CodeVisitor, making orphaned nodes difficult to add by mistake.
-    #[cfg(not(feature = "uuid_ids"))]
-    fn add_contains_rel(&mut self, node_name: Option<&str>) -> NodeId {
-        // TODO: Consider changing the return type to Result<NodeId> depending on the type of node
-        // being traversed. Add generic type instaed of the optional node name and find a clean way
-        // to handle adding nodes without names, perhaps by implementing a trait like UnnamedNode
-        // for them.
-        let node_id = self.state.next_node_id(); // Generate ID here
-
-        if let Some(current_mod) = self.state.code_graph.modules.last_mut() {
-            current_mod.items.push(node_id);
-
-            self.state.code_graph.relations.push(Relation {
-                source: current_mod.id,
-                target: node_id,
-                kind: RelationKind::Contains,
-            });
-
-            #[cfg(feature = "verbose_debug")]
-            if let Some(name) = _node_name {
-                self.debug_mod_stack_push(name.to_owned(), node_id);
-            }
-        }
-
-        node_id // Return the new ID
-    }
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -382,10 +329,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             let span = func.extract_span_bytes();
 
-            #[cfg(feature = "uuid_ids")]
             let macro_id = self.add_contains_rel(&macro_name, span);
-            #[cfg(not(feature = "uuid_ids"))]
-            let macro_id = self.add_contains_rel(Some(&macro_name));
 
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(&macro_name, macro_id);
@@ -422,14 +366,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 kind: MacroKind::ProcedureMacro {
                     kind: proc_macro_kind,
                 },
-                #[cfg(not(feature = "uuid_ids"))]
-                rules: Vec::new(), // Procedural macros don't have declarative rules
                 attributes,
                 docstring,
                 body,
-                #[cfg(feature = "uuid_ids")]
                 span,
-                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
             };
 
@@ -441,10 +381,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let byte_range = func.span().byte_range();
         let span = (byte_range.start, byte_range.end);
 
-        #[cfg(feature = "uuid_ids")]
         let fn_id = self.add_contains_rel(&fn_name, span);
-        #[cfg(not(feature = "uuid_ids"))]
-        let fn_id = self.add_contains_rel(Some(&fn_name));
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&fn_name, fn_id);
         // Register function with current module
@@ -452,25 +389,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process function parameters
         let mut parameters = Vec::new();
         for arg in &func.sig.inputs {
-            #[cfg(feature = "uuid_ids")]
             if let Some(param) = self.state.process_fn_arg(arg) {
                 // Add relation between function and parameter
 
-                #[cfg(feature = "uuid_ids")]
                 self.state.code_graph.relations.push(Relation {
                     source: GraphId::Node(fn_id),
                     target: GraphId::Type(param.type_id),
-                    kind: RelationKind::FunctionParameter,
-                });
-                parameters.push(param);
-            }
-
-            #[cfg(not(feature = "uuid_ids"))]
-            if let Some(param) = self.state.process_fn_arg(arg) {
-                // Add relation between function and parameter
-                self.state.code_graph.relations.push(Relation {
-                    source: fn_id,
-                    target: param.id,
                     kind: RelationKind::FunctionParameter,
                 });
                 parameters.push(param);
@@ -483,16 +407,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ReturnType::Type(_, ty) => {
                 let type_id = get_or_create_type(self.state, ty);
                 // Add relation between function and return type
-                #[cfg(feature = "uuid_ids")]
                 self.state.code_graph.relations.push(Relation {
                     source: GraphId::Node(fn_id),
                     target: GraphId::Type(type_id),
-                    kind: RelationKind::FunctionReturn,
-                });
-                #[cfg(not(feature = "uuid_ids"))]
-                self.state.code_graph.relations.push(Relation {
-                    source: fn_id,
-                    target: type_id,
                     kind: RelationKind::FunctionReturn,
                 });
                 Some(type_id)
@@ -521,7 +438,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             attributes,
             docstring,
             body,
-            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
         });
 
@@ -536,9 +452,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let byte_range = item_struct.span().byte_range();
         let span = (byte_range.start, byte_range.end);
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let struct_id = self.add_contains_rel(Some(&struct_name));
-        #[cfg(feature = "uuid_ids")]
         let struct_id = self.add_contains_rel(&struct_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -550,10 +463,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
             let span = field.extract_span_bytes();
 
-            #[cfg(not(feature = "uuid_ids"))]
-            let field_id = self.state.next_node_id();
-
-            #[cfg(feature = "uuid_ids")]
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
@@ -575,9 +484,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // TODO: Remove Nodes from fields for new version
             // Support as full nodes for now
             let field_node = FieldNode {
-                #[cfg(feature = "uuid_ids")]
-                id: field_id,
-                #[cfg(not(feature = "uuid_ids"))]
                 id: field_id,
                 name: field_name,
                 type_id,
@@ -586,16 +492,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             // Add relation between struct and field
-            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(struct_id),
                 target: GraphId::Node(field_id),
-                kind: RelationKind::StructField,
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: struct_id,
-                target: field_id,
                 kind: RelationKind::StructField,
             });
 
@@ -622,7 +521,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 generic_params,
                 attributes,
                 docstring,
-                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(
                     self.state
                         .generate_tracking_hash(&item_struct.to_token_stream()),
@@ -636,9 +534,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let type_alias_name = item_type.ident.to_string();
 
         let span = item_type.extract_span_bytes();
-        #[cfg(not(feature = "uuid_ids"))]
-        let type_alias_id = self.add_contains_rel(Some(&type_alias_name));
-        #[cfg(feature = "uuid_ids")]
         let type_alias_id = self.add_contains_rel(&type_alias_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -666,7 +561,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 generic_params,
                 attributes,
                 docstring,
-                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(
                     self.state
                         .generate_tracking_hash(&item_type.to_token_stream()),
@@ -681,9 +575,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let union_name = item_union.ident.to_string();
 
         let span = item_union.extract_span_bytes();
-        #[cfg(not(feature = "uuid_ids"))]
-        let union_id = self.add_contains_rel(Some(&union_name));
-        #[cfg(feature = "uuid_ids")]
         let union_id = self.add_contains_rel(&union_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -694,15 +585,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for field in &item_union.fields.named {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
 
-            #[cfg(feature = "uuid_ids")]
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
                     .unwrap_or(format!("Unnamed field of {}", union_name)),
                 span,
             );
-            #[cfg(not(feature = "uuid_ids"))]
-            let field_id = self.state.next_node_id();
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(
                 &field_name
@@ -721,16 +609,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             // Add relation between union and field
-            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(union_id),
                 target: GraphId::Node(field_id),
-                kind: RelationKind::StructField, // Reuse StructField relation for union fields
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: union_id,
-                target: field_id,
                 kind: RelationKind::StructField, // Reuse StructField relation for union fields
             });
 
@@ -755,9 +636,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 generic_params,
                 attributes,
                 docstring,
-                #[cfg(feature = "uuid_ids")]
                 span,
-                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(
                     self.state
                         .generate_tracking_hash(&item_union.to_token_stream()),
@@ -772,9 +651,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let enum_name = item_enum.ident.to_string();
 
         let span = item_enum.extract_span_bytes();
-        #[cfg(not(feature = "uuid_ids"))]
-        let enum_id = self.add_contains_rel(Some(&enum_name));
-        #[cfg(feature = "uuid_ids")]
         let enum_id = self.add_contains_rel(&enum_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -786,12 +662,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let variant_name = variant.ident.to_string();
             let variant_span = variant.extract_span_bytes();
 
-            #[cfg(feature = "uuid_ids")]
             let variant_id = self
                 .state
                 .generate_synthetic_node_id(&variant_name, variant_span);
-            #[cfg(not(feature = "uuid_ids"))]
-            let variant_id = self.state.next_node_id();
 
             // Process fields of the variant
             let mut fields = Vec::new();
@@ -800,15 +673,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     for field in &fields_named.named {
                         let field_span = field.extract_span_bytes();
                         let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-                        #[cfg(feature = "uuid_ids")]
                         let field_id = self.state.generate_synthetic_node_id(
                             &field_name
                                 .clone()
                                 .unwrap_or_else(|| format!("Unnamed field of {}", enum_name)),
                             field_span,
                         );
-                        #[cfg(not(feature = "uuid_ids"))]
-                        let field_id = self.state.next_node_id();
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id(
                             &field_name
@@ -825,7 +695,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             visibility: self.state.convert_visibility(&field.vis),
                             attributes: extract_attributes(&field.attrs),
                         }; // Add relation between variant and named field
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(variant_id),
                             target: GraphId::Node(field_id),
@@ -837,20 +706,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 }
                 syn::Fields::Unnamed(fields_unnamed) => {
                     for field in fields_unnamed.unnamed.iter() {
-                        #[cfg(not(feature = "uuid_ids"))]
-                        let field_id = self.state.next_node_id();
-                        #[cfg(feature = "uuid_ids")]
                         let unnamed = "Tuple field".to_string();
-                        #[cfg(feature = "uuid_ids")]
                         let field_id = self.state.generate_synthetic_node_id(&unnamed, span);
                         let type_id = get_or_create_type(self.state, &field.ty);
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id("unnamed_enum_field", field_id);
 
                         let field_node = FieldNode {
-                            #[cfg(feature = "uuid_ids")]
-                            id: field_id,
-                            #[cfg(not(feature = "uuid_ids"))]
                             id: field_id,
                             name: None, // Tuple fields don't have names
                             type_id,
@@ -858,7 +720,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             attributes: extract_attributes(&field.attrs),
                         };
                         // Add relation between variant and unnamed field
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(variant_id),
                             target: GraphId::Node(field_id),
@@ -880,9 +741,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .map(|(_, expr)| expr.to_token_stream().to_string());
 
             let variant_node = VariantNode {
-                #[cfg(feature = "uuid_ids")]
-                id: variant_id,
-                #[cfg(not(feature = "uuid_ids"))]
                 id: variant_id,
                 name: variant_name,
                 fields,
@@ -891,16 +749,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             // Add relation between enum and variant
-            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(enum_id),
                 target: GraphId::Node(variant_id),
-                kind: RelationKind::EnumVariant,
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: enum_id,
-                target: variant_id,
                 kind: RelationKind::EnumVariant,
             });
 
@@ -926,7 +777,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 generic_params,
                 attributes,
                 docstring,
-                #[cfg(feature = "uuid_ids")]
                 tracking_hash: Some(
                     self.state
                         .generate_tracking_hash(&item_enum.to_token_stream()),
@@ -941,9 +791,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let impl_name = name_impl(item_impl);
         let span = item_impl.extract_span_bytes();
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let impl_id = self.add_contains_rel(Some(&impl_name));
-        #[cfg(feature = "uuid_ids")]
         let impl_id = self.add_contains_rel(&impl_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -1008,10 +855,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if let syn::ImplItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
                 let method_span = method.extract_span_bytes();
-                // let method_node_id = self.state.next_node_id();
-                #[cfg(not(feature = "uuid_ids"))]
-                let method_node_id = self.add_contains_rel(Some(&method_name));
-                #[cfg(feature = "uuid_ids")]
                 let method_node_id = self.add_contains_rel(&method_name, method_span);
 
                 #[cfg(feature = "verbose_debug")]
@@ -1022,16 +865,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 for arg in &method.sig.inputs {
                     if let Some(param) = self.state.process_fn_arg(arg) {
                         // Add relation between method and parameter
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(method_node_id),
                             target: GraphId::Type(param.type_id),
-                            kind: RelationKind::FunctionParameter,
-                        });
-                        #[cfg(not(feature = "uuid_ids"))]
-                        self.state.code_graph.relations.push(Relation {
-                            source: method_node_id,
-                            target: param.id,
                             kind: RelationKind::FunctionParameter,
                         });
                         parameters.push(param);
@@ -1044,34 +880,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ReturnType::Type(_, ty) => {
                         let type_id = get_or_create_type(self.state, ty);
                         // Add relation between method and return type
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(method_node_id),
                             target: GraphId::Type(type_id),
                             kind: RelationKind::FunctionReturn,
                         });
-                        #[cfg(not(feature = "uuid_ids"))]
-                        self.state.code_graph.relations.push(Relation {
-                            source: method_node_id,
-                            target: type_id,
-                            kind: RelationKind::FunctionReturn,
-                        });
                         Some(type_id)
                     }
                 };
-                #[cfg(feature = "uuid_ids")]
                 self.state.code_graph.relations.push(Relation {
                     source: GraphId::Type(self_type_id), // The struct/enum type
                     target: GraphId::Node(method_node_id),
                     kind: RelationKind::Method,
                 });
-                #[cfg(not(feature = "uuid_ids"))]
-                self.state.code_graph.relations.push(Relation {
-                    source: self_type_id, // The struct/enum type
-                    target: method_node_id,
-                    kind: RelationKind::Method,
-                });
-
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
@@ -1094,7 +915,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     attributes,
                     docstring,
                     body,
-                    #[cfg(feature = "uuid_ids")]
                     tracking_hash: Some(
                         self.state
                             .generate_tracking_hash(&method_name.to_token_stream()),
@@ -1125,29 +945,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         } else {
             RelationKind::ImplementsFor
         };
-        #[cfg(feature = "uuid_ids")]
         self.state.code_graph.relations.push(Relation {
             source: GraphId::Node(impl_id),
             target: GraphId::Type(self_type_id),
             kind: relation_kind,
         });
-        #[cfg(not(feature = "uuid_ids"))]
-        self.state.code_graph.relations.push(Relation {
-            source: impl_id,
-            target: self_type_id,
-            kind: relation_kind,
-        });
         if let Some(trait_type_id) = trait_type_id {
-            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(impl_id),
                 target: GraphId::Type(trait_type_id),
-                kind: RelationKind::ImplementsTrait,
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: impl_id,
-                target: trait_type_id,
                 kind: RelationKind::ImplementsTrait,
             });
         }
@@ -1160,9 +966,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let trait_name = item_trait.ident.to_string();
         let span = item_trait.extract_span_bytes();
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let trait_id = self.add_contains_rel(Some(&trait_name));
-        #[cfg(feature = "uuid_ids")]
         let trait_id = self.add_contains_rel(&trait_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -1175,9 +978,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let method_name = method.sig.ident.to_string();
                 let method_span = method.extract_span_bytes();
 
-                #[cfg(not(feature = "uuid_ids"))]
-                let method_node_id = self.state.next_node_id();
-                #[cfg(feature = "uuid_ids")]
                 let method_node_id = self
                     .state
                     .generate_synthetic_node_id(&method_name, method_span);
@@ -1190,16 +990,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 for arg in &method.sig.inputs {
                     if let Some(param) = self.state.process_fn_arg(arg) {
                         // Add relation between method and parameter
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(method_node_id),
                             target: GraphId::Type(param.type_id),
-                            kind: RelationKind::FunctionParameter,
-                        });
-                        #[cfg(not(feature = "uuid_ids"))]
-                        self.state.code_graph.relations.push(Relation {
-                            source: method_node_id,
-                            target: param.id,
                             kind: RelationKind::FunctionParameter,
                         });
                         parameters.push(param);
@@ -1216,12 +1009,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(method_node_id),
                             target: GraphId::Type(type_id),
-                            kind: RelationKind::FunctionReturn,
-                        });
-                        #[cfg(not(feature = "uuid_ids"))]
-                        self.state.code_graph.relations.push(Relation {
-                            source: method_node_id,
-                            target: type_id,
                             kind: RelationKind::FunctionReturn,
                         });
                         Some(type_id)
@@ -1253,7 +1040,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     attributes,
                     docstring,
                     body,
-                    #[cfg(feature = "uuid_ids")]
                     tracking_hash: Some(
                         self.state
                             .generate_tracking_hash(&method.clone().to_token_stream()),
@@ -1267,7 +1053,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_trait.generics);
 
         // Process super traits
-        #[cfg(feature = "uuid_ids")]
         let super_traits: Vec<TypeId> = item_trait
             .supertraits
             .iter()
@@ -1295,18 +1080,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 }
             })
             .collect();
-        #[cfg(not(feature = "uuid_ids"))]
-        let super_traits: Vec<TypeId> = item_trait
-            .supertraits
-            .iter()
-            .map(|bound| {
-                let ty = Type::TraitObject(syn::TypeTraitObject {
-                    dyn_token: None,
-                    bounds: syn::punctuated::Punctuated::from_iter(vec![bound.clone()]),
-                });
-                get_or_create_type(self.state, &ty)
-            })
-            .collect();
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_trait.attrs);
@@ -1323,7 +1096,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             super_traits: super_traits.clone(),
             attributes,
             docstring,
-            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_trait.to_token_stream()),
@@ -1334,16 +1106,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Add relation for super traits
         for super_trait_id in &super_traits {
-            #[cfg(feature = "uuid_ids")]
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(trait_id),
                 target: GraphId::Type(*super_trait_id),
-                kind: RelationKind::Inherits,
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: trait_id,
-                target: *super_trait_id,
                 kind: RelationKind::Inherits,
             });
         }
@@ -1355,9 +1120,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let module_name = module.ident.to_string();
         let span = module.extract_span_bytes();
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let module_id = self.add_contains_rel(Some(&module_name));
-        #[cfg(feature = "uuid_ids")]
         let module_id = self.add_contains_rel(&module_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -1376,7 +1138,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create module node with proper path tracking
         // Create module node with proper hierarchy tracking
-        #[cfg(feature = "uuid_ids")]
         let module_def = match &module.content {
             Some(_) => ModuleDef::Inline {
                 items: Vec::new(),
@@ -1396,11 +1157,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             docstring: extract_docstring(&module.attrs),
             imports: Vec::new(),
             exports: Vec::new(),
-            #[cfg(feature = "uuid_ids")]
             span, // Assign the extracted span
-            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
-            #[cfg(feature = "uuid_ids")]
             module_def,
         };
 
@@ -1482,16 +1240,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             for import in imports {
                 // Add module import relation
-                #[cfg(feature = "uuid_ids")]
                 graph.relations.push(Relation {
                     source: GraphId::Node(module_id),
                     target: GraphId::Node(import.id),
-                    kind: RelationKind::ModuleImports,
-                });
-                #[cfg(not(feature = "uuid_ids"))]
-                graph.relations.push(Relation {
-                    source: module_id,
-                    target: import.id,
                     kind: RelationKind::ModuleImports,
                 });
 
@@ -1514,9 +1265,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let crate_name = extern_crate.ident.to_string();
         let span = extern_crate.extract_span_bytes();
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let import_id = self.add_contains_rel(Some(&crate_name));
-        #[cfg(feature = "uuid_ids")]
         let import_id = self.add_contains_rel(&crate_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -1560,23 +1308,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             kind: RelationKind::ModuleImports,
         });
 
-        // --- TypeId Generation ---
-        #[cfg(not(feature = "uuid_ids"))]
-        let type_id = {
-            // Keep old logic separate
-            let id = self.state.next_type_id();
-            self.state.code_graph.type_graph.push(TypeNode {
-                id,
-                kind: TypeKind::Named {
-                    path: vec![crate_name.clone()],
-                    is_fully_qualified: false, // extern crate is like a root path segment
-                },
-                related_types: Vec::new(),
-            });
-            id
-        };
-
-        #[cfg(feature = "uuid_ids")]
         let type_id = {
             // 1. Construct a representative syn::Type for the external crate.
             //    Using just the crate name as the path is simplest.
@@ -1597,12 +1328,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
 
         // --- Relation Creation ---
-        #[cfg(not(feature = "uuid_ids"))]
-        self.state.code_graph.relations.push(Relation {
-            source: import_id,
-            target: type_id,
-            kind: RelationKind::Uses,
-        });
         // TODO: Remove this relation
         // I did not really understand that an `extern crate some_crate` statement actually worked
         // on the entire crate namespace itself, and cannot be specific enough to import a type
@@ -1623,10 +1348,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let const_name = item_const.ident.to_string();
         let span = item_const.extract_span_bytes();
-        #[cfg(feature = "uuid_ids")]
         let const_id = self.add_contains_rel(&const_name, span);
-        #[cfg(not(feature = "uuid_ids"))]
-        let const_id = self.state.next_node_id();
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&const_name, const_id);
@@ -1651,9 +1373,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             value,
             attributes,
             docstring,
-            #[cfg(feature = "uuid_ids")]
             span,
-            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_const.to_token_stream()),
@@ -1664,16 +1384,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.values.push(const_node);
 
         // Add relation between constant and its type
-        #[cfg(feature = "uuid_ids")]
         self.state.code_graph.relations.push(Relation {
             source: GraphId::Node(const_id),
             target: GraphId::Type(type_id),
-            kind: RelationKind::ValueType,
-        });
-        #[cfg(not(feature = "uuid_ids"))]
-        self.state.code_graph.relations.push(Relation {
-            source: const_id, // usize
-            target: type_id,  // usize
             kind: RelationKind::ValueType,
         });
 
@@ -1686,9 +1399,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let static_name = item_static.ident.to_string();
         let span = item_static.extract_span_bytes();
 
-        #[cfg(not(feature = "uuid_ids"))]
-        let static_id = self.state.next_node_id();
-        #[cfg(feature = "uuid_ids")]
         let static_id = self.add_contains_rel(&static_name, span);
 
         #[cfg(feature = "verbose_debug")]
@@ -1716,9 +1426,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             value,
             attributes,
             docstring,
-            #[cfg(feature = "uuid_ids")]
             span,
-            #[cfg(feature = "uuid_ids")]
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_static.to_token_stream()),
@@ -1729,16 +1437,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.values.push(static_node);
 
         // Add relation between static and its type
-        #[cfg(feature = "uuid_ids")]
         self.state.code_graph.relations.push(Relation {
             source: GraphId::Node(static_id),
             target: GraphId::Type(type_id),
-            kind: RelationKind::ValueType,
-        });
-        #[cfg(not(feature = "uuid_ids"))]
-        self.state.code_graph.relations.push(Relation {
-            source: static_id,
-            target: type_id,
             kind: RelationKind::ValueType,
         });
 
@@ -1747,7 +1448,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     // Visit macro definitions (macro_rules!)
-    #[cfg(feature = "uuid_ids")]
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
         let is_exported = item_macro
             .attrs
@@ -1795,7 +1495,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             attributes,
             docstring,
             body,
-            #[cfg(feature = "uuid_ids")]
             span,
             tracking_hash: Some(
                 self.state
@@ -1806,124 +1505,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.macros.push(macro_node);
 
         // Do NOT recurse into the macro body with visit::visit_item_macro
-    }
-
-    // Visit macro definitions (macro_rules!)
-    #[cfg(not(feature = "uuid_ids"))]
-    fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
-        // Only process macros with #[macro_export]
-        if !item_macro
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("macro_export"))
-        {
-            return;
-        }
-
-        // Get the macro name
-        let macro_name = item_macro
-            .ident
-            .as_ref()
-            .map(|ident| ident.to_string())
-            .unwrap_or_else(|| "unnamed_macro".to_string());
-        let span = item_macro.extract_span_bytes();
-
-        #[cfg(not(feature = "uuid_ids"))]
-        let macro_id = self.state.next_node_id();
-
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&macro_name, macro_id);
-
-        // Extract the macro body
-        let body = Some(item_macro.mac.tokens.to_string());
-
-        // Extract doc comments and other attributes
-        let docstring = extract_docstring(&item_macro.attrs);
-        let attributes = extract_attributes(&item_macro.attrs);
-
-        // Parse macro rules (simplified approach)
-        let mut rules = Vec::new();
-        let tokens_str = item_macro.mac.tokens.to_string();
-
-        // Very basic parsing of macro rules - in a real implementation,
-        // you would want to use a more sophisticated approach
-        // However, for our purposes this will do fine for the MVP
-        for rule in tokens_str.split(";") {
-            if rule.trim().is_empty() {
-                continue;
-            }
-
-            // Try to split the rule into pattern and expansion
-            if let Some(idx) = rule.find("=>") {
-                let pattern = rule[..idx].trim().to_string();
-                let expansion = rule[(idx + 2)..].trim().to_string();
-                let rule_id = self.state.next_node_id();
-                #[cfg(feature = "verbose_debug")]
-                self.debug_new_id("Macro `=>` item", macro_id);
-
-                rules.push(MacroRuleNode {
-                    id: rule_id,
-                    pattern,
-                    expansion,
-                });
-            }
-        }
-
-        // Create the macro node
-        let macro_node = MacroNode {
-            id: macro_id,
-            name: macro_name,
-            visibility: VisibilityKind::Public, // Macros with #[macro_export] are public
-            kind: MacroKind::DeclarativeMacro,
-            rules,
-            attributes,
-            docstring,
-            body,
-        };
-
-        // Add the macro to the code graph
-        self.state.code_graph.macros.push(macro_node);
-    }
-
-    // Visit macro invocations
-    // Leaving this out of our new version, delete later when cleaning up feature flags.
-    #[cfg(not(feature = "uuid_ids"))]
-    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-        // Create a node ID for this macro invocation
-        let invocation_id = self.state.next_node_id();
-
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id("unnamed macro invocation (Whaa?)", invocation_id);
-
-        // Get the macro name
-        let macro_path = mac.path.to_token_stream().to_string();
-
-        // Find if this macro is defined in our code graph
-        let defined_macro = self
-            .state
-            .code_graph
-            .macros
-            .iter()
-            .find(|m| m.name == macro_path.split("::").last().unwrap_or(&macro_path));
-
-        if let Some(defined_macro) = defined_macro {
-            // Add a relation between the invocation and the macro definition
-            #[cfg(feature = "uuid_ids")]
-            self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(invocation_id),
-                target: GraphId::Node(defined_macro.id),
-                kind: RelationKind::MacroUse,
-            });
-            #[cfg(not(feature = "uuid_ids"))]
-            self.state.code_graph.relations.push(Relation {
-                source: invocation_id,
-                target: defined_macro.id,
-                kind: RelationKind::MacroUse,
-            });
-        }
-
-        // Continue visiting
-        visit::visit_macro(self, mac);
     }
 }
 

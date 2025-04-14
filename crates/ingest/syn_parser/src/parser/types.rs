@@ -1,12 +1,6 @@
-#[cfg(not(feature = "uuid_ids"))]
-use crate::NodeId;
-#[cfg(feature = "uuid_ids")]
 use ploke_core::{NodeId, TypeId}; // Use new types when feature is enabled // Use compat types when feature is disabled
 
 use serde::{Deserialize, Serialize};
-
-#[cfg(not(feature = "uuid_ids"))]
-pub type TypeId = usize;
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
