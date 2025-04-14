@@ -1,5 +1,13 @@
 use std::path::PathBuf;
 
+struct SomeStruct {
+    field: Box<SomeStruct>,
+}
+
+struct Other {
+    x: Box<dyn Visible>,
+}
+
 use crate::parser::types::{GenericParamNode, VisibilityKind};
 use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled
 use serde::{Deserialize, Serialize};

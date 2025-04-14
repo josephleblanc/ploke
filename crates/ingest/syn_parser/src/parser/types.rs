@@ -77,7 +77,10 @@ pub enum TypeKind {
     },
 }
 
-// Represents a generic parameter
+/// Represents a generic parameter
+/// These are appropriate node elements because they are "defined" when used in part of another,
+/// e.g. function, definition. Then, we can say that they are "referenced" when used in, e.g. a
+/// function call, or as part of another definition like for a struct's fields.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GenericParamNode {
     pub id: NodeId,

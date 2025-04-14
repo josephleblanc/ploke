@@ -1,5 +1,6 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use crate::parser::ExtractSpan;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use dashmap::DashMap;
@@ -148,12 +149,14 @@ impl VisitorState {
 
         for param in &generics.params {
             match param {
-                syn::GenericParam::Type(TypeParam {
-                    ident,
-                    bounds,
-                    default,
-                    ..
-                }) => {
+                syn::GenericParam::Type(
+                    type_param @ TypeParam {
+                        ident,
+                        bounds,
+                        default,
+                        ..
+                    },
+                ) => {
                     let bounds: Vec<TypeId> = bounds
                         .iter()
                         .filter_map(|bound| self.process_type_bound(bound))
@@ -164,11 +167,12 @@ impl VisitorState {
                         get_or_create_type(self, expr)
                     });
 
+                    let span = type_param.extract_span_bytes();
                     // Generate ID for the generic parameter node
                     let param_node_id = self.generate_synthetic_node_id(
                         &format!("generic_type_{}", ident),
-                        // TODO: Get span from TypeParam if possible
-                        (0, 0), // Placeholder span
+                        span, // TODO: Get span from TypeParam if possible
+                              // (0, 0), // Placeholder span
                     );
 
                     params.push(GenericParamNode {
@@ -187,11 +191,11 @@ impl VisitorState {
                         .map(|bound| self.process_lifetime_bound(bound))
                         .collect();
 
+                    let span = lifetime_def.extract_span_bytes();
                     // Generate ID for the generic parameter node
                     let param_node_id = self.generate_synthetic_node_id(
                         &format!("generic_lifetime_{}", lifetime_def.lifetime.ident),
-                        // TODO: Get span from LifetimeDef if possible
-                        (0, 0), // Placeholder span
+                        span,
                     );
 
                     params.push(GenericParamNode {
@@ -204,12 +208,12 @@ impl VisitorState {
                 }
                 syn::GenericParam::Const(const_param) => {
                     let type_id = super::type_processing::get_or_create_type(self, &const_param.ty);
+                    let span = const_param.extract_span_bytes();
 
                     // Generate ID for the generic parameter node
                     let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_const_{}", const_param.ident),
-                        // TODO: Get span from ConstParam if possible
-                        (0, 0), // Placeholder span
+                        &format!("generic_const_{}", const_param.ident,),
+                        span,
                     );
 
                     params.push(GenericParamNode {
