@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
-
 #[cfg(test)]
 mod determinism_tests {
     use crate::common::run_phase1_phase2; // Assuming this helper exists and works

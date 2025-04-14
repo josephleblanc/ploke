@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
-
 #[cfg(test)]
 mod phase2_relation_tests {
     use crate::common::uuid_ids_utils::*;

@@ -26,7 +26,7 @@ dashmap = { workspace = true }
 petgraph = { workspace = true }
 cozo = { workspace = true }
 # uuid is now an optional transitive dependency via ploke-core
-uuid = { workspace = true, features = ["v5", "serde"], optional = true }
+uuid = { workspace = true, features = ["v5", "serde"] }
 
 # Error handling
 thiserror = { workspace = true }                          # version 2
@@ -34,8 +34,8 @@ ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
 
 # Added for Phase 1 Discovery (Optional)
-toml = { version = "0.8", optional = true }
-walkdir = { version = "2.4", optional = true }
+toml = { version = "0.8" }
+walkdir = { version = "2.4" }
 
 
 [dev-dependencies]
@@ -52,4 +52,3 @@ verbose_debug = []
 workspace_vis = []
 # Feature flag for the UUID refactor
 # Enables uuid_ids in ploke-core and brings in necessary discovery deps
-uuid_ids = ["ploke-core/uuid_ids", "dep:toml", "dep:walkdir", "dep:uuid"]

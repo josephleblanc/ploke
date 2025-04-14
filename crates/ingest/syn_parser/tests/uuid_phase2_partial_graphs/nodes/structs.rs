@@ -1,4 +1,3 @@
-#![cfg(feature = "uuid_ids")]
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed

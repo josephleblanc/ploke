@@ -1,4 +1,3 @@
-#![cfg(feature = "uuid_ids")]
 #![cfg(test)]
 
 use crate::common::uuid_ids_utils::*;

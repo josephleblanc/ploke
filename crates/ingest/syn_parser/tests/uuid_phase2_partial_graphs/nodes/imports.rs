@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")]
-
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;

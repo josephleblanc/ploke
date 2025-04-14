@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")]
-
 //! Helper functions for module testing
 //!
 //! These helper functions are intentionally overkill and brittle.

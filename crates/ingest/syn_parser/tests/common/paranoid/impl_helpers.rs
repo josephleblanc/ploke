@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")]
-
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{NodeId, TypeId};
 use quote::ToTokens;

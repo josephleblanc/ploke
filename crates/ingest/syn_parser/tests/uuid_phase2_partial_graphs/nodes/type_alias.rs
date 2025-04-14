@@ -1,4 +1,3 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
 use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
 use ploke_core::{NodeId, TypeId};
 // Import TypeAliasNode specifically

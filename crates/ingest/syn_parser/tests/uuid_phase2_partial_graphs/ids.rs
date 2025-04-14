@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
-
 #[cfg(test)]
 mod phase2_id_tests {
     use crate::common::{find_function_by_name, run_phase1_phase2};

@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")]
-
 use ploke_core::NodeId;
 use syn_parser::parser::{graph::CodeGraph, nodes::Visible};
 

@@ -1,4 +1,3 @@
-#![cfg(feature = "uuid_ids")]
 use crate::common::paranoid::find_union_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;

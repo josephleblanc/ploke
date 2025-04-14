@@ -1,4 +1,3 @@
-#![cfg(feature = "uuid_ids")] // Gate the whole module
 use crate::common::uuid_ids_utils::*;
 use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::NodeId;

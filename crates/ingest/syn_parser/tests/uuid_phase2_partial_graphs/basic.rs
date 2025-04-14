@@ -1,7 +1,4 @@
-#![cfg(feature = "uuid_ids")]
-
 #[cfg(test)]
-#[cfg(feature = "uuid_ids")] // Gate the whole module
 mod phase2_tests {
     // Assuming this helper exists
     use ploke_core::TrackingHash;
