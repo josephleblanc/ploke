@@ -5,25 +5,16 @@ edition = "2021"
 
 [dependencies]
 ploke-common = { path = "../common" }
-# Make syn_parser optional, base dependency doesn't enable features
-syn_parser = { path = "../ingest/syn_parser", optional = true }
-# Core types needed only when uuid_ids is active
-ploke-core = { path = "../ploke-core", optional = true } # Needed for Uuid types if test-utils uses them directly
-uuid = { workspace = true, features = ["v5", "serde"], optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
+# syn_parser is now a required dependency
+syn_parser = { path = "../ingest/syn_parser" }
+# Core types are now always needed
+ploke-core = { path = "../ploke-core" } # Needed for Uuid types if test-utils uses them directly
+uuid = { workspace = true, features = ["v5", "serde"] }
+serde = { workspace = true, features = ["derive"] }
 proc-macro2 = { workspace = true, features = [
     "span-locations",
-], optional = true }
+] }
 
 [features]
 default = []
-# Feature flag for the UUID refactor in test-utils
-uuid_ids = [
-    "dep:syn_parser",
-    "syn_parser/uuid_ids", # <-- Propagate the feature flag
-    "dep:ploke-core",      # Enable ploke-core dependency
-    "ploke-core/uuid_ids", # Enable uuid_ids feature in ploke-core
-    "dep:uuid",
-    "dep:serde",
-    "dep:proc-macro2",
-]
+# Feature flag for the UUID refactor in test-utils (REMOVED)
