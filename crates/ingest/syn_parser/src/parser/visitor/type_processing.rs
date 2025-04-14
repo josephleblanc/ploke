@@ -51,7 +51,7 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
 
     // 3. Process the type structure (recursively calls this function for nested types)
     //    This determines the TypeKind and finds related TypeIds.
-    let (type_kind, related_types) = process_type(state, ty);
+    let (type_kind, related_types) = process_type(state, ty); // Pass only state and ty
 
     // 4. Create the TypeNode containing the structural information
     let type_node = TypeNode {
@@ -78,11 +78,7 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
 ///
 /// # Returns
 /// A tuple containing the `TypeKind` and a `Vec<TypeId>` of related types.
-pub(crate) fn process_type(
-    state: &mut VisitorState,
-    ty: &Type,
-    name: &str,
-) -> (TypeKind, Vec<TypeId>) {
+pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Vec<TypeId>) {
     let mut related_types = Vec::new();
 
     match ty {
@@ -128,10 +124,7 @@ pub(crate) fn process_type(
                     seg.ident.to_string()
                 })
                 .collect();
-            // AI: Is there a good way to handle this `name` being `&str` but `segments` needing to
-            // compare against `String?`
-            segments.ends_with([name]);
-            // AI?
+            // Removed the problematic `ends_with` check and the associated comments.
 
             (
                 TypeKind::Named {
