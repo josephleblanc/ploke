@@ -169,11 +169,8 @@ impl VisitorState {
 
                     let span = type_param.extract_span_bytes();
                     // Generate ID for the generic parameter node
-                    let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_type_{}", ident),
-                        span, // TODO: Get span from TypeParam if possible
-                              // (0, 0), // Placeholder span
-                    );
+                    let param_node_id =
+                        self.generate_synthetic_node_id(&format!("generic_type_{}", ident), span);
 
                     params.push(GenericParamNode {
                         id: param_node_id,
