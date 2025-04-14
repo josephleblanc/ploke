@@ -1,12 +1,10 @@
 // Define a stable PROJECT_NAMESPACE UUID.
 // Moved from syn_parser::discovery
 // Generated via `uuidgen`: f7f4a9a0-1b1a-4b0e-9c1a-1a1a1a1a1a1a
-#[cfg(feature = "uuid_ids")]
 pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
-#[cfg(feature = "uuid_ids")]
 mod ids {
     use std::path::Path;
 
@@ -226,22 +224,4 @@ mod ids {
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
 }
 
-#[cfg(feature = "uuid_ids")]
 pub use ids::*;
-
-// --- Fallback definitions when uuid_ids feature is NOT enabled ---
-
-#[cfg(not(feature = "uuid_ids"))]
-mod ids_compat {
-    // Define NodeId and TypeId as usize for compatibility with the old system.
-    // Add other necessary derives if the old system used them (e.g., Copy, Default).
-    pub type NodeId = usize;
-    pub type TypeId = usize;
-
-    // LogicalTypeId and TrackingHash don't exist in the old system.
-    // We could define dummy types or just not define them.
-    // Let's not define them for now to make compile errors clearer
-    // if code accidentally tries to use them without the flag.
-    // pub struct LogicalTypeId; // Placeholder if needed
-    // pub struct TrackingHash; // Placeholder if needed
-}

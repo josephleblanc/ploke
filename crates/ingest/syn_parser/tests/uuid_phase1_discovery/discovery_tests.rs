@@ -1,5 +1,3 @@
-#![cfg(feature = "uuid_ids")]
-
 // Removed unused imports: FixtureError, HashMap, File, Write, PathBuf,
 // CrateContext, DiscoveryOutput, PROJECT_NAMESPACE_UUID, Uuid
 use ploke_common::workspace_root;

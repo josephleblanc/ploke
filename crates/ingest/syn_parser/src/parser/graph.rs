@@ -171,6 +171,9 @@ impl CodeGraph {
         })
     }
 
+    // TODO: Improve this. It is old code and needs to be refactored to be more idiomatic and
+    // checked for correctness.
+    #[allow(dead_code, reason = "Useful in upcoming uuid changes for Phase 3")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
         let context_module_id = match self.find_module_by_path(context_module) {
             Some(m) => m.id,

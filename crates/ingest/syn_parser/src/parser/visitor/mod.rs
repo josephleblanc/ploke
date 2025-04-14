@@ -1,5 +1,14 @@
 use serde::{Deserialize, Serialize};
 use syn::visit::Visit;
+mod attribute_processing;
+mod code_visitor;
+mod state;
+mod type_processing;
+
+pub use code_visitor::CodeVisitor;
+pub use state::VisitorState;
+
+use crate::parser::graph::CodeGraph;
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -59,18 +68,6 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
 
     logical_path
 }
-
-mod attribute_processing;
-mod code_visitor;
-mod state;
-mod type_processing;
-
-pub use code_visitor::CodeVisitor;
-pub use state::VisitorState;
-
-use crate::parser::{channel::ParserMessage, graph::CodeGraph};
-use flume::{Receiver, Sender};
-use std::thread;
 
 use {
     super::nodes::ModuleNode,          // Moved ModuleNode import here

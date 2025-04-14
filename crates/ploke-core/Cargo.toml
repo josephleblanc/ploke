@@ -7,13 +7,10 @@ authors = ["Your Name <your.email@example.com>"]                    # Please upd
 
 [dependencies]
 # Enable these core dependencies only when the uuid_ids feature is active
-uuid = { workspace = true, features = ["v5", "serde"], optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
-proc-macro2 = { workspace = true, features = [
-    "span-locations",
-], optional = true }
+uuid = { workspace = true, features = ["v5", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 
 [features]
 default = []
 # Feature flag for the UUID refactor
-uuid_ids = ["dep:uuid", "dep:serde", "dep:proc-macro2"]
