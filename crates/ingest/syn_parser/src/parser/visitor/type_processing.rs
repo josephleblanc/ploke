@@ -78,7 +78,11 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
 ///
 /// # Returns
 /// A tuple containing the `TypeKind` and a `Vec<TypeId>` of related types.
-pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Vec<TypeId>) {
+pub(crate) fn process_type(
+    state: &mut VisitorState,
+    ty: &Type,
+    name: &str,
+) -> (TypeKind, Vec<TypeId>) {
     let mut related_types = Vec::new();
 
     match ty {
@@ -124,6 +128,10 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
                     seg.ident.to_string()
                 })
                 .collect();
+            // AI: Is there a good way to handle this `name` being `&str` but `segments` needing to
+            // compare against `String?`
+            segments.ends_with([name]);
+            // AI?
 
             (
                 TypeKind::Named {
