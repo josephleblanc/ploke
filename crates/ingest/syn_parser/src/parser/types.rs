@@ -131,6 +131,12 @@ pub enum GenericParamKind {
         type_id: TypeId,
     },
 }
+
+impl GenericParamKind {}
+// AI: Generate getter methods tha return each fields from inside the enum `GenericParamKind`,
+// e.g. generic_param_kind.name()
+// AI!
+
 //ANCHOR_END: generic_param_kind
 
 /// Different kinds of visibility
