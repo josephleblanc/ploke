@@ -160,6 +160,53 @@ mod ids {
             Self::Synthetic(type_uuid)
         }
 
+        /// Generates a temporary Synthetic TypeId specifically for usages of `Self` or
+        /// generic parameters within a particular definition context (e.g., struct, fn, impl).
+        /// This ensures that `Self` in `impl A` gets a different TypeId than `Self` in `impl B`,
+        /// and `T` used within `Foo<T>` gets a different TypeId than `T` used within `Bar<T>`.
+        ///
+        /// # Arguments
+        /// * `crate_namespace` - The Uuid namespace of the crate where the usage occurs.
+        /// * `file_path` - The path to the file where the usage occurs.
+        /// * `context_definition_id` - The `NodeId` of the item (struct, fn, impl, etc.)
+        ///   within which this `Self` or generic parameter is being used.
+        /// * `parameter_marker` - A byte slice distinguishing the parameter (e.g., `b"SELF"`
+        ///   or `b"GENERIC:T"`).
+        pub fn generate_contextual_synthetic(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            context_definition_id: NodeId,
+            parameter_marker: &[u8],
+        ) -> Self {
+            let fp_bytes = file_path.as_os_str().as_encoded_bytes();
+
+            // Extract the UUID bytes from the NodeId regardless of variant
+            let context_id_bytes = match context_definition_id {
+                NodeId::Resolved(uuid) => *uuid.as_bytes(),
+                NodeId::Synthetic(uuid) => *uuid.as_bytes(),
+            };
+
+            // Combine namespace, file path, context ID, and the parameter marker.
+            // Using separators helps ensure distinctness.
+            let synthetic_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::FILE::")
+                .chain(fp_bytes)
+                .chain(b"::CONTEXT_ID::")
+                .chain(&context_id_bytes)
+                .chain(b"::PARAM::")
+                .chain(parameter_marker)
+                .copied()
+                .collect();
+
+            // Generate the UUIDv5 using the project's root namespace.
+            let type_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data);
+
+            // Return the Synthetic variant containing the generated UUID.
+            Self::Synthetic(type_uuid)
+        }
+
         // Placeholder for the Phase 3 resolved ID generation
         // pub fn generate_resolved(defining_crate_namespace: Uuid, canonical_type_path: &str) -> Self {
         //     // ... hash defining_crate_namespace + canonical_type_path ...
