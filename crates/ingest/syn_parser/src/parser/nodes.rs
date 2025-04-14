@@ -48,7 +48,6 @@ impl Visible for FunctionNode {
 
 // Represents a parameter in a function
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[cfg(feature = "uuid_ids")]
 pub struct ParamData {
     pub name: Option<String>,
     pub type_id: TypeId, // The ID of the parameter's type
@@ -118,9 +117,6 @@ pub struct StructNode {
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>, // Replace Vec<String>
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 //ANCHOR_END: StructNode
@@ -148,9 +144,6 @@ pub struct EnumNode {
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    #[cfg(feature = "uuid_ids")]
-    #[cfg_attr(feature = "uuid_ids", serde(skip_serializing_if = "Option::is_none"))]
-    #[cfg_attr(feature = "uuid_ids", serde(default))]
     pub tracking_hash: Option<TrackingHash>,
 }
 
@@ -477,8 +470,6 @@ pub struct MacroNode {
     pub span: (usize, usize), // Add span field
     pub visibility: VisibilityKind,
     pub kind: MacroKind,
-    #[cfg(not(feature = "uuid_ids"))]
-    pub rules: Vec<MacroRuleNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub body: Option<String>,

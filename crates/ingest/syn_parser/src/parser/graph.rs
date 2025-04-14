@@ -1,4 +1,3 @@
-#[cfg(feature = "uuid_ids")]
 use crate::parser::relations::GraphId;
 use ploke_core::NodeId;
 
@@ -23,7 +22,7 @@ impl CodeGraph {
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     pub fn debug_print_all_visible(&self) {
-        #[cfg(all(feature = "verbose_debug", feature = "uuid_ids"))]
+        #[cfg(feature = "verbose_debug")]
         {
             // New implementation using NodeId enum
             let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
@@ -50,7 +49,6 @@ impl CodeGraph {
         }
     }
 
-    #[cfg(feature = "uuid_ids")] // New version for uuid path using GraphId
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
         // Find the module that contains this item
         let module_id = self
@@ -73,7 +71,6 @@ impl CodeGraph {
         }
     }
 
-    #[cfg(feature = "uuid_ids")]
     pub fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
         // Find the module that contains this item
         let module_id = self
@@ -159,8 +156,6 @@ impl CodeGraph {
             })
     }
 
-    // #[allow(dead_code, reason = "useful later")]
-    #[cfg(feature = "uuid_ids")]
     pub fn module_contains_node(&self, module_id: NodeId, item_id: NodeId) -> bool {
         // Check if module directly contains the item
         self.modules
@@ -176,8 +171,6 @@ impl CodeGraph {
         })
     }
 
-    #[allow(dead_code, reason = "useful later")]
-    #[cfg(feature = "uuid_ids")]
     fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
         let context_module_id = match self.find_module_by_path(context_module) {
             Some(m) => m.id,

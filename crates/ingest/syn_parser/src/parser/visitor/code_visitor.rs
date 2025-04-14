@@ -218,7 +218,6 @@ impl<'a> CodeVisitor<'a> {
     /// Generates a new `NodeId::Synthetic` for the item being visited,
     /// ensuring it's immediately linked to the current module via a `Contains` relation.
     /// Requires the item's name and span for UUID generation.
-    /// This version is active when the `uuid_ids` feature is enabled.
     fn add_contains_rel(&mut self, item_name: &str, item_span: (usize, usize)) -> NodeId {
         // 1. Generate the Synthetic NodeId using context from state
         //    Requires crate_namespace, current_file_path, current_module_path, item_name, item_span
@@ -1005,7 +1004,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ReturnType::Type(_, ty) => {
                         let type_id = get_or_create_type(self.state, ty);
                         // Add relation between method and return type
-                        #[cfg(feature = "uuid_ids")]
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(method_node_id),
                             target: GraphId::Type(type_id),
@@ -1333,7 +1331,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // on the entire crate namespace itself, and cannot be specific enough to import a type
         // directly. Therefore, the `TypeId` generation doesn't make sense here. `TypeId` is
         // reserved for actual types.
-        #[cfg(feature = "uuid_ids")]
         self.state.code_graph.relations.push(Relation {
             source: GraphId::Node(import_id),
             target: GraphId::Type(type_id), // type_id is now guaranteed to be registered

@@ -1,6 +1,3 @@
-#![allow(clippy::duplicated_attributes)]
-#![cfg(feature = "uuid_ids")] // Gate the entire module
-
 use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
 use serde::Deserialize;
 use std::collections::HashMap;

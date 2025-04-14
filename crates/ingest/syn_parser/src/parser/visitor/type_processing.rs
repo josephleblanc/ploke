@@ -1,11 +1,8 @@
 use super::state::VisitorState;
-#[cfg(not(feature = "uuid_ids"))]
-use crate::parser::types::TypeId;
 use crate::parser::{
     types::{TypeKind, TypeNode},
     utils::type_to_string,
 }; // Includes TypeNode, TypeKind, TypeId (enum)
-#[cfg(feature = "uuid_ids")]
 use ploke_core::TypeId;
 use quote::ToTokens;
 use syn::{
@@ -45,11 +42,8 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     // --- New Type Processing ---
 
     // 1. Generate the new Synthetic Type ID using the string representation
-    #[cfg(feature = "uuid_ids")]
     let new_id =
         TypeId::generate_synthetic(state.crate_namespace, &state.current_file_path, &type_str);
-    #[cfg(not(feature = "uuid_ids"))]
-    let new_id = state.next_type_id(); // Fallback for non-UUID builds
 
     // 2. **Crucial:** Insert the new ID into the cache *before* recursive processing
     //    to handle potential cycles (e.g., struct Foo(Box<Foo>)).
