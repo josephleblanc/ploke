@@ -132,10 +132,52 @@ pub enum GenericParamKind {
     },
 }
 
-impl GenericParamKind {}
-// AI: Generate getter methods tha return each fields from inside the enum `GenericParamKind`,
-// e.g. generic_param_kind.name()
-// AI!
+impl GenericParamKind {
+    /// Returns the name of the generic parameter, if applicable.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            GenericParamKind::Type { name, .. } => Some(name),
+            GenericParamKind::Lifetime { name, .. } => Some(name),
+            GenericParamKind::Const { name, .. } => Some(name),
+        }
+    }
+
+    /// Returns the type bounds of the generic parameter, if applicable.
+    pub fn bounds(&self) -> Option<&[TypeId]> {
+        match self {
+            GenericParamKind::Type { bounds, .. } => Some(bounds),
+            GenericParamKind::Lifetime { .. } => None, // Lifetimes have string bounds, handled separately if needed
+            GenericParamKind::Const { .. } => None,
+        }
+    }
+
+    /// Returns the lifetime bounds of the generic parameter, if applicable.
+    pub fn lifetime_bounds(&self) -> Option<&[String]> {
+        match self {
+            GenericParamKind::Type { .. } => None,
+            GenericParamKind::Lifetime { bounds, .. } => Some(bounds),
+            GenericParamKind::Const { .. } => None,
+        }
+    }
+
+    /// Returns the default type of the generic parameter, if applicable.
+    pub fn default(&self) -> Option<&TypeId> {
+        match self {
+            GenericParamKind::Type { default, .. } => default.as_ref(),
+            GenericParamKind::Lifetime { .. } => None,
+            GenericParamKind::Const { .. } => None,
+        }
+    }
+
+    /// Returns the type ID of the const generic parameter, if applicable.
+    pub fn const_type_id(&self) -> Option<&TypeId> {
+        match self {
+            GenericParamKind::Type { .. } => None,
+            GenericParamKind::Lifetime { .. } => None,
+            GenericParamKind::Const { type_id, .. } => Some(type_id),
+        }
+    }
+}
 
 //ANCHOR_END: generic_param_kind
 
