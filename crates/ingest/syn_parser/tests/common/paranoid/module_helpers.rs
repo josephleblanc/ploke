@@ -79,7 +79,7 @@ pub fn find_declaration_node_paranoid<'a>(
         .unwrap_or_else(|| {
             panic!(
                 "Parent ModuleNode not found for path: {:?} in file '{}'",
-                parent_path_vec,
+                parent_path_vec, // Use parent_path_vec here
                 file_path.display()
             )
         });
@@ -87,7 +87,7 @@ pub fn find_declaration_node_paranoid<'a>(
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
-        &parent_path_vec,
+        &parent_path_vec, // Use parent_path_vec here
         module_name,
         ItemKind::Module,     // Pass the correct ItemKind
         Some(parent_mod.id), // Pass the PARENT module's ID as parent scope
@@ -158,19 +158,47 @@ pub fn find_file_module_node_paranoid<'a>(
 
     // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for a file-based module definition is its logical parent path.
-    let parent_path: Vec<String> = expected_module_path
+    let parent_path_vec: Vec<String> = expected_module_path // Use parent_path_vec consistently
         .iter()
         .take(expected_module_path.len().saturating_sub(1))
         .cloned()
         .collect();
     // Find the parent module node to get its ID
-    let parent_mod = graph
-        .modules
-        .iter()
-        .find(|m| m.path == parent_path_vec)
-        .unwrap_or_else(|| {
-            panic!(
-                "Parent ModuleNode not found for path: {:?} in file '{}'",
+    // Note: For the root module (e.g., lib.rs, main.rs), parent_path_vec will be empty ["crate"].
+    // The parent scope ID should be None in this case.
+    let parent_mod_id = if parent_path_vec.is_empty() || parent_path_vec == ["crate"] {
+        None // Root module has no parent *within this graph context*
+    } else {
+        Some(
+            graph
+                .modules
+                .iter()
+                .find(|m| m.path == parent_path_vec) // Use parent_path_vec here
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Parent ModuleNode not found for path: {:?} in file '{}'",
+                        parent_path_vec, // Use parent_path_vec here
+                        file_path.display()
+                    )
+                })
+                .id,
+        )
+    };
+
+    let regenerated_id = NodeId::generate_synthetic(
+        crate_namespace,
+        file_path, // Use the file_path from the target_data
+        &parent_path_vec, // Use parent_path_vec here
+        module_name,
+        ItemKind::Module, // Pass the correct ItemKind
+        parent_mod_id,    // Pass the found parent module's ID (or None)
+    );
+
+    assert_eq!(
+        module_id, regenerated_id,
+        "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module, parent_mod_id
+    );
                 parent_path_vec,
                 file_path.display()
             )
@@ -259,14 +287,26 @@ pub fn find_inline_module_node_paranoid<'a>(
         .take(expected_module_path.len().saturating_sub(1))
         .cloned()
         .collect();
+    // Find the parent module node to get its ID
+    let parent_mod = graph // Define parent_mod here
+        .modules
+        .iter()
+        .find(|m| m.path == parent_path_vec) // Use parent_path_vec here
+        .unwrap_or_else(|| {
+            panic!(
+                "Parent ModuleNode not found for path: {:?} in file '{}'",
+                parent_path_vec, // Use parent_path_vec here
+                file_path.display()
+            )
+        });
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
-        &parent_path,
+        &parent_path_vec, // Use parent_path_vec here
         module_name,
-        ItemKind::Module, // Pass the correct ItemKind
-        None,             // Pass None for parent_scope_id (temporary)
+        ItemKind::Module,     // Pass the correct ItemKind
+        Some(parent_mod.id), // Pass the PARENT module's ID as parent scope
     );
 
     assert_eq!(
