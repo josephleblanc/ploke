@@ -258,81 +258,25 @@ mod ids {
             type_kind: &TypeKind, // Use TypeKind from this crate
             related_type_ids: &[TypeId],
         ) -> Self {
-            use std::mem::discriminant;
+            // Create our custom hasher
+            let mut hasher = ByteHasher::default();
 
-            let fp_bytes = file_path.as_os_str().as_encoded_bytes();
-            let kind_discriminant_bytes = discriminant(type_kind).to_le_bytes(); // Use discriminant
+            // Hash the context components
+            // Note: Hashing Path/PathBuf directly includes OS-specific separators.
+            // Hashing the string representation might be more portable if needed,
+            // but for now, direct hashing is simpler.
+            crate_namespace.hash(&mut hasher);
+            file_path.hash(&mut hasher);
 
-            // Correct usage of uuid::Builder for v5
-            let mut hasher = uuid::Builder::new_v5(&PROJECT_NAMESPACE_UUID) // Pass namespace here
-                .append_slice(b"::CRATE::")
-                .append_slice(crate_namespace.as_bytes())
-                .append_slice(b"::FILE::")
-                .append_slice(fp_bytes)
-                .append_slice(b"::KIND_DISC::")
-                .append_slice(&kind_discriminant_bytes);
+            // Hash the structural components using their derived Hash impls
+            type_kind.hash(&mut hasher);
+            related_type_ids.hash(&mut hasher);
 
-            // Append kind-specific data
-            hasher = match type_kind {
-                TypeKind::Named {
-                    path,
-                    is_fully_qualified,
-                } => hasher
-                    .append_slice(b"::NAMED::")
-                    .append_slice(path.join("::").as_bytes())
-                    .append_slice(&[if *is_fully_qualified { 1 } else { 0 }]),
-                TypeKind::Reference {
-                    lifetime,
-                    is_mutable,
-                } => hasher
-                    .append_slice(b"::REF::")
-                    .append_slice(lifetime.as_deref().unwrap_or("").as_bytes())
-                    .append_slice(&[if *is_mutable { 1 } else { 0 }]),
-                TypeKind::Slice { .. } => hasher.append_slice(b"::SLICE"),
-                TypeKind::Array { size, .. } => hasher
-                    .append_slice(b"::ARRAY::")
-                    .append_slice(size.as_deref().unwrap_or("").as_bytes()),
-                TypeKind::Tuple { .. } => hasher.append_slice(b"::TUPLE"),
-                TypeKind::Function {
-                    is_unsafe,
-                    is_extern,
-                    abi,
-                    ..
-                } => hasher
-                    .append_slice(b"::FN_PTR::")
-                    .append_slice(&[if *is_unsafe { 1 } else { 0 }])
-                    .append_slice(&[if *is_extern { 1 } else { 0 }])
-                    .append_slice(abi.as_deref().unwrap_or("").as_bytes()),
-                TypeKind::Never => hasher.append_slice(b"::NEVER"),
-                TypeKind::Inferred => hasher.append_slice(b"::INFERRED"),
-                TypeKind::RawPointer { is_mutable, .. } => hasher
-                    .append_slice(b"::RAW_PTR::")
-                    .append_slice(&[if *is_mutable { 1 } else { 0 }]),
-                TypeKind::TraitObject { dyn_token, .. } => hasher
-                    .append_slice(b"::TRAIT_OBJ::")
-                    .append_slice(&[if *dyn_token { 1 } else { 0 }]),
-                TypeKind::ImplTrait { .. } => hasher.append_slice(b"::IMPL_TRAIT"),
-                TypeKind::Paren { .. } => hasher.append_slice(b"::PAREN"),
-                TypeKind::Macro { name, tokens } => hasher
-                    .append_slice(b"::MACRO::")
-                    .append_slice(name.as_bytes())
-                    .append_slice(tokens.as_bytes()),
-                TypeKind::Unknown { type_str } => {
-                    hasher.append_slice(b"::UNKNOWN::").append_slice(type_str.as_bytes())
-                }
-            };
+            // Retrieve the collected bytes
+            let collected_bytes = hasher.finish_bytes();
 
-            // Append related type IDs
-            hasher = hasher.append_slice(b"::RELATED::");
-            for related_id in related_type_ids {
-                let id_bytes = match related_id {
-                    TypeId::Resolved(uuid) => *uuid.as_bytes(),
-                    TypeId::Synthetic(uuid) => *uuid.as_bytes(),
-                };
-                hasher = hasher.append_slice(&id_bytes);
-            }
-
-            let type_uuid = hasher.build();
+            // Generate UUIDv5 using the collected bytes
+            let type_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &collected_bytes);
             Self::Synthetic(type_uuid)
         }
 
