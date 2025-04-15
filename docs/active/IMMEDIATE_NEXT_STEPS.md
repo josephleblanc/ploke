@@ -93,6 +93,42 @@ The code analysis reveals:
         *   Modify `visit_*` methods in `CodeVisitor` for defining items (structs, enums, traits, functions, impls, modules) to push their generated `NodeId` onto the `current_definition_scope` stack after ID creation and pop it before returning.
     *   **Benefit:** Ensures `NodeId::generate_synthetic` receives the correct immediate parent scope ID, allowing for better disambiguation of nested items and items defined within different scopes (e.g., methods in different impls). This is crucial for accurate Phase 2 graph construction.
 
+---
+
+## Status Update (2025-04-15)
+
+**Completed:**
+
+*   **Section 1 (Defer ID Unification):** Decision made and documented (ADR-007).
+*   **Section 2 (Revamp `Synthetic` ID Generation):**
+    *   Moved `ItemKind` to `ploke-core`.
+    *   Updated `NodeId::generate_synthetic` (removed span, added item\_kind, parent\_scope\_id).
+    *   Updated `NodeId` call sites in visitor.
+    *   Moved `TypeKind` to `ploke-core`.
+    *   Updated `TypeId::generate_synthetic` (structural hashing via `ByteHasher`).
+    *   Updated `TypeId` call sites in visitor (`get_or_create_type`), removed string cache.
+    *   Removed `TypeId::generate_contextual_synthetic`, updated `process_type` for generic handling of Self/Generics.
+*   **Section 3 (Enhance `VisitorState` Context):**
+    *   Added `current_definition_scope` stack to `VisitorState`.
+    *   Updated `VisitorState::generate_synthetic_node_id` to use the stack for `parent_scope_id`.
+    *   Added push/pop logic to `CodeVisitor` methods.
+
+**Current Situation:**
+
+*   Implementing Step 3 caused widespread test failures in `tests/uuid_phase2_partial_graphs/`.
+*   Analysis (`docs/plans/uuid_refactor/testing/test_failures_after_step3.md`) confirmed these failures are *expected* because the `paranoid` test helpers have not yet been updated to pass the correct `parent_scope_id` when regenerating expected `NodeId`s. The failures validate that the core change in Step 3 is working.
+
+**Next Steps:**
+
+1.  **Fix Paranoid Test Helpers:** Update all `find_*_node_paranoid` helpers in `crates/ingest/syn_parser/tests/common/paranoid/` to determine and pass the correct `parent_scope_id` (usually the containing module's ID) when calling `NodeId::generate_synthetic`.
+2.  **Run Tests:** Verify all tests pass after fixing the helpers.
+3.  **Proceed to Step 4:** Continue with the plan ("Refactor Type Processing & Cache" - although most of this was done as part of Step 2.5, review if any further action is needed).
+4.  **Proceed to Step 5:** Refactor Generic Handling.
+5.  **Proceed to Step 6:** Clarify Definition vs. Usage Representation.
+6.  **Proceed to Step 7:** Cleanup.
+
+---
+
 4.  **Refactor Type Processing & Cache:** (Renumbered from previous plan)
     *   **Action:**
         *   Modify `get_or_create_type` (still returning `TypeId`) to use the new structure-based `TypeId::generate_synthetic` (Step 2b).
