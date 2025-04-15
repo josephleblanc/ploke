@@ -340,15 +340,25 @@ fn test_import_node_field_id_regeneration() {
     ];
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
-    let actual_span = node.span;
+    // let actual_span = node.span; // Span no longer used
 
-    // ID generation uses visible_name
+    // Determine ItemKind based on the node found
+    let item_kind = match node.kind {
+        ImportKind::UseStatement => ploke_core::ItemKind::Import,
+        ImportKind::ExternCrate => ploke_core::ItemKind::ExternCrate,
+        ImportKind::ImportNode => ploke_core::ItemKind::Import, // Treat like UseStatement
+    };
+
+    // ID generation uses original_name or visible_name if no original
+    let id_gen_name = node.original_name.as_deref().unwrap_or(&node.visible_name);
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
-        visible_name,
-        actual_span,
+        id_gen_name, // Use appropriate name for ID gen
+        item_kind,   // Pass the determined ItemKind
+        None,        // Pass None for parent_scope_id
     );
 
     assert!(

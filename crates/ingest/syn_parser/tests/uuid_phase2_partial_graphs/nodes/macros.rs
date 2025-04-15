@@ -168,14 +168,18 @@ fn test_macro_node_field_id_regeneration() {
     let macro_name = "exported_macro";
 
     let node = find_macro_node_basic(graph, &module_path, macro_name);
-    let actual_span = node.span;
+    // let actual_span = node.span; // Span no longer used
+
+    // All macros use ItemKind::Macro for ID generation
+    let item_kind = ploke_core::ItemKind::Macro;
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
         macro_name,
-        actual_span,
+        item_kind, // Pass ItemKind::Macro
+        None,      // Pass None for parent_scope_id
     );
 
     assert!(

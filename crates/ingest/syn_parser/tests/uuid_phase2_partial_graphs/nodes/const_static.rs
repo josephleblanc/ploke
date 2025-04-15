@@ -216,14 +216,21 @@ fn test_value_node_field_id_regeneration() {
     let value_name = "TOP_LEVEL_INT";
 
     let node = find_value_node_basic(graph, &module_path, value_name);
-    let actual_span = node.span; // Get span from the found node
+    // let actual_span = node.span; // Span no longer used
+
+    // Determine ItemKind based on the node found
+    let item_kind = match node.kind {
+        ValueKind::Constant => ploke_core::ItemKind::Const,
+        ValueKind::Static { .. } => ploke_core::ItemKind::Static,
+    };
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
         value_name,
-        actual_span, // Use actual span
+        item_kind, // Pass the determined ItemKind
+        None,      // Pass None for parent_scope_id
     );
 
     // Assert the ID is synthetic (basic check) - still useful

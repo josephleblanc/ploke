@@ -66,12 +66,14 @@ mod phase2_relation_tests {
             .join("mod.rs");
 
         let expected_mod_two_rel_path = &["crate".to_string()];
+        // Regenerate ID using ItemKind::Module and None for parent_scope_id
         let expect_mod_two_id = NodeId::generate_synthetic(
             expect_crate_namespace,
             &expect_mod_two_path,
             expected_mod_two_rel_path,
             "module_two",
-            (0, 0),
+            ploke_core::ItemKind::Module, // Pass ItemKind::Module
+            None,                         // Pass None for parent_scope_id
         );
         let code_graph_with_mod_two_option = code_graphs
             .iter()
@@ -85,13 +87,14 @@ derived using:
     expect_mod_two_path:        {:?}
     expected_mod_two_rel_path:  {:?}
     name:                       {}
-    span:                       {:?}",
+    item_kind:                  {:?}
+    parent_scope_id:            None",
             expect_mod_two_id,
             expect_crate_namespace,
             &expect_mod_two_path,
             expected_mod_two_rel_path,
             "module_two",
-            (0, 0),
+            ploke_core::ItemKind::Module,
         );
 
         #[cfg(feature = "verbose_debug")]
