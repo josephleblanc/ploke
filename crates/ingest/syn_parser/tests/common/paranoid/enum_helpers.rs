@@ -88,14 +88,14 @@ pub fn find_enum_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         expected_module_path,
         enum_name,
-        ItemKind::Enum, // Pass the correct ItemKind
-        None,           // Pass None for parent_scope_id (temporary)
+        ItemKind::Enum,       // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         enum_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for enum '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        enum_id, regenerated_id, enum_name, file_path.display(), ItemKind::Enum
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for enum '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        enum_id, regenerated_id, enum_name, file_path.display(), ItemKind::Enum, Some(module_node.id)
     );
 
     // 7. Return the validated node

@@ -66,25 +66,37 @@ pub fn find_declaration_node_paranoid<'a>(
 
     // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for a declaration is the path of the module it's declared *in*.
-    let parent_path: Vec<String> = expected_module_path
+    let parent_path_vec: Vec<String> = expected_module_path
         .iter()
         .take(expected_module_path.len().saturating_sub(1))
         .cloned()
         .collect();
+    // Find the parent module node to get its ID
+    let parent_mod = graph
+        .modules
+        .iter()
+        .find(|m| m.path == parent_path_vec)
+        .unwrap_or_else(|| {
+            panic!(
+                "Parent ModuleNode not found for path: {:?} in file '{}'",
+                parent_path_vec,
+                file_path.display()
+            )
+        });
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
-        &parent_path,
+        &parent_path_vec,
         module_name,
-        ItemKind::Module, // Pass the correct ItemKind
-        None,             // Pass None for parent_scope_id (temporary)
+        ItemKind::Module,     // Pass the correct ItemKind
+        Some(parent_mod.id), // Pass the PARENT module's ID as parent scope
     );
 
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between declaration node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
+        "Mismatch between declaration node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module, Some(parent_mod.id)
     );
 
     // 6. Return the validated node
@@ -151,14 +163,26 @@ pub fn find_file_module_node_paranoid<'a>(
         .take(expected_module_path.len().saturating_sub(1))
         .cloned()
         .collect();
+    // Find the parent module node to get its ID
+    let parent_mod = graph
+        .modules
+        .iter()
+        .find(|m| m.path == parent_path_vec)
+        .unwrap_or_else(|| {
+            panic!(
+                "Parent ModuleNode not found for path: {:?} in file '{}'",
+                parent_path_vec,
+                file_path.display()
+            )
+        });
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
-        &parent_path,
+        &parent_path_vec,
         module_name,
-        ItemKind::Module, // Pass the correct ItemKind
-        None,             // Pass None for parent_scope_id (temporary)
+        ItemKind::Module,     // Pass the correct ItemKind
+        Some(parent_mod.id), // Pass the PARENT module's ID as parent scope
     );
 
     assert_eq!(
@@ -230,7 +254,7 @@ pub fn find_inline_module_node_paranoid<'a>(
 
     // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for an inline module definition is its logical parent path.
-    let parent_path: Vec<String> = expected_module_path
+    let parent_path_vec: Vec<String> = expected_module_path
         .iter()
         .take(expected_module_path.len().saturating_sub(1))
         .cloned()
@@ -247,8 +271,8 @@ pub fn find_inline_module_node_paranoid<'a>(
 
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between inline module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
+        "Mismatch between inline module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module, Some(parent_mod.id)
     );
 
     // 6. Return the validated node

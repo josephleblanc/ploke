@@ -571,13 +571,13 @@ pub fn find_function_node_paranoid<'a>(
         expected_module_path,
         func_name,
         ploke_core::ItemKind::Function, // Pass the correct ItemKind
-        None,                           // Pass None for parent_scope_id (temporary)
+        Some(module_node.id),           // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function, Some(module_node.id)
     );
 
     // 7. Return the validated node

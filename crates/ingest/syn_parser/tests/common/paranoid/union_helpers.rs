@@ -88,14 +88,14 @@ pub fn find_union_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         expected_module_path,
         union_name,
-        ItemKind::Union, // Pass the correct ItemKind
-        None,            // Pass None for parent_scope_id (temporary)
+        ItemKind::Union,      // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         union_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for union '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        union_id, regenerated_id, union_name, file_path.display(), ItemKind::Union
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for union '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        union_id, regenerated_id, union_name, file_path.display(), ItemKind::Union, Some(module_node.id)
     );
 
     // 7. Return the validated node

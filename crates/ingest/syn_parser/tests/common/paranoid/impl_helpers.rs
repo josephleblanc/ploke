@@ -158,9 +158,9 @@ pub fn find_impl_node_paranoid<'a>(
         crate_namespace,
         file_path,
         expected_module_path,
-        &expected_name, // Use the generated name
-        ItemKind::Impl, // Pass the correct ItemKind
-        None,           // Pass None for parent_scope_id (temporary)
+        &expected_name,       // Use the generated name
+        ItemKind::Impl,       // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     // We compare the regenerated ID against the actual ID found on the node.
@@ -168,8 +168,8 @@ pub fn find_impl_node_paranoid<'a>(
     // doesn't perfectly match the one used inside the visitor's `add_contains_rel` call.
     assert_eq!(
         impl_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' (ItemKind: {:?}, ParentScope: None). Name generation might be the cause.",
-        impl_id, regenerated_id, expected_name, file_path.display(), ItemKind::Impl
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?}). Name generation might be the cause.",
+        impl_id, regenerated_id, expected_name, file_path.display(), ItemKind::Impl, Some(module_node.id)
     );
 
     // 8. Return the validated node

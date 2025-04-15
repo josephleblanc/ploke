@@ -87,14 +87,14 @@ pub fn find_trait_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         expected_module_path,
         trait_name,
-        ItemKind::Trait, // Pass the correct ItemKind
-        None,            // Pass None for parent_scope_id (temporary)
+        ItemKind::Trait,      // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         trait_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for trait '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        trait_id, regenerated_id, trait_name, file_path.display(), ItemKind::Trait
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for trait '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        trait_id, regenerated_id, trait_name, file_path.display(), ItemKind::Trait, Some(module_node.id)
     );
 
     // 7. Return the validated node

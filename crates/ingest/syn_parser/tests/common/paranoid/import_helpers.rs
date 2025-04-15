@@ -127,8 +127,8 @@ pub fn find_import_node_paranoid<'a>(
 
     assert_eq!(
         import_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}' (ItemKind: {:?}, ParentScope: None)",
-        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind, Some(module_node.id)
     );
 
     // 8. Return the validated node

@@ -88,14 +88,14 @@ pub fn find_struct_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         expected_module_path,
         struct_name,
-        ItemKind::Struct, // Pass the correct ItemKind
-        None,             // Pass None for parent_scope_id (temporary)
+        ItemKind::Struct,     // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         struct_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for struct '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        struct_id, regenerated_id, struct_name, file_path.display(), ItemKind::Struct
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for struct '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        struct_id, regenerated_id, struct_name, file_path.display(), ItemKind::Struct, Some(module_node.id)
     );
 
     // 7. Return the validated node

@@ -88,14 +88,14 @@ pub fn find_type_alias_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         expected_module_path,
         alias_name,
-        ItemKind::TypeAlias, // Pass the correct ItemKind
-        None,                // Pass None for parent_scope_id (temporary)
+        ItemKind::TypeAlias,  // Pass the correct ItemKind
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
         alias_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        alias_id, regenerated_id, alias_name, file_path.display(), ItemKind::TypeAlias
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        alias_id, regenerated_id, alias_name, file_path.display(), ItemKind::TypeAlias, Some(module_node.id)
     );
 
     // 7. Return the validated node
