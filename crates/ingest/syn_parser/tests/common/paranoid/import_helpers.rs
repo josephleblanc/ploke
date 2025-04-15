@@ -99,30 +99,36 @@ pub fn find_import_node_paranoid<'a>(
 
     let import_node = module_candidates[0];
     let import_id = import_node.id;
-    let actual_span = import_node.span; // Get span from the found node
+    // let actual_span = import_node.span; // Span no longer used for ID generation
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
-    //    The ID is generated based on the visible_name (or "*" for glob) and span.
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    //    The ID is generated based on the original name (or "<glob>") and ItemKind.
     let id_gen_name = if import_node.is_glob {
-        "*"
+        "<glob>" // Use the placeholder name used during generation
     } else {
         import_node
             .original_name
             .as_deref()
-            .unwrap_or(&import_node.visible_name)
+            .unwrap_or(&import_node.visible_name) // Fallback to visible if no original (shouldn't happen for non-glob?)
     };
+    let item_kind = match import_node.kind {
+        syn_parser::parser::nodes::ImportKind::UseStatement => ItemKind::Import,
+        syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
+    };
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
-        id_gen_name,          // Use visible_name or "*" for ID generation
-        actual_span,          // Use the span from the node itself
+        id_gen_name,          // Use original name or "<glob>" for ID generation
+        item_kind,            // Pass the correct ItemKind
+        None,                 // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         import_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}' with span {:?}",
-        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}' (ItemKind: {:?}, ParentScope: None)",
+        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind
     );
 
     // 8. Return the validated node

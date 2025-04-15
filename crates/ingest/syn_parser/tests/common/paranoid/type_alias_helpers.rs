@@ -80,21 +80,22 @@ pub fn find_type_alias_node_paranoid<'a>(
 
     let type_alias_node = module_candidates[0];
     let alias_id = type_alias_node.id();
-    let actual_span = type_alias_node.span; // Get span from the found node
+    // let actual_span = type_alias_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         alias_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::TypeAlias, // Pass the correct ItemKind
+        None,                // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         alias_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in file '{}' with span {:?}",
-        alias_id, regenerated_id, alias_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        alias_id, regenerated_id, alias_name, file_path.display(), ItemKind::TypeAlias
     );
 
     // 7. Return the validated node

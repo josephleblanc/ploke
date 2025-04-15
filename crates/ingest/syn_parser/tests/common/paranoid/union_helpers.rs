@@ -80,21 +80,22 @@ pub fn find_union_node_paranoid<'a>(
 
     let union_node = module_candidates[0];
     let union_id = union_node.id();
-    let actual_span = union_node.span; // Get span from the found node
+    // let actual_span = union_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         union_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::Union, // Pass the correct ItemKind
+        None,            // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         union_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for union '{}' in file '{}' with span {:?}",
-        union_id, regenerated_id, union_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for union '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        union_id, regenerated_id, union_name, file_path.display(), ItemKind::Union
     );
 
     // 7. Return the validated node

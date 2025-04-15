@@ -79,21 +79,22 @@ pub fn find_trait_node_paranoid<'a>(
 
     let trait_node = module_candidates[0];
     let trait_id = trait_node.id();
-    let actual_span = trait_node.span; // Get span from the found node
+    // let actual_span = trait_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         trait_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::Trait, // Pass the correct ItemKind
+        None,            // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         trait_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for trait '{}' in file '{}' with span {:?}",
-        trait_id, regenerated_id, trait_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for trait '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        trait_id, regenerated_id, trait_name, file_path.display(), ItemKind::Trait
     );
 
     // 7. Return the validated node

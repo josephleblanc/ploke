@@ -92,21 +92,28 @@ pub fn find_value_node_paranoid<'a>(
 
     let value_node = module_candidates[0];
     let value_id = value_node.id();
-    let actual_span = value_node.span; // Get span from the found node
+    // let actual_span = value_node.span; // Span no longer used for ID generation
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // Determine ItemKind based on ValueNodeKind
+    let item_kind = match value_node.kind {
+        syn_parser::parser::nodes::ValueNodeKind::Const => ItemKind::Const,
+        syn_parser::parser::nodes::ValueNodeKind::Static => ItemKind::Static,
+    };
+
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
         value_name,
-        actual_span, // Use the span from the node itself
+        item_kind, // Pass the determined ItemKind
+        None,      // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         value_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}' with span {:?}",
-        value_id, regenerated_id, value_name, expected_module_path, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: None)",
+        value_id, regenerated_id, value_name, expected_module_path, file_path.display(), item_kind
     );
 
     // 8. Return the validated node

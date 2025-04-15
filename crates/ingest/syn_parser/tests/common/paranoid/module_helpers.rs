@@ -56,15 +56,15 @@ pub fn find_declaration_node_paranoid<'a>(
     let module_node = candidates[0];
     let module_id = module_node.id();
     let module_name = module_node.name();
-    // Use the declaration span for ID regeneration
-    let actual_span = module_node.declaration_span().unwrap_or_else(|| {
-        panic!(
-            "ModuleNode {:?} ({}) is Declaration but has no declaration_span",
-            module_node.path, module_node.name
-        )
-    });
+    // Span is no longer used for ID generation
+    // let actual_span = module_node.declaration_span().unwrap_or_else(|| {
+    //     panic!(
+    //         "ModuleNode {:?} ({}) is Declaration but has no declaration_span",
+    //         module_node.path, module_node.name
+    //     )
+    // });
 
-    // 5. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for a declaration is the path of the module it's declared *in*.
     let parent_path: Vec<String> = expected_module_path
         .iter()
@@ -77,13 +77,14 @@ pub fn find_declaration_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         &parent_path,
         module_name,
-        actual_span, // Use the declaration span
+        ItemKind::Module, // Pass the correct ItemKind
+        None,             // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between declaration node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' with declaration span {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), actual_span
+        "Mismatch between declaration node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
     );
 
     // 6. Return the validated node
@@ -140,10 +141,10 @@ pub fn find_file_module_node_paranoid<'a>(
     let module_node = candidates[0];
     let module_id = module_node.id();
     let module_name = module_node.name();
-    // Use the module's overall span (currently (0,0) for file root, might change)
-    let actual_span = module_node.span;
+    // Span is no longer used for ID generation
+    // let actual_span = module_node.span;
 
-    // 5. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for a file-based module definition is its logical parent path.
     let parent_path: Vec<String> = expected_module_path
         .iter()
@@ -156,13 +157,14 @@ pub fn find_file_module_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         &parent_path,
         module_name,
-        actual_span, // Use the module's span
+        ItemKind::Module, // Pass the correct ItemKind
+        None,             // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' with span {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), actual_span
+        "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
     );
 
     // 6. Return the validated node
@@ -218,15 +220,15 @@ pub fn find_inline_module_node_paranoid<'a>(
     let module_node = candidates[0];
     let module_id = module_node.id();
     let module_name = module_node.name();
-    // Use the inline span for ID regeneration
-    let actual_span = module_node.inline_span().unwrap_or_else(|| {
-        panic!(
-            "ModuleNode {:?} ({}) is Inline but has no inline_span",
-            module_node.path, module_node.name
-        )
-    });
+    // Span is no longer used for ID generation
+    // let actual_span = module_node.inline_span().unwrap_or_else(|| {
+    //     panic!(
+    //         "ModuleNode {:?} ({}) is Inline but has no inline_span",
+    //         module_node.path, module_node.name
+    //     )
+    // });
 
-    // 5. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 5. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The parent path for an inline module definition is its logical parent path.
     let parent_path: Vec<String> = expected_module_path
         .iter()
@@ -239,13 +241,14 @@ pub fn find_inline_module_node_paranoid<'a>(
         file_path, // Use the file_path from the target_data
         &parent_path,
         module_name,
-        actual_span, // Use the inline span
+        ItemKind::Module, // Pass the correct ItemKind
+        None,             // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         module_id, regenerated_id,
-        "Mismatch between inline module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' with inline span {:?}",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), actual_span
+        "Mismatch between inline module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
     );
 
     // 6. Return the validated node

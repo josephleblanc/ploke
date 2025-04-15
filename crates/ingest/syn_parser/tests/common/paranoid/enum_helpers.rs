@@ -80,21 +80,22 @@ pub fn find_enum_node_paranoid<'a>(
 
     let enum_node = module_candidates[0];
     let enum_id = enum_node.id();
-    let actual_span = enum_node.span; // Get span from the found node
+    // let actual_span = enum_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         enum_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::Enum, // Pass the correct ItemKind
+        None,           // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         enum_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for enum '{}' in file '{}' with span {:?}",
-        enum_id, regenerated_id, enum_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for enum '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        enum_id, regenerated_id, enum_name, file_path.display(), ItemKind::Enum
     );
 
     // 7. Return the validated node

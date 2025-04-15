@@ -90,21 +90,22 @@ pub fn find_macro_node_paranoid<'a>(
 
     let macro_node = module_candidates[0];
     let macro_id = macro_node.id();
-    let actual_span = macro_node.span; // Get span from the found node
+    // let actual_span = macro_node.span; // Span no longer used for ID generation
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
         macro_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::Macro, // Pass the correct ItemKind
+        None,            // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         macro_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' with span {:?}",
-        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: None)",
+        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro
     );
 
     // 8. Return the validated node

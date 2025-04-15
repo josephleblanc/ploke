@@ -80,21 +80,22 @@ pub fn find_struct_node_paranoid<'a>(
 
     let struct_node = module_candidates[0];
     let struct_id = struct_node.id();
-    let actual_span = struct_node.span; // Get span from the found node
+    // let actual_span = struct_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         struct_name,
-        actual_span, // Use the span from the node itself
+        ItemKind::Struct, // Pass the correct ItemKind
+        None,             // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         struct_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for struct '{}' in file '{}' with span {:?}",
-        struct_id, regenerated_id, struct_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for struct '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        struct_id, regenerated_id, struct_name, file_path.display(), ItemKind::Struct
     );
 
     // 7. Return the validated node

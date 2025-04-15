@@ -102,9 +102,9 @@ pub fn find_impl_node_paranoid<'a>(
 
     let impl_node = module_candidates[0];
     let impl_id = impl_node.id();
-    let actual_span = impl_node.span;
+    // let actual_span = impl_node.span; // Span no longer used for ID generation
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     //    Need to generate the expected name based on type strings.
     let expected_name = match trait_type_str {
         Some(t) => format!("impl {} for {}", t, self_type_str),
@@ -117,19 +117,18 @@ pub fn find_impl_node_paranoid<'a>(
         crate_namespace,
         file_path,
         expected_module_path,
-        &expected_name, // Use the generated name
-        actual_span,
+        &expected_name,   // Use the generated name
+        ItemKind::Impl,   // Pass the correct ItemKind
+        None,             // Pass None for parent_scope_id (temporary)
     );
 
     // We compare the regenerated ID against the actual ID found on the node.
     // NOTE: This check might be brittle if the `expected_name` generation here
-    // doesn't perfectly match the one used inside the visitor's `add_contains_rel` call,
-    // especially for generic types where `to_string()` adds spaces.
-    // Consider relaxing this specific check if it proves too fragile due to name generation differences.
+    // doesn't perfectly match the one used inside the visitor's `add_contains_rel` call.
     assert_eq!(
         impl_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' with span {:?}. Name generation might be the cause.",
-        impl_id, regenerated_id, expected_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' (ItemKind: {:?}, ParentScope: None). Name generation might be the cause.",
+        impl_id, regenerated_id, expected_name, file_path.display(), ItemKind::Impl
     );
 
     // 8. Return the validated node
