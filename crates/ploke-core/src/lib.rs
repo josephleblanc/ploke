@@ -5,8 +5,13 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
+// Add top-level serde imports for derives
+use serde::{Deserialize, Serialize};
+
 mod ids {
     use std::path::Path;
+    // Import TypeKind into the ids module scope
+    use crate::TypeKind;
 
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -195,8 +200,8 @@ mod ids {
             let fp_bytes = file_path.as_os_str().as_encoded_bytes();
             let kind_discriminant_bytes = discriminant(type_kind).to_le_bytes(); // Use discriminant
 
-            let mut hasher = uuid::v5::Builder::from_slice(PROJECT_NAMESPACE_UUID.as_bytes())
-                .expect("Failed to create UUIDv5 builder from project namespace")
+            // Correct usage of uuid::Builder for v5
+            let mut hasher = uuid::Builder::new_v5(&PROJECT_NAMESPACE_UUID) // Pass namespace here
                 .append_slice(b"::CRATE::")
                 .append_slice(crate_namespace.as_bytes())
                 .append_slice(b"::FILE::")
