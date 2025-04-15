@@ -1,9 +1,7 @@
 use super::state::VisitorState;
-use crate::parser::{
-    types::{TypeKind, TypeNode},
-    utils::type_to_string,
-}; // Includes TypeNode, TypeKind, TypeId (enum)
+use crate::parser::{types::TypeNode, utils::type_to_string}; // Includes TypeNode, TypeKind, TypeId (enum)
 use ploke_core::TypeId;
+use ploke_core::TypeKind;
 use quote::ToTokens;
 use syn::{
     AngleBracketedGenericArguments, GenericArgument, PathArguments, ReturnType, Type, TypePath,
