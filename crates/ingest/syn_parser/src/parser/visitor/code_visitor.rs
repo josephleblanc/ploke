@@ -58,9 +58,9 @@ impl<'a> CodeVisitor<'a> {
                     full_path.last().unwrap().clone()
                 } else {
                     full_path.push(use_name.clone());
-                    use_name
+                    use_name // This is the visible name in this case
                 };
-                // Pass ItemKind::Import
+                // Pass the *visible name* (checked_name) and ItemKind::Import
                 let import_id = self.add_contains_rel(&checked_name, ItemKind::Import);
 
                 imports.push(ImportNode {
@@ -77,13 +77,13 @@ impl<'a> CodeVisitor<'a> {
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
                 let original_name = rename.ident.to_string();
-                let visible_name = rename.rename.to_string();
+                let visible_name = rename.rename.to_string(); // The 'as' name
 
                 let span = rename.extract_span_bytes();
-                // Pass ItemKind::Import, use original name for ID generation consistency
-                let import_id = self.add_contains_rel(&original_name, ItemKind::Import);
+                // Pass the *visible name* and ItemKind::Import
+                let import_id = self.add_contains_rel(&visible_name, ItemKind::Import);
 
-                full_path.push(original_name.clone());
+                full_path.push(original_name.clone()); // Path still uses original name segment
 
                 imports.push(ImportNode {
                     id: import_id,
@@ -1270,14 +1270,22 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// This visit method will:
     ///     - Create an `ImportNode` for the extern crate and add it to current_module.imports
     ///     - Adds a new `Contains` relation with current module (through `add_contains_rel`)
-    ///     - `NodeId::Synthetic` created through `add_contains_rel`
+    ///     - `NodeId::Synthetic` created through `add_contains_rel` using the *visible name*.
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
-        let crate_name = extern_crate.ident.to_string();
-        // Pass ItemKind::ExternCrate
-        let import_id = self.add_contains_rel(&crate_name, ItemKind::ExternCrate);
+        // Determine the visible name (alias or original name)
+        let visible_name = extern_crate
+            .rename
+            .as_ref()
+            .map(|(_, id)| id.to_string()) // Use the rename identifier if present
+            .unwrap_or_else(|| extern_crate.ident.to_string()); // Otherwise, use the original identifier
+
+        // Pass the *visible name* and ItemKind::ExternCrate to generate the ID
+        let import_id = self.add_contains_rel(&visible_name, ItemKind::ExternCrate);
 
         #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&crate_name, import_id);
+        self.debug_new_id(&visible_name, import_id); // Log with visible name
+
+        let crate_name = extern_crate.ident.to_string(); // Keep original name for path etc.
 
         let span = extern_crate.extract_span_bytes();
 

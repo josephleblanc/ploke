@@ -102,14 +102,11 @@ pub fn find_import_node_paranoid<'a>(
     // let actual_span = import_node.span; // Span no longer used for ID generation
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
-    //    The ID is generated based on the original name (or "<glob>") and ItemKind.
+    //    The ID is now generated based on the *visible name* (or "<glob>") and ItemKind.
     let id_gen_name = if import_node.is_glob {
         "<glob>" // Use the placeholder name used during generation
     } else {
-        import_node
-            .original_name
-            .as_deref()
-            .unwrap_or(&import_node.visible_name) // Fallback to visible if no original (shouldn't happen for non-glob?)
+        &import_node.visible_name // Use the visible name for ID regeneration
     };
     // Handle all variants of ImportKind
     let item_kind = match import_node.kind {

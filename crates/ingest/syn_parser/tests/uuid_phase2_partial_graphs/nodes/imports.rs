@@ -349,14 +349,18 @@ fn test_import_node_field_id_regeneration() {
         ImportKind::ImportNode => ploke_core::ItemKind::Import, // Treat like UseStatement
     };
 
-    // ID generation uses original_name or visible_name if no original
-    let id_gen_name = node.original_name.as_deref().unwrap_or(&node.visible_name);
+    // ID generation now uses the *visible name* or "<glob>"
+    let id_gen_name = if node.is_glob {
+        "<glob>"
+    } else {
+        &node.visible_name
+    };
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
-        id_gen_name, // Use appropriate name for ID gen
+        id_gen_name, // Use visible name or "<glob>" for ID gen
         item_kind,   // Pass the determined ItemKind
         None,        // Pass None for parent_scope_id
     );
