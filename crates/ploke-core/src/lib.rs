@@ -248,9 +248,12 @@ mod ids {
         /// - Bytes representing the specific data within the `TypeKind` variant (e.g., path segments, mutability flags).
         /// - Bytes of all `related_type_ids` UUIDs in order.
         ///
-        /// **Note:** This currently generates generic IDs for `Self` and generic parameter usages
-        /// based on their simple names (e.g., `TypeKind::Named { path: ["Self"], .. }`). Full
-        /// contextual disambiguation for these cases is planned for Step 3 (`Enhance VisitorState Context`).
+        /// **Note on `Self` and Generic Parameters:** This function currently generates generic IDs
+        /// for usages of `Self` and generic parameters based on their simple names (e.g.,
+        /// `TypeKind::Named { path: ["Self"], .. }` or `TypeKind::Named { path: ["T"], .. }`).
+        /// This means `Self` used in `impl A` might temporarily get the same `Synthetic` `TypeId`
+        /// as `Self` used in `impl B` during Phase 2. Full contextual disambiguation to distinguish
+        /// these cases is deferred until Phase 3 (name resolution) or Step 3 (`Enhance VisitorState Context`).
         pub fn generate_synthetic(
             crate_namespace: Uuid,
             file_path: &Path,
@@ -279,52 +282,8 @@ mod ids {
             Self::Synthetic(type_uuid)
         }
 
-        /// Generates a temporary Synthetic TypeId specifically for usages of `Self` or
-        /// generic parameters within a particular definition context (e.g., struct, fn, impl).
-        /// This ensures that `Self` in `impl A` gets a different TypeId than `Self` in `impl B`,
-        /// and `T` used within `Foo<T>` gets a different TypeId than `T` used within `Bar<T>`.
-        ///
-        /// # Arguments
-        /// * `crate_namespace` - The Uuid namespace of the crate where the usage occurs.
-        /// * `file_path` - The path to the file where the usage occurs.
-        /// * `context_definition_id` - The `NodeId` of the item (struct, fn, impl, etc.)
-        ///   within which this `Self` or generic parameter is being used.
-        /// * `parameter_marker` - A byte slice distinguishing the parameter (e.g., `b"SELF"`
-        ///   or `b"GENERIC:T"`).
-        pub fn generate_contextual_synthetic(
-            crate_namespace: Uuid,
-            file_path: &Path,
-            context_definition_id: NodeId,
-            parameter_marker: &[u8],
-        ) -> Self {
-            let fp_bytes = file_path.as_os_str().as_encoded_bytes();
-
-            // Extract the UUID bytes from the NodeId regardless of variant
-            let context_id_bytes = match context_definition_id {
-                NodeId::Resolved(uuid) => *uuid.as_bytes(),
-                NodeId::Synthetic(uuid) => *uuid.as_bytes(),
-            };
-
-            // Combine namespace, file path, context ID, and the parameter marker.
-            // Using separators helps ensure distinctness.
-            let synthetic_data: Vec<u8> = crate_namespace
-                .as_bytes()
-                .iter()
-                .chain(b"::FILE::")
-                .chain(fp_bytes)
-                .chain(b"::CONTEXT_ID::")
-                .chain(&context_id_bytes)
-                .chain(b"::PARAM::")
-                .chain(parameter_marker)
-                .copied()
-                .collect();
-
-            // Generate the UUIDv5 using the project's root namespace.
-            let type_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data);
-
-            // Return the Synthetic variant containing the generated UUID.
-            Self::Synthetic(type_uuid)
-        }
+        // Removed generate_contextual_synthetic function.
+        // Contextual disambiguation for Self/Generics is deferred to Step 3.
 
         // Placeholder for the Phase 3 resolved ID generation
         // pub fn generate_resolved(defining_crate_namespace: Uuid, canonical_type_path: &str) -> Self {

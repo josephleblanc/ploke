@@ -77,6 +77,9 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
 
     match ty {
         Type::Path(TypePath { path, qself }) => {
+            // Check if it's a simple path like "Self" or "T" (potential generic/self)
+            // For now, treat these like any other named path for TypeKind generation.
+            // Contextual disambiguation is deferred.
             let segments: Vec<String> = path
                 .segments
                 .iter()
