@@ -375,8 +375,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Add the macro to the code graph
             self.state.code_graph.macros.push(macro_node);
+            // Don't push proc macro IDs onto the definition scope stack,
+            // as they don't typically define nested items in the same way.
+            // Continue visiting the function body for regular functions below.
         }
 
+        // --- Handle Regular Functions ---
         let fn_name = func.sig.ident.to_string();
         // Pass ItemKind::Function
         let fn_id = self.add_contains_rel(&fn_name, ItemKind::Function);
@@ -441,8 +445,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
         });
 
+        // Push the function's ID onto the scope stack
+        self.state.current_definition_scope.push(fn_id);
+
         // Continue visiting the function body
         visit::visit_item_fn(self, func);
+
+        // Pop the function's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     // Visit struct definitions
@@ -525,7 +535,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         .generate_tracking_hash(&item_struct.to_token_stream()),
                 ),
             }));
+
+        // Push the struct's ID onto the scope stack
+        self.state.current_definition_scope.push(struct_id);
+
         visit::visit_item_struct(self, item_struct);
+
+        // Pop the struct's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     // Visit type alias definitions
@@ -567,6 +584,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
+        // Type aliases don't typically define nested scopes in the same way
+        // as structs/enums/fns, so we don't push their ID onto the definition stack.
         visit::visit_item_type(self, item_type);
     }
 
@@ -644,7 +663,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
+        // Push the union's ID onto the scope stack
+        self.state.current_definition_scope.push(union_id);
+
         visit::visit_item_union(self, item_union);
+
+        // Pop the union's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     // Visit enum definitions
@@ -788,7 +813,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
+        // Push the enum's ID onto the scope stack
+        self.state.current_definition_scope.push(enum_id);
+
         visit::visit_item_enum(self, item_enum);
+
+        // Pop the enum's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     // Visit impl blocks
@@ -962,7 +993,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
+        // Push the impl's ID onto the scope stack
+        self.state.current_definition_scope.push(impl_id);
+
         visit::visit_item_impl(self, item_impl);
+
+        // Pop the impl's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     // Visit trait definitions
@@ -1115,7 +1152,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
+        // Push the trait's ID onto the scope stack
+        self.state.current_definition_scope.push(trait_id);
+
         visit::visit_item_trait(self, item_trait);
+
+        // Pop the trait's ID from the scope stack
+        self.state.current_definition_scope.pop();
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
@@ -1194,8 +1237,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         self.state.code_graph.modules.push(module_node);
+
+        // Push the module's ID onto the scope stack *before* visiting children
+        self.state.current_definition_scope.push(module_id);
+
         // continue visiting.
         visit::visit_item_mod(self, module);
+
+        // Pop the module's ID *after* visiting children
+        self.state.current_definition_scope.pop();
 
         let _popped = self.state.current_module.pop();
         #[cfg(feature = "verbose_debug")]

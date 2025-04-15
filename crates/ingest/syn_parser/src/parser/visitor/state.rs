@@ -29,6 +29,8 @@ pub struct VisitorState {
     // USER response: Agreed, should re-evaluate post-refactor of uuid system.
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
     pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
+    // Stack tracking the NodeId of the current definition scope (e.g., struct, fn, impl, trait)
+    pub(crate) current_definition_scope: Vec<NodeId>,
 }
 
 impl VisitorState {
@@ -56,20 +58,23 @@ impl VisitorState {
             // type_map removed
             current_module_path: Vec::new(),
             current_module: Vec::new(),
+            current_definition_scope: Vec::new(), // Initialize empty scope stack
         }
     }
 
     /// Helper to generate a synthetic NodeId using the current visitor state.
-    /// Passes `None` for `parent_scope_id` currently. This needs to be updated
-    /// when parent scope tracking is implemented in VisitorState (Step 3).
+    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
     pub(crate) fn generate_synthetic_node_id(&self, name: &str, item_kind: ItemKind) -> NodeId {
+        // Get the last pushed scope ID as the parent, if available
+        let parent_scope_id = self.current_definition_scope.last().copied();
+
         NodeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
             &self.current_module_path, // Current module path acts as relative path context
             name,
             item_kind,
-            None, // TODO: Pass actual parent_scope_id once VisitorState tracks it
+            parent_scope_id, // Pass the parent scope ID from the stack
         )
     }
 

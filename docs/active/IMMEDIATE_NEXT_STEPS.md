@@ -41,7 +41,7 @@ The code analysis reveals:
             *   **Files:** `crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs` (via `add_contains_rel` and direct calls), `crates/ingest/syn_parser/src/parser/visitor/state.rs` (via `generate_synthetic_node_id` helper), `crates/ingest/syn_parser/src/parser/visitor/mod.rs` (root module ID).
             *   **Change:** Systematically locate all call sites (direct or indirect via helpers like `add_contains_rel` and `generate_synthetic_node_id`). For each call:
                 *   Pass the correct `ItemKind` corresponding to the code element being processed (e.g., `ItemKind::Function` for an `ItemFn`, `ItemKind::Field` for a struct field, `ItemKind::Module` for `ItemMod`, etc.).
-                *   **Temporarily Pass `None` for `parent_scope_id`:** The `VisitorState` does not yet track the parent scope ID. All calls will pass `None` for this argument for now. This will be addressed in Step 3 (`Enhance VisitorState Context`).
+                *   Pass the appropriate `parent_scope_id`. This is now handled by the updated `VisitorState::generate_synthetic_node_id` helper, which reads from `current_definition_scope`.
                 *   Remove the `span` argument.
             *   **Helpers Updated:** The `VisitorState::generate_synthetic_node_id` and `CodeVisitor::add_contains_rel` helpers were updated to accept `ItemKind` instead of `span`.
             *   **Error Prevention:** Compile frequently after modifying call sites. Use the compiler errors (e.g., "missing argument `item_kind`", "expected `ItemKind`, found `(usize, usize)`") to ensure all call sites are found and updated correctly.
@@ -86,10 +86,14 @@ The code analysis reveals:
     *   **Benefit:** Creates significantly more stable and semantically meaningful `Synthetic` IDs, robust against formatting changes. Disambiguates items like functions and structs with the same name in the same scope (`NodeId`). Bases type identity on structure rather than potentially ambiguous string representations (`TypeId`), fixing critical issues with `Self` type conflation and providing a solid foundation for handling generics correctly. Reduces reliance on `span`, making IDs less volatile.
 
 3.  **Enhance `VisitorState` Context:**
-    *   **Action:** Add `current_definition_scope: Vec<NodeId>` to `VisitorState`. Push the `Synthetic` `NodeId` of a defining item (struct, trait, impl, fn) when entering its visit method, pop when leaving. The *last* element of this stack is the immediate parent scope ID needed for `NodeId::generate_synthetic`.
-    *   **Benefit:** Provides necessary context for generating IDs for nested items (fields, variants, generic parameters, methods) that are correctly scoped relative to their defining parent.
+    *   **Goal:** Provide the necessary parent scope context for generating correctly scoped `Synthetic` `NodeId`s for nested items (fields, variants, methods, generic parameters defined within items).
+    *   **Action:**
+        *   Add `current_definition_scope: Vec<NodeId>` to `VisitorState` and initialize it.
+        *   Update `VisitorState::generate_synthetic_node_id` helper to read `self.current_definition_scope.last().copied()` and pass it as the `parent_scope_id` argument to the core `NodeId::generate_synthetic` function.
+        *   Modify `visit_*` methods in `CodeVisitor` for defining items (structs, enums, traits, functions, impls, modules) to push their generated `NodeId` onto the `current_definition_scope` stack after ID creation and pop it before returning.
+    *   **Benefit:** Ensures `NodeId::generate_synthetic` receives the correct immediate parent scope ID, allowing for better disambiguation of nested items and items defined within different scopes (e.g., methods in different impls). This is crucial for accurate Phase 2 graph construction.
 
-4.  **Refactor Type Processing & Cache:**
+4.  **Refactor Type Processing & Cache:** (Renumbered from previous plan)
     *   **Action:**
         *   Modify `get_or_create_type` (still returning `TypeId`) to use the new structure-based `TypeId::generate_synthetic` (Step 2b).
         *   Remove the `VisitorState.type_map` cache entirely *or* change its key to be the generated `Synthetic` `TypeId` and its value to be the `TypeNode`. Evaluate if it's still needed after fixing the ID generation (likely removable).
