@@ -157,39 +157,114 @@ mod ids {
         Synthetic(Uuid),
     }
     impl TypeId {
-        /// Generates a temporary Synthetic TypeId based on the context where a type
-        /// is used and a string representation of that type.
+        /// Generates a temporary `Synthetic` `TypeId` based on structural information.
+        ///
+        /// This ID is used during Phase 2 parsing before full type resolution. It aims
+        /// to be deterministic and stable against formatting changes by hashing the
+        /// structural components of the type (`TypeKind`, related `TypeId`s) rather
+        /// than its string representation.
         ///
         /// # Arguments
-        /// * `crate_namespace` - The Uuid namespace of the crate where the usage occurs.
-        /// * `file_path` - The path to the file where the usage occurs.
-        /// * `type_string_repr` - A consistent string representation of the syn::Type
-        ///   (typically generated using `ty.to_token_stream().to_string()`).
+        /// * `crate_namespace` - The UUID namespace of the crate where the type usage occurs.
+        /// * `file_path` - The absolute path to the file where the type usage occurs.
+        /// * `type_kind` - The structural kind of the type (e.g., `TypeKind::Named`, `TypeKind::Reference`).
+        /// * `related_type_ids` - A slice of `TypeId`s for nested types (e.g., generic arguments, tuple elements).
+        ///
+        /// # Returns
+        /// A `TypeId::Synthetic` variant containing a UUIDv5 hash derived from the inputs.
+        ///
+        /// # Hashing Strategy
+        /// The hash incorporates:
+        /// - Crate namespace UUID bytes.
+        /// - File path bytes.
+        /// - The discriminant of the `TypeKind` enum variant.
+        /// - Bytes representing the specific data within the `TypeKind` variant (e.g., path segments, mutability flags).
+        /// - Bytes of all `related_type_ids` UUIDs in order.
+        ///
+        /// **Note:** This currently generates generic IDs for `Self` and generic parameter usages
+        /// based on their simple names (e.g., `TypeKind::Named { path: ["Self"], .. }`). Full
+        /// contextual disambiguation for these cases is planned for Step 3 (`Enhance VisitorState Context`).
         pub fn generate_synthetic(
             crate_namespace: Uuid,
             file_path: &Path,
-            type_string_repr: &str,
+            type_kind: &TypeKind, // Use TypeKind from this crate
+            related_type_ids: &[TypeId],
         ) -> Self {
-            // Use as_encoded_bytes() for potentially non-UTF8 paths
+            use std::mem::discriminant;
+
             let fp_bytes = file_path.as_os_str().as_encoded_bytes();
+            let kind_discriminant_bytes = discriminant(type_kind).to_le_bytes(); // Use discriminant
 
-            // Combine namespace, file path bytes, and type string bytes.
-            // Using a separator helps ensure distinctness if components could overlap,
-            // though UUIDv5 hashing is generally robust.
-            let synthetic_data: Vec<u8> = crate_namespace
-                .as_bytes()
-                .iter()
-                .chain(b"::FILE::") // Separator
-                .chain(fp_bytes)
-                .chain(b"::TYPE::") // Separator
-                .chain(type_string_repr.as_bytes())
-                .copied()
-                .collect();
+            let mut hasher = uuid::v5::Builder::from_slice(PROJECT_NAMESPACE_UUID.as_bytes())
+                .expect("Failed to create UUIDv5 builder from project namespace")
+                .append_slice(b"::CRATE::")
+                .append_slice(crate_namespace.as_bytes())
+                .append_slice(b"::FILE::")
+                .append_slice(fp_bytes)
+                .append_slice(b"::KIND_DISC::")
+                .append_slice(&kind_discriminant_bytes);
 
-            // Generate the UUIDv5 using the project's root namespace.
-            let type_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data);
+            // Append kind-specific data
+            hasher = match type_kind {
+                TypeKind::Named {
+                    path,
+                    is_fully_qualified,
+                } => hasher
+                    .append_slice(b"::NAMED::")
+                    .append_slice(path.join("::").as_bytes())
+                    .append_slice(&[if *is_fully_qualified { 1 } else { 0 }]),
+                TypeKind::Reference {
+                    lifetime,
+                    is_mutable,
+                } => hasher
+                    .append_slice(b"::REF::")
+                    .append_slice(lifetime.as_deref().unwrap_or("").as_bytes())
+                    .append_slice(&[if *is_mutable { 1 } else { 0 }]),
+                TypeKind::Slice { .. } => hasher.append_slice(b"::SLICE"),
+                TypeKind::Array { size, .. } => hasher
+                    .append_slice(b"::ARRAY::")
+                    .append_slice(size.as_deref().unwrap_or("").as_bytes()),
+                TypeKind::Tuple { .. } => hasher.append_slice(b"::TUPLE"),
+                TypeKind::Function {
+                    is_unsafe,
+                    is_extern,
+                    abi,
+                    ..
+                } => hasher
+                    .append_slice(b"::FN_PTR::")
+                    .append_slice(&[if *is_unsafe { 1 } else { 0 }])
+                    .append_slice(&[if *is_extern { 1 } else { 0 }])
+                    .append_slice(abi.as_deref().unwrap_or("").as_bytes()),
+                TypeKind::Never => hasher.append_slice(b"::NEVER"),
+                TypeKind::Inferred => hasher.append_slice(b"::INFERRED"),
+                TypeKind::RawPointer { is_mutable, .. } => hasher
+                    .append_slice(b"::RAW_PTR::")
+                    .append_slice(&[if *is_mutable { 1 } else { 0 }]),
+                TypeKind::TraitObject { dyn_token, .. } => hasher
+                    .append_slice(b"::TRAIT_OBJ::")
+                    .append_slice(&[if *dyn_token { 1 } else { 0 }]),
+                TypeKind::ImplTrait { .. } => hasher.append_slice(b"::IMPL_TRAIT"),
+                TypeKind::Paren { .. } => hasher.append_slice(b"::PAREN"),
+                TypeKind::Macro { name, tokens } => hasher
+                    .append_slice(b"::MACRO::")
+                    .append_slice(name.as_bytes())
+                    .append_slice(tokens.as_bytes()),
+                TypeKind::Unknown { type_str } => {
+                    hasher.append_slice(b"::UNKNOWN::").append_slice(type_str.as_bytes())
+                }
+            };
 
-            // Return the Synthetic variant containing the generated UUID.
+            // Append related type IDs
+            hasher = hasher.append_slice(b"::RELATED::");
+            for related_id in related_type_ids {
+                let id_bytes = match related_id {
+                    TypeId::Resolved(uuid) => *uuid.as_bytes(),
+                    TypeId::Synthetic(uuid) => *uuid.as_bytes(),
+                };
+                hasher = hasher.append_slice(&id_bytes);
+            }
+
+            let type_uuid = hasher.build();
             Self::Synthetic(type_uuid)
         }
 
@@ -332,4 +407,70 @@ pub enum ItemKind {
     Macro,       // Includes declarative (macro_rules!) and procedural macros
     Import, // Represents a specific item within a `use` statement (e.g., `HashMap` in `use std::collections::HashMap`)
     ExternCrate, // Represents an `extern crate` declaration
+}
+
+// ANCHOR: TypeKind_defn
+/// Different kinds of types encountered during parsing.
+/// Moved from `syn_parser::parser::types`.
+/// Used as input for structural `TypeId::Synthetic` generation.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)] // Added Eq, Hash
+pub enum TypeKind {
+    //ANCHOR_END: TypeKind_defn
+    Named {
+        path: Vec<String>, // Full path segments
+        is_fully_qualified: bool,
+    },
+    Reference {
+        lifetime: Option<String>, // Lifetimes are strings for now
+        is_mutable: bool,
+        // Type being referenced is in related_types[0]
+    },
+    Slice {
+        // Element type is in related_types[0]
+    },
+    Array {
+        // Element type is in related_types[0]
+        size: Option<String>, // Size expression as string
+    },
+    Tuple {
+        // Element types are in related_types
+    },
+    // ANCHOR: ExternCrate
+    Function {
+        // Parameter types are in related_types (except last one)
+        // Return type is in related_types[last]
+        is_unsafe: bool,
+        is_extern: bool,
+        abi: Option<String>, // ABI as string
+    },
+    //ANCHOR_END: ExternCrate
+    Never,
+    Inferred,
+    RawPointer {
+        is_mutable: bool,
+        // Pointee type is in related_types[0]
+    },
+    // ANCHOR: TraitObject
+    TraitObject {
+        // Trait bounds are in related_types
+        dyn_token: bool,
+    },
+    //ANCHOR_END: TraitObject
+    // ANCHOR: ImplTrait
+    ImplTrait {
+        // Trait bounds are in related_types
+    },
+    //ANCHOR_END: ImplTrait
+    Paren {
+        // Inner type is in related_types[0]
+    },
+    // ANCHOR: ItemMacro
+    Macro {
+        name: String,
+        tokens: String, // Macro tokens as string
+    },
+    //ANCHOR_END: ItemMacro
+    Unknown {
+        type_str: String, // Fallback string representation
+    },
 }

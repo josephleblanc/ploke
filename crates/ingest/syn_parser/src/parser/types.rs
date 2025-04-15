@@ -1,4 +1,4 @@
-use ploke_core::{NodeId, TypeId}; // Use new types when feature is enabled // Use compat types when feature is disabled
+use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 
 use serde::{Deserialize, Serialize};
 
@@ -13,69 +13,7 @@ pub struct TypeNode {
 }
 //ANCHOR_END: TypeNode
 
-// ANCHOR: TypeKind_defn
-// Different kinds of types
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum TypeKind {
-    //ANCHOR_END: TypeKind_defn
-    Named {
-        path: Vec<String>, // Full path segments
-        is_fully_qualified: bool,
-    },
-    Reference {
-        lifetime: Option<String>,
-        is_mutable: bool,
-        // Type being referenced is in related_types[0]
-    },
-    Slice {
-        // Element type is in related_types[0]
-    },
-    Array {
-        // Element type is in related_types[0]
-        size: Option<String>,
-    },
-    Tuple {
-        // Element types are in related_types
-    },
-    // ANCHOR: ExternCrate
-    Function {
-        // Parameter types are in related_types (except last one)
-        // Return type is in related_types[last]
-        is_unsafe: bool,
-        is_extern: bool,
-        abi: Option<String>,
-    },
-    //ANCHOR_END: ExternCrate
-    Never,
-    Inferred,
-    RawPointer {
-        is_mutable: bool,
-        // Pointee type is in related_types[0]
-    },
-    // ANCHOR: TraitObject
-    TraitObject {
-        // Trait bounds are in related_types
-        dyn_token: bool,
-    },
-    //ANCHOR_END: TraitObject
-    // ANCHOR: ImplTrait
-    ImplTrait {
-        // Trait bounds are in related_types
-    },
-    //ANCHOR_END: ImplTrait
-    Paren {
-        // Inner type is in related_types[0]
-    },
-    // ANCHOR: ItemMacro
-    Macro {
-        name: String,
-        tokens: String,
-    },
-    //ANCHOR_END: ItemMacro
-    Unknown {
-        type_str: String,
-    },
-}
+// TypeKind moved to ploke_core
 
 /// Represents a generic parameter
 /// These are appropriate node elements because they are "defined" when used in part of another,
