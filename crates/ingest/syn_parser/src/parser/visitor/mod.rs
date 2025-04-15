@@ -1,3 +1,4 @@
+use ploke_core::ItemKind;
 use serde::{Deserialize, Serialize};
 use syn::visit::Visit;
 mod attribute_processing;

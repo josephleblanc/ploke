@@ -1,6 +1,7 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use crate::parser::ExtractSpan;
+use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use dashmap::DashMap;

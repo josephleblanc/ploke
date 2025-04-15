@@ -1,5 +1,5 @@
 use ploke_common::fixtures_crates_dir;
-use ploke_core::{NodeId, TypeId};
+use ploke_core::{ItemKind, NodeId, TypeId};
 use quote::ToTokens;
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::visitor::ParsedCodeGraph;
@@ -117,9 +117,9 @@ pub fn find_impl_node_paranoid<'a>(
         crate_namespace,
         file_path,
         expected_module_path,
-        &expected_name,   // Use the generated name
-        ItemKind::Impl,   // Pass the correct ItemKind
-        None,             // Pass None for parent_scope_id (temporary)
+        &expected_name, // Use the generated name
+        ItemKind::Impl, // Pass the correct ItemKind
+        None,           // Pass None for parent_scope_id (temporary)
     );
 
     // We compare the regenerated ID against the actual ID found on the node.

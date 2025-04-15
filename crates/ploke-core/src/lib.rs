@@ -314,7 +314,7 @@ pub use ids::*;
 /// especially when `span` is removed as an input. It ensures that, for example,
 /// a function named `foo` and a struct named `foo` in the same module scope
 /// will generate distinct `NodeId`s.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemKind {
     Function,
     Struct,
@@ -324,12 +324,12 @@ pub enum ItemKind {
     Trait,
     Impl,
     Module,
-    Field, // Struct or Union field
-    Variant, // Enum variant
+    Field,        // Struct or Union field
+    Variant,      // Enum variant
     GenericParam, // Type, Lifetime, or Const generic parameter definition
     Const,
     Static,
-    Macro, // Includes declarative (macro_rules!) and procedural macros
+    Macro,       // Includes declarative (macro_rules!) and procedural macros
     Import, // Represents a specific item within a `use` statement (e.g., `HashMap` in `use std::collections::HashMap`)
     ExternCrate, // Represents an `extern crate` declaration
 }

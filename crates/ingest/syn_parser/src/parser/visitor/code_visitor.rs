@@ -14,6 +14,7 @@ use crate::parser::types::*;
 use crate::parser::ExtractSpan;
 
 use crate::parser::nodes::ModuleDef;
+use ploke_core::ItemKind;
 use ploke_core::{NodeId, TypeId};
 
 use quote::ToTokens;
@@ -84,10 +85,11 @@ impl<'a> CodeVisitor<'a> {
 
                 full_path.push(original_name.clone());
 
+                imports.push(ImportNode {
                     id: import_id,
                     path: full_path, // Path uses original name segment
                     kind: ImportKind::UseStatement,
-                    visible_name, // The 'as' name
+                    visible_name,                       // The 'as' name
                     original_name: Some(original_name), // The original name before 'as'
                     is_glob: false,
                     span,
@@ -101,6 +103,8 @@ impl<'a> CodeVisitor<'a> {
 
                 // Path stored should be the path *to* the glob, not including '*'
                 let full_path = base_path.to_vec();
+
+                imports.push(ImportNode {
                     id: import_id,
                     path: full_path, // Path to the glob
                     kind: ImportKind::UseStatement,
@@ -225,9 +229,7 @@ impl<'a> CodeVisitor<'a> {
     fn add_contains_rel(&mut self, item_name: &str, item_kind: ItemKind) -> NodeId {
         // 1. Generate the Synthetic NodeId using the state helper
         //    This now uses item_kind instead of span and passes None for parent_scope_id.
-        let node_id = self
-            .state
-            .generate_synthetic_node_id(item_name, item_kind);
+        let node_id = self.state.generate_synthetic_node_id(item_name, item_kind);
 
         // 2. Add the Contains relation using the new ID and GraphId wrapper
         // Find the parent module based on the *current path*, not just the last pushed module.
@@ -793,7 +795,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
-        // Pass ItemKind::Impl
+                                              // Pass ItemKind::Impl
         let impl_id = self.add_contains_rel(&impl_name, ItemKind::Impl);
 
         #[cfg(feature = "verbose_debug")]

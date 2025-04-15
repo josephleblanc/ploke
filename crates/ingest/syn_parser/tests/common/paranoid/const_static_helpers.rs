@@ -1,7 +1,7 @@
 use ploke_common::fixtures_crates_dir;
-use ploke_core::NodeId;
+use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::{
-    nodes::{ValueNode, Visible}, // Added ValueNode, Visible
+    nodes::{ValueKind, ValueNode, Visible}, // Added ValueNode, Visible
     visitor::ParsedCodeGraph,
 };
 
@@ -96,8 +96,8 @@ pub fn find_value_node_paranoid<'a>(
 
     // Determine ItemKind based on ValueNodeKind
     let item_kind = match value_node.kind {
-        syn_parser::parser::nodes::ValueNodeKind::Const => ItemKind::Const,
-        syn_parser::parser::nodes::ValueNodeKind::Static => ItemKind::Static,
+        ValueKind::Constant => ItemKind::Const,
+        ValueKind::Static { .. } => ItemKind::Static,
     };
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind

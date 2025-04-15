@@ -3,7 +3,7 @@
 //! These helper functions are intentionally overkill and brittle.
 
 use ploke_common::fixtures_crates_dir;
-use ploke_core::NodeId;
+use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::visitor::ParsedCodeGraph;
 
