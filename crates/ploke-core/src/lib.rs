@@ -61,24 +61,57 @@ mod ids {
         // Possibly useful but more likely to be too fine-grained to allow for incremental updates
         // Only here for now as a possible alternative. Probably delete/move into TrackingHash
         // instead.
+        /// Generates a temporary `Synthetic` `NodeId` based on stable context.
+        ///
+        /// This ID is used during the parallel parsing phase (Phase 2) before full
+        /// name resolution is available. It aims to be deterministic and stable
+        /// against formatting changes by excluding `span` information.
+        ///
+        /// # Arguments
+        /// * `crate_namespace` - The UUID namespace of the crate being parsed.
+        /// * `file_path` - The absolute path to the file containing the item.
+        /// * `relative_path` - The logical module path within the file (e.g., `["inner_mod"]`).
+        /// * `item_name` - The name of the item (e.g., function name, struct name).
+        /// * `item_kind` - The kind of item (e.g., `ItemKind::Function`, `ItemKind::Struct`).
+        ///   Used for disambiguation (e.g., function `foo` vs struct `foo`).
+        /// * `parent_scope_id` - The `NodeId` of the immediate parent scope (e.g., the module
+        ///   containing a function, or the struct containing a field). `None` for top-level
+        ///   items within a file (like the root module itself).
+        ///
+        /// # Returns
+        /// A `NodeId::Synthetic` variant containing a UUIDv5 hash derived from the inputs.
         pub fn generate_synthetic(
             crate_namespace: uuid::Uuid,
             file_path: &std::path::Path,
             relative_path: &[String],
             item_name: &str,
-            span: (usize, usize),
+            item_kind: crate::ItemKind, // Use ItemKind from this crate
+            parent_scope_id: Option<NodeId>,
         ) -> Self {
             let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
-            let span_start_bytes = span.0.to_le_bytes(); // use consistent byte order
-            let span_end_bytes = span.1.to_le_bytes();
+            // Use discriminant of ItemKind for hashing (stable and simple)
+            let item_kind_bytes = (item_kind as u8).to_le_bytes();
+
+            // Get bytes for parent_scope_id, using a placeholder for None
+            let parent_id_bytes = match parent_scope_id {
+                Some(NodeId::Resolved(uuid)) => *uuid.as_bytes(),
+                Some(NodeId::Synthetic(uuid)) => *uuid.as_bytes(),
+                None => [0u8; 16], // Placeholder for None
+            };
+
             let synthetic_data: Vec<u8> = crate_namespace
                 .as_bytes()
                 .iter()
+                .chain(b"::FILE::")
                 .chain(fp_bytes)
+                .chain(b"::REL_PATH::")
                 .chain(relative_path.join("::").as_bytes())
+                .chain(b"::PARENT_ID::")
+                .chain(&parent_id_bytes) // Add parent ID bytes
+                .chain(b"::KIND::")
+                .chain(&item_kind_bytes) // Add item kind bytes
+                .chain(b"::NAME::")
                 .chain(item_name.as_bytes())
-                .chain(&span_start_bytes)
-                .chain(&span_end_bytes)
                 .copied()
                 .collect();
 

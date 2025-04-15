@@ -26,22 +26,26 @@ The code analysis reveals:
     *   **Goal:** Make `Synthetic` `NodeId` and `TypeId` generation deterministic based on stable semantic context (crate, file path, module path, item name, item kind, parent scope, type structure) rather than unstable `span` information or problematic raw type strings. This improves robustness against code formatting changes and lays the groundwork for more accurate semantic analysis and linking.
     *   **Strategy:** Incrementally modify the ID generation functions and their call sites, ensuring tests pass at each stage. Prioritize clear documentation and use compiler feedback to guide the refactoring.
     *   **Actions & Propagation:**
-        1.  **Modify `NodeId::generate_synthetic` Signature & Logic:**
-            *   **File:** `crates/ploke-core/src/ids.rs` (within `lib.rs`)
+        1.  **Move `ItemKind` Enum:**
+            *   **Files:** `crates/ingest/syn_parser/src/parser/nodes.rs`, `crates/ploke-core/src/lib.rs`
+            *   **Change:** Move the `ItemKind` enum definition from `syn_parser` to `ploke-core` to avoid circular dependencies. Update imports accordingly.
+        2.  **Modify `NodeId::generate_synthetic` Signature & Logic:**
+            *   **File:** `crates/ploke-core/src/lib.rs`
             *   **Change:** Update the function signature:
                 *   Remove `span: (usize, usize)`.
-                *   Add `item_kind: ItemKind` (using the enum created previously).
-                *   Add `parent_scope_id: Option<NodeId>` (to represent the immediate defining scope, e.g., the module containing a function, or the struct containing a field).
-            *   **Change:** Update the UUIDv5 hash calculation within the function to incorporate `item_kind` and `parent_scope_id` bytes instead of `span` bytes. Ensure consistent byte ordering and representation.
+                *   Add `item_kind: ItemKind` (now defined in `ploke-core`).
+                *   Add `parent_scope_id: Option<NodeId>` (to represent the immediate defining scope).
+            *   **Change:** Update the UUIDv5 hash calculation within the function to incorporate `item_kind` (using its discriminant) and `parent_scope_id` bytes (using a placeholder for `None`) instead of `span` bytes. Ensure consistent byte ordering and representation.
             *   **Documentation:** Update the Rustdoc comment for `NodeId::generate_synthetic` thoroughly, explaining the new inputs, their purpose (disambiguation, scoping), the removal of `span`, and the hashing strategy.
-        2.  **Update `NodeId::generate_synthetic` Call Sites:**
-            *   **Files:** Primarily `crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs` (especially within the `add_contains_rel` helper and potentially direct calls for fields, variants, generic params), `crates/ingest/syn_parser/src/parser/visitor/state.rs` (update the `generate_synthetic_node_id` helper), and `crates/ingest/syn_parser/src/parser/visitor/mod.rs` (for the root module ID generation in `analyze_file_phase2`).
-            *   **Change:** Systematically locate all call sites. For each call:
-                *   Pass the correct `ItemKind` corresponding to the code element being processed (e.g., `ItemKind::Function` for an `ItemFn`, `ItemKind::Field` for a struct field).
-                *   Pass the appropriate `parent_scope_id`. This requires Step 3 (`Enhance VisitorState Context`) to be implemented first or concurrently to make the parent ID available. For items directly within a module, this would be the module's `NodeId`. For items within structs/enums/impls (like fields, variants, methods), it would be the `NodeId` of the struct/enum/impl.
+        3.  **Update `NodeId::generate_synthetic` Call Sites:**
+            *   **Files:** `crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs` (via `add_contains_rel` and direct calls), `crates/ingest/syn_parser/src/parser/visitor/state.rs` (via `generate_synthetic_node_id` helper), `crates/ingest/syn_parser/src/parser/visitor/mod.rs` (root module ID).
+            *   **Change:** Systematically locate all call sites (direct or indirect via helpers like `add_contains_rel` and `generate_synthetic_node_id`). For each call:
+                *   Pass the correct `ItemKind` corresponding to the code element being processed (e.g., `ItemKind::Function` for an `ItemFn`, `ItemKind::Field` for a struct field, `ItemKind::Module` for `ItemMod`, etc.).
+                *   **Temporarily Pass `None` for `parent_scope_id`:** The `VisitorState` does not yet track the parent scope ID. All calls will pass `None` for this argument for now. This will be addressed in Step 3 (`Enhance VisitorState Context`).
                 *   Remove the `span` argument.
-            *   **Error Prevention:** Compile frequently after modifying call sites. Use the compiler errors (e.g., "missing field `item_kind`", "expected `Option<NodeId>`, found `(usize, usize)`") to ensure all call sites are found and updated correctly.
-        3.  **Modify `TypeId::generate_synthetic` Signature & Logic:**
+            *   **Helpers Updated:** The `VisitorState::generate_synthetic_node_id` and `CodeVisitor::add_contains_rel` helpers were updated to accept `ItemKind` instead of `span`.
+            *   **Error Prevention:** Compile frequently after modifying call sites. Use the compiler errors (e.g., "missing argument `item_kind`", "expected `ItemKind`, found `(usize, usize)`") to ensure all call sites are found and updated correctly.
+        4.  **Modify `TypeId::generate_synthetic` Signature & Logic:**
             *   **File:** `crates/ploke-core/src/ids.rs` (within `lib.rs`)
             *   **Change:** Update the function signature:
                 *   Remove `type_string_repr: &str`.

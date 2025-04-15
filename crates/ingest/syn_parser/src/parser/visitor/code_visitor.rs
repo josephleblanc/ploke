@@ -74,35 +74,36 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
-                let use_rename = rename.ident.to_string();
+                let original_name = rename.ident.to_string();
+                let visible_name = rename.rename.to_string();
 
                 let span = rename.extract_span_bytes();
-                let import_id = self.add_contains_rel(&use_rename, span);
+                // Pass ItemKind::Import, use original name for ID generation consistency
+                let import_id = self.add_contains_rel(&original_name, ItemKind::Import);
 
-                full_path.push(use_rename);
+                full_path.push(original_name.clone());
 
-                imports.push(ImportNode {
                     id: import_id,
-                    path: full_path,
+                    path: full_path, // Path uses original name segment
                     kind: ImportKind::UseStatement,
-                    visible_name: rename.rename.to_string(),
-                    original_name: Some(rename.ident.to_string()),
+                    visible_name, // The 'as' name
+                    original_name: Some(original_name), // The original name before 'as'
                     is_glob: false,
                     span,
                     is_self_import: false,
                 });
             }
-            syn::UseTree::Glob(star) => {
-                let span = star.extract_span_bytes();
-                let import_id = self.add_contains_rel("*", span);
+            syn::UseTree::Glob(glob) => {
+                let span = glob.extract_span_bytes();
+                // Use a placeholder name like "<glob>" for the ID, pass ItemKind::Import
+                let import_id = self.add_contains_rel("<glob>", ItemKind::Import);
 
-                let mut full_path = base_path.to_vec();
-                full_path.push("*".to_string());
-                imports.push(ImportNode {
+                // Path stored should be the path *to* the glob, not including '*'
+                let full_path = base_path.to_vec();
                     id: import_id,
-                    path: base_path.to_vec(),
+                    path: full_path, // Path to the glob
                     kind: ImportKind::UseStatement,
-                    visible_name: "*".to_string(),
+                    visible_name: "*".to_string(), // Visual representation
                     original_name: None,
                     is_glob: true,
                     span: tree.extract_span_bytes(),
@@ -216,19 +217,16 @@ impl<'a> CodeVisitor<'a> {
         println!("{:+^10} (-) popped {} -> {:?}", "", name, popped);
         println!("{:+^13} {} now: {:?}", "", name, stack);
     }
-    /// Generates a new `NodeId::Synthetic` for the item being visited,
-    /// ensuring it's immediately linked to the current module via a `Contains` relation.
-    /// Requires the item's name and span for UUID generation.
-    fn add_contains_rel(&mut self, item_name: &str, item_span: (usize, usize)) -> NodeId {
-        // 1. Generate the Synthetic NodeId using context from state
-        //    Requires crate_namespace, current_file_path, current_module_path, item_name, item_span
-        let node_id = NodeId::generate_synthetic(
-            self.state.crate_namespace,      // Provided by VisitorState::new
-            &self.state.current_file_path,   // Provided by VisitorState::new
-            &self.state.current_module_path, // Tracked during visitation
-            item_name,                       // Passed as argument
-            item_span,                       // Passed as argument
-        );
+    /// Generates a new `NodeId::Synthetic` for the item being visited using the
+    /// `VisitorState` helper, ensuring it's immediately linked to the current
+    /// module via a `Contains` relation.
+    /// Requires the item's name and kind for UUID generation.
+    fn add_contains_rel(&mut self, item_name: &str, item_kind: ItemKind) -> NodeId {
+        // 1. Generate the Synthetic NodeId using the state helper
+        //    This now uses item_kind instead of span and passes None for parent_scope_id.
+        let node_id = self
+            .state
+            .generate_synthetic_node_id(item_name, item_kind);
 
         // 2. Add the Contains relation using the new ID and GraphId wrapper
         // Find the parent module based on the *current path*, not just the last pushed module.
@@ -326,13 +324,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // location, name, and other metadata that might be useful for the RAG to get easy wins.
         if is_proc_macro {
             let macro_name = func.sig.ident.to_string();
-
-            let span = func.extract_span_bytes();
-
-            let macro_id = self.add_contains_rel(&macro_name, span);
+            // Pass ItemKind::Macro
+            let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro);
 
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(&macro_name, macro_id);
+
+            let span = func.extract_span_bytes();
 
             // Determine the kind of procedural macro
             let proc_macro_kind = if func
@@ -378,13 +376,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         let fn_name = func.sig.ident.to_string();
-        let byte_range = func.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
-
-        let fn_id = self.add_contains_rel(&fn_name, span);
+        // Pass ItemKind::Function
+        let fn_id = self.add_contains_rel(&fn_name, ItemKind::Function);
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&fn_name, fn_id);
-        // Register function with current module
+
+        let byte_range = func.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
 
         // Process function parameters
         let mut parameters = Vec::new();
@@ -448,26 +446,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit struct definitions
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_name = item_struct.ident.to_string();
-
-        let byte_range = item_struct.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
-
-        let struct_id = self.add_contains_rel(&struct_name, span);
+        // Pass ItemKind::Struct
+        let struct_id = self.add_contains_rel(&struct_name, ItemKind::Struct);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&struct_name, struct_id);
+
+        let byte_range = item_struct.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
 
         // Process fields
         let mut fields = Vec::new();
         for field in &item_struct.fields {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-            let span = field.extract_span_bytes();
-
+            // Pass ItemKind::Field
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or(format!("{} unnamed field", struct_name)),
-                span,
+                    .unwrap_or_else(|| format!("unnamed_field_in_{}", struct_name)), // Use clearer placeholder
+                ItemKind::Field,
             );
 
             #[cfg(feature = "verbose_debug")]
@@ -532,12 +529,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit type alias definitions
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
         let type_alias_name = item_type.ident.to_string();
-
-        let span = item_type.extract_span_bytes();
-        let type_alias_id = self.add_contains_rel(&type_alias_name, span);
+        // Pass ItemKind::TypeAlias
+        let type_alias_id = self.add_contains_rel(&type_alias_name, ItemKind::TypeAlias);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&type_alias_name, type_alias_id);
+
+        let span = item_type.extract_span_bytes();
 
         // Process the aliased type
         let type_id = get_or_create_type(self.state, &item_type.ty);
@@ -573,23 +571,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit union definitions
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
         let union_name = item_union.ident.to_string();
-
-        let span = item_union.extract_span_bytes();
-        let union_id = self.add_contains_rel(&union_name, span);
+        // Pass ItemKind::Union
+        let union_id = self.add_contains_rel(&union_name, ItemKind::Union);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&union_name, union_id);
+
+        let span = item_union.extract_span_bytes();
 
         // Process fields
         let mut fields = Vec::new();
         for field in &item_union.fields.named {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-
+            // Pass ItemKind::Field
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or(format!("Unnamed field of {}", union_name)),
-                span,
+                    .unwrap_or_else(|| format!("unnamed_field_in_{}", union_name)), // Use clearer placeholder
+                ItemKind::Field,
             );
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(
@@ -649,35 +648,35 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit enum definitions
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
         let enum_name = item_enum.ident.to_string();
-
-        let span = item_enum.extract_span_bytes();
-        let enum_id = self.add_contains_rel(&enum_name, span);
+        // Pass ItemKind::Enum
+        let enum_id = self.add_contains_rel(&enum_name, ItemKind::Enum);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&enum_name, enum_id);
+
+        let span = item_enum.extract_span_bytes();
 
         // Process variants
         let mut variants = Vec::new();
         for variant in &item_enum.variants {
             let variant_name = variant.ident.to_string();
-            let variant_span = variant.extract_span_bytes();
-
+            // Pass ItemKind::Variant
             let variant_id = self
                 .state
-                .generate_synthetic_node_id(&variant_name, variant_span);
+                .generate_synthetic_node_id(&variant_name, ItemKind::Variant);
 
             // Process fields of the variant
             let mut fields = Vec::new();
             match &variant.fields {
                 syn::Fields::Named(fields_named) => {
                     for field in &fields_named.named {
-                        let field_span = field.extract_span_bytes();
                         let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+                        // Pass ItemKind::Field
                         let field_id = self.state.generate_synthetic_node_id(
                             &field_name
                                 .clone()
-                                .unwrap_or_else(|| format!("Unnamed field of {}", enum_name)),
-                            field_span,
+                                .unwrap_or_else(|| format!("unnamed_field_in_{}", variant_name)), // Scope to variant
+                            ItemKind::Field,
                         );
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id(
@@ -705,9 +704,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     }
                 }
                 syn::Fields::Unnamed(fields_unnamed) => {
-                    for field in fields_unnamed.unnamed.iter() {
-                        let unnamed = "Tuple field".to_string();
-                        let field_id = self.state.generate_synthetic_node_id(&unnamed, span);
+                    for (index, field) in fields_unnamed.unnamed.iter().enumerate() {
+                        // Use index for unnamed fields
+                        let field_name = format!("unnamed_field_{}_in_{}", index, variant_name);
+                        // Pass ItemKind::Field
+                        let field_id = self
+                            .state
+                            .generate_synthetic_node_id(&field_name, ItemKind::Field);
                         let type_id = get_or_create_type(self.state, &field.ty);
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id("unnamed_enum_field", field_id);
@@ -788,13 +791,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
-        let impl_name = name_impl(item_impl);
-        let span = item_impl.extract_span_bytes();
-
-        let impl_id = self.add_contains_rel(&impl_name, span);
+        let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
+        // Pass ItemKind::Impl
+        let impl_id = self.add_contains_rel(&impl_name, ItemKind::Impl);
 
         #[cfg(feature = "verbose_debug")]
-        self.debug_new_id("unnamed_impl", impl_id);
+        self.debug_new_id(&impl_name, impl_id); // Log with the generated name
+
+        let span = item_impl.extract_span_bytes();
 
         // Process self type,
         // // Case 1: Simple struct
@@ -854,11 +858,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             //       to handle syn::ImplItem::Const or syn::ImplItem::Type
             if let syn::ImplItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
-                let method_span = method.extract_span_bytes();
-                let method_node_id = self.add_contains_rel(&method_name, method_span);
+                // Pass ItemKind::Function for the method
+                let method_node_id = self.add_contains_rel(&method_name, ItemKind::Function);
 
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
+
+                let method_span = method.extract_span_bytes();
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -964,23 +970,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit trait definitions
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
         let trait_name = item_trait.ident.to_string();
-        let span = item_trait.extract_span_bytes();
-
-        let trait_id = self.add_contains_rel(&trait_name, span);
+        // Pass ItemKind::Trait
+        let trait_id = self.add_contains_rel(&trait_name, ItemKind::Trait);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&trait_name, trait_id);
+
+        let span = item_trait.extract_span_bytes();
 
         // Process methods
         let mut methods = Vec::new();
         for item in &item_trait.items {
             if let syn::TraitItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
-                let method_span = method.extract_span_bytes();
-
+                // Pass ItemKind::Function
+                // Note: This ID is for the *definition* within the trait.
                 let method_node_id = self
                     .state
-                    .generate_synthetic_node_id(&method_name, method_span);
+                    .generate_synthetic_node_id(&method_name, ItemKind::Function);
 
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
@@ -1117,12 +1124,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
         let module_name = module.ident.to_string();
-        let span = module.extract_span_bytes();
-
-        let module_id = self.add_contains_rel(&module_name, span);
+        // Pass ItemKind::Module
+        let module_id = self.add_contains_rel(&module_name, ItemKind::Module);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_mod_stack();
+
+        let span = module.extract_span_bytes();
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&module_name, module_id);
@@ -1262,12 +1270,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     ///     - `NodeId::Synthetic` created through `add_contains_rel`
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
         let crate_name = extern_crate.ident.to_string();
-        let span = extern_crate.extract_span_bytes();
-
-        let import_id = self.add_contains_rel(&crate_name, span);
+        // Pass ItemKind::ExternCrate
+        let import_id = self.add_contains_rel(&crate_name, ItemKind::ExternCrate);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&crate_name, import_id);
+
+        let span = extern_crate.extract_span_bytes();
 
         let import_node = ImportNode {
             id: import_id,
@@ -1345,11 +1354,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let const_name = item_const.ident.to_string();
-        let span = item_const.extract_span_bytes();
-        let const_id = self.add_contains_rel(&const_name, span);
+        // Pass ItemKind::Const
+        let const_id = self.add_contains_rel(&const_name, ItemKind::Const);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&const_name, const_id);
+
+        let span = item_const.extract_span_bytes();
 
         // Process the type
         let type_id = get_or_create_type(self.state, &item_const.ty);
@@ -1395,12 +1406,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit static items
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
         let static_name = item_static.ident.to_string();
-        let span = item_static.extract_span_bytes();
-
-        let static_id = self.add_contains_rel(&static_name, span);
+        // Pass ItemKind::Static
+        let static_id = self.add_contains_rel(&static_name, ItemKind::Static);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&static_name, static_id);
+
+        let span = item_static.extract_span_bytes();
 
         // Process the type
         let type_id = get_or_create_type(self.state, &item_static.ty);
@@ -1473,12 +1485,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .as_ref()
             .map(|ident| ident.to_string())
             .unwrap_or_else(|| "unnamed_macro".to_string());
-
-        let span = item_macro.extract_span_bytes();
-        let macro_id = self.add_contains_rel(&macro_name, span);
+        // Pass ItemKind::Macro
+        let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro);
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&macro_name, macro_id);
+
+        let span = item_macro.extract_span_bytes();
 
         let body = Some(item_macro.mac.tokens.to_string());
         let docstring = extract_docstring(&item_macro.attrs);

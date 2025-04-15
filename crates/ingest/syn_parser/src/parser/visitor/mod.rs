@@ -130,7 +130,8 @@ pub fn analyze_file_phase2(
         &file_path,
         &root_module_parent_path, // Use parent path for ID generation context
         &root_module_name,
-        (0, 0), // Span - still using (0,0) for root, might need refinement
+        ItemKind::Module, // Pass correct ItemKind
+        None,             // Root module has no parent scope ID within the file context
     );
 
     #[cfg(feature = "verbose_debug")]

@@ -61,13 +61,18 @@ impl VisitorState {
             current_module: Vec::new(),
         }
     }
-    pub(crate) fn generate_synthetic_node_id(&self, name: &str, span: (usize, usize)) -> NodeId {
+
+    /// Helper to generate a synthetic NodeId using the current visitor state.
+    /// Passes `None` for `parent_scope_id` currently. This needs to be updated
+    /// when parent scope tracking is implemented in VisitorState (Step 3).
+    pub(crate) fn generate_synthetic_node_id(&self, name: &str, item_kind: ItemKind) -> NodeId {
         NodeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
-            &self.current_module_path,
+            &self.current_module_path, // Current module path acts as relative path context
             name,
-            span,
+            item_kind,
+            None, // TODO: Pass actual parent_scope_id once VisitorState tracks it
         )
     }
 
@@ -167,10 +172,11 @@ impl VisitorState {
                         get_or_create_type(self, expr)
                     });
 
-                    let span = type_param.extract_span_bytes();
-                    // Generate ID for the generic parameter node
-                    let param_node_id =
-                        self.generate_synthetic_node_id(&format!("generic_type_{}", ident), span);
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
+                    let param_node_id = self.generate_synthetic_node_id(
+                        &format!("generic_type_{}", ident), // Use a distinct name format
+                        ItemKind::GenericParam,
+                    );
 
                     params.push(GenericParamNode {
                         id: param_node_id,
@@ -188,11 +194,10 @@ impl VisitorState {
                         .map(|bound| self.process_lifetime_bound(bound))
                         .collect();
 
-                    let span = lifetime_def.extract_span_bytes();
-                    // Generate ID for the generic parameter node
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
                     let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_lifetime_{}", lifetime_def.lifetime.ident),
-                        span,
+                        &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
+                        ItemKind::GenericParam,
                     );
 
                     params.push(GenericParamNode {
@@ -205,12 +210,11 @@ impl VisitorState {
                 }
                 syn::GenericParam::Const(const_param) => {
                     let type_id = super::type_processing::get_or_create_type(self, &const_param.ty);
-                    let span = const_param.extract_span_bytes();
 
-                    // Generate ID for the generic parameter node
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
                     let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_const_{}", const_param.ident,),
-                        span,
+                        &format!("generic_const_{}", const_param.ident), // Use a distinct name format
+                        ItemKind::GenericParam,
                     );
 
                     params.push(GenericParamNode {
