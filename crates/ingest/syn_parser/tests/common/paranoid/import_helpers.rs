@@ -111,9 +111,12 @@ pub fn find_import_node_paranoid<'a>(
             .as_deref()
             .unwrap_or(&import_node.visible_name) // Fallback to visible if no original (shouldn't happen for non-glob?)
     };
+    // Handle all variants of ImportKind
     let item_kind = match import_node.kind {
         syn_parser::parser::nodes::ImportKind::UseStatement => ItemKind::Import,
         syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
+        // Add the missing variant - treat it like a standard UseStatement for ItemKind
+        syn_parser::parser::nodes::ImportKind::ImportNode => ItemKind::Import,
     };
 
     let regenerated_id = NodeId::generate_synthetic(

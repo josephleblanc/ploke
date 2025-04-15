@@ -562,21 +562,22 @@ pub fn find_function_node_paranoid<'a>(
 
     let func_node = module_candidates[0];
     let func_id = func_node.id();
-    let actual_span = func_node.span; // Get span from the found node
+    // let actual_span = func_node.span; // Span no longer used for ID generation
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's actual span and context
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
         expected_module_path,
         func_name,
-        actual_span, // Use the span from the node itself
+        ploke_core::ItemKind::Function, // Pass the correct ItemKind
+        None,                           // Pass None for parent_scope_id (temporary)
     );
 
     assert_eq!(
         func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' with span {:?}",
-        func_id, regenerated_id, func_name, file_path.display(), actual_span
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' (ItemKind: {:?}, ParentScope: None)",
+        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function
     );
 
     // 7. Return the validated node
