@@ -59,7 +59,8 @@ impl<'a> CodeVisitor<'a> {
                     full_path.push(use_name.clone());
                     use_name
                 };
-                let import_id = self.add_contains_rel(&checked_name, span);
+                // Pass ItemKind::Import
+                let import_id = self.add_contains_rel(&checked_name, ItemKind::Import);
 
                 imports.push(ImportNode {
                     id: import_id,

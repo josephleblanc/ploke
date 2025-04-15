@@ -305,3 +305,31 @@ mod ids {
 }
 
 pub use ids::*;
+
+/// Represents the specific kind of a code item associated with a `NodeId`.
+/// Moved from `syn_parser::parser::nodes`.
+///
+/// This enum is used as part of the input for generating `NodeId::Synthetic`
+/// to help disambiguate items that might otherwise have similar names or paths,
+/// especially when `span` is removed as an input. It ensures that, for example,
+/// a function named `foo` and a struct named `foo` in the same module scope
+/// will generate distinct `NodeId`s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ItemKind {
+    Function,
+    Struct,
+    Enum,
+    Union,
+    TypeAlias,
+    Trait,
+    Impl,
+    Module,
+    Field, // Struct or Union field
+    Variant, // Enum variant
+    GenericParam, // Type, Lifetime, or Const generic parameter definition
+    Const,
+    Static,
+    Macro, // Includes declarative (macro_rules!) and procedural macros
+    Import, // Represents a specific item within a `use` statement (e.g., `HashMap` in `use std::collections::HashMap`)
+    ExternCrate, // Represents an `extern crate` declaration
+}
