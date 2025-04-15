@@ -1,9 +1,8 @@
 use crate::common::paranoid::find_union_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;
-use ploke_core::NodeId;
+use ploke_core::{NodeId, TypeKind}; // Import TypeKind from ploke_core
 // Import UnionNode specifically
-use syn_parser::parser::types::TypeKind; // Import EnumNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     nodes::Visible,

@@ -2,11 +2,11 @@
 
 // Imports mirrored from functions.rs, adjust as needed
 use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{NodeId, TypeId};
+use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::{
     nodes::Visible,
     relations::{GraphId, RelationKind}, // Added for relation checks
-    types::{GenericParamKind, TypeKind, VisibilityKind},
+    types::{GenericParamKind, VisibilityKind}, // Remove TypeKind from here
 };
 
 // --- Test Cases ---

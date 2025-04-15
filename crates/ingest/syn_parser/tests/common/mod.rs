@@ -2,7 +2,8 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeKind};
+use ploke_core::TypeKind; // Import directly from ploke_core
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
 
