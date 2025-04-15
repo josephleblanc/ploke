@@ -1027,11 +1027,17 @@ fn test_value_node_paranoid_const_doc_attr() {
         type_node.related_types.is_empty(),
         "f64 TypeNode should have no related types"
     );
-    // Regenerate TypeId (basic check for now)
-    let expected_type_id = TypeId::generate_synthetic(crate_namespace, file_path, "f64");
+    // Regenerate TypeId based on structure
+    let type_kind = ploke_core::TypeKind::Named {
+        path: vec!["f64".to_string()],
+        is_fully_qualified: false,
+    };
+    let related_ids: &[TypeId] = &[];
+    let expected_type_id =
+        TypeId::generate_synthetic(crate_namespace, file_path, &type_kind, related_ids);
     assert_eq!(
         node.type_id, expected_type_id,
-        "TypeId mismatch. Expected (regen): {}, Actual: {}",
+        "TypeId mismatch for f64. Expected (regen): {}, Actual: {}",
         expected_type_id, node.type_id
     );
 
@@ -1221,11 +1227,17 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         type_node.related_types.is_empty(),
         "bool TypeNode should have no related types"
     );
-    // Regenerate TypeId
-    let expected_type_id = TypeId::generate_synthetic(crate_namespace, file_path, "bool");
+    // Regenerate TypeId based on structure
+    let type_kind = ploke_core::TypeKind::Named {
+        path: vec!["bool".to_string()],
+        is_fully_qualified: false,
+    };
+    let related_ids: &[TypeId] = &[];
+    let expected_type_id =
+        TypeId::generate_synthetic(crate_namespace, file_path, &type_kind, related_ids);
     assert_eq!(
         node.type_id, expected_type_id,
-        "TypeId mismatch. Expected (regen): {}, Actual: {}",
+        "TypeId mismatch for bool. Expected (regen): {}, Actual: {}",
         expected_type_id, node.type_id
     );
 

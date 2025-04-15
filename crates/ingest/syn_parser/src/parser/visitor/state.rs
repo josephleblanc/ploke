@@ -3,8 +3,7 @@ use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
-use dashmap::DashMap;
-use std::sync::Arc;
+// Removed unused imports: DashMap, Arc
 
 use super::type_processing::get_or_create_type;
 

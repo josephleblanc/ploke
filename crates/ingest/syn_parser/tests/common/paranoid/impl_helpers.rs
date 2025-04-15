@@ -39,21 +39,37 @@ pub fn find_impl_node_paranoid<'a>(
     let expected_self_type_id = {
         let parsed_type = syn::parse_str::<syn::Type>(self_type_str)
             .expect("Failed to parse self_type_str for TypeId generation");
-        // Generate the synthetic ID based on the parsed type's string representation
+        // Generate the synthetic ID based on structure.
+        // For simple named types like in these tests, we create a basic TypeKind::Named.
+        // Assume no related types for this basic regeneration check.
+        let type_kind = ploke_core::TypeKind::Named {
+            path: vec![parsed_type.to_token_stream().to_string()], // Simple path from string
+            is_fully_qualified: false,                             // Assume not qualified for test regen
+        };
+        let related_type_ids: &[TypeId] = &[]; // Empty slice
+
         TypeId::generate_synthetic(
             crate_namespace,
             file_path,
-            &parsed_type.to_token_stream().to_string(),
+            &type_kind,
+            related_type_ids,
         )
     };
 
     let expected_trait_type_id: Option<TypeId> = trait_type_str.map(|tts| {
         let parsed_type = syn::parse_str::<syn::Type>(tts)
             .expect("Failed to parse trait_type_str for TypeId generation");
+        // Generate the synthetic ID based on structure.
+        let type_kind = ploke_core::TypeKind::Named {
+            path: vec![parsed_type.to_token_stream().to_string()],
+            is_fully_qualified: false,
+        };
+        let related_type_ids: &[TypeId] = &[];
         TypeId::generate_synthetic(
             crate_namespace,
             file_path,
-            &parsed_type.to_token_stream().to_string(),
+            &type_kind,
+            related_type_ids,
         )
     });
 

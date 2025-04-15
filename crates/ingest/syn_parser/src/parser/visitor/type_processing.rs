@@ -1,5 +1,5 @@
 use super::state::VisitorState;
-use crate::parser::{types::TypeNode, utils::type_to_string}; // Includes TypeNode, TypeKind, TypeId (enum)
+use crate::parser::types::TypeNode; // Removed unused import: utils::type_to_string
 use ploke_core::TypeId;
 use ploke_core::TypeKind;
 use quote::ToTokens;

@@ -53,10 +53,7 @@ impl ExtractSpan for ConstParam {}
 // Place this where appropriate (e.g., type_processing.rs or utils.rs).
 use quote::ToTokens; // Needs quote dependency in syn_parser
 
-/// Converts a syn::Type into a consistent string representation.
-pub(crate) fn type_to_string(ty: &syn::Type) -> String {
-    ty.to_token_stream().to_string()
-}
+// Removed unused function: type_to_string
 
 // --- Example Usage in syn_parser ---
 /*
