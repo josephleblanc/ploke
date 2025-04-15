@@ -34,44 +34,69 @@ pub fn find_impl_node_paranoid<'a>(
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path; // Use the path from the found graph data
 
-    // 3. Generate expected TypeIds based on parsing the input strings
-    //    This mimics how the visitor likely generated the ID using get_or_create_type
-    let expected_self_type_id = {
-        let parsed_type = syn::parse_str::<syn::Type>(self_type_str)
-            .expect("Failed to parse self_type_str for TypeId generation");
-        // Generate the synthetic ID based on structure.
-        // For simple named types like in these tests, we create a basic TypeKind::Named.
-        // Assume no related types for this basic regeneration check.
-        let type_kind = ploke_core::TypeKind::Named {
-            path: vec![parsed_type.to_token_stream().to_string()], // Simple path from string
-            is_fully_qualified: false,                             // Assume not qualified for test regen
-        };
-        let related_type_ids: &[TypeId] = &[]; // Empty slice
+    // 3. Generate expected TypeIds by simulating the structural analysis
+    //    Helper closure to perform the simulation
+    let generate_expected_type_id_for_test = |type_str: &str| -> TypeId {
+        let parsed_type = syn::parse_str::<syn::Type>(type_str)
+            .unwrap_or_else(|_| panic!("Failed to parse type string for TypeId generation: {}", type_str));
 
-        TypeId::generate_synthetic(
-            crate_namespace,
-            file_path,
-            &type_kind,
-            related_type_ids,
-        )
+        match parsed_type {
+            syn::Type::Path(type_path) => {
+                // Extract base path segments (e.g., ["GenericStruct"])
+                let base_path: Vec<String> = type_path.path.segments.iter().map(|seg| seg.ident.to_string()).collect();
+                let mut related_ids = Vec::new();
+
+                // Extract generic arguments if present
+                if let Some(last_segment) = type_path.path.segments.last() {
+                    if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+                        for arg in &args.args {
+                            if let syn::GenericArgument::Type(gen_type) = arg {
+                                // Simulate getting TypeId for the generic argument (e.g., "T")
+                                // Generate ID based on its name directly for test simplicity
+                                let gen_type_str = gen_type.to_token_stream().to_string();
+                                let gen_type_kind = ploke_core::TypeKind::Named {
+                                    path: vec![gen_type_str], // Use the generic param name as path
+                                    is_fully_qualified: false, // Assume false for simple generic param
+                                };
+                                let gen_related_ids: &[TypeId] = &[]; // Generic param itself has no related types here
+                                related_ids.push(TypeId::generate_synthetic(
+                                    crate_namespace,
+                                    file_path,
+                                    &gen_type_kind,
+                                    gen_related_ids,
+                                ));
+                            }
+                            // TODO: Handle other GenericArgument types (Lifetime, Const) if needed for future tests
+                        }
+                    }
+                    // TODO: Handle PathArguments::Parenthesized if needed
+                }
+
+                // Construct the TypeKind for the main path
+                let type_kind = ploke_core::TypeKind::Named {
+                    path: base_path,
+                    is_fully_qualified: type_path.qself.is_some(),
+                };
+
+                // Generate the final TypeId using the base TypeKind and collected related IDs
+                TypeId::generate_synthetic(
+                    crate_namespace,
+                    file_path,
+                    &type_kind,
+                    &related_ids, // Pass collected related IDs
+                )
+            }
+            // TODO: Handle other syn::Type variants (Reference, Tuple, etc.) if needed by tests using this helper
+            _ => {
+                 panic!("generate_expected_type_id_for_test only handles Type::Path currently, received: {}", type_str);
+            }
+        }
     };
 
-    let expected_trait_type_id: Option<TypeId> = trait_type_str.map(|tts| {
-        let parsed_type = syn::parse_str::<syn::Type>(tts)
-            .expect("Failed to parse trait_type_str for TypeId generation");
-        // Generate the synthetic ID based on structure.
-        let type_kind = ploke_core::TypeKind::Named {
-            path: vec![parsed_type.to_token_stream().to_string()],
-            is_fully_qualified: false,
-        };
-        let related_type_ids: &[TypeId] = &[];
-        TypeId::generate_synthetic(
-            crate_namespace,
-            file_path,
-            &type_kind,
-            related_type_ids,
-        )
-    });
+    // Use the helper closure to generate expected IDs
+    let expected_self_type_id = generate_expected_type_id_for_test(self_type_str);
+    let expected_trait_type_id: Option<TypeId> = trait_type_str.map(generate_expected_type_id_for_test);
+
 
     // 4. Filter candidates by matching self_type and trait_type IDs
     let type_candidates: Vec<&ImplNode> = graph
