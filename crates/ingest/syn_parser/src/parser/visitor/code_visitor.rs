@@ -96,7 +96,7 @@ impl<'a> CodeVisitor<'a> {
                     is_self_import: false,
                 });
             }
-            syn::UseTree::Glob(glob) => {
+            syn::UseTree::Glob(_) => {
                 // Use a placeholder name like "<glob>" for the ID, pass ItemKind::Import
                 let import_id = self.add_contains_rel("<glob>", ItemKind::Import);
 
@@ -973,8 +973,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&trait_name, trait_id);
-
-        let span = item_trait.extract_span_bytes();
 
         // Process methods
         let mut methods = Vec::new();
