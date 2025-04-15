@@ -8,7 +8,70 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
+// Helper Hasher to collect bytes for UUID generation
+mod byte_hasher {
+    use std::hash::Hasher;
+
+    #[derive(Default)]
+    pub(crate) struct ByteHasher {
+        bytes: Vec<u8>,
+    }
+
+    impl ByteHasher {
+        pub(crate) fn finish_bytes(self) -> Vec<u8> {
+            self.bytes
+        }
+    }
+
+    impl Hasher for ByteHasher {
+        fn finish(&self) -> u64 {
+            // Not used, we collect bytes directly
+            unimplemented!("ByteHasher does not produce a u64 hash")
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.bytes.extend_from_slice(bytes);
+        }
+
+        // Override other write_* methods for potential efficiency gains
+        // if the derived Hash implementations use them directly.
+        fn write_u8(&mut self, i: u8) {
+            self.bytes.push(i);
+        }
+        fn write_u16(&mut self, i: u16) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_u32(&mut self, i: u32) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_u64(&mut self, i: u64) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_usize(&mut self, i: usize) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_i8(&mut self, i: i8) {
+            self.bytes.push(i as u8);
+        }
+        fn write_i16(&mut self, i: i16) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_i32(&mut self, i: i32) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_i64(&mut self, i: i64) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+        fn write_isize(&mut self, i: isize) {
+            self.bytes.extend_from_slice(&i.to_le_bytes());
+        }
+    }
+}
+
+
 mod ids {
+    use crate::byte_hasher::ByteHasher; // Import the custom hasher
+    use std::hash::{Hash, Hasher}; // Import Hash traits
     use std::path::Path;
     // Import TypeKind into the ids module scope
     use crate::TypeKind;
