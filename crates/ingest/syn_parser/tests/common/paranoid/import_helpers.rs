@@ -122,7 +122,7 @@ pub fn find_import_node_paranoid<'a>(
         expected_module_path, // Use the module's definition path for context
         id_gen_name,          // Use original name or "<glob>" for ID generation
         item_kind,            // Pass the correct ItemKind
-        None,                 // Pass None for parent_scope_id (temporary)
+        Some(module_node.id), // Pass the containing module's ID as parent scope
     );
 
     assert_eq!(
