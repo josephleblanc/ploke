@@ -27,31 +27,27 @@ use syn::{
 // `TypeId`.
 //   * Duplicate TypeId == Bad
 pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId {
-    let type_str = type_to_string(ty);
-    // --- Cache Check ---
-    // Check if the type string already exists in the map
-    if let Some(entry) = state.type_map.get(&type_str) {
-        let id = *entry.value();
-        // Drop the dashmap ref explicitly before returning if needed, though often implicit drop is fine.
-        // drop(entry);
-        return id;
-    }
-
     // --- New Type Processing ---
 
-    // 1. Generate the new Synthetic Type ID using the string representation
-    let new_id =
-        TypeId::generate_synthetic(state.crate_namespace, &state.current_file_path, &type_str);
+    // 1. Process the type structure first to get TypeKind and related TypeIds
+    //    This handles recursion internally.
+    let (type_kind, related_types) = process_type(state, ty);
 
-    // 2. **Crucial:** Insert the new ID into the cache *before* recursive processing
-    //    to handle potential cycles (e.g., struct Foo(Box<Foo>)).
-    state.type_map.insert(type_str.to_string(), new_id);
+    // 2. Generate the new Synthetic Type ID using the structural information
+    let new_id = TypeId::generate_synthetic(
+        state.crate_namespace,
+        &state.current_file_path,
+        &type_kind, // Pass the determined TypeKind
+        &related_types, // Pass the determined related TypeIds
+    );
 
-    // 3. Process the type structure (recursively calls this function for nested types)
-    //    This determines the TypeKind and finds related TypeIds.
-    let (type_kind, related_types) = process_type(state, ty); // Pass only state and ty
+    // 3. Check if a TypeNode with this ID already exists (handles recursion/cycles)
+    //    We avoid adding duplicate TypeNodes.
+    if state.code_graph.type_graph.iter().any(|tn| tn.id == new_id) {
+        return new_id; // Already processed and added due to recursion
+    }
 
-    // 4. Create the TypeNode containing the structural information
+    // 4. Create the TypeNode containing the structural information if it's new
     let type_node = TypeNode {
         id: new_id, // The newly generated ID
         kind: type_kind,

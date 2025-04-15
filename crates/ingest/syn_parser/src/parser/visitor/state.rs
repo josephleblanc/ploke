@@ -23,9 +23,7 @@ pub struct VisitorState {
     pub(crate) current_file_path: PathBuf, // Path of the file being parsed by this visitor instance
     // --- End Conditional Fields ---
 
-    // Use DashMap for thread-safe concurrent access to the type cache
-    // TypeId here will be usize or the Uuid-based struct depending on the feature flag
-    pub(crate) type_map: Arc<DashMap<String, TypeId>>,
+    // Removed type_map cache (Arc<DashMap<String, TypeId>>)
 
     // TODO: AI comment: Re-evaluate if both current_module_path and current_module are needed.
     // current_module_path seems more aligned with UUID generation needs.
@@ -56,7 +54,7 @@ impl VisitorState {
             crate_namespace,
             current_file_path,
             // New fields are conditionally compiled out
-            type_map: Arc::new(DashMap::new()),
+            // type_map removed
             current_module_path: Vec::new(),
             current_module: Vec::new(),
         }

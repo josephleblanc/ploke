@@ -14,7 +14,7 @@ use crate::parser::types::*;
 use crate::parser::ExtractSpan;
 
 use crate::parser::nodes::ModuleDef;
-use ploke_core::ItemKind;
+use ploke_core::{ItemKind, TypeKind}; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
 use quote::ToTokens;
