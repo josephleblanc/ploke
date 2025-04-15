@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::parser::types::{GenericParamNode, VisibilityKind};
-use ploke_core::{ItemKind, NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled // Import ItemKind from ploke_core
+use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled // Import ItemKind from ploke_core
 use serde::{Deserialize, Serialize};
 
 // ANCHOR: ItemFn

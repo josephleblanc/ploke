@@ -97,7 +97,6 @@ impl<'a> CodeVisitor<'a> {
                 });
             }
             syn::UseTree::Glob(glob) => {
-                let span = glob.extract_span_bytes();
                 // Use a placeholder name like "<glob>" for the ID, pass ItemKind::Import
                 let import_id = self.add_contains_rel("<glob>", ItemKind::Import);
 
@@ -801,8 +800,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&impl_name, impl_id); // Log with the generated name
 
-        let span = item_impl.extract_span_bytes();
-
         // Process self type,
         // // Case 1: Simple struct
         // impl MyStruct {}
@@ -866,8 +863,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
-
-                let method_span = method.extract_span_bytes();
 
                 // Process method parameters
                 let mut parameters = Vec::new();

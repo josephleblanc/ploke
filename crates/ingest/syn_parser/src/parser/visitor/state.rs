@@ -1,6 +1,5 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
-use crate::parser::ExtractSpan;
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
@@ -155,14 +154,12 @@ impl VisitorState {
 
         for param in &generics.params {
             match param {
-                syn::GenericParam::Type(
-                    type_param @ TypeParam {
-                        ident,
-                        bounds,
-                        default,
-                        ..
-                    },
-                ) => {
+                syn::GenericParam::Type(TypeParam {
+                    ident,
+                    bounds,
+                    default,
+                    ..
+                }) => {
                     let bounds: Vec<TypeId> = bounds
                         .iter()
                         .filter_map(|bound| self.process_type_bound(bound))
