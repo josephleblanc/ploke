@@ -199,25 +199,6 @@ pub fn find_file_module_node_paranoid<'a>(
         "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
         module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module, parent_mod_id
     );
-                parent_path_vec,
-                file_path.display()
-            )
-        });
-
-    let regenerated_id = NodeId::generate_synthetic(
-        crate_namespace,
-        file_path, // Use the file_path from the target_data
-        &parent_path_vec,
-        module_name,
-        ItemKind::Module,     // Pass the correct ItemKind
-        Some(parent_mod.id), // Pass the PARENT module's ID as parent scope
-    );
-
-    assert_eq!(
-        module_id, regenerated_id,
-        "Mismatch between file module node's actual ID ({}) and regenerated ID ({}) for module path {:?} (name: '{}') in file '{}' (ItemKind: {:?}, ParentScope: None)",
-        module_id, regenerated_id, expected_module_path, module_name, file_path.display(), ItemKind::Module
-    );
 
     // 6. Return the validated node
     module_node
