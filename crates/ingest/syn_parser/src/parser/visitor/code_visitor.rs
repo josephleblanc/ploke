@@ -42,6 +42,7 @@ impl<'a> CodeVisitor<'a> {
             syn::UseTree::Path(path) => {
                 let mut new_base = base_path.to_vec();
                 new_base.push(path.ident.to_string());
+
                 imports.extend(self.process_use_tree(&path.tree, &new_base));
             }
             syn::UseTree::Name(name) => {
