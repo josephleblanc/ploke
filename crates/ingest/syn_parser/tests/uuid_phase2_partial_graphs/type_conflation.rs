@@ -25,10 +25,21 @@ fn find_lib_rs_graph(
         .expect("ParsedCodeGraph for src/lib.rs not found")
 }
 
-/// Test that the TypeId for a generic parameter 'T' is currently the same
+/// Test that the TypeId for a generic parameter 'T' is distinct
 /// when defined in different function scopes within the same file.
-/// This test is EXPECTED TO PASS with the current implementation and
-/// SHOULD FAIL after TypeId generation incorporates parent scope.
+///
+/// Fixture Targets:
+/// - `top_level_func<T>(param: T)` in `src/lib.rs`
+/// - `inner_mod::inner_func<T>(param: T)` in `src/lib.rs`
+///
+/// Expected Behavior (Post-Fix):
+/// The `TypeId` for `T` in `top_level_func` should be different from the
+/// `TypeId` for `T` in `inner_func` because they are defined within
+/// different parent scopes (the functions themselves).
+///
+/// Current Behavior (Pre-Fix):
+/// The `TypeId`s are expected to be the *same* because `TypeId::generate_synthetic`
+/// currently ignores the parent scope. This test SHOULD FAIL until the fix is applied.
 #[test]
 fn test_generic_param_conflation_in_functions() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
@@ -59,19 +70,33 @@ fn test_generic_param_conflation_in_functions() {
     let inner_param_t_type_id = find_param_type_id(graph, inner_func_node.id, 0)
         .expect("Failed to find TypeId for T in inner_func parameter");
 
-    // Assert that the TypeIds are currently the same (conflated)
-    assert_eq!(
+    // Assert that the TypeIds are distinct (NOT equal).
+    // This WILL FAIL until TypeId::generate_synthetic incorporates parent_scope_id.
+    assert_ne!(
         top_level_param_t_type_id, inner_param_t_type_id,
-        "TypeId for generic 'T' parameter should currently be conflated between top_level_func ({}) and inner_func ({}). This test should fail after fix.",
+        "FAILED: TypeId for generic 'T' parameter is conflated between different function scopes.\n - Top Level Func 'T': {}\n - Inner Func 'T':    {}\nThis indicates TypeId generation needs parent scope context.",
         top_level_param_t_type_id,
         inner_param_t_type_id
     );
 }
 
-/// Test that the TypeId for the 'Self' return type is currently the same
+/// Test that the TypeId for the 'Self' return type is distinct
 /// when used in methods of different impl blocks within the same file.
-/// This test is EXPECTED TO PASS with the current implementation and
-/// SHOULD FAIL after TypeId generation incorporates parent scope.
+///
+/// Fixture Targets:
+/// - `impl TopLevelStruct { fn method(&self, ...) -> Self }` in `src/lib.rs`
+/// - `impl inner_mod::InnerStruct { fn inner_method(&self, ...) -> Self }` in `src/lib.rs`
+///
+/// Expected Behavior (Post-Fix):
+/// The `TypeId` for the `Self` return type in `TopLevelStruct::method` should
+/// be different from the `TypeId` for `Self` in `InnerStruct::inner_method`
+/// because `Self` refers to different types (`TopLevelStruct` vs `InnerStruct`)
+/// defined in different scopes. The parent scope (the impl block) should differentiate them.
+///
+/// Current Behavior (Pre-Fix):
+/// The `TypeId`s are expected to be the *same* because `TypeId::generate_synthetic`
+/// currently ignores the parent scope and only sees `TypeKind::Named { path: ["Self"], .. }`.
+/// This test SHOULD FAIL until the fix is applied.
 #[test]
 fn test_self_return_type_conflation_in_impls() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
@@ -107,20 +132,32 @@ fn test_self_return_type_conflation_in_impls() {
     let inner_return_self_type_id = find_return_type_id(graph, inner_method_node.id)
         .expect("Failed to find return TypeId for Self in InnerStruct::inner_method");
 
-    // Assert that the TypeIds are currently the same (conflated)
-    assert_eq!(
+    // Assert that the TypeIds are distinct (NOT equal).
+    // This WILL FAIL until TypeId::generate_synthetic incorporates parent_scope_id.
+    assert_ne!(
         top_level_return_self_type_id, inner_return_self_type_id,
-        "TypeId for 'Self' return type should currently be conflated between impls for TopLevelStruct ({}) and InnerStruct ({}). This test should fail after fix.",
+        "FAILED: TypeId for 'Self' return type is conflated between different impl blocks.\n - TopLevelStruct impl 'Self': {}\n - InnerStruct impl 'Self':    {}\nThis indicates TypeId generation needs parent scope context.",
         top_level_return_self_type_id,
         inner_return_self_type_id
     );
 }
 
 /// Test that the TypeId for a generic parameter 'T' used as a field type
-/// is currently the same when defined in different struct/newtype scopes
-/// within the same file.
-/// This test is EXPECTED TO PASS with the current implementation and
-/// SHOULD FAIL after TypeId generation incorporates parent scope.
+/// is distinct when defined in different struct/newtype scopes within the same file.
+///
+/// Fixture Targets:
+/// - `TopLevelNewtype<T>(pub T)` in `src/lib.rs` (field `0` of type `T`)
+/// - `inner_mod::InnerNewtype<T>(pub T)` in `src/lib.rs` (field `0` of type `T`)
+///
+/// Expected Behavior (Post-Fix):
+/// The `TypeId` for the field type `T` in `TopLevelNewtype` should be different
+/// from the `TypeId` for the field type `T` in `InnerNewtype` because the `T`
+/// generic parameter is defined within different parent scopes (the structs themselves).
+///
+/// Current Behavior (Pre-Fix):
+/// The `TypeId`s are expected to be the *same* because `TypeId::generate_synthetic`
+/// currently ignores the parent scope and only sees `TypeKind::Named { path: ["T"], .. }`.
+/// This test SHOULD FAIL until the fix is applied.
 #[test]
 fn test_generic_field_conflation_in_structs() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
@@ -156,10 +193,11 @@ fn test_generic_field_conflation_in_structs() {
         .expect("Failed to find TypeId for T field in InnerNewtype");
 
 
-    // Assert that the TypeIds for the field 'T' are currently the same (conflated)
-    assert_eq!(
+    // Assert that the TypeIds for the field 'T' are distinct (NOT equal).
+    // This WILL FAIL until TypeId::generate_synthetic incorporates parent_scope_id.
+    assert_ne!(
         top_level_field_t_type_id, inner_field_t_type_id,
-        "TypeId for generic 'T' field should currently be conflated between TopLevelNewtype ({}) and InnerNewtype ({}). This test should fail after fix.",
+        "FAILED: TypeId for generic 'T' field type is conflated between different struct scopes.\n - TopLevelNewtype 'T' field: {}\n - InnerNewtype 'T' field:    {}\nThis indicates TypeId generation needs parent scope context.",
         top_level_field_t_type_id,
         inner_field_t_type_id
     );
