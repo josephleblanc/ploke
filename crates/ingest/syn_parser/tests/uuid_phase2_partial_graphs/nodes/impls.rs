@@ -286,9 +286,7 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
 }
 
 #[test]
-#[should_panic(
-    expected = "TypeId for Self in SimpleStruct::new should be different from TypeId for Self in GenericStruct::print_value parameter"
-)] // Expecting this to fail currently
+#[ignore = "Test for known limitation of `Self` type conflation, see 90_type_id_self_conflation_phase2.md"] // Expecting this to fail currently
 fn test_impl_node_self_type_conflation_phase2() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

@@ -70,7 +70,7 @@ mod byte_hasher {
 
 mod ids {
     use crate::byte_hasher::ByteHasher; // Import the custom hasher
-    use std::hash::Hash; // Import Hash traits
+    use std::hash::{Hash, Hasher}; // Import Hash traits
     use std::path::Path;
     // Import TypeKind into the ids module scope
     use crate::TypeKind;

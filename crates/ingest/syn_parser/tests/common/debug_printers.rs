@@ -73,3 +73,63 @@ m.name = {}\nm.id = {}\nm.is_file_based() = {}\n",
     eprintln!("7. SEARCHING_USE_NAME: import_id {:?}\n", import_id);
     import_id
 }
+
+#[cfg(feature = "verbose_debug")]
+#[allow(clippy::too_many_arguments)]
+pub fn debug_print_static_info(
+    graph: &CodeGraph,
+    crate_namespace: uuid::Uuid,
+    file_path: &std::path::PathBuf,
+    node: &syn_parser::parser::nodes::ValueNode,
+    type_node: &syn_parser::parser::types::TypeNode,
+    type_kind: ploke_core::TypeKind,
+    related_ids: &[ploke_core::TypeId],
+    expected_type_id: ploke_core::TypeId,
+) {
+    use syn_parser::parser::relations::{GraphId, RelationKind};
+
+    eprintln!(
+        "DEBUGGING TYPENODE: type_node = find_type_node(graph, node.type_id):\n{:#?}
+
+let expected_type_id = TypeId::generate_synthetic(
+    crate_namespace,    {}
+    file_path,          {:?}
+    &type_kind,         {:?}
+    related_ids,        {:?}
+    Some(node.id()),    {:?}
+); --> {}
+
+            ",
+        type_node,
+        crate_namespace,
+        file_path,
+        &type_kind,
+        related_ids,
+        Some(node.id()), // Use the node's own ID as parent scope
+        expected_type_id
+    );
+    let value_type_rel = graph
+        .relations
+        .iter()
+        .find(|r| r.target == GraphId::Type(node.type_id) && r.kind == RelationKind::ValueType)
+        .expect("Expected RelationKind::ValueType to exist with for target, none found.");
+    let debug_value_node = graph
+        .values
+        .iter()
+        .find(|v| GraphId::Node(v.id) == value_type_rel.source)
+        .expect("Expected RelationKind::ValueType to exist with for source, none found.");
+    let debug_value_module = graph
+        .modules
+        .iter()
+        .find(|m| m.items().is_some_and(|i| i.contains(&debug_value_node.id)));
+    eprintln!(
+        "DEBUGGING VALUE NODE Found valid relation between ValueNode source: {} and TypeNode target {}
+VALUENODE: {:#?}
+TYPENODE: {:#?}
+MODULE CONTAINING VALUENODE: {:#?}
+---
+",
+        debug_value_node.id, node.type_id,
+        debug_value_node, node, debug_value_module
+    );
+}

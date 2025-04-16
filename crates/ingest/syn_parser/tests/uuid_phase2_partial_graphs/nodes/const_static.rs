@@ -1261,9 +1261,21 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         related_ids,
         Some(node.id()), // Use the node's own ID as parent scope
     );
+
+    #[cfg(feature = "verbose_debug")]
+    crate::common::debug_printers::debug_print_static_info(
+        graph,
+        crate_namespace,
+        file_path,
+        node,
+        type_node,
+        type_kind,
+        related_ids,
+        expected_type_id,
+    );
     assert_eq!(
         node.type_id, expected_type_id,
-        "TypeId mismatch for bool. Expected (regen): {}, Actual: {}",
+        "TypeId mismatch for bool. Expected (regen): {}, Actual: {},",
         expected_type_id, node.type_id
     );
 

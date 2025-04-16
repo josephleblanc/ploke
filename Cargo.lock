@@ -575,6 +575,10 @@ name = "fixture_attributes"
 version = "0.1.0"
 
 [[package]]
+name = "fixture_conflation"
+version = "0.1.0"
+
+[[package]]
 name = "fixture_cyclic_types"
 version = "0.1.0"
 
