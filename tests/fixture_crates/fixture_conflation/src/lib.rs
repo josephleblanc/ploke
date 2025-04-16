@@ -28,6 +28,9 @@
 //! - TypeNode.related_types (implicitly via generics, tuples, etc.)
 //! - RelationKind (implicitly via structure)
 
+// Enable unstable features needed for some test cases
+#![feature(associated_type_defaults)]
+
 #![allow(dead_code, unused_variables, unused_lifetimes)]
 
 use std::fmt::Debug;
@@ -39,6 +42,7 @@ mod other_mod;
 
 // 1. Test FieldNode.type_id (generic T)
 //    Test GenericParamKind::Type.bounds
+#[derive(Debug)] // Added to satisfy trait bounds requiring Self: Debug
 pub struct TopLevelStruct<T: Debug> {
     field: T,
 }
@@ -103,6 +107,7 @@ mod inner_mod {
 
     // 12. Test FieldNode.type_id (generic T) - Should be different from TopLevelStruct's T
     //     Test GenericParamKind::Type.bounds
+    #[derive(Debug)] // Added to satisfy trait bounds requiring Self: Debug
     pub struct InnerStruct<T: Display> {
         inner_field: T,
     }
@@ -153,18 +158,21 @@ mod inner_mod {
 
 // 20. Test FieldNode.type_id (generic T from other_mod::OtherFileStruct)
 //     Ensures file path context is used for TypeId generation.
-pub struct UsesOtherFile<T: Sync> {
+//     Added `+ Debug` to T because OtherFileStruct requires it.
+pub struct UsesOtherFile<T: Sync + Debug> {
     other_struct: other_mod::OtherFileStruct<T>,
 }
 
 // 21. Test ParamData.type_id (generic T from other_mod::other_file_func)
 //     Test FunctionNode.return_type (generic T from other_mod::other_file_func)
-pub fn calls_other_file_func<T: Send + Sync>(param: T) -> T {
+//     Added `+ Clone` to T because other_file_func requires it.
+pub fn calls_other_file_func<T: Send + Sync + Clone>(param: T) -> T {
     other_mod::other_file_func(param)
 }
 
 // 22. Test ImplNode.self_type (using type from other module)
-impl<T: Sync> UsesOtherFile<T> {
+//     Added `+ Debug` to T because the return type OtherFileStruct requires it.
+impl<T: Sync + Debug> UsesOtherFile<T> {
     pub fn get_other(&self) -> &other_mod::OtherFileStruct<T> {
         &self.other_struct
     }
@@ -189,14 +197,17 @@ pub fn name_collision() {}
 // Nested generics
 // 24. Test FieldNode.type_id (nested generic T, U)
 //     Test TypeNode.related_types implicitly
-pub struct NestedGeneric<T, U> {
+//     Added `T: Debug` because TopLevelStruct requires it.
+//     Added `U: Display` because InnerStruct requires it.
+pub struct NestedGeneric<T: Debug, U: Display> {
     nested: TopLevelStruct<T>,
     other_nested: inner_mod::InnerStruct<U>,
 }
 
 // Type alias involving Self
 // 25. Test TypeAliasNode.type_id (involving Self)
-pub trait TraitWithSelfAlias {
+//     Added `Self: Sized` because associated types must be Sized by default.
+pub trait TraitWithSelfAlias: Sized {
     type AliasOfSelf = Self;
     fn get_alias(&self) -> Self::AliasOfSelf;
 }
