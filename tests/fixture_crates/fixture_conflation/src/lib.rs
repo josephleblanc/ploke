@@ -326,17 +326,19 @@ pub trait CfgGatedGenericTrait<T> { // Same name, same generic param name
 
 // 40. Test NodeId/TypeId conflation for generic impls under different cfgs
 #[cfg(feature = "feature_a")]
-impl<T: Debug> CfgGatedStruct { // Impl for the feature_a version of CfgGatedStruct
+impl CfgGatedStruct { // Impl for the feature_a version of CfgGatedStruct - NOT generic itself
      // 41. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
-    pub fn cfg_method_a(&self, input: T) -> Self {
+     // Generic parameter T moved to the method where it's used.
+    pub fn cfg_method_a<T: Debug>(&self, input: T) -> Self {
         println!("cfg_method_a: {:?}", input);
         CfgGatedStruct { field_a: 0 }
     }
 }
 #[cfg(not(feature = "feature_a"))]
-impl<T: Display> CfgGatedStruct { // Impl for the not(feature_a) version of CfgGatedStruct
+impl CfgGatedStruct { // Impl for the not(feature_a) version of CfgGatedStruct - NOT generic itself
     // 42. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
-    pub fn cfg_method_not_a(&self, input: T) -> Self {
+    // Generic parameter T moved to the method where it's used.
+    pub fn cfg_method_not_a<T: Display>(&self, input: T) -> Self {
         println!("cfg_method_not_a: {}", input);
         CfgGatedStruct { field_b: String::new() }
     }
