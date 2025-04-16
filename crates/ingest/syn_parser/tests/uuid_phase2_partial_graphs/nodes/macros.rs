@@ -173,13 +173,27 @@ fn test_macro_node_field_id_regeneration() {
     // All macros use ItemKind::Macro for ID generation
     let item_kind = ploke_core::ItemKind::Macro;
 
+    // Find the containing module node to get its ID for the parent scope
+    let module_node = graph
+        .modules
+        .iter()
+        .find(|m| m.defn_path() == module_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",
+                module_path,
+                file_path.display(),
+                macro_name
+            )
+        });
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
         macro_name,
-        item_kind, // Pass ItemKind::Macro
-        None,      // Pass None for parent_scope_id
+        item_kind,            // Pass ItemKind::Macro
+        Some(module_node.id), // Pass the containing module's ID
     );
 
     assert!(

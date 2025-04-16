@@ -356,13 +356,27 @@ fn test_import_node_field_id_regeneration() {
         &node.visible_name
     };
 
+    // Find the containing module node to get its ID for the parent scope
+    let module_node = graph
+        .modules
+        .iter()
+        .find(|m| m.defn_path() == module_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",
+                module_path,
+                file_path.display(),
+                visible_name
+            )
+        });
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
         &module_path,
-        id_gen_name, // Use visible name or "<glob>" for ID gen
-        item_kind,   // Pass the determined ItemKind
-        None,        // Pass None for parent_scope_id
+        id_gen_name,          // Use visible name or "<glob>" for ID gen
+        item_kind,            // Pass the determined ItemKind
+        Some(module_node.id), // Pass the containing module's ID
     );
 
     assert!(
