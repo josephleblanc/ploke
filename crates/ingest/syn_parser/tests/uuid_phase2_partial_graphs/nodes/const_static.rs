@@ -1047,8 +1047,14 @@ fn test_value_node_paranoid_const_doc_attr() {
         is_fully_qualified: false,
     };
     let related_ids: &[TypeId] = &[];
-    let expected_type_id =
-        TypeId::generate_synthetic(crate_namespace, file_path, &type_kind, related_ids);
+    // Pass None for parent_scope_id when regenerating in tests
+    let expected_type_id = TypeId::generate_synthetic(
+        crate_namespace,
+        file_path,
+        &type_kind,
+        related_ids,
+        None, // Parent scope is None in this test regeneration context
+    );
     assert_eq!(
         node.type_id, expected_type_id,
         "TypeId mismatch for f64. Expected (regen): {}, Actual: {}",
@@ -1247,8 +1253,14 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         is_fully_qualified: false,
     };
     let related_ids: &[TypeId] = &[];
-    let expected_type_id =
-        TypeId::generate_synthetic(crate_namespace, file_path, &type_kind, related_ids);
+    // Pass None for parent_scope_id when regenerating in tests
+    let expected_type_id = TypeId::generate_synthetic(
+        crate_namespace,
+        file_path,
+        &type_kind,
+        related_ids,
+        None, // Parent scope is None in this test regeneration context
+    );
     assert_eq!(
         node.type_id, expected_type_id,
         "TypeId mismatch for bool. Expected (regen): {}, Actual: {}",

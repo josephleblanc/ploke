@@ -184,6 +184,14 @@ mod ids {
 
             Self::Synthetic(uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
         }
+
+        /// Returns the inner Uuid regardless of the variant (Resolved or Synthetic).
+        pub fn uuid(&self) -> Uuid {
+            match self {
+                NodeId::Resolved(uuid) => *uuid,
+                NodeId::Synthetic(uuid) => *uuid,
+            }
+        }
     }
     impl std::fmt::Display for NodeId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -275,13 +283,11 @@ mod ids {
             type_kind.hash(&mut hasher);
             related_type_ids.hash(&mut hasher);
 
-            // Hash the parent scope ID (using placeholder for None)
-            let parent_id_bytes = match parent_scope_id {
-                Some(NodeId::Resolved(uuid)) => *uuid.as_bytes(),
-                Some(NodeId::Synthetic(uuid)) => *uuid.as_bytes(),
-                None => [0u8; 16], // Placeholder for None
-            };
-            parent_id_bytes.hash(&mut hasher); // Add parent scope to hash input
+            // Conditionally hash the parent scope ID using the uuid() method
+            if let Some(parent_id) = parent_scope_id {
+                hasher.write(parent_id.uuid().as_bytes()); // Use the uuid() method
+            }
+            // else: hash nothing extra for the None case
 
             // Retrieve the collected bytes
             let collected_bytes = hasher.finish_bytes();

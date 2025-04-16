@@ -59,11 +59,13 @@ pub fn find_impl_node_paranoid<'a>(
                                     is_fully_qualified: false, // Assume false for simple generic param
                                 };
                                 let gen_related_ids: &[TypeId] = &[]; // Generic param itself has no related types here
+                                // Pass None for parent_scope_id when regenerating in tests
                                 related_ids.push(TypeId::generate_synthetic(
                                     crate_namespace,
                                     file_path,
                                     &gen_type_kind,
                                     gen_related_ids,
+                                    None, // Parent scope is None in this test regeneration context
                                 ));
                             }
                             // TODO: Handle other GenericArgument types (Lifetime, Const) if needed for future tests
@@ -79,11 +81,13 @@ pub fn find_impl_node_paranoid<'a>(
                 };
 
                 // Generate the final TypeId using the base TypeKind and collected related IDs
+                // Pass None for parent_scope_id when regenerating in tests
                 TypeId::generate_synthetic(
                     crate_namespace,
                     file_path,
                     &type_kind,
                     &related_ids, // Pass collected related IDs
+                    None,         // Parent scope is None in this test regeneration context
                 )
             }
             // TODO: Handle other syn::Type variants (Reference, Tuple, etc.) if needed by tests using this helper
