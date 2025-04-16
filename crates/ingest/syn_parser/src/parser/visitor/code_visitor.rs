@@ -844,6 +844,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // impl MyTrait for MyStruct {}
         // // item_impl.self_ty = Type::Path for "MyStruct"
         // // item_impl.trait_ = Some for "MyTrait"
+
+        // Pushing parent node id to stack BEFORE generating self type.
+        self.state.current_definition_scope.push(impl_id);
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -993,8 +996,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // Push the impl's ID onto the scope stack
-        self.state.current_definition_scope.push(impl_id);
+        // Already pushed the impl's ID to stack before calling `get_or_create_type` on the `Self`
+        // type above.
 
         visit::visit_item_impl(self, item_impl);
 
@@ -1417,7 +1420,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let span = item_const.extract_span_bytes();
 
         // Process the type
+        // NOTE: I'm not sure this approach really makes sense for the "type" of the const here. I
+        // mean I suppose you could consider it in the "scope" of the const definition, but it is
+        // fundementally different from the way a, e.g., generic is "scoped", or `Self`. For now
+        // this gives us unique IDs, but this will probably have to change at some point for
+        // incremental parsing. For now its... fine, I suppose.
+        // push "parent" scope first
+        self.state.current_definition_scope.push(const_id);
         let type_id = get_or_create_type(self.state, &item_const.ty);
+        // pop "parent" scope
+        self.state.current_definition_scope.pop();
 
         // Extract the value expression as a string
         let value = Some(item_const.expr.to_token_stream().to_string());
@@ -1453,8 +1465,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             kind: RelationKind::ValueType,
         });
 
+        // add this state management if recursing into the children of the const node, which
+        // should... only happen if we are parding `syn::Expr`?
+        // self.state.current_definition_scope.push(const_id);
         // Continue visiting
         visit::visit_item_const(self, item_const);
+        // pop parent id onto stack, appropriate state management
+        // self.state.current_definition_scope.pop();
     }
 
     // Visit static items
@@ -1469,7 +1486,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let span = item_static.extract_span_bytes();
 
         // Process the type
+        self.state.current_definition_scope.push(static_id);
         let type_id = get_or_create_type(self.state, &item_static.ty);
+        self.state.current_definition_scope.pop();
 
         // Extract the value expression as a string
         let value = Some(item_static.expr.to_token_stream().to_string());
@@ -1508,7 +1527,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         });
 
         // Continue visiting
+        // add this state management if recursing into the children of the const node, which
+        // should... only happen if we are parding `syn::Expr`?
+        // push parent id onto stack for type processing
+        // self.state.current_definition_scope.push(static_id);
         visit::visit_item_static(self, item_static);
+        // pop parent id onto stack, appropriate state management
+        // self.state.current_definition_scope.pop();
     }
 
     // Visit macro definitions (macro_rules!)
