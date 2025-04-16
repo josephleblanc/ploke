@@ -141,12 +141,31 @@ The code analysis reveals:
     *   **Benefit:** Fixes the critical flaw of using type strings for `TypeId`s/caching, handles generics more robustly at the ID level.
 
 5.  **Refactor Generic Handling (Using Existing ID Types):**
-    *   **Action:**
-        *   When visiting `syn::GenericParam` (in `process_generics`), generate its `Synthetic` `NodeId` using the `current_definition_scope.last()` from `VisitorState` as the parent scope ID input.
-        *   When visiting a type usage like `T` (in `process_type`), the goal is to eventually link it to the correct parameter definition's `NodeId`. During the initial parse:
-            *   **(Recommended for now):** Generate a `Synthetic` `TypeId` based on the name "T" and the *file context* (using the new structure-based generation from Step 2b, which might involve marking it as a named parameter usage). Add a placeholder relation or marker (e.g., in `PendingRelation`) indicating this needs resolution.
-            *   **(Advanced):** Attempt to look up "T" in the current scope (using `VisitorState` context) during the parse. If found (e.g., matching a `GenericParamNode` associated with the `current_definition_scope`), store the *parameter's* `NodeId` somehow associated with the usage `TypeId` (perhaps via a `PendingRelation`). This is closer to name resolution but adds complexity.
-    *   **Benefit:** Moves towards correctly identifying generic parameters and preparing for linking usage (`TypeId`) to definition (`NodeId`).
+    *   **Goal:** Ensure generic parameter definitions get correctly scoped `NodeId`s and that generic type usages (`T`, `Self`) get `TypeId`s that are disambiguated by their usage scope within the file.
+    *   **Actions:**
+        1.  **Generic Definition `NodeId`:**
+            *   **File:** `crates/ingest/syn_parser/src/parser/visitor/state.rs` (`process_generics`)
+            *   **Verify:** Confirm that when visiting `syn::GenericParam`, the call to `VisitorState::generate_synthetic_node_id` correctly uses the `parent_scope_id` from `current_definition_scope.last()`. This ensures `NodeId`s for generic parameter definitions are scoped correctly.
+        2.  **Generic Usage `TypeId` (Incorporate Scope):**
+            *   **File:** `crates/ingest/syn_parser/src/parser/visitor/type_processing.rs` (`process_type`, `get_or_create_type`)
+            *   **Change:** When visiting a type usage like `T` or `Self` (typically `syn::Type::Path`), `process_type` determines the `TypeKind` (e.g., `Named { path: ["T"], .. }`).
+            *   **Change:** `get_or_create_type` must retrieve the `parent_scope_id` from `VisitorState.current_definition_scope.last().copied()`.
+            *   **Change:** `get_or_create_type` must call the *updated* `TypeId::generate_synthetic` (see 5.3), passing this `parent_scope_id` along with the structural `TypeKind`, related types, file path, and namespace.
+            *   **Rationale:** This incorporates the usage scope into the `TypeId::Synthetic`, preventing collisions for generics/`Self` used in different scopes within the same file (e.g., `T` in `fn foo<T>` vs. `T` in `struct Bar<T>`). This simplifies later resolution by removing ambiguity at the ID level.
+        3.  **Modify `TypeId::generate_synthetic`:**
+            *   **File:** `crates/ploke-core/src/lib.rs`
+            *   **Change:** Update the function signature to accept `parent_scope_id: Option<NodeId>`.
+            *   **Change:** Update the UUIDv5 hash calculation within the function to incorporate the bytes of the `parent_scope_id` (using a placeholder for `None`), similar to how `NodeId::generate_synthetic` handles it.
+            *   **Documentation:** Update the Rustdoc comment for `TypeId::generate_synthetic` to include the new parameter and explain its role in disambiguating context-dependent types like generics and `Self`.
+        4.  **Update `TypeId` Call Sites:**
+            *   **File:** `crates/ingest/syn_parser/src/parser/visitor/type_processing.rs` (`get_or_create_type`)
+            *   **Change:** Modify the call to `TypeId::generate_synthetic` to pass the retrieved `parent_scope_id`.
+        5.  **Test `TypeId` Scoping:**
+            *   **Action:** Run the full test suite: `cargo test -p syn_parser -- --nocapture`.
+            *   **Focus:** Pay close attention to tests involving generics and `Self` types, especially in `tests/uuid_phase2_partial_graphs/` and `tests/fixture_crates/fixture_types/`. Failures are expected where types previously collided but should now be distinct.
+            *   **Debugging:** Use `eprintln!` or logging if needed to compare expected vs. actual `TypeId`s, ensuring the parent scope is correctly influencing the generated ID.
+            *   **Fix Tests:** Update test assertions and potentially paranoid helper functions (`find_*_type_paranoid`) to correctly regenerate `TypeId`s using the appropriate `parent_scope_id` context based on the test setup.
+    *   **Benefit:** Creates distinct `TypeId`s for generic/`Self` usages based on their definition scope within a file, eliminating Phase 2 ambiguity and simplifying later resolution. Leverages existing context tracking.
 
 6.  **Clarify Definition vs. Usage Representation (Using Existing ID Types):**
     *   **Action:** Reinforce the existing structural distinction. `NodeId` represents definitions (StructNode, FunctionNode, GenericParamNode, etc.). `TypeId` represents type usages (stored in fields like `param.type_id`, `field.type_id`, `return_type`, trait bounds). Review `parser/nodes.rs` and `parser/types.rs` to ensure this pattern is consistent and add documentation (doc comments) to clarify the intended role of `NodeId` vs. `TypeId` fields.
