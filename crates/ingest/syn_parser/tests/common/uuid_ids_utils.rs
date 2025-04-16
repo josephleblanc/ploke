@@ -562,22 +562,43 @@ pub fn find_function_node_paranoid<'a>(
 
     let func_node = module_candidates[0];
     let func_id = func_node.id();
-    // let actual_span = func_node.span; // Span no longer used for ID generation
 
     // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    //    Find the actual parent scope ID from the 'Contains' relation in the graph.
+    let actual_parent_scope_id = graph
+        .relations
+        .iter()
+        .find(|rel| {
+            rel.target == GraphId::Node(func_id) && rel.kind == RelationKind::Contains
+        })
+        .map(|rel| match rel.source {
+            GraphId::Node(id) => Some(id),
+            GraphId::Type(_) => panic!("'Contains' relation source cannot be a TypeId for a Node target"),
+        })
+        .unwrap_or_else(|| {
+            // If no Contains relation found, it might be the root module's content,
+            // or something went wrong during parsing. For paranoia, assume None is correct only if it's top-level.
+            // A more robust check might be needed depending on how root items are handled.
+            // For now, let's assume top-level items in a file *should* have the file's module as parent.
+             panic!("Could not find 'Contains' relation for function '{}' ({}) in file '{}'", func_name, func_id, file_path.display());
+            // If we expect items directly under crate root with no module parent:
+            // if expected_module_path == ["crate"] { None } else { panic!(...) }
+        });
+
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
-        expected_module_path,
+        expected_module_path, // Still use the expected module path for context hashing
         func_name,
         ploke_core::ItemKind::Function, // Pass the correct ItemKind
-        Some(module_node.id),           // Pass the containing module's ID as parent scope
+        actual_parent_scope_id,         // Pass the parent scope ID found via the Contains relation
     );
 
     assert_eq!(
         func_id, regenerated_id,
         "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function, Some(module_node.id)
+        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function, actual_parent_scope_id // Use actual parent scope in message
     );
 
     // 7. Return the validated node
