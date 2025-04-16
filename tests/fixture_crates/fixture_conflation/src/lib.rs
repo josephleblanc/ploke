@@ -26,6 +26,8 @@
 //! - GenericParamKind::Type.default
 //! - GenericParamKind::Const.type_id
 //! - TypeNode.related_types (implicitly via generics, tuples, etc.)
+//! - FieldNode.type_id (in EnumNode variants)
+//! - FieldNode.type_id (in newtype tuple struct)
 //! - RelationKind (implicitly via structure)
 //!
 //! **Note:** This fixture aims for stable Rust compatibility. The `TraitWithSelfAlias`
@@ -102,6 +104,18 @@ pub trait TraitWithConst<T = i32> {
 // 11. Test TypeAliasNode.type_id (generic T)
 pub type TopLevelAlias<T> = Vec<T>;
 
+// 26. Test FieldNode.type_id (generic T in enum variant)
+//     Test GenericParamKind::Type.bounds
+pub enum TopLevelEnum<T: Send> {
+    VariantA(T),
+    VariantB(String),
+}
+
+// 27. Test FieldNode.type_id (generic T in newtype tuple struct)
+//     Test GenericParamKind::Type.bounds
+pub struct TopLevelNewtype<T: Sync>(pub T);
+
+
 // --- Nested Module Definitions ---
 
 mod inner_mod {
@@ -158,6 +172,17 @@ mod inner_mod {
     pub struct InnerConstGeneric<const N: usize> {
         _data: [u8; N],
     }
+
+    // 28. Test FieldNode.type_id (generic T in enum variant) - Different T from TopLevelEnum
+    //     Test GenericParamKind::Type.bounds
+    pub enum InnerEnum<T: Send + Sync> {
+        InnerVariantA(T),
+    }
+
+    // 29. Test FieldNode.type_id (generic T in newtype tuple struct) - Different T from TopLevelNewtype
+    //     Test GenericParamKind::Type.bounds
+    pub struct InnerNewtype<T: Clone>(pub T);
+
 }
 
 // --- Using items from the other file ---
