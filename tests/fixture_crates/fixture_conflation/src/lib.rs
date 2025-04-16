@@ -274,7 +274,7 @@ pub struct CfgGatedStruct {
 pub fn cfg_gated_func() -> i32 {
     0
 }
-#[cfg(feature = "feature_b")]
+#[cfg(not(feature = "feature_a"))] // Changed from feature_b
 pub fn cfg_gated_func() -> String {
     String::new()
 }
