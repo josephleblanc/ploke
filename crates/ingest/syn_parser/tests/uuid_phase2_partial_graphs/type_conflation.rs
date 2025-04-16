@@ -2,21 +2,21 @@
 //! with generics (T) and Self types across different scopes.
 
 use crate::common::{
+    paranoid::find_struct_node_paranoid, // Import from the paranoid module
     uuid_ids_utils::{
         find_field_type_id, find_function_node_paranoid, find_param_type_id,
-        find_return_type_id, find_struct_node_paranoid, run_phases_and_collect,
+        find_return_type_id, run_phases_and_collect,
     },
-    FixtureError, // Import FixtureError if needed for helper results
+    // FixtureError, // Removed unused import
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
-use std::path::PathBuf;
+// use std::path::PathBuf; // Removed unused import
+use syn_parser::parser::visitor::ParsedCodeGraph; // Import directly
 
 const FIXTURE_NAME: &str = "fixture_conflation";
 
 // Helper to find the specific graph for lib.rs
-fn find_lib_rs_graph(
-    graphs: &[crate::common::uuid_ids_utils::ParsedCodeGraph],
-) -> &crate::common::uuid_ids_utils::ParsedCodeGraph {
+fn find_lib_rs_graph(graphs: &[ParsedCodeGraph]) -> &ParsedCodeGraph { // Use direct import
     let fixture_root = fixtures_crates_dir().join(FIXTURE_NAME);
     let lib_rs_path = fixture_root.join("src/lib.rs");
     graphs
