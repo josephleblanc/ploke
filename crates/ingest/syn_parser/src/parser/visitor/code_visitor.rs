@@ -390,6 +390,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let byte_range = func.span().byte_range();
         let span = (byte_range.start, byte_range.end);
 
+        // Push the function's ID onto the scope stack BEFORE processing types/generics
+        self.state.current_definition_scope.push(fn_id);
+
         // Process function parameters
         let mut parameters = Vec::new();
         for arg in &func.sig.inputs {
@@ -423,6 +426,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process generic parameters
         let generic_params = self.state.process_generics(&func.sig.generics);
 
+        // Pop the function's ID from the scope stack AFTER processing types/generics
+        self.state.current_definition_scope.pop();
+
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&func.attrs);
         let attributes = extract_attributes(&func.attrs);
@@ -445,14 +451,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
         });
 
-        // Push the function's ID onto the scope stack
-        self.state.current_definition_scope.push(fn_id);
-
-        // Continue visiting the function body
+        // Continue visiting the function body (fn_id is already off the stack)
         visit::visit_item_fn(self, func);
-
-        // Pop the function's ID from the scope stack
-        self.state.current_definition_scope.pop();
     }
 
     // Visit struct definitions
@@ -466,6 +466,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let byte_range = item_struct.span().byte_range();
         let span = (byte_range.start, byte_range.end);
+
+        // Push the struct's ID onto the scope stack BEFORE processing fields/generics
+        self.state.current_definition_scope.push(struct_id);
 
         // Process fields
         let mut fields = Vec::new();
@@ -513,6 +516,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_struct.generics);
 
+        // Pop the struct's ID from the scope stack AFTER processing fields/generics
+        self.state.current_definition_scope.pop();
+
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
         let attributes = extract_attributes(&item_struct.attrs);
@@ -536,13 +542,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
-        // Push the struct's ID onto the scope stack
-        self.state.current_definition_scope.push(struct_id);
-
+        // Continue visiting (struct_id is already off the stack)
         visit::visit_item_struct(self, item_struct);
-
-        // Pop the struct's ID from the scope stack
-        self.state.current_definition_scope.pop();
     }
 
     // Visit type alias definitions
@@ -556,11 +557,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let span = item_type.extract_span_bytes();
 
+        // Push the type alias's ID onto the scope stack BEFORE processing type/generics
+        self.state.current_definition_scope.push(type_alias_id);
+
         // Process the aliased type
         let type_id = get_or_create_type(self.state, &item_type.ty);
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_type.generics);
+
+        // Pop the type alias's ID from the scope stack AFTER processing type/generics
+        self.state.current_definition_scope.pop();
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_type.attrs);
@@ -599,6 +606,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.debug_new_id(&union_name, union_id);
 
         let span = item_union.extract_span_bytes();
+
+        // Push the union's ID onto the scope stack BEFORE processing fields/generics
+        self.state.current_definition_scope.push(union_id);
 
         // Process fields
         let mut fields = Vec::new();
@@ -641,6 +651,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_union.generics);
 
+        // Pop the union's ID from the scope stack AFTER processing fields/generics
+        self.state.current_definition_scope.pop();
+
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_union.attrs);
         let attributes = extract_attributes(&item_union.attrs);
@@ -663,13 +676,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
-        // Push the union's ID onto the scope stack
-        self.state.current_definition_scope.push(union_id);
-
+        // Continue visiting (union_id is already off the stack)
         visit::visit_item_union(self, item_union);
-
-        // Pop the union's ID from the scope stack
-        self.state.current_definition_scope.pop();
     }
 
     // Visit enum definitions
@@ -691,6 +699,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let variant_id = self
                 .state
                 .generate_synthetic_node_id(&variant_name, ItemKind::Variant);
+
+            // Push the variant's ID onto the scope stack BEFORE processing its fields
+            self.state.current_definition_scope.push(variant_id);
 
             // Process fields of the variant
             let mut fields = Vec::new();
@@ -764,6 +775,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 }
             }
 
+            // Pop the variant's ID from the scope stack AFTER processing its fields
+            self.state.current_definition_scope.pop();
+
             // Extract discriminant if any
             let discriminant = variant
                 .discriminant
@@ -788,8 +802,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             variants.push(variant_node);
         }
 
+        // Push the enum's ID onto the scope stack BEFORE processing its generics
+        self.state.current_definition_scope.push(enum_id);
+
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
+
+        // Pop the enum's ID from the scope stack AFTER processing its generics
+        self.state.current_definition_scope.pop();
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_enum.attrs);
@@ -813,13 +833,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ),
             }));
 
-        // Push the enum's ID onto the scope stack
-        self.state.current_definition_scope.push(enum_id);
-
+        // Continue visiting (enum_id is already off the stack)
         visit::visit_item_enum(self, item_enum);
-
-        // Pop the enum's ID from the scope stack
-        self.state.current_definition_scope.pop();
     }
 
     // Visit impl blocks
@@ -898,6 +913,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
 
+                // Push the method's ID onto the scope stack BEFORE processing its types/generics
+                self.state.current_definition_scope.push(method_node_id);
+
                 // Process method parameters
                 let mut parameters = Vec::new();
                 for arg in &method.sig.inputs {
@@ -933,6 +951,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 });
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
+
+                // Pop the method's ID from the scope stack AFTER processing its types/generics
+                self.state.current_definition_scope.pop();
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1028,6 +1049,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
 
+                // Push the method's ID onto the scope stack BEFORE processing its types/generics
+                self.state.current_definition_scope.push(method_node_id);
+
                 // Process method parameters
                 let mut parameters = Vec::new();
                 for arg in &method.sig.inputs {
@@ -1060,6 +1084,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
+                // Pop the method's ID from the scope stack AFTER processing its types/generics
+                self.state.current_definition_scope.pop();
+
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
                 let attributes = extract_attributes(&method.attrs);
@@ -1090,6 +1117,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 methods.push(method_node);
             }
         }
+
+        // Push the trait's ID onto the scope stack BEFORE processing its generics/supertraits
+        self.state.current_definition_scope.push(trait_id);
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_trait.generics);
@@ -1123,6 +1153,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             })
             .collect();
 
+        // Pop the trait's ID from the scope stack AFTER processing its generics/supertraits
+        self.state.current_definition_scope.pop();
+
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_trait.attrs);
         let attributes = extract_attributes(&item_trait.attrs);
@@ -1155,13 +1188,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // Push the trait's ID onto the scope stack
-        self.state.current_definition_scope.push(trait_id);
-
+        // Continue visiting (trait_id is already off the stack)
         visit::visit_item_trait(self, item_trait);
-
-        // Pop the trait's ID from the scope stack
-        self.state.current_definition_scope.pop();
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
