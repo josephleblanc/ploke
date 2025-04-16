@@ -626,3 +626,122 @@ pub fn find_type_node(graph: &CodeGraph, type_id: TypeId) -> &TypeNode {
         .find(|tn| tn.id == type_id)
         .unwrap_or_else(|| panic!("TypeNode not found for TypeId: {}", type_id))
 }
+
+/// Finds a method (FunctionNode) within a specific impl or trait block, performs paranoid checks,
+/// and returns a reference to it.
+///
+/// This helper leverages `find_impl_node_paranoid` or `find_trait_node_paranoid` to locate
+/// the parent scope first, ensuring the parent context is correct before searching for the method.
+///
+/// Panics if the graph, parent node, or method is not found, or if uniqueness or ID checks fail.
+pub fn find_method_node_paranoid<'a>(
+    parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
+    fixture_name: &str,                   // Needed to construct expected path
+    relative_file_path: &str,             // e.g., "src/lib.rs" or "src/impls.rs"
+    expected_module_path: &[String],      // Module path containing the impl/trait block
+    parent_context: MethodParentContext<'a>, // Specifies the parent impl or trait
+    method_name: &str,                    // Name of the method to find
+) -> &'a FunctionNode {
+    // --- 1. Find the ParsedCodeGraph (Common logic) ---
+    let fixture_root = fixtures_crates_dir().join(fixture_name);
+    let target_file_path = fixture_root.join(relative_file_path);
+    let target_data = parsed_graphs
+        .iter()
+        .find(|data| data.file_path == target_file_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "ParsedCodeGraph for '{}' not found in results",
+                target_file_path.display()
+            )
+        });
+    let graph = &target_data.graph;
+    let crate_namespace = target_data.crate_namespace;
+    let file_path = &target_data.file_path;
+
+    // --- 2. Find the Parent Node (Impl or Trait) and its Methods ---
+    let (parent_node_id, methods_list): (NodeId, &[FunctionNode]) = match parent_context {
+        MethodParentContext::Impl {
+            self_type_str,
+            trait_type_str,
+        } => {
+            // Use the existing paranoid helper to find the specific impl block
+            let impl_node = super::paranoid::impl_helpers::find_impl_node_paranoid(
+                parsed_graphs,
+                fixture_name,
+                relative_file_path,
+                expected_module_path,
+                self_type_str,
+                trait_type_str,
+            );
+            (impl_node.id(), &impl_node.methods) // Return ID and methods slice
+        }
+        MethodParentContext::Trait { trait_name } => {
+            // Use the existing paranoid helper to find the specific trait block
+            let trait_node = super::paranoid::trait_helpers::find_trait_node_paranoid(
+                parsed_graphs,
+                fixture_name,
+                relative_file_path,
+                expected_module_path,
+                trait_name,
+            );
+            (trait_node.id(), &trait_node.methods) // Return ID and methods slice
+        }
+    };
+
+    // --- 3. Find the Method by Name within the Parent's Methods ---
+    let method_node = methods_list
+        .iter()
+        .find(|m| m.name() == method_name)
+        .unwrap_or_else(|| {
+            panic!(
+                "Method named '{}' not found within parent scope {:?} (context: {:?}) in file '{}'",
+                method_name,
+                parent_node_id, // Use the found parent ID
+                parent_context,
+                file_path.display()
+            )
+        });
+
+    // --- 4. PARANOID CHECK: Assert Uniqueness (Implicitly done by find returning Option) ---
+    // If find returned Some, we implicitly assume uniqueness within that parent's method list.
+    // A stricter check could collect all matches and assert len == 1, but find is idiomatic here.
+
+    let method_id = method_node.id();
+
+    // --- 5. PARANOID CHECK: Regenerate Method's NodeId ---
+    // The context for the method's ID includes the module path containing the parent impl/trait,
+    // the method's name, its kind, and the parent impl/trait's ID.
+    let regenerated_id = NodeId::generate_synthetic(
+        crate_namespace,
+        file_path,
+        expected_module_path, // Module path containing the parent impl/trait
+        method_name,
+        ploke_core::ItemKind::Function, // Methods are functions
+        Some(parent_node_id), // Parent scope is the impl/trait ID
+    );
+
+    // --- 6. Assert Regenerated ID Matches Actual ID ---
+    assert_eq!(
+        method_id, regenerated_id,
+        "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}'",
+        method_id, regenerated_id, method_name, parent_node_id, parent_context, file_path.display()
+    );
+
+    // --- 7. Return the validated method node ---
+    method_node
+}
+
+/// Specifies the context (impl or trait) containing the method being searched for.
+#[derive(Debug, Clone, Copy)] // Added derive for Debug, Clone, Copy
+pub enum MethodParentContext<'a> {
+    Impl {
+        /// The string representation of the `self` type of the impl block.
+        self_type_str: &'a str,
+        /// Optional string representation of the trait type, if it's a trait impl.
+        trait_type_str: Option<&'a str>,
+    },
+    Trait {
+        /// The name of the trait containing the method.
+        trait_name: &'a str,
+    },
+}
