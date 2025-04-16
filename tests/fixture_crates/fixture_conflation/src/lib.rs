@@ -31,6 +31,8 @@
 //! - RelationKind (implicitly via structure)
 //! - Conflation across mutually exclusive `#[cfg(feature = "feature_a")]` / `#[cfg(not(feature = "feature_a"))]` attributes.
 //! - Conflation of fields within a struct under mutually exclusive `cfg` attributes.
+//! - Conflation of generic impls/traits under mutually exclusive `cfg` attributes.
+//! - Disambiguation of identically named items in different files gated by file-level `cfg` attributes.
 //!
 //! **Note:** This fixture aims for stable Rust compatibility. The `TraitWithSelfAlias`
 //! example, which used `type AliasOfSelf = Self;`, was removed because it required
@@ -55,6 +57,12 @@ use std::fmt::{Debug, Display}; // Added Display import
 
 // Include the contents of other_mod.rs as a module
 mod other_mod;
+// Include file-level cfg test modules
+#[cfg(feature = "feature_a")]
+mod cfg_file_a;
+#[cfg(not(feature = "feature_a"))]
+mod cfg_file_not_a;
+
 
 // --- Top Level Definitions ---
 
@@ -303,4 +311,33 @@ pub struct CfgGatedFieldsStruct {
     pub gated_field: i32, // Same name, different types under cfg
     #[cfg(not(feature = "feature_a"))]
     pub gated_field: String,
+}
+
+// 39. Test NodeId/TypeId conflation for generic traits under different cfgs
+#[cfg(feature = "feature_a")]
+pub trait CfgGatedGenericTrait<T> {
+    fn method_a(&self, param: T) -> i32;
+}
+#[cfg(not(feature = "feature_a"))]
+pub trait CfgGatedGenericTrait<T> { // Same name, same generic param name
+    fn method_not_a(&self, param: T) -> String; // Different method signature
+}
+
+
+// 40. Test NodeId/TypeId conflation for generic impls under different cfgs
+#[cfg(feature = "feature_a")]
+impl<T: Debug> CfgGatedStruct { // Impl for the feature_a version of CfgGatedStruct
+     // 41. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
+    pub fn cfg_method_a(&self, input: T) -> Self {
+        println!("cfg_method_a: {:?}", input);
+        CfgGatedStruct { field_a: 0 }
+    }
+}
+#[cfg(not(feature = "feature_a"))]
+impl<T: Display> CfgGatedStruct { // Impl for the not(feature_a) version of CfgGatedStruct
+    // 42. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
+    pub fn cfg_method_not_a(&self, input: T) -> Self {
+        println!("cfg_method_not_a: {}", input);
+        CfgGatedStruct { field_b: String::new() }
+    }
 }
