@@ -4,10 +4,9 @@
 use crate::common::{
     paranoid::find_struct_node_paranoid, // Import from the paranoid module
     uuid_ids_utils::{
-        find_field_type_id, find_function_node_paranoid, find_param_type_id,
-        find_return_type_id, run_phases_and_collect,
+        find_field_type_id, find_method_node_paranoid, find_param_type_id, find_return_type_id,
+        run_phases_and_collect, MethodParentContext, // Import the new helper and context enum
     },
-    // FixtureError, // Removed unused import
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
 // use std::path::PathBuf; // Removed unused import
@@ -107,23 +106,32 @@ fn test_self_return_type_conflation_in_impls() {
     // Note: The parent scope for a method is the ImplNode ID. We need to find that first,
     // or adjust find_function_node_paranoid if it can handle methods directly.
     // Let's assume find_function_node_paranoid works by finding the function and checking
-    // its parent 'Contains' relation points to the correct Impl block scope.
+    // its parent 'Contains' relation points to the correct Impl block scope. <-- This assumption was wrong for find_function_node_paranoid
     // We need the module path containing the *impl block*.
-    let top_level_method_node = find_function_node_paranoid(
+    // Use the new find_method_node_paranoid helper
+    let top_level_method_node = find_method_node_paranoid(
         &graphs,
         FIXTURE_NAME,
         "src/lib.rs",
-        &["crate".to_string()], // Impl block is at the top level
-        "method",               // Method name
+        &["crate".to_string()], // Module path containing the impl block
+        MethodParentContext::Impl {
+            self_type_str: "TopLevelStruct", // The struct being implemented
+            trait_type_str: None,           // It's an inherent impl
+        },
+        "method", // Method name
     );
 
-    // Find the method `inner_method` in `impl InnerStruct`
-    let inner_method_node = find_function_node_paranoid(
+    // Find the method `inner_method` in `impl InnerStruct` using the new helper
+    let inner_method_node = find_method_node_paranoid(
         &graphs,
         FIXTURE_NAME,
         "src/lib.rs",
-        &["crate".to_string(), "inner_mod".to_string()], // Impl block is in inner_mod
-        "inner_method",                                 // Method name
+        &["crate".to_string(), "inner_mod".to_string()], // Module path containing the impl block
+        MethodParentContext::Impl {
+            self_type_str: "InnerStruct", // The struct being implemented
+            trait_type_str: None,        // It's an inherent impl
+        },
+        "inner_method", // Method name
     );
 
     // Get the TypeId for the return type (Self) in both methods
