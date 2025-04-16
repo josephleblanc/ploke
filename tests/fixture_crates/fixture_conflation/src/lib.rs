@@ -238,7 +238,6 @@ pub struct NestedGeneric<T: Debug, U: Display> {
 // (associated_type_defaults) which caused issues with `cargo clippy` on stable.
 // This specific pattern wasn't essential for the primary goal of testing T/Self conflation.
 
-
 // --- #[cfg] Attribute Conflation Tests ---
 
 // These items have the same names and scopes but are gated by different features.
@@ -260,10 +259,13 @@ pub struct CfgGatedStruct {
 
 // 33. Test NodeId conflation for functions under different cfgs
 #[cfg(feature = "feature_a")]
-pub fn cfg_gated_func() -> i32 { 0 }
+pub fn cfg_gated_func() -> i32 {
+    0
+}
 #[cfg(feature = "feature_b")]
-pub fn cfg_gated_func() -> String { String::new() }
-
+pub fn cfg_gated_func() -> String {
+    String::new()
+}
 
 // 34. Test NodeId conflation for enums under different cfgs
 #[cfg(feature = "feature_a")]
