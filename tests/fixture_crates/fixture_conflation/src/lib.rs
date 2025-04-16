@@ -27,6 +27,10 @@
 //! - GenericParamKind::Const.type_id
 //! - TypeNode.related_types (implicitly via generics, tuples, etc.)
 //! - RelationKind (implicitly via structure)
+//!
+//! **Note:** This fixture aims for stable Rust compatibility. The `TraitWithSelfAlias`
+//! example, which used `type AliasOfSelf = Self;`, was removed because it required
+//! the unstable `associated_type_defaults` feature.
 
 // Removed #![feature(associated_type_defaults)] as the unstable feature usage was removed.
 
@@ -132,9 +136,10 @@ mod inner_mod {
     // 15. Test ImplNode.trait_type (generic T) - Different T from impl for String
     //     Test ImplNode.self_type (generic T)
     //     Test GenericParamKind::Type.bounds (combined)
-    //     Added `+ Debug` to T because InnerStruct derives Debug, which requires T: Debug,
+    //     Added `+ std::fmt::Debug` to T because InnerStruct derives Debug, which requires T: Debug,
     //     and TopLevelTrait requires Self: Debug (which InnerStruct satisfies via derive).
-    impl<T: Default + Display + Clone + Debug> TopLevelTrait<T> for InnerStruct<T> {
+    //     Using full path `std::fmt::Debug` to avoid ambiguity with the derive macro.
+    impl<T: Default + Display + Clone + std::fmt::Debug> TopLevelTrait<T> for InnerStruct<T> {
         type Associated = Vec<T>; // 16. Test TypeAliasNode.type_id (implicitly, for Associated = Vec<T>)
         fn trait_method(&self, input: T) -> Self::Associated {
             // Self here refers to InnerStruct<T>
