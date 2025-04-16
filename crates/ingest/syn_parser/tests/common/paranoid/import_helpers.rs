@@ -120,7 +120,7 @@ pub fn find_import_node_paranoid<'a>(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Use the module's definition path for context
-        id_gen_name,          // Use original name or "<glob>" for ID generation
+        id_gen_name,          // Use visible name or "<glob>" for ID generation
         item_kind,            // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
     );
@@ -128,7 +128,7 @@ pub fn find_import_node_paranoid<'a>(
     assert_eq!(
         import_id, regenerated_id,
         "Mismatch between node's actual ID ({}) and regenerated ID ({}) for import '{}' (path: {:?}) in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind, Some(module_node.id)
+        import_id, regenerated_id, visible_name, expected_path, expected_module_path, file_path.display(), item_kind, Some(module_node.id) // Use actual parent scope in message
     );
 
     // 8. Return the validated node

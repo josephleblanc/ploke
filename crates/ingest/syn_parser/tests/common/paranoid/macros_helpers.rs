@@ -105,7 +105,7 @@ pub fn find_macro_node_paranoid<'a>(
     assert_eq!(
         macro_id, regenerated_id,
         "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id)
+        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id) // Use actual parent scope in message
     );
 
     // 8. Return the validated node
