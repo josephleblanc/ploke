@@ -96,13 +96,6 @@ pub fn find_macro_node_paranoid<'a>(
     // The visitor uses the module path where the item is defined as context.
     // The helper must use the same path for regeneration.
 
-    // --- DEBUG ---
-    eprintln!(
-        "[HELPER ID REGEN - MACRO] name: '{}', item_kind: {:?}, parent_scope: {:?}, mod_path: {:?}, file: {:?}",
-        macro_name, ItemKind::Macro, Some(module_node.id), expected_module_path, file_path
-    );
-    // --- END DEBUG ---
-
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,            // Use the file_path from the target_data

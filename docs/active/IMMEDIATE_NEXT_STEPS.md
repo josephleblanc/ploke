@@ -117,16 +117,17 @@ The code analysis reveals:
 
 *   Implementing Step 3 (adding `parent_scope_id` context) initially caused widespread test failures, as expected.
 *   The `find_file_module_node_paranoid` helper was updated to use `parent_scope_id = None` for regeneration, successfully fixing the module-related test failures (Commit `c43aa04`).
-*   The `find_import_node_paranoid` and `find_macro_node_paranoid` helpers were updated to derive the parent module's path (excluding the module's own name) and use that along with the parent module's ID for regeneration (Commit `13839e5`).
-*   Despite these fixes, tests related to imports and macros (`uuid_phase2_partial_graphs::nodes::imports::*` and `uuid_phase2_partial_graphs::nodes::macros::*`) are still failing with `NodeId` mismatches. This indicates a remaining subtle inconsistency between the visitor's ID generation context and the helpers' regeneration context for these specific item types.
+*   The `find_import_node_paranoid` and `find_macro_node_paranoid` helpers were corrected to use the full `expected_module_path` (matching the visitor's `current_module_path`) for regeneration context (Commit `53c02f2`).
+*   The manual regeneration tests (`test_import_node_field_id_regeneration`, `test_macro_node_field_id_regeneration`) were corrected to properly find and use the parent module's ID (Commit `a7a34fa`).
+*   All `syn_parser` tests are now passing, indicating consistency between visitor ID generation and helper regeneration logic for `NodeId`.
+*   Temporary debug prints were added to trace ID generation inputs.
 
 **Next Steps:**
 
-1.  **Analyze Remaining Failures:** Deeply investigate the failing import and macro tests. Compare the *exact* inputs (`crate_namespace`, `file_path`, `module_path`, `name`, `item_kind`, `parent_scope_id`) passed to `NodeId::generate_synthetic` by the visitor versus the helper for a specific failing case (e.g., `test_import_node_paranoid_simple`). Identify the precise mismatch.
-2.  **Fix Helpers/Visitor:** Based on the analysis, correct the logic in either the paranoid helpers or potentially the visitor's handling of imports/macros to ensure consistent inputs are used for ID generation and regeneration.
-3.  **Run Tests:** Verify all tests pass after fixing the helpers/visitor.
-4.  **Proceed to Step 4:** Continue with the plan ("Refactor Type Processing & Cache" - review if any further action is needed).
-5.  **Proceed to Step 5:** Refactor Generic Handling.
+1.  **Remove Debug Prints:** Clean up the temporary `eprintln!` statements added to `VisitorState` and the import/macro helpers.
+2.  **Review Plan:** Re-evaluate the remaining steps in the UUID refactor plan (Sections 4-7 below).
+3.  **Proceed to Step 4:** Continue with the plan ("Refactor Type Processing & Cache" - review if any further action is needed, though much was done in Step 2.5).
+4.  **Proceed to Step 5:** Refactor Generic Handling.
 5.  **Proceed to Step 6:** Clarify Definition vs. Usage Representation.
 6.  **Proceed to Step 7:** Cleanup.
 
