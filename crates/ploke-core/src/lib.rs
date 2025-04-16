@@ -393,7 +393,8 @@ pub enum ItemKind {
 /// Moved from `syn_parser::parser::types`.
 /// Used as input for structural `TypeId::Synthetic` generation.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)] // Added Eq, Hash
-pub enum TypeKind { // Corrected: Removed duplicate 'pub'
+pub enum TypeKind {
+    // Corrected: Removed duplicate 'pub'
     //ANCHOR_END: TypeKind_defn
     Named {
         path: Vec<String>, // Full path segments
