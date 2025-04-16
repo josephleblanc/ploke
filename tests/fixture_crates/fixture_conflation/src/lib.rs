@@ -29,11 +29,23 @@
 //! - FieldNode.type_id (in EnumNode variants)
 //! - FieldNode.type_id (in newtype tuple struct)
 //! - RelationKind (implicitly via structure)
-//! - Conflation across mutually exclusive `#[cfg]` attributes
+//! - Conflation across mutually exclusive `#[cfg(feature = "feature_a")]` / `#[cfg(not(feature = "feature_a"))]` attributes.
+//! - Conflation of fields within a struct under mutually exclusive `cfg` attributes.
 //!
 //! **Note:** This fixture aims for stable Rust compatibility. The `TraitWithSelfAlias`
 //! example, which used `type AliasOfSelf = Self;`, was removed because it required
 //! the unstable `associated_type_defaults` feature.
+//!
+//! **Cfg Testing Rationale:** This fixture intentionally creates items with the
+//! same name under `#[cfg(feature = "feature_a")]` and `#[cfg(not(feature = "feature_a"))]`.
+//! The current Phase 2 parser does *not* account for `cfg` attributes when
+//! generating `NodeId`s or `TypeId`s. Therefore, these identically named items
+//! *are expected* to produce the same IDs (conflation). Tests using this fixture
+//! should verify this current behavior. This serves as a baseline and a reminder
+//! of this limitation. Handling `cfg` attributes correctly during ID generation
+//! or performing full `cfg` evaluation before ID generation is deferred. Testing
+//! scenarios where multiple conflicting features (e.g., `feature_a` and `feature_b`)
+//! might be enabled simultaneously is explicitly out of scope for this fixture.
 
 // Removed #![feature(associated_type_defaults)] as the unstable feature usage was removed.
 
@@ -251,10 +263,10 @@ pub struct CfgGatedStruct {
     // 31. Test FieldNode.type_id conflation under different cfgs
     pub field_a: i32,
 }
-#[cfg(feature = "feature_b")]
+#[cfg(not(feature = "feature_a"))] // Changed from feature_b
 pub struct CfgGatedStruct {
     // 32. Test FieldNode.type_id conflation under different cfgs (different type)
-    pub field_b: String,
+    pub field_b: String, // Note: Field name differs, but TypeId for String vs i32 is tested
 }
 
 // 33. Test NodeId conflation for functions under different cfgs
@@ -270,16 +282,25 @@ pub fn cfg_gated_func() -> String {
 // 34. Test NodeId conflation for enums under different cfgs
 #[cfg(feature = "feature_a")]
 pub enum CfgGatedEnum {
-    VariantA(i32), // 35. Test FieldNode.type_id conflation
+    VariantA(i32), // 35. Test FieldNode.type_id conflation (for the i32 TypeId)
 }
-#[cfg(feature = "feature_b")]
+#[cfg(not(feature = "feature_a"))] // Changed from feature_b
 pub enum CfgGatedEnum {
-    VariantB(String), // 36. Test FieldNode.type_id conflation
+    VariantB(String), // 36. Test FieldNode.type_id conflation (for the String TypeId)
 }
 
 // 37. Test NodeId conflation for consts under different cfgs
 //     Test ValueNode.type_id conflation
 #[cfg(feature = "feature_a")]
 pub const CFG_GATED_CONST: i32 = 1;
-#[cfg(feature = "feature_b")]
-pub const CFG_GATED_CONST: &str = "feature_b";
+#[cfg(not(feature = "feature_a"))] // Changed from feature_b
+pub const CFG_GATED_CONST: &str = "not_feature_a";
+
+
+// 38. Test FieldNode.type_id conflation for fields within the same struct
+pub struct CfgGatedFieldsStruct {
+    #[cfg(feature = "feature_a")]
+    pub gated_field: i32, // Same name, different types under cfg
+    #[cfg(not(feature = "feature_a"))]
+    pub gated_field: String,
+}
