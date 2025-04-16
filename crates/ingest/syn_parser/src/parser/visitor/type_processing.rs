@@ -37,12 +37,13 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     let new_id = TypeId::generate_synthetic(
         state.crate_namespace,
         &state.current_file_path,
-        &type_kind, // Pass the determined TypeKind
+        &type_kind,     // Pass the determined TypeKind
         &related_types, // Pass the determined related TypeIds
     );
 
     // 3. Check if a TypeNode with this ID already exists (handles recursion/cycles)
     //    We avoid adding duplicate TypeNodes.
+    // NOTE: Might be slightly more efficient to reverse the iter here. Try benchmarking someday.
     if state.code_graph.type_graph.iter().any(|tn| tn.id == new_id) {
         return new_id; // Already processed and added due to recursion
     }
