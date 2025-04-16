@@ -1,9 +1,9 @@
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
+use ploke_core::TypeKind;
 use ploke_core::{NodeId, TrackingHash, TypeId};
 use syn_parser::parser::nodes::ValueKind;
-use syn_parser::parser::types::TypeKind; // Import TypeKind
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
