@@ -93,10 +93,17 @@ pub fn find_macro_node_paranoid<'a>(
     // let actual_span = macro_node.span; // Span no longer used for ID generation
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    // Derive the parent path from the expected module path for ID regeneration context
+    let parent_path_vec: Vec<String> = expected_module_path
+        .iter()
+        .take(expected_module_path.len().saturating_sub(1))
+        .cloned()
+        .collect();
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path,            // Use the file_path from the target_data
-        expected_module_path, // Use the module's definition path for context
+        file_path,        // Use the file_path from the target_data
+        &parent_path_vec, // Use the PARENT path for context hashing
         macro_name,
         ItemKind::Macro,      // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
@@ -104,8 +111,8 @@ pub fn find_macro_node_paranoid<'a>(
 
     assert_eq!(
         macro_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id) // Use actual parent scope in message
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} (parent path for regen: {:?}) file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        macro_id, regenerated_id, macro_name, expected_module_path, parent_path_vec, file_path.display(), ItemKind::Macro, Some(module_node.id)
     );
 
     // 8. Return the validated node
