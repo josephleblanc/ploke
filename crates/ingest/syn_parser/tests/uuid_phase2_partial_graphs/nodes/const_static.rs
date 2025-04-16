@@ -224,6 +224,20 @@ fn test_value_node_field_id_regeneration() {
         ValueKind::Static { .. } => ploke_core::ItemKind::Static,
     };
 
+    // Find the containing module node to get its ID for the parent scope
+    let module_node = graph
+        .modules
+        .iter()
+        .find(|m| m.path == module_path)
+        .unwrap_or_else(|| {
+            panic!(
+                "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",
+                module_path,
+                file_path.display(),
+                value_name
+            )
+        });
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
