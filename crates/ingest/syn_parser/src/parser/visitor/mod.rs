@@ -146,6 +146,10 @@ pub fn analyze_file_phase2(
         root_module_name
     );
 
+    // *** NEW STEP: Push root module ID onto the scope stack ***
+    // This makes it the default parent scope for top-level items visited next.
+    state.current_definition_scope.push(root_module_id);
+
     // 3. Create the root module node using the derived path and name
     state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
