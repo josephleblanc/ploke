@@ -521,8 +521,10 @@ pub fn find_function_node_paranoid<'a>(
     let name_candidates: Vec<&FunctionNode> = graph
         .functions
         .iter()
+        .chain(graph.impls.iter().flat_map(|imp| &imp.methods))
         .filter(|f| f.name() == func_name)
         .collect();
+    // let method_candidates: Vec<&FunctionNode> = graph.impls.iter().map(|imp| imp.methods).flatten()
 
     assert!(
         !name_candidates.is_empty(),
@@ -569,36 +571,47 @@ pub fn find_function_node_paranoid<'a>(
         .relations
         .iter()
         .find(|rel| {
-            rel.target == GraphId::Node(func_id) && rel.kind == RelationKind::Contains
+            rel.target == GraphId::Node(func_id)
+                && (rel.kind == RelationKind::Contains || rel.kind == RelationKind::Method)
         })
         .map(|rel| match rel.source {
             GraphId::Node(id) => Some(id),
-            GraphId::Type(_) => panic!("'Contains' relation source cannot be a TypeId for a Node target"),
+            GraphId::Type(_) => {
+                panic!("'Contains' relation source cannot be a TypeId for a Node target")
+            }
         })
         .unwrap_or_else(|| {
             // If no Contains relation found, it might be the root module's content,
             // or something went wrong during parsing. For paranoia, assume None is correct only if it's top-level.
             // A more robust check might be needed depending on how root items are handled.
             // For now, let's assume top-level items in a file *should* have the file's module as parent.
-             panic!("Could not find 'Contains' relation for function '{}' ({}) in file '{}'", func_name, func_id, file_path.display());
+            panic!(
+                "Could not find 'Contains' relation for function '{}' ({}) in file '{}'",
+                func_name,
+                func_id,
+                file_path.display()
+            );
             // If we expect items directly under crate root with no module parent:
             // if expected_module_path == ["crate"] { None } else { panic!(...) }
         });
 
-
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path, // Use the file_path from the target_data
+        file_path,            // Use the file_path from the target_data
         expected_module_path, // Still use the expected module path for context hashing
         func_name,
         ploke_core::ItemKind::Function, // Pass the correct ItemKind
         actual_parent_scope_id,         // Pass the parent scope ID found via the Contains relation
     );
+    let possible_parent = graph.find_node(actual_parent_scope_id.unwrap());
 
     assert_eq!(
         func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        func_id, regenerated_id, func_name, file_path.display(), ploke_core::ItemKind::Function, actual_parent_scope_id // Use actual parent scope in message
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' with expected module path {:?} (ItemKind: {:?}, ParentScope: {:?})
+FOUND FUNCTION NODE: {:#?}
+",
+        func_id, regenerated_id, func_name, file_path.display(), expected_module_path, ploke_core::ItemKind::Function, actual_parent_scope_id, // Use actual parent scope in message
+        possible_parent.unwrap().name()
     );
 
     // 7. Return the validated node
