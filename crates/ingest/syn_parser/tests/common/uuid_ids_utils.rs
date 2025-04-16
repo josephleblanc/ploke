@@ -1,5 +1,4 @@
 use ploke_common::{fixtures_crates_dir, workspace_root};
-use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::{NodeId, TypeId};
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::CodeGraph;
