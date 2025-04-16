@@ -115,7 +115,6 @@ pub enum TopLevelEnum<T: Send> {
 //     Test GenericParamKind::Type.bounds
 pub struct TopLevelNewtype<T: Sync>(pub T);
 
-
 // --- Nested Module Definitions ---
 
 mod inner_mod {
@@ -182,7 +181,6 @@ mod inner_mod {
     // 29. Test FieldNode.type_id (generic T in newtype tuple struct) - Different T from TopLevelNewtype
     //     Test GenericParamKind::Type.bounds
     pub struct InnerNewtype<T: Clone>(pub T);
-
 }
 
 // --- Using items from the other file ---
