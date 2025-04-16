@@ -1047,13 +1047,13 @@ fn test_value_node_paranoid_const_doc_attr() {
         is_fully_qualified: false,
     };
     let related_ids: &[TypeId] = &[];
-    // Pass None for parent_scope_id when regenerating in tests
+    // Pass the ValueNode's ID as the parent scope for its type
     let expected_type_id = TypeId::generate_synthetic(
         crate_namespace,
         file_path,
         &type_kind,
         related_ids,
-        None, // Parent scope is None in this test regeneration context
+        Some(node.id()), // Use the node's own ID as parent scope
     );
     assert_eq!(
         node.type_id, expected_type_id,
@@ -1253,13 +1253,13 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
         is_fully_qualified: false,
     };
     let related_ids: &[TypeId] = &[];
-    // Pass None for parent_scope_id when regenerating in tests
+    // Pass the ValueNode's ID as the parent scope for its type
     let expected_type_id = TypeId::generate_synthetic(
         crate_namespace,
         file_path,
         &type_kind,
         related_ids,
-        None, // Parent scope is None in this test regeneration context
+        Some(node.id()), // Use the node's own ID as parent scope
     );
     assert_eq!(
         node.type_id, expected_type_id,

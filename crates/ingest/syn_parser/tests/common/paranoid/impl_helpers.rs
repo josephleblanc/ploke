@@ -36,7 +36,9 @@ pub fn find_impl_node_paranoid<'a>(
 
     // 3. Generate expected TypeIds by simulating the structural analysis
     //    Helper closure to perform the simulation
-    let generate_expected_type_id_for_test = |type_str: &str| -> TypeId {
+    //    Now takes parent_scope_id for context
+    let generate_expected_type_id_for_test =
+        |type_str: &str, parent_scope_id: Option<NodeId>| -> TypeId {
         let parsed_type = syn::parse_str::<syn::Type>(type_str).unwrap_or_else(|_| {
             panic!(
                 "Failed to parse type string for TypeId generation: {}",
@@ -74,7 +76,7 @@ pub fn find_impl_node_paranoid<'a>(
                                     file_path,
                                     &gen_type_kind,
                                     gen_related_ids,
-                                    None, // Parent scope is None in this test regeneration context
+                                    parent_scope_id, // Pass the provided parent scope
                                 ));
                             }
                             // TODO: Handle other GenericArgument types (Lifetime, Const) if needed for future tests
@@ -96,7 +98,7 @@ pub fn find_impl_node_paranoid<'a>(
                     file_path,
                     &type_kind,
                     &related_ids, // Pass collected related IDs
-                    None,         // Parent scope is None in this test regeneration context
+                    parent_scope_id, // Pass the provided parent scope
                 )
             }
             // TODO: Handle other syn::Type variants (Reference, Tuple, etc.) if needed by tests using this helper
@@ -106,27 +108,8 @@ pub fn find_impl_node_paranoid<'a>(
         }
     };
 
-    // Use the helper closure to generate expected IDs
-    let expected_self_type_id = generate_expected_type_id_for_test(self_type_str);
-    let expected_trait_type_id: Option<TypeId> =
-        trait_type_str.map(generate_expected_type_id_for_test);
-
-    // 4. Filter candidates by matching self_type and trait_type IDs
-    let type_candidates: Vec<&ImplNode> = graph
-        .impls
-        .iter()
-        .filter(|imp| {
-            imp.self_type == expected_self_type_id && imp.trait_type == expected_trait_type_id
-        })
-        .collect();
-
-    assert!(
-        !type_candidates.is_empty(),
-        "No ImplNode found matching self_type '{}' ({:?}) and trait_type '{:?}' ({:?}) in file '{}'",
-        self_type_str, expected_self_type_id, trait_type_str, expected_trait_type_id, file_path.display()
-    );
-
-    // 5. Filter further by module association
+    // Find the ImplNode first based on module association before generating expected TypeIds
+    // 4. Filter candidates by module association first
     let module_node = graph
         .modules
         .iter()
@@ -139,22 +122,44 @@ pub fn find_impl_node_paranoid<'a>(
             )
         });
 
-    let module_candidates: Vec<&ImplNode> = type_candidates
-        .into_iter()
+    let module_candidates: Vec<&ImplNode> = graph
+        .impls
+        .iter()
         .filter(|imp| module_node.items().is_some_and(|m| m.contains(&imp.id())))
         .collect();
 
-    // 6. PARANOID CHECK: Assert exactly ONE candidate remains
+    // 5. Now filter these candidates by matching TypeIds, regenerating with the ImplNode's ID as context
+    let type_candidates: Vec<&ImplNode> = module_candidates
+        .into_iter()
+        .filter(|imp| {
+            // Regenerate expected IDs using the *actual* ImplNode's ID as parent scope
+            let parent_scope_id = Some(imp.id());
+            let expected_self_type_id =
+                generate_expected_type_id_for_test(self_type_str, parent_scope_id);
+            let expected_trait_type_id: Option<TypeId> = trait_type_str
+                .map(|t_str| generate_expected_type_id_for_test(t_str, parent_scope_id));
+
+            imp.self_type == expected_self_type_id && imp.trait_type == expected_trait_type_id
+        })
+        .collect();
+
+
+    // 6. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by TypeIDs
+     assert!(
+        !type_candidates.is_empty(),
+        "No ImplNode found matching regenerated TypeIds for self_type '{}' and trait_type '{:?}' within module {:?} in file '{}'",
+        self_type_str, trait_type_str, expected_module_path, file_path.display()
+    );
     assert_eq!(
-        module_candidates.len(),
+        type_candidates.len(),
         1,
-        "Expected exactly one ImplNode matching types and associated with module path {:?} in file '{}', found {}",
+        "Expected exactly one ImplNode matching regenerated TypeIds and associated with module path {:?} in file '{}', found {}",
         expected_module_path,
         file_path.display(),
-        module_candidates.len()
+        type_candidates.len()
     );
 
-    let impl_node = module_candidates[0];
+    let impl_node = type_candidates[0];
     let impl_id = impl_node.id();
     // let actual_span = impl_node.span; // Span no longer used for ID generation
 
