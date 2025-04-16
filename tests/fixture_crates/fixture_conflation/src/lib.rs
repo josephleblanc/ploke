@@ -63,7 +63,6 @@ mod cfg_file_a;
 #[cfg(not(feature = "feature_a"))]
 mod cfg_file_not_a;
 
-
 // --- Top Level Definitions ---
 
 // 1. Test FieldNode.type_id (generic T)
@@ -304,7 +303,6 @@ pub const CFG_GATED_CONST: i32 = 1;
 #[cfg(not(feature = "feature_a"))] // Changed from feature_b
 pub const CFG_GATED_CONST: &str = "not_feature_a";
 
-
 // 38. Test FieldNode.type_id conflation for fields within the same struct
 pub struct CfgGatedFieldsStruct {
     #[cfg(feature = "feature_a")]
@@ -319,27 +317,31 @@ pub trait CfgGatedGenericTrait<T> {
     fn method_a(&self, param: T) -> i32;
 }
 #[cfg(not(feature = "feature_a"))]
-pub trait CfgGatedGenericTrait<T> { // Same name, same generic param name
+pub trait CfgGatedGenericTrait<T> {
+    // Same name, same generic param name
     fn method_not_a(&self, param: T) -> String; // Different method signature
 }
 
-
 // 40. Test NodeId/TypeId conflation for generic impls under different cfgs
 #[cfg(feature = "feature_a")]
-impl CfgGatedStruct { // Impl for the feature_a version of CfgGatedStruct - NOT generic itself
-     // 41. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
-     // Generic parameter T moved to the method where it's used.
+impl CfgGatedStruct {
+    // Impl for the feature_a version of CfgGatedStruct - NOT generic itself
+    // 41. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
+    // Generic parameter T moved to the method where it's used.
     pub fn cfg_method_a<T: Debug>(&self, input: T) -> Self {
         println!("cfg_method_a: {:?}", input);
         CfgGatedStruct { field_a: 0 }
     }
 }
 #[cfg(not(feature = "feature_a"))]
-impl CfgGatedStruct { // Impl for the not(feature_a) version of CfgGatedStruct - NOT generic itself
+impl CfgGatedStruct {
+    // Impl for the not(feature_a) version of CfgGatedStruct - NOT generic itself
     // 42. Test NodeId/TypeId conflation for methods using Self/Generics under cfgs
     // Generic parameter T moved to the method where it's used.
     pub fn cfg_method_not_a<T: Display>(&self, input: T) -> Self {
         println!("cfg_method_not_a: {}", input);
-        CfgGatedStruct { field_b: String::new() }
+        CfgGatedStruct {
+            field_b: String::new(),
+        }
     }
 }
