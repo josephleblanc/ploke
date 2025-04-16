@@ -93,17 +93,20 @@ pub fn find_macro_node_paranoid<'a>(
     // let actual_span = macro_node.span; // Span no longer used for ID generation
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
-    // Derive the parent path from the expected module path for ID regeneration context
-    let parent_path_vec: Vec<String> = expected_module_path
-        .iter()
-        .take(expected_module_path.len().saturating_sub(1))
-        .cloned()
-        .collect();
+    // The visitor uses the module path where the item is defined as context.
+    // The helper must use the same path for regeneration.
+
+    // --- DEBUG ---
+    eprintln!(
+        "[HELPER ID REGEN - MACRO] name: '{}', item_kind: {:?}, parent_scope: {:?}, mod_path: {:?}, file: {:?}",
+        macro_name, ItemKind::Macro, Some(module_node.id), expected_module_path, file_path
+    );
+    // --- END DEBUG ---
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
-        file_path,        // Use the file_path from the target_data
-        &parent_path_vec, // Use the PARENT path for context hashing
+        file_path,            // Use the file_path from the target_data
+        expected_module_path, // Use the module's definition path for context hashing
         macro_name,
         ItemKind::Macro,      // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
@@ -111,8 +114,8 @@ pub fn find_macro_node_paranoid<'a>(
 
     assert_eq!(
         macro_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} (parent path for regen: {:?}) file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        macro_id, regenerated_id, macro_name, expected_module_path, parent_path_vec, file_path.display(), ItemKind::Macro, Some(module_node.id)
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
+        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id)
     );
 
     // 8. Return the validated node

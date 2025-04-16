@@ -68,6 +68,13 @@ impl VisitorState {
         // Get the last pushed scope ID as the parent, if available
         let parent_scope_id = self.current_definition_scope.last().copied();
 
+        // --- DEBUG ---
+        eprintln!(
+            "[VISITOR ID GEN] name: '{}', item_kind: {:?}, parent_scope: {:?}, mod_path: {:?}, file: {:?}",
+            name, item_kind, parent_scope_id, self.current_module_path, self.current_file_path
+        );
+        // --- END DEBUG ---
+
         NodeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
