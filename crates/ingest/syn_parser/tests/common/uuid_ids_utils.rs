@@ -658,8 +658,11 @@ pub fn find_method_node_paranoid<'a>(
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path;
 
-    // --- 2. Find the Parent Node (Impl or Trait) and its Methods ---
-    let (parent_node_id, methods_list): (NodeId, &[FunctionNode]) = match parent_context {
+    // --- 2. Find Parent and Method, Ensuring Uniqueness ---
+    let parent_node_id: NodeId; // Will be assigned within the match
+    let method_node: &'a FunctionNode; // Will be assigned within the match
+
+    match parent_context {
         MethodParentContext::Impl {
             self_type_str,
             trait_type_str,
@@ -673,7 +676,27 @@ pub fn find_method_node_paranoid<'a>(
                 self_type_str,
                 trait_type_str,
             );
-            (impl_node.id(), &impl_node.methods) // Return ID and methods slice
+            parent_node_id = impl_node.id(); // Assign parent ID
+
+            // Find method candidates by name within this impl block
+            let method_candidates: Vec<&FunctionNode> = impl_node
+                .methods
+                .iter()
+                .filter(|m| m.name() == method_name)
+                .collect();
+
+            // PARANOID CHECK: Assert exactly ONE method matches the name within this impl
+            assert_eq!(
+                method_candidates.len(),
+                1,
+                "Expected exactly one method named '{}' within parent impl scope {:?} (context: {:?}) in file '{}', found {}",
+                method_name,
+                parent_node_id,
+                parent_context,
+                file_path.display(),
+                method_candidates.len()
+            );
+            method_node = method_candidates[0]; // Assign the unique method node
         }
         MethodParentContext::Trait { trait_name } => {
             // Use the existing paranoid helper to find the specific trait block
@@ -684,31 +707,33 @@ pub fn find_method_node_paranoid<'a>(
                 expected_module_path,
                 trait_name,
             );
-            (trait_node.id(), &trait_node.methods) // Return ID and methods slice
+            parent_node_id = trait_node.id(); // Assign parent ID
+
+            // Find method candidates by name within this trait block
+            let method_candidates: Vec<&FunctionNode> = trait_node
+                .methods
+                .iter()
+                .filter(|m| m.name() == method_name)
+                .collect();
+
+            // PARANOID CHECK: Assert exactly ONE method matches the name within this trait
+             assert_eq!(
+                method_candidates.len(),
+                1,
+                "Expected exactly one method named '{}' within parent trait scope {:?} (context: {:?}) in file '{}', found {}",
+                method_name,
+                parent_node_id,
+                parent_context,
+                file_path.display(),
+                method_candidates.len()
+            );
+            method_node = method_candidates[0]; // Assign the unique method node
         }
     };
 
-    // --- 3. Find the Method by Name within the Parent's Methods ---
-    let method_node = methods_list
-        .iter()
-        .find(|m| m.name() == method_name)
-        .unwrap_or_else(|| {
-            panic!(
-                "Method named '{}' not found within parent scope {:?} (context: {:?}) in file '{}'",
-                method_name,
-                parent_node_id, // Use the found parent ID
-                parent_context,
-                file_path.display()
-            )
-        });
-
-    // --- 4. PARANOID CHECK: Assert Uniqueness (Implicitly done by find returning Option) ---
-    // If find returned Some, we implicitly assume uniqueness within that parent's method list.
-    // A stricter check could collect all matches and assert len == 1, but find is idiomatic here.
-
+    // --- 3. PARANOID CHECK: Regenerate Method's NodeId ---
+    // Now that we have the unique method_node and its parent_node_id
     let method_id = method_node.id();
-
-    // --- 5. PARANOID CHECK: Regenerate Method's NodeId ---
     // The context for the method's ID includes the module path containing the parent impl/trait,
     // the method's name, its kind, and the parent impl/trait's ID.
     let regenerated_id = NodeId::generate_synthetic(
@@ -717,17 +742,17 @@ pub fn find_method_node_paranoid<'a>(
         expected_module_path, // Module path containing the parent impl/trait
         method_name,
         ploke_core::ItemKind::Function, // Methods are functions
-        Some(parent_node_id), // Parent scope is the impl/trait ID
+        Some(parent_node_id), // Parent scope is the impl/trait ID found above
     );
 
-    // --- 6. Assert Regenerated ID Matches Actual ID ---
+    // --- 4. Assert Regenerated ID Matches Actual ID ---
     assert_eq!(
         method_id, regenerated_id,
         "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}'",
         method_id, regenerated_id, method_name, parent_node_id, parent_context, file_path.display()
     );
 
-    // --- 7. Return the validated method node ---
+    // --- 5. Return the validated method node ---
     method_node
 }
 
