@@ -33,22 +33,26 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     //    This handles recursion internally.
     let (type_kind, related_types) = process_type(state, ty);
 
-    // 2. Generate the new Synthetic Type ID using the structural information
+    // 2. Get the current parent scope ID from the state
+    let parent_scope_id = state.current_definition_scope.last().copied();
+
+    // 3. Generate the new Synthetic Type ID using structural info AND parent scope
     let new_id = TypeId::generate_synthetic(
         state.crate_namespace,
         &state.current_file_path,
         &type_kind,     // Pass the determined TypeKind
         &related_types, // Pass the determined related TypeIds
+        parent_scope_id, // Pass the parent scope ID
     );
 
-    // 3. Check if a TypeNode with this ID already exists (handles recursion/cycles)
+    // 4. Check if a TypeNode with this ID already exists (handles recursion/cycles)
     //    We avoid adding duplicate TypeNodes.
     // NOTE: Might be slightly more efficient to reverse the iter here. Try benchmarking someday.
     if state.code_graph.type_graph.iter().any(|tn| tn.id == new_id) {
         return new_id; // Already processed and added due to recursion
     }
 
-    // 4. Create the TypeNode containing the structural information if it's new
+    // 5. Create the TypeNode containing the structural information if it's new
     let type_node = TypeNode {
         id: new_id, // The newly generated ID
         kind: type_kind,
@@ -56,10 +60,10 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
         // span: Option? If we want to store the span of the first encounter? Maybe later.
     };
 
-    // 5. Add the new TypeNode to the graph
+    // 6. Add the new TypeNode to the graph
     state.code_graph.type_graph.push(type_node);
 
-    // 6. Return the newly generated ID
+    // 7. Return the newly generated ID
     new_id
 }
 

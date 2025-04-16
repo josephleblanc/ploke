@@ -259,6 +259,7 @@ mod ids {
             file_path: &Path,
             type_kind: &TypeKind, // Use TypeKind from this crate
             related_type_ids: &[TypeId],
+            parent_scope_id: Option<NodeId>, // NEW: Add parent scope context
         ) -> Self {
             // Create our custom hasher
             let mut hasher = ByteHasher::default();
@@ -273,6 +274,14 @@ mod ids {
             // Hash the structural components using their derived Hash impls
             type_kind.hash(&mut hasher);
             related_type_ids.hash(&mut hasher);
+
+            // Hash the parent scope ID (using placeholder for None)
+            let parent_id_bytes = match parent_scope_id {
+                Some(NodeId::Resolved(uuid)) => *uuid.as_bytes(),
+                Some(NodeId::Synthetic(uuid)) => *uuid.as_bytes(),
+                None => [0u8; 16], // Placeholder for None
+            };
+            parent_id_bytes.hash(&mut hasher); // Add parent scope to hash input
 
             // Retrieve the collected bytes
             let collected_bytes = hasher.finish_bytes();
