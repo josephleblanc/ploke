@@ -229,8 +229,8 @@ fn test_value_node_field_id_regeneration() {
         file_path,
         &module_path,
         value_name,
-        item_kind, // Pass the determined ItemKind
-        None,      // Pass None for parent_scope_id
+        item_kind,            // Pass the determined ItemKind
+        Some(module_node.id), // Pass the containing module's ID
     );
 
     // Assert the ID is synthetic (basic check) - still useful
