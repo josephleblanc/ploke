@@ -29,6 +29,7 @@
 //! - FieldNode.type_id (in EnumNode variants)
 //! - FieldNode.type_id (in newtype tuple struct)
 //! - RelationKind (implicitly via structure)
+//! - Conflation across mutually exclusive `#[cfg]` attributes
 //!
 //! **Note:** This fixture aims for stable Rust compatibility. The `TraitWithSelfAlias`
 //! example, which used `type AliasOfSelf = Self;`, was removed because it required
@@ -236,3 +237,47 @@ pub struct NestedGeneric<T: Debug, U: Display> {
 // Removed TraitWithSelfAlias and its impl as it required an unstable feature
 // (associated_type_defaults) which caused issues with `cargo clippy` on stable.
 // This specific pattern wasn't essential for the primary goal of testing T/Self conflation.
+
+
+// --- #[cfg] Attribute Conflation Tests ---
+
+// These items have the same names and scopes but are gated by different features.
+// Our current ID generation will likely conflate them (produce the same ID).
+// Tests should verify this conflation happens now, and fail if/when ID generation
+// is updated to account for cfg attributes (or if tests are ignored).
+
+// 30. Test NodeId conflation for structs under different cfgs
+#[cfg(feature = "feature_a")]
+pub struct CfgGatedStruct {
+    // 31. Test FieldNode.type_id conflation under different cfgs
+    pub field_a: i32,
+}
+#[cfg(feature = "feature_b")]
+pub struct CfgGatedStruct {
+    // 32. Test FieldNode.type_id conflation under different cfgs (different type)
+    pub field_b: String,
+}
+
+// 33. Test NodeId conflation for functions under different cfgs
+#[cfg(feature = "feature_a")]
+pub fn cfg_gated_func() -> i32 { 0 }
+#[cfg(feature = "feature_b")]
+pub fn cfg_gated_func() -> String { String::new() }
+
+
+// 34. Test NodeId conflation for enums under different cfgs
+#[cfg(feature = "feature_a")]
+pub enum CfgGatedEnum {
+    VariantA(i32), // 35. Test FieldNode.type_id conflation
+}
+#[cfg(feature = "feature_b")]
+pub enum CfgGatedEnum {
+    VariantB(String), // 36. Test FieldNode.type_id conflation
+}
+
+// 37. Test NodeId conflation for consts under different cfgs
+//     Test ValueNode.type_id conflation
+#[cfg(feature = "feature_a")]
+pub const CFG_GATED_CONST: i32 = 1;
+#[cfg(feature = "feature_b")]
+pub const CFG_GATED_CONST: &str = "feature_b";

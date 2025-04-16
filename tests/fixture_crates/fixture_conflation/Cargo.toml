@@ -2,7 +2,12 @@
 name = "fixture_conflation"
 version = "0.1.0"
 edition = "2021"
-description = "Test fixture specifically designed to expose TypeId conflation issues, especially with generics (T) and Self types across different scopes and files."
+description = "Test fixture specifically designed to expose TypeId conflation issues, especially with generics (T), Self types, and #[cfg] attributes across different scopes and files."
+
+[features]
+# Define features used for #[cfg] testing in the fixture code
+feature_a = []
+feature_b = []
 
 [dependencies]
 # No dependencies needed for this fixture
