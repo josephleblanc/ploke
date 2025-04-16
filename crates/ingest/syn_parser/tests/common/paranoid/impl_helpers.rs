@@ -37,13 +37,22 @@ pub fn find_impl_node_paranoid<'a>(
     // 3. Generate expected TypeIds by simulating the structural analysis
     //    Helper closure to perform the simulation
     let generate_expected_type_id_for_test = |type_str: &str| -> TypeId {
-        let parsed_type = syn::parse_str::<syn::Type>(type_str)
-            .unwrap_or_else(|_| panic!("Failed to parse type string for TypeId generation: {}", type_str));
+        let parsed_type = syn::parse_str::<syn::Type>(type_str).unwrap_or_else(|_| {
+            panic!(
+                "Failed to parse type string for TypeId generation: {}",
+                type_str
+            )
+        });
 
         match parsed_type {
             syn::Type::Path(type_path) => {
                 // Extract base path segments (e.g., ["GenericStruct"])
-                let base_path: Vec<String> = type_path.path.segments.iter().map(|seg| seg.ident.to_string()).collect();
+                let base_path: Vec<String> = type_path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.to_string())
+                    .collect();
                 let mut related_ids = Vec::new();
 
                 // Extract generic arguments if present
@@ -55,11 +64,11 @@ pub fn find_impl_node_paranoid<'a>(
                                 // Generate ID based on its name directly for test simplicity
                                 let gen_type_str = gen_type.to_token_stream().to_string();
                                 let gen_type_kind = ploke_core::TypeKind::Named {
-                                    path: vec![gen_type_str], // Use the generic param name as path
+                                    path: vec![gen_type_str],  // Use the generic param name as path
                                     is_fully_qualified: false, // Assume false for simple generic param
                                 };
                                 let gen_related_ids: &[TypeId] = &[]; // Generic param itself has no related types here
-                                // Pass None for parent_scope_id when regenerating in tests
+                                                                      // Pass None for parent_scope_id when regenerating in tests
                                 related_ids.push(TypeId::generate_synthetic(
                                     crate_namespace,
                                     file_path,
@@ -92,15 +101,15 @@ pub fn find_impl_node_paranoid<'a>(
             }
             // TODO: Handle other syn::Type variants (Reference, Tuple, etc.) if needed by tests using this helper
             _ => {
-                 panic!("generate_expected_type_id_for_test only handles Type::Path currently, received: {}", type_str);
+                panic!("generate_expected_type_id_for_test only handles Type::Path currently, received: {}", type_str);
             }
         }
     };
 
     // Use the helper closure to generate expected IDs
     let expected_self_type_id = generate_expected_type_id_for_test(self_type_str);
-    let expected_trait_type_id: Option<TypeId> = trait_type_str.map(generate_expected_type_id_for_test);
-
+    let expected_trait_type_id: Option<TypeId> =
+        trait_type_str.map(generate_expected_type_id_for_test);
 
     // 4. Filter candidates by matching self_type and trait_type IDs
     let type_candidates: Vec<&ImplNode> = graph
