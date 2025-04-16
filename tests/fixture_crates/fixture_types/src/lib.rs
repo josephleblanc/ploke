@@ -29,6 +29,7 @@ pub fn process_array(a: Buffer) -> u8 {
 pub fn process_ref(r: &String) -> usize {
     r.len()
 }
+
 pub fn process_mut_ref(r: &mut String) {
     r.push_str(" modified");
 }
