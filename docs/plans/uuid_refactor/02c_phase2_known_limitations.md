@@ -52,7 +52,7 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
-## 4. `TypeId` Conflation for Generics and `Self` Types
+## 4. ✅ `TypeId` Conflation for Generics and `Self` Types
 
 *   **Status:** **ADDRESSED**
 *   **Original Limitation:** The initial implementation of `TypeId::generate_synthetic` did not incorporate sufficient contextual information (like the defining scope). This led to identical `TypeId`s being generated for generic parameters (e.g., `<T>`) or `Self` types defined in different scopes (e.g., different functions, structs, or impl blocks), even though they represented distinct types semantically.
@@ -61,6 +61,9 @@ This document tracks known limitations, missing features, or areas where the Pha
     *   `test_generic_param_conflation_in_functions`: Verifies distinct `TypeId`s for `<T>` in different functions.
     *   `test_self_return_type_conflation_in_impls`: Verifies distinct `TypeId`s for `Self` return types in different impl blocks.
     *   `test_generic_field_conflation_in_structs`: Verifies distinct `TypeId`s for `<T>` field types in different struct definitions.
+*   **Additional Validation:** Some tests in 
+    *   `test_impl_node_self_type_conflation_phase2`: Verifies distinct `TypeId`s for certain node fields in test directory `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/`
+        * `impls.rs`: Verified different `Self` type (capitalized due to syn parsing) across two self-impl blocks for `SimpleStruct` vs `GenericStruct` for methods `SimpleStruct::new` (`Self` in body and return type) and `GenericStruct::print_value` (`&self` parameter)
 
 ---
 

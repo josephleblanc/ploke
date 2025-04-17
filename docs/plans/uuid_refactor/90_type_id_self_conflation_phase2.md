@@ -1,4 +1,8 @@
-# Known Issue: TypeId Conflation for `Self` Keyword in Phase 2 Parsing
+# Known Issue: TypeId Conflation for `Self` Keyword in Phase 2 Parsing (solved)
+
+Solved as of 2025-04-17
+
+**solved git commit:** b91ef2b65d56c1980d803595bb49518723f9fcc1
 
 **Date:** 2025-04-10
 **Status:** Documented Limitation

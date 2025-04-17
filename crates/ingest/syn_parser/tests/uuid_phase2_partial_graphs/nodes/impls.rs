@@ -286,7 +286,8 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
 }
 
 #[test]
-#[ignore = "Test for known limitation of `Self` type conflation, see 90_type_id_self_conflation_phase2.md"] // Expecting this to fail currently
+// #[ignore = "Test for known limitation of `Self` type conflation, see 90_type_id_self_conflation_phase2.md"] // Expecting this to fail currently
+// Now passes after additional functionality added
 fn test_impl_node_self_type_conflation_phase2() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -378,35 +379,14 @@ fn test_impl_node_self_type_conflation_phase2() {
         type_id_self_return_ss, type_id_simple_struct
     );
 
-    // 2. (Should Fail - Demonstrating Conflation) Assert that the TypeId for `Self` return type
-    //    in SimpleStruct::new IS THE SAME as the TypeId for the underlying `Self` type from
-    //    the `&self` parameter in GenericStruct<T>::print_value.
+    // 2. Assert that the TypeId for `Self` return type in SimpleStruct::new IS NOT THE SAME as the
+    //    TypeId for the underlying `Self` type from the `&self` parameter in
+    //    GenericStruct<T>::print_value.
+    // (Should Pass as of 2025-03-17 fix - Demonstrating Conflation Solved)
     assert_ne!( // Use assert_ne! here because the test should panic if they ARE equal
         type_id_self_return_ss, type_id_self_param_gs,
         "TypeId for Self in SimpleStruct::new should be different from TypeId for Self in GenericStruct::print_value parameter" // This message is for the #[should_panic]
     );
-
-    // If the above assert_ne! passes, it means the TypeIds were different, which is unexpected. Panic manually.
-    // Note: This manual panic might not be hit if the assert_ne! itself panics due to equality.
-    // The #[should_panic] attribute is the primary mechanism here.
-    // panic!("TEST FAILED: TypeId for Self was unexpectedly different across impl blocks: {:?} vs {:?}", type_id_self_return_ss, type_id_self_param_gs);
-
-    // WARNING: If the previous test passed then this test MUST fail (assert_eq! vs assert_ne!)
-    // This is only here as a sanity check and debug temporarily. Delete one of the two assertions
-    // after debugging is over and tests are stable
-    //     assert_eq!(
-    //         // Use assert_ne! here because the test should panic if they ARE equal
-    //         type_id_self_return_ss,
-    //         type_id_self_param_gs,
-    //         "typid of self_id_self_return_ss: {type_id_self_return_ss}
-    // typeid of type_id_self_param_gs: {type_id_self_param_gs}
-    // CONFIRMED_NE type_id_simple_struct: {type_id_simple_struct}
-    //
-    // parent_impl_node_gs: {:#?}
-    // method_print_value: {:#?}",
-    //         parent_impl_node_gs,
-    //         method_print_value
-    //     );
 }
 
 // TODO: Add combined test for remaining impl blocks
