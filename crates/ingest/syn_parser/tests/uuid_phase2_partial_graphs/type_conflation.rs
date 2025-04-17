@@ -4,18 +4,24 @@
 use crate::common::{
     paranoid::find_struct_node_paranoid, // Import from the paranoid module
     uuid_ids_utils::{
-        find_field_type_id, find_method_node_paranoid, find_param_type_id, find_return_type_id,
-        run_phases_and_collect, MethodParentContext, // Import the new helper and context enum
+        find_field_type_id,
+        find_function_node_paranoid,
+        find_method_node_paranoid,
+        find_param_type_id,
+        find_return_type_id,
+        run_phases_and_collect,
+        MethodParentContext, // Import the new helper and context enum
     },
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
-// use std::path::PathBuf; // Removed unused import
+                                       // use std::path::PathBuf; // Removed unused import
 use syn_parser::parser::visitor::ParsedCodeGraph; // Import directly
 
 const FIXTURE_NAME: &str = "fixture_conflation";
 
 // Helper to find the specific graph for lib.rs
-fn find_lib_rs_graph(graphs: &[ParsedCodeGraph]) -> &ParsedCodeGraph { // Use direct import
+fn find_lib_rs_graph(graphs: &[ParsedCodeGraph]) -> &ParsedCodeGraph {
+    // Use direct import
     let fixture_root = fixtures_crates_dir().join(FIXTURE_NAME);
     let lib_rs_path = fixture_root.join("src/lib.rs");
     graphs
@@ -115,8 +121,8 @@ fn test_self_return_type_conflation_in_impls() {
         "src/lib.rs",
         &["crate".to_string()], // Module path containing the impl block
         MethodParentContext::Impl {
-            self_type_str: "TopLevelStruct", // The struct being implemented
-            trait_type_str: None,           // It's an inherent impl
+            self_type_str: "TopLevelStruct < T >", // The struct being implemented
+            trait_type_str: None,                  // It's an inherent impl
         },
         "method", // Method name
     );
@@ -128,25 +134,42 @@ fn test_self_return_type_conflation_in_impls() {
         "src/lib.rs",
         &["crate".to_string(), "inner_mod".to_string()], // Module path containing the impl block
         MethodParentContext::Impl {
-            self_type_str: "InnerStruct", // The struct being implemented
-            trait_type_str: None,        // It's an inherent impl
+            self_type_str: "InnerStruct < T >", // The struct being implemented
+            trait_type_str: None,               // It's an inherent impl
         },
         "inner_method", // Method name
     );
 
     // Get the TypeId for the return type (Self) in both methods
-    let top_level_return_self_type_id = find_return_type_id(graph, top_level_method_node.id)
+    let top_level_return_self_type = graph
+        .impls
+        .iter()
+        .flat_map(|imp| &imp.methods)
+        .find(|f| f.id == top_level_method_node.id)
         .expect("Failed to find return TypeId for Self in TopLevelStruct::method");
-    let inner_return_self_type_id = find_return_type_id(graph, inner_method_node.id)
+    let inner_return_self_type = graph
+        .impls
+        .iter()
+        .flat_map(|imp| &imp.methods)
+        .find(|f| f.id == inner_method_node.id)
         .expect("Failed to find return TypeId for Self in InnerStruct::inner_method");
 
     // Assert that the TypeIds are distinct (NOT equal).
     // This WILL FAIL until TypeId::generate_synthetic incorporates parent_scope_id.
     assert_ne!(
-        top_level_return_self_type_id, inner_return_self_type_id,
-        "FAILED: TypeId for 'Self' return type is conflated between different impl blocks.\n - TopLevelStruct impl 'Self': {}\n - InnerStruct impl 'Self':    {}\nThis indicates TypeId generation needs parent scope context.",
-        top_level_return_self_type_id,
-        inner_return_self_type_id
+        top_level_return_self_type.id,
+        inner_return_self_type.id,
+        "FAILED: TypeId for 'Self' return type is conflated between different impl blocks.
+- TopLevelStruct impl 'Self': {}
+- InnerStruct impl 'Self':    {}
+This indicates TypeId generation needs parent scope context.
+Full node info:
+top_level_return_self_type: {:#?}
+inner_return_self_type: {:#?}",
+        top_level_return_self_type.id,
+        inner_return_self_type.id,
+        top_level_return_self_type,
+        inner_return_self_type
     );
 }
 
@@ -187,7 +210,6 @@ fn test_generic_field_conflation_in_structs() {
     let top_level_field_t_type_id = find_field_type_id(graph, top_level_field_node_id)
         .expect("Failed to find TypeId for T field in TopLevelNewtype");
 
-
     // Find inner_mod::InnerNewtype<T>(pub T)
     let inner_newtype_node = find_struct_node_paranoid(
         &graphs,
@@ -197,9 +219,8 @@ fn test_generic_field_conflation_in_structs() {
         "InnerNewtype",
     );
     let inner_field_node_id = inner_newtype_node.fields[0].id;
-     let inner_field_t_type_id = find_field_type_id(graph, inner_field_node_id)
+    let inner_field_t_type_id = find_field_type_id(graph, inner_field_node_id)
         .expect("Failed to find TypeId for T field in InnerNewtype");
-
 
     // Assert that the TypeIds for the field 'T' are distinct (NOT equal).
     // This WILL FAIL until TypeId::generate_synthetic incorporates parent_scope_id.
