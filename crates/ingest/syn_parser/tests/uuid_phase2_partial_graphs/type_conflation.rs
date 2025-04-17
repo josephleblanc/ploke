@@ -382,7 +382,55 @@ fn test_file_level_cfg_struct_node_id_disambiguation() {
         struct_in_file_a.id, struct_in_file_not_a.id
     );
 
-    // Optional: Further check if the attributes are captured correctly (next step)
-    // assert!(struct_in_file_a.attributes.iter().any(|a| a.name == "cfg" && a.args.contains(&"feature = \"feature_a\"".to_string())));
-    // assert!(struct_in_file_not_a.attributes.iter().any(|a| a.name == "cfg" && a.args.contains(&"not (feature = \"feature_a\")".to_string())));
+    // --- Check File-Level Attributes on ModuleNode ---
+    // The file-level #[cfg] attributes are stored on the ModuleNode representing the file,
+    // not directly on the items defined within it. We need to find the ModuleNodes.
+
+    let fixture_root = fixtures_crates_dir().join(FIXTURE_NAME);
+    let file_a_path = fixture_root.join("src/cfg_file_a.rs");
+    let file_not_a_path = fixture_root.join("src/cfg_file_not_a.rs");
+
+    // Find the ModuleNode for cfg_file_a.rs
+    let module_a = graphs
+        .iter()
+        .find_map(|g| {
+            g.graph
+                .modules
+                .iter()
+                .find(|m| m.file_path().is_some_and(|p| p == &file_a_path))
+        })
+        .expect("ModuleNode for cfg_file_a.rs not found");
+
+    // Find the ModuleNode for cfg_file_not_a.rs
+    let module_not_a = graphs
+        .iter()
+        .find_map(|g| {
+            g.graph
+                .modules
+                .iter()
+                .find(|m| m.file_path().is_some_and(|p| p == &file_not_a_path))
+        })
+        .expect("ModuleNode for cfg_file_not_a.rs not found");
+
+    // Assert that the correct file-level cfg attribute is present on module_a
+    // Note: This comparison is coarse string matching on the attribute arguments.
+    // It doesn't parse or canonicalize the cfg condition.
+    assert!(
+        module_a
+            .file_attrs()
+            .expect("Module A should be file-based and have file_attrs")
+            .iter()
+            .any(|a| a.name == "cfg" && a.args.contains(&"feature = \"feature_a\"".to_string())),
+        "FAILED: Expected ModuleNode for cfg_file_a.rs to have file attribute #[cfg(feature = \"feature_a\")]"
+    );
+
+    // Assert that the correct file-level cfg attribute is present on module_not_a
+    assert!(
+        module_not_a
+            .file_attrs()
+            .expect("Module Not_A should be file-based and have file_attrs")
+            .iter()
+            .any(|a| a.name == "cfg" && a.args.contains(&"not (feature = \"feature_a\")".to_string())),
+        "FAILED: Expected ModuleNode for cfg_file_not_a.rs to have file attribute #[cfg(not(feature = \"feature_a\"))]"
+    );
 }
