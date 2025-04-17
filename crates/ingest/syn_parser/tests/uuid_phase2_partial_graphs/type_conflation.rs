@@ -8,7 +8,6 @@ use crate::common::{
         find_function_node_paranoid,
         find_method_node_paranoid,
         find_param_type_id,
-        find_return_type_id,
         run_phases_and_collect,
         MethodParentContext, // Import the new helper and context enum
     },
