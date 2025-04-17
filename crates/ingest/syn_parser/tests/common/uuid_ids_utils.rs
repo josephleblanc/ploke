@@ -654,7 +654,6 @@ pub fn find_method_node_paranoid<'a>(
                 target_file_path.display()
             )
         });
-    let graph = &target_data.graph;
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path;
 
@@ -717,7 +716,7 @@ pub fn find_method_node_paranoid<'a>(
                 .collect();
 
             // PARANOID CHECK: Assert exactly ONE method matches the name within this trait
-             assert_eq!(
+            assert_eq!(
                 method_candidates.len(),
                 1,
                 "Expected exactly one method named '{}' within parent trait scope {:?} (context: {:?}) in file '{}', found {}",
@@ -742,7 +741,7 @@ pub fn find_method_node_paranoid<'a>(
         expected_module_path, // Module path containing the parent impl/trait
         method_name,
         ploke_core::ItemKind::Function, // Methods are functions
-        Some(parent_node_id), // Parent scope is the impl/trait ID found above
+        Some(parent_node_id),           // Parent scope is the impl/trait ID found above
     );
 
     // --- 4. Assert Regenerated ID Matches Actual ID ---

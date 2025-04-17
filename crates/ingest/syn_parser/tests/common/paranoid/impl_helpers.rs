@@ -12,7 +12,7 @@ pub fn find_impl_node_paranoid<'a>(
     fixture_name: &str,                   // Needed to construct expected path
     relative_file_path: &str,             // e.g., "src/lib.rs" or "src/impls.rs"
     expected_module_path: &[String],      // Module path within the target file
-    self_type_str: &str, // Expected type string (e.g., "SimpleStruct", "GenericStruct<T>")
+    self_type_str: &str, // Expected type string (e.g., "SimpleStruct", "GenericStruct < T >")
     trait_type_str: Option<&str>, // Expected trait string (e.g., "SimpleTrait", "GenericTrait<T>")
 ) -> &'a ImplNode {
     // 1. Construct the absolute expected file path
@@ -37,8 +37,9 @@ pub fn find_impl_node_paranoid<'a>(
     // 3. Generate expected TypeIds by simulating the structural analysis
     //    Helper closure to perform the simulation
     //    Now takes parent_scope_id for context
-    let generate_expected_type_id_for_test =
-        |type_str: &str, parent_scope_id: Option<NodeId>| -> TypeId {
+    let generate_expected_type_id_for_test = |type_str: &str,
+                                              parent_scope_id: Option<NodeId>|
+     -> TypeId {
         let parsed_type = syn::parse_str::<syn::Type>(type_str).unwrap_or_else(|_| {
             panic!(
                 "Failed to parse type string for TypeId generation: {}",
@@ -97,7 +98,7 @@ pub fn find_impl_node_paranoid<'a>(
                     crate_namespace,
                     file_path,
                     &type_kind,
-                    &related_ids, // Pass collected related IDs
+                    &related_ids,    // Pass collected related IDs
                     parent_scope_id, // Pass the provided parent scope
                 )
             }
@@ -143,9 +144,8 @@ pub fn find_impl_node_paranoid<'a>(
         })
         .collect();
 
-
     // 6. PARANOID CHECK: Assert exactly ONE candidate remains after filtering by TypeIDs
-     assert!(
+    assert!(
         !type_candidates.is_empty(),
         "No ImplNode found matching regenerated TypeIds for self_type '{}' and trait_type '{:?}' within module {:?} in file '{}'",
         self_type_str, trait_type_str, expected_module_path, file_path.display()
