@@ -277,13 +277,17 @@ fn test_cfg_struct_node_id_conflation() {
         })
         .collect();
 
-    // Assert: Exactly one node exists due to conflation
-    assert_eq!(found_structs.len(), 1,
-        "FAILED: Expected exactly one CfgGatedStruct node due to ID conflation (ignoring cfg), found {}. This might indicate cfg-awareness was added unexpectedly.
-Found structs: {:#?}",
-        found_structs.len(), found_structs);
+    // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
+    assert_eq!(found_structs.len(), 2,
+        "FAILED: Expected exactly two CfgGatedStruct nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
+        found_structs.len());
 
-    // Assert: The single node's ID matches the expected (conflated) ID
+    // Assert: Both nodes share the SAME NodeId due to conflation (ignoring cfg)
+    assert_eq!(found_structs[0].id, found_structs[1].id,
+        "FAILED: Expected the two CfgGatedStruct nodes to have the SAME conflated NodeId, but they differ: {} vs {}",
+        found_structs[0].id, found_structs[1].id);
+
+    // Assert: The shared ID matches the expected ID generated without cfg context
     assert_eq!(found_structs[0].id, expected_id,
         "FAILED: The NodeId for CfgGatedStruct ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
         found_structs[0].id, expected_id);
@@ -323,12 +327,17 @@ fn test_cfg_function_node_id_conflation() {
         .filter(|f| f.name == "cfg_gated_func")
         .collect();
 
-    // Assert: Exactly one node exists due to conflation
-    assert_eq!(found_funcs.len(), 1,
-        "FAILED: Expected exactly one cfg_gated_func node due to ID conflation (ignoring cfg), found {}. This might indicate cfg-awareness was added unexpectedly.",
+    // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
+    assert_eq!(found_funcs.len(), 2,
+        "FAILED: Expected exactly two cfg_gated_func nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
         found_funcs.len());
 
-    // Assert: The single node's ID matches the expected (conflated) ID
+    // Assert: Both nodes share the SAME NodeId due to conflation (ignoring cfg)
+    assert_eq!(found_funcs[0].id, found_funcs[1].id,
+        "FAILED: Expected the two cfg_gated_func nodes to have the SAME conflated NodeId, but they differ: {} vs {}",
+        found_funcs[0].id, found_funcs[1].id);
+
+    // Assert: The shared ID matches the expected ID generated without cfg context
     assert_eq!(found_funcs[0].id, expected_id,
         "FAILED: The NodeId for cfg_gated_func ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
         found_funcs[0].id, expected_id);
