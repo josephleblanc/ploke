@@ -248,7 +248,9 @@ fn test_cfg_struct_node_id_conflation() {
     let module_path = vec!["crate".to_string()];
 
     // Find the parent module scope ID (the ModuleNode representing lib.rs)
-    let parent_scope_id = graph.modules.iter()
+    let parent_scope_id = graph
+        .modules
+        .iter()
         .find(|m| m.file_path().is_some_and(|p| p == file_path)) // Find module by file path
         .map(|m| m.id)
         .expect("ModuleNode for lib.rs file path not found");
@@ -264,24 +266,28 @@ fn test_cfg_struct_node_id_conflation() {
     );
 
     // Find all struct nodes with that name in the graph
-    let found_structs: Vec<&syn_parser::parser::nodes::StructNode> = graph.defined_types.iter()
+    let found_structs: Vec<&syn_parser::parser::nodes::StructNode> = graph
+        .defined_types
+        .iter()
         .filter_map(|td| match td {
-            syn_parser::parser::nodes::TypeDefNode::Struct(s) if s.name == "CfgGatedStruct" => Some(s),
+            syn_parser::parser::nodes::TypeDefNode::Struct(s) if s.name == "CfgGatedStruct" => {
+                Some(s)
+            }
             _ => None,
         })
         .collect();
 
     // Assert: Exactly one node exists due to conflation
     assert_eq!(found_structs.len(), 1,
-        "FAILED: Expected exactly one CfgGatedStruct node due to ID conflation (ignoring cfg), found {}. This might indicate cfg-awareness was added unexpectedly.",
-        found_structs.len());
+        "FAILED: Expected exactly one CfgGatedStruct node due to ID conflation (ignoring cfg), found {}. This might indicate cfg-awareness was added unexpectedly.
+Found structs: {:#?}",
+        found_structs.len(), found_structs);
 
     // Assert: The single node's ID matches the expected (conflated) ID
     assert_eq!(found_structs[0].id, expected_id,
         "FAILED: The NodeId for CfgGatedStruct ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
         found_structs[0].id, expected_id);
 }
-
 
 #[test]
 fn test_cfg_function_node_id_conflation() {
@@ -293,11 +299,12 @@ fn test_cfg_function_node_id_conflation() {
     let module_path = vec!["crate".to_string()]; // Top-level in lib.rs
 
     // Find the parent module scope ID (the ModuleNode representing lib.rs)
-     let parent_scope_id = graph.modules.iter()
+    let parent_scope_id = graph
+        .modules
+        .iter()
         .find(|m| m.file_path().is_some_and(|p| p == file_path)) // Find module by file path
         .map(|m| m.id)
         .expect("ModuleNode for lib.rs file path not found");
-
 
     // Regenerate the expected ID *without* cfg context
     let expected_id = ploke_core::NodeId::generate_synthetic(
@@ -310,7 +317,9 @@ fn test_cfg_function_node_id_conflation() {
     );
 
     // Find all function nodes with that name in the graph (excluding methods in impls)
-    let found_funcs: Vec<&syn_parser::parser::nodes::FunctionNode> = graph.functions.iter()
+    let found_funcs: Vec<&syn_parser::parser::nodes::FunctionNode> = graph
+        .functions
+        .iter()
         .filter(|f| f.name == "cfg_gated_func")
         .collect();
 
