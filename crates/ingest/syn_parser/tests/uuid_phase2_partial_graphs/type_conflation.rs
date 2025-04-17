@@ -341,3 +341,48 @@ fn test_cfg_function_node_id_conflation() {
         "FAILED: The NodeId for cfg_gated_func ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
         found_funcs[0].id, expected_id);
 }
+
+// --- File-Level #[cfg] Disambiguation Tests ---
+
+/// Test that NodeIds ARE distinct for identically named items defined in
+/// separate files gated by mutually exclusive file-level #[cfg] attributes.
+/// This distinction is expected because NodeId generation includes the file path.
+///
+/// Fixture Targets:
+/// - `FileGatedStruct` in `src/cfg_file_a.rs` (via `#[cfg(feature = "feature_a")]`)
+/// - `FileGatedStruct` in `src/cfg_file_not_a.rs` (via `#[cfg(not(feature = "feature_a"))]`)
+#[test]
+fn test_file_level_cfg_struct_node_id_disambiguation() {
+    let graphs = run_phases_and_collect(FIXTURE_NAME);
+
+    // Find FileGatedStruct in cfg_file_a.rs
+    // Module path is ["crate", "cfg_file_a"]
+    let struct_in_file_a = find_struct_node_paranoid(
+        &graphs,
+        FIXTURE_NAME,
+        "src/cfg_file_a.rs",
+        &["crate".to_string(), "cfg_file_a".to_string()],
+        "FileGatedStruct",
+    );
+
+    // Find FileGatedStruct in cfg_file_not_a.rs
+    // Module path is ["crate", "cfg_file_not_a"]
+    let struct_in_file_not_a = find_struct_node_paranoid(
+        &graphs,
+        FIXTURE_NAME,
+        "src/cfg_file_not_a.rs",
+        &["crate".to_string(), "cfg_file_not_a".to_string()],
+        "FileGatedStruct",
+    );
+
+    // Assert that the NodeIds are distinct (NOT equal)
+    assert_ne!(
+        struct_in_file_a.id, struct_in_file_not_a.id,
+        "FAILED: Expected NodeIds for FileGatedStruct in different cfg-gated files to be distinct due to file path difference, but they are the same.\n - ID in cfg_file_a.rs:    {}\n - ID in cfg_file_not_a.rs: {}",
+        struct_in_file_a.id, struct_in_file_not_a.id
+    );
+
+    // Optional: Further check if the attributes are captured correctly (next step)
+    // assert!(struct_in_file_a.attributes.iter().any(|a| a.name == "cfg" && a.args.contains(&"feature = \"feature_a\"".to_string())));
+    // assert!(struct_in_file_not_a.attributes.iter().any(|a| a.name == "cfg" && a.args.contains(&"not (feature = \"feature_a\")".to_string())));
+}
