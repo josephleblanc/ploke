@@ -50,4 +50,45 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
+---
+
+## 4. `TypeId` Conflation for Generics and `Self` Types
+
+*   **Status:** **ADDRESSED**
+*   **Original Limitation:** The initial implementation of `TypeId::generate_synthetic` did not incorporate sufficient contextual information (like the defining scope). This led to identical `TypeId`s being generated for generic parameters (e.g., `<T>`) or `Self` types defined in different scopes (e.g., different functions, structs, or impl blocks), even though they represented distinct types semantically.
+*   **Resolution:** The `TypeId::generate_synthetic` function in [`ploke-core/src/lib.rs`](../../../../crates/ploke-core/src/lib.rs) was updated to include the `parent_scope_id` (the `NodeId` of the containing definition like a function, struct, impl, etc.) as part of its hash input. This ensures that types like `T` or `Self` defined within different scopes now generate distinct `TypeId`s.
+*   **Validation:** Tests in [`crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs`](../../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs) now pass, specifically:
+    *   `test_generic_param_conflation_in_functions`: Verifies distinct `TypeId`s for `<T>` in different functions.
+    *   `test_self_return_type_conflation_in_impls`: Verifies distinct `TypeId`s for `Self` return types in different impl blocks.
+    *   `test_generic_field_conflation_in_structs`: Verifies distinct `TypeId`s for `<T>` field types in different struct definitions.
+
+---
+
+## 5. Item-Level `#[cfg]` Attribute Handling (`NodeId` Conflation)
+
+*   **Status:** **KNOWN LIMITATION (Deferred)**
+*   **Limitation:** The `NodeId::generate_synthetic` function currently **does not** incorporate item-level `#[cfg(...)]` attributes into its hash input. As a result, identically named items within the same scope that differ only by mutually exclusive `cfg` attributes (e.g., `#[cfg(feature = "a")] struct Foo;` and `#[cfg(not(feature = "a"))] struct Foo;`) are assigned the **same `NodeId`**. The `CodeVisitor` creates duplicate node instances in the graph for each `cfg` branch, but these instances share the same ID.
+*   **Discovery:** Identified during testing with the `fixture_conflation` crate.
+*   **Root Cause:** Lack of `cfg` attribute processing within `NodeId::generate_synthetic` in [`ploke-core/src/lib.rs`](../../../../crates/ploke-core/src/lib.rs).
+*   **Decision:** Handling item-level `cfg` attributes during Phase 2 ID generation has been explicitly **deferred** due to complexity. See [ADR-009: Defer Handling of Item-Level `cfg` Attributes in Phase 2 ID Generation](../adrs/proposed/ADR-009-Defer-Item-Level-Cfg-Handling.md).
+*   **Validation:** Tests in [`crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs`](../../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs) verify this *expected* conflation:
+    *   `test_cfg_struct_node_id_conflation`
+    *   `test_cfg_function_node_id_conflation`
+    These tests assert that *two* node instances are created but share the *same* `NodeId`.
+
+---
+
+## 6. File-Level `#![cfg]` Attribute Handling (Attribute Propagation)
+
+*   **Status:** **KNOWN LIMITATION (Proposal Pending)**
+*   **Limitation:** File-level attributes (`#![cfg(...)]`) are correctly captured and stored on the corresponding `ModuleNode` (specifically in `ModuleDef::FileBased::file_attrs`). Items defined within these files receive distinct `NodeId`s due to the file path being part of the ID generation. However, the `cfg` context from the file-level attribute is **not** currently propagated or directly associated with the item nodes (e.g., `StructNode`, `FunctionNode`) defined within that file. Consumers need to traverse back to the containing `ModuleNode` to determine the file-level `cfg` context.
+*   **Discovery:** Identified during testing with the `fixture_conflation` crate.
+*   **Root Cause:** The `CodeVisitor` currently stores file-level attributes on the `ModuleNode` but doesn't pass this context down when visiting items within the file. See [`crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs`](../../../../crates/ingest/syn_parser/src/parser/visitor/code_visitor.rs).
+*   **Decision:** A proposal exists to associate file-level `cfg` attributes directly with contained items, but the specific mechanism (Phase 2 visitor change vs. later enhancement phase) is undecided. See [ADR-010: Apply File-Level `cfg` Attributes to Contained Items](../adrs/proposed/ADR-010-Apply-File-Level-Cfg-Attributes.md).
+*   **Validation:** The test `test_file_level_cfg_struct_node_id_disambiguation` in [`crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs`](../../../../crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/type_conflation.rs) verifies:
+    *   That `NodeId`s *are* distinct for items in different `cfg`-gated files (due to file path).
+    *   That the file-level `cfg` attributes *are* correctly stored on the respective `ModuleNode`s.
+
+---
+
 *(Add subsequent limitations below this line)*
