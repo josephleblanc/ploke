@@ -42,6 +42,30 @@ impl CodeGraph {
         })
     }
 
+    /// Finds an enum node by its ID, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the defined types, collects all matching `EnumNode`s,
+    /// and returns:
+    /// - `Ok(&EnumNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    pub fn get_enum_checked(&self, id: NodeId) -> Result<&EnumNode, SynParserError> {
+        let matches: Vec<&EnumNode> = self
+            .defined_types
+            .iter()
+            .filter_map(|def| match def {
+                TypeDefNode::Enum(e) if e.id == id => Some(e),
+                _ => None,
+            })
+            .collect();
+
+        match matches.len() {
+            0 => Err(SynParserError::NotFound(id)),
+            1 => Ok(matches[0]),
+            _ => Err(SynParserError::DuplicateNode(id)),
+        }
+    }
+
     /// Finds a type alias node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
