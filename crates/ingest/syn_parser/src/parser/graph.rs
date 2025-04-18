@@ -32,6 +32,25 @@ impl CodeGraph {
         })
     }
 
+    /// Finds a struct node by its ID, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the defined types, collects all matching `StructNode`s,
+    /// and returns:
+    /// - `Ok(&StructNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    pub fn get_struct_checked(&self, id: NodeId) -> Result<&StructNode, SynParserError> {
+        let mut matches = self.defined_types.iter().filter_map(|def| match def {
+            TypeDefNode::Struct(s) if s.id == id => Some(s),
+            _ => None,
+        });
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err(SynParserError::DuplicateNode(id));
+        }
+        first.ok_or(SynParserError::NotFound(id))
+    }
+
     /// Finds an enum node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
@@ -62,6 +81,7 @@ impl CodeGraph {
         first.ok_or(SynParserError::NotFound(id))
     }
 
+
     /// Finds a type alias node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
@@ -73,6 +93,25 @@ impl CodeGraph {
         })
     }
 
+    /// Finds a type alias node by its ID, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the defined types, collects all matching `TypeAliasNode`s,
+    /// and returns:
+    /// - `Ok(&TypeAliasNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    pub fn get_type_alias_checked(&self, id: NodeId) -> Result<&TypeAliasNode, SynParserError> {
+        let mut matches = self.defined_types.iter().filter_map(|def| match def {
+            TypeDefNode::TypeAlias(t) if t.id == id => Some(t),
+            _ => None,
+        });
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err(SynParserError::DuplicateNode(id));
+        }
+        first.ok_or(SynParserError::NotFound(id))
+    }
+
     /// Finds a union node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
@@ -82,6 +121,25 @@ impl CodeGraph {
             TypeDefNode::Union(u) if u.id == id => Some(u),
             _ => None,
         })
+    }
+
+    /// Finds a union node by its ID, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the defined types, collects all matching `UnionNode`s,
+    /// and returns:
+    /// - `Ok(&UnionNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    pub fn get_union_checked(&self, id: NodeId) -> Result<&UnionNode, SynParserError> {
+        let mut matches = self.defined_types.iter().filter_map(|def| match def {
+            TypeDefNode::Union(u) if u.id == id => Some(u),
+            _ => None,
+        });
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err(SynParserError::DuplicateNode(id));
+        }
+        first.ok_or(SynParserError::NotFound(id))
     }
 
     /// Gets the full module path for an item by searching through all modules
