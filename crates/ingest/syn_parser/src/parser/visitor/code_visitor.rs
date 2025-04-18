@@ -12,11 +12,14 @@ use crate::parser::nodes::{
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::ExtractSpan;
+use std::hash::Hasher;
 
 use crate::parser::nodes::ModuleDef;
 use ploke_core::{ItemKind, TypeKind}; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
+use cfg_expr::Expression; // NEW: Import Expression
+use ploke_core::byte_hasher::ByteHasher; // NEW: Import ByteHasher
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -305,6 +308,56 @@ impl<'a> CodeVisitor<'a> {
 
         // 3. Return the newly generated NodeId enum
         node_id
+    }
+
+    /// Combines an inherited scope CFG expression with an item's own CFG expression
+    /// into a new, canonical `Expression`.
+    /// Handles None cases and ensures deterministic combination by sorting the
+    /// `.original()` strings before creating and re-parsing an `all(...)` string.
+    fn combine_cfgs(
+        scope_cfg: Option<&Expression>,
+        item_cfg: Option<&Expression>,
+    ) -> Option<Expression> {
+        match (scope_cfg, item_cfg) {
+            (None, None) => None,
+            // If only one exists, clone it (its .original() is already canonical for itself).
+            (Some(s), None) => Some(s.clone()),
+            (None, Some(i)) => Some(i.clone()),
+            (Some(s), Some(i)) => {
+                // Combine using a canonical "all(...)" string and re-parse.
+                let mut original_strings = [s.original(), i.original()];
+                // Sort alphabetically for determinism.
+                original_strings.sort_unstable();
+
+                let combined_string =
+                    format!("all({}, {})", original_strings[0], original_strings[1]);
+
+                // Re-parse the combined string.
+                match Expression::parse(&combined_string) {
+                    Ok(combined_expr) => Some(combined_expr),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to re-parse combined scope/item cfg expression '{}': {}",
+                            combined_string, e
+                        );
+                        // Fallback: Perhaps return the scope_cfg or item_cfg? Or None?
+                        // Returning None seems safest if combination fails.
+                        None
+                    }
+                }
+            }
+        }
+    }
+
+    /// Hashes the canonical string representation (`.original()`) of an Option<&Expression>
+    /// into Option<Vec<u8>> using ByteHasher.
+    fn hash_expression(expr: Option<&Expression>) -> Option<Vec<u8>> {
+        expr.map(|e| {
+            let mut hasher = ByteHasher::default();
+            // Hash the bytes of the canonical .original() string.
+            hasher.write(e.original().as_bytes());
+            hasher.finish_bytes() // finish_bytes() is now pub
+        })
     }
 }
 

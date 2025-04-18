@@ -1,3 +1,4 @@
+use cfg_expr::Expression; // NEW: Import Expression
 use quote::ToTokens;
 use syn::{parse::Parser, spanned::Spanned};
 
@@ -108,9 +109,87 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
 pub(crate) fn extract_attributes(attrs: &[syn::Attribute]) -> Vec<Attribute> {
     attrs
         .iter()
-        .filter(|attr| !attr.path().is_ident("doc")) // Skip doc comments
+        .filter(|attr| !attr.path().is_ident("doc") && !attr.path().is_ident("cfg")) // Skip doc AND cfg comments
         .map(parse_attribute)
         .collect()
+}
+
+/// Parses `#[cfg(...)]` attributes from a slice, combines them deterministically,
+/// and returns a single `Option<Expression>`.
+///
+/// # Arguments
+/// * `attrs` - A slice of `syn::Attribute` to parse.
+///
+/// # Returns
+/// * `Some(Expression)` if one or more valid `cfg` attributes are found.
+/// * `None` if no `cfg` attributes are found or if parsing fails.
+///
+/// # Determinism
+/// If multiple `#[cfg]` attributes are present, they are combined into an
+/// `Expression::All([...])`. The order of expressions within the `All` vector
+/// is determined by sorting the string representations of the individual expressions
+/// alphabetically and combining them into a new `all(...)` expression string, which
+/// is then re-parsed. This ensures that the order of attributes in the source code
+/// does not affect the resulting combined `Expression`'s `.original()` string.
+pub(crate) fn parse_and_combine_cfgs_from_attrs(attrs: &[syn::Attribute]) -> Option<Expression> {
+    let mut initial_expressions: Vec<Expression> = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .filter_map(|attr| {
+            // Extract the tokens inside the cfg(...)
+            let tokens = match &attr.meta {
+                syn::Meta::List(list) => Some(list.tokens.clone()),
+                _ => {
+                    eprintln!(
+                        "Warning: Found #[cfg] attribute without list-like tokens: {:?}",
+                        attr.path().to_token_stream()
+                    );
+                    None
+                }
+            };
+
+            tokens.and_then(|t| {
+                match Expression::parse(&t.to_string()) {
+                    Ok(expr) => Some(expr),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Failed to parse cfg expression '{}': {}",
+                            t.to_string(),
+                            e
+                        );
+                        None // Skip invalid expressions
+                    }
+                }
+            })
+        })
+        .collect();
+
+    match initial_expressions.len() {
+        0 => None,
+        1 => initial_expressions.pop(), // Take the single expression
+        _ => {
+            // Multiple expressions: Combine into a canonical "all(...)" string and re-parse.
+            let mut original_strings: Vec<&str> =
+                initial_expressions.iter().map(|e| e.original()).collect();
+            // Sort alphabetically for determinism.
+            original_strings.sort_unstable();
+
+            let combined_string = format!("all({})", original_strings.join(", "));
+
+            // Re-parse the combined string.
+            match Expression::parse(&combined_string) {
+                Ok(combined_expr) => Some(combined_expr),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to re-parse combined cfg expression '{}': {}",
+                        combined_string, e
+                    );
+                    // Fallback: Return None if re-parsing fails, though this shouldn't ideally happen.
+                    None
+                }
+            }
+        }
+    }
 }
 
 // --- NEW: Functions for File-Level (Inner) Attributes ---
@@ -155,7 +234,7 @@ pub(crate) fn extract_file_level_attributes(attrs: &[syn::Attribute]) -> Vec<Att
     // Implementation is identical to extract_attributes for now
     attrs
         .iter()
-        .filter(|attr| !attr.path().is_ident("doc")) // Skip doc comments
+        .filter(|attr| !attr.path().is_ident("doc") && !attr.path().is_ident("cfg")) // Skip doc AND cfg comments
         .map(parse_attribute) // Uses the same helper
         .collect()
 }

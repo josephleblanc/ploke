@@ -1,9 +1,8 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use cfg_expr::Expression; // NEW: Import Expression
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
-
-// Removed unused imports: DashMap, Arc
 
 use super::type_processing::get_or_create_type;
 
@@ -28,9 +27,14 @@ pub struct VisitorState {
     // current_module_path seems more aligned with UUID generation needs.
     // USER response: Agreed, should re-evaluate post-refactor of uuid system.
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
-    pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
+    pub(crate) current_module: Vec<String>, // Stack of module IDs/names? Needs clarification.
     // Stack tracking the NodeId of the current definition scope (e.g., struct, fn, impl, trait)
     pub(crate) current_definition_scope: Vec<NodeId>,
+    // --- NEW CFG Tracking Fields ---
+    /// The combined CFG expression inherited from the current scope (file, module, struct, etc.)
+    pub(crate) current_scope_cfg: Option<Expression>,
+    /// Stack to save/restore `current_scope_cfg` when entering/leaving scopes.
+    pub(crate) cfg_stack: Vec<Option<Expression>>,
 }
 
 impl VisitorState {
@@ -59,6 +63,9 @@ impl VisitorState {
             current_module_path: Vec::new(),
             current_module: Vec::new(),
             current_definition_scope: Vec::new(), // Initialize empty scope stack
+            // Initialize new CFG fields
+            current_scope_cfg: None,
+            cfg_stack: Vec::new(),
         }
     }
 
@@ -75,6 +82,9 @@ impl VisitorState {
             name,
             item_kind,
             parent_scope_id, // Pass the parent scope ID from the stack
+            // TODO: Pass cfg_bytes here once calculated by the caller (visitor)
+            None, // Temporary placeholder
+                  // todo!("Pass cfg_bytes here"),
         )
     }
 

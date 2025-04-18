@@ -37,8 +37,7 @@ ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
 toml = { version = "0.8" }
 walkdir = { version = "2.4" }
 
-# handling cfg flags
-cfg-expr = { version = "0.15" } # Main cfg parser, ensure features
+cfg-expr = { version = "0.15" } # Main cfg parser, ensure features# handling cfg flags
 target-lexicon = "0.12"         # For target configuration info
 
 

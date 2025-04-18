@@ -133,6 +133,9 @@ pub fn analyze_file_phase2(
         &root_module_name,
         ItemKind::Module, // Pass correct ItemKind
         None,             // Root module has no parent scope ID within the file context
+        // TODO: Pass cfg_bytes for the root module (derived from file_cfg_expr)
+        None, // Temporary placeholder
+              // todo!("Pass cfg_bytes for root module"),
     );
 
     #[cfg(feature = "verbose_debug")]

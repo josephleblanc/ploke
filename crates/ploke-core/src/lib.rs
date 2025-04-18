@@ -9,16 +9,16 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 use serde::{Deserialize, Serialize};
 
 // Helper Hasher to collect bytes for UUID generation
-mod byte_hasher {
+pub mod byte_hasher {
     use std::hash::Hasher;
 
     #[derive(Default)]
-    pub(crate) struct ByteHasher {
+    pub struct ByteHasher {
         bytes: Vec<u8>,
     }
 
     impl ByteHasher {
-        pub(crate) fn finish_bytes(self) -> Vec<u8> {
+        pub fn finish_bytes(self) -> Vec<u8> {
             self.bytes
         }
     }
