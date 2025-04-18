@@ -37,6 +37,10 @@ ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
 toml = { version = "0.8" }
 walkdir = { version = "2.4" }
 
+# handling cfg flags
+cfg-expr = "0.15"       # Main cfg parser
+target-lexicon = "0.12" # For target configuration info
+
 
 [dev-dependencies]
 tempfile = "3.10" # For creating temporary files/dirs in tests
