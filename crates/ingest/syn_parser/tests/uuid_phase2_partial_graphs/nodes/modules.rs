@@ -990,16 +990,24 @@ fn test_module_node_mod_attributes_and_docs() {
     let inline_node =
         find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
 
-    // --- Assert Module-Level Attributes ---
+    // --- Assert Module-Level CFGs ---
     assert_eq!(
-        inline_node.attributes.len(),
+        inline_node.cfgs.len(),
         1,
-        "Expected 1 attribute on inline_pub_mod"
+        "Expected 1 cfg string on inline_pub_mod, found {}. Cfgs: {:?}",
+        inline_node.cfgs.len(),
+        inline_node.cfgs
     );
-    assert_eq!(inline_node.attributes[0].name, "cfg");
+    assert_eq!(
+        inline_node.cfgs[0], "test",
+        "Expected cfg string 'test', found '{}'",
+        inline_node.cfgs[0]
+    );
+    // Assert attributes list is now empty
     assert!(
-        inline_node.attributes[0].args.contains(&"test".to_string()),
-        "Expected '#[cfg(test)]'"
+        inline_node.attributes.is_empty(),
+        "Expected attributes list to be empty for inline_pub_mod, found: {:?}",
+        inline_node.attributes
     );
 
     // --- Assert Module-Level Docs ---

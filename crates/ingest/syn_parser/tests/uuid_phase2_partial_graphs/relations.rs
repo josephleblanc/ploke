@@ -70,10 +70,11 @@ mod phase2_relation_tests {
         let expect_mod_two_id = NodeId::generate_synthetic(
             expect_crate_namespace,
             &expect_mod_two_path,
-            expected_mod_two_rel_path,
+            expected_mod_two_rel_path, // This is the *parent* path for ID generation context
             "module_two",
             ploke_core::ItemKind::Module, // Pass ItemKind::Module
-            None,                         // Pass None for parent_scope_id
+            None,                         // File-level module definition has no parent scope ID
+            None, // Assume no relevant file-level #[cfg] in fixture for this test
         );
         let code_graph_with_mod_two_option = code_graphs
             .iter()
@@ -85,13 +86,14 @@ mod phase2_relation_tests {
 derived using:
     expected_crate_namespace:   {}
     expect_mod_two_path:        {:?}
-    expected_mod_two_rel_path:  {:?}
+    expected_mod_two_rel_path:  {:?} (Parent Path for ID Gen)
     name:                       {}
     item_kind:                  {:?}
-    parent_scope_id:            None",
+    parent_scope_id:            None
+    cfg_bytes:                  None",
             expect_mod_two_id,
             expect_crate_namespace,
-            &expect_mod_two_path,
+            &expect_mod_two_path, // File path
             expected_mod_two_rel_path,
             "module_two",
             ploke_core::ItemKind::Module,

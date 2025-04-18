@@ -14,7 +14,7 @@ use crate::common::{
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
                                        // use std::path::PathBuf; // Removed unused import
-use syn_parser::parser::visitor::ParsedCodeGraph; // Import directly
+use syn_parser::parser::{nodes::Visible, visitor::ParsedCodeGraph}; // Import directly
 
 const FIXTURE_NAME: &str = "fixture_conflation";
 
@@ -239,32 +239,24 @@ fn test_generic_field_conflation_in_structs() {
 #[test]
 fn test_cfg_struct_node_id_conflation() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
+    let module_path = &["crate".to_string()];
+
+    // Find the two struct nodes using the paranoid helper.
+    // The helper internally verifies the ID generation including CFG context.
+    // We need to find *both* instances. Since the paranoid helper asserts uniqueness
+    // based on name *and* module path, we can't use it directly to find both.
+    // Instead, we'll find them manually in the graph and assert their IDs differ.
+
     let graph_data = find_lib_rs_graph(&graphs);
     let graph = &graph_data.graph;
-    let crate_namespace = graph_data.crate_namespace;
-    let file_path = &graph_data.file_path;
-    // Module path for items defined directly in lib.rs
-    let module_path = vec!["crate".to_string()];
 
-    // Find the parent module scope ID (the ModuleNode representing lib.rs)
-    let parent_scope_id = graph
+    // Find all struct nodes with that name associated with the correct module
+    let module_node = graph
         .modules
         .iter()
-        .find(|m| m.file_path().is_some_and(|p| p == file_path)) // Find module by file path
-        .map(|m| m.id)
-        .expect("ModuleNode for lib.rs file path not found");
+        .find(|m| m.path == *module_path)
+        .expect("ModuleNode for crate path not found");
 
-    // Regenerate the expected ID *without* cfg context (mimicking current visitor)
-    let expected_id = ploke_core::NodeId::generate_synthetic(
-        crate_namespace,
-        file_path,
-        &module_path, // Use the logical module path for hashing context
-        "CfgGatedStruct",
-        ploke_core::ItemKind::Struct,
-        Some(parent_scope_id),
-    );
-
-    // Find all struct nodes with that name in the graph
     let found_structs: Vec<&syn_parser::parser::nodes::StructNode> = graph
         .defined_types
         .iter()
@@ -274,6 +266,11 @@ fn test_cfg_struct_node_id_conflation() {
             }
             _ => None,
         })
+        .filter(|s| {
+            module_node
+                .items()
+                .is_some_and(|items| items.contains(&s.id))
+        })
         .collect();
 
     // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
@@ -281,49 +278,43 @@ fn test_cfg_struct_node_id_conflation() {
         "FAILED: Expected exactly two CfgGatedStruct nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
         found_structs.len());
 
-    // Assert: Both nodes share the SAME NodeId due to conflation (ignoring cfg)
-    assert_eq!(found_structs[0].id, found_structs[1].id,
-        "FAILED: Expected the two CfgGatedStruct nodes to have the SAME conflated NodeId, but they differ: {} vs {}",
-        found_structs[0].id, found_structs[1].id);
+    // Assert: The two nodes have DIFFERENT NodeIds because their CFGs differ
+    assert_ne!(found_structs[0].id, found_structs[1].id,
+        "FAILED: Expected the two CfgGatedStruct nodes to have DIFFERENT NodeIds due to differing CFGs, but they are the same: {}. CFG hashing might not be working.",
+        found_structs[0].id);
 
-    // Assert: The shared ID matches the expected ID generated without cfg context
-    assert_eq!(found_structs[0].id, expected_id,
-        "FAILED: The NodeId for CfgGatedStruct ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
-        found_structs[0].id, expected_id);
+    // Optional: Verify each node individually using the paranoid helper if needed,
+    // although the assertion above confirms the core requirement.
+    // find_struct_node_paranoid(&graphs, FIXTURE_NAME, "src/lib.rs", module_path, "CfgGatedStruct");
+    // This would panic if called twice expecting uniqueness, confirming the need for manual check here.
 }
 
 #[test]
 fn test_cfg_function_node_id_conflation() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
+    let module_path = &["crate".to_string()];
+
+    // Similar to the struct test, find both function nodes manually and compare IDs.
     let graph_data = find_lib_rs_graph(&graphs);
     let graph = &graph_data.graph;
-    let crate_namespace = graph_data.crate_namespace;
-    let file_path = &graph_data.file_path;
-    let module_path = vec!["crate".to_string()]; // Top-level in lib.rs
 
-    // Find the parent module scope ID (the ModuleNode representing lib.rs)
-    let parent_scope_id = graph
+    // Find the parent module node
+    let module_node = graph
         .modules
         .iter()
-        .find(|m| m.file_path().is_some_and(|p| p == file_path)) // Find module by file path
-        .map(|m| m.id)
-        .expect("ModuleNode for lib.rs file path not found");
+        .find(|m| m.path == *module_path)
+        .expect("ModuleNode for crate path not found");
 
-    // Regenerate the expected ID *without* cfg context
-    let expected_id = ploke_core::NodeId::generate_synthetic(
-        crate_namespace,
-        file_path,
-        &module_path,
-        "cfg_gated_func",
-        ploke_core::ItemKind::Function,
-        Some(parent_scope_id),
-    );
-
-    // Find all function nodes with that name in the graph (excluding methods in impls)
+    // Find all function nodes with that name associated with the correct module
     let found_funcs: Vec<&syn_parser::parser::nodes::FunctionNode> = graph
         .functions
         .iter()
         .filter(|f| f.name == "cfg_gated_func")
+        .filter(|f| {
+            module_node
+                .items()
+                .is_some_and(|items| items.contains(&f.id))
+        })
         .collect();
 
     // Assert: Exactly TWO nodes exist because the visitor processes both cfg branches
@@ -331,15 +322,10 @@ fn test_cfg_function_node_id_conflation() {
         "FAILED: Expected exactly two cfg_gated_func nodes (one for each cfg branch), found {}. Visitor might not be processing both branches.",
         found_funcs.len());
 
-    // Assert: Both nodes share the SAME NodeId due to conflation (ignoring cfg)
-    assert_eq!(found_funcs[0].id, found_funcs[1].id,
-        "FAILED: Expected the two cfg_gated_func nodes to have the SAME conflated NodeId, but they differ: {} vs {}",
-        found_funcs[0].id, found_funcs[1].id);
-
-    // Assert: The shared ID matches the expected ID generated without cfg context
-    assert_eq!(found_funcs[0].id, expected_id,
-        "FAILED: The NodeId for cfg_gated_func ({}) does not match the expected conflated ID ({}) generated without cfg context. ID generation might have changed.",
-        found_funcs[0].id, expected_id);
+    // Assert: The two nodes have DIFFERENT NodeIds because their CFGs differ
+    assert_ne!(found_funcs[0].id, found_funcs[1].id,
+        "FAILED: Expected the two cfg_gated_func nodes to have DIFFERENT NodeIds due to differing CFGs, but they are the same: {}. CFG hashing might not be working.",
+        found_funcs[0].id);
 }
 
 // --- File-Level #[cfg] Disambiguation Tests ---
@@ -411,26 +397,18 @@ fn test_file_level_cfg_struct_node_id_disambiguation() {
                 .find(|m| m.file_path().is_some_and(|p| p == &file_not_a_path))
         })
         .expect("ModuleNode for cfg_file_not_a.rs not found");
-
-    // Assert that the correct file-level cfg attribute is present on module_a
-    // Note: This comparison is coarse string matching on the attribute arguments.
-    // It doesn't parse or canonicalize the cfg condition.
+    // Assert that the correct file-level cfg attribute is present on module_a's cfgs field
     assert!(
-        module_a
-            .file_attrs()
-            .expect("Module A should be file-based and have file_attrs")
-            .iter()
-            .any(|a| a.name == "cfg" && a.args.contains(&"feature = \"feature_a\"".to_string())),
-        "FAILED: Expected ModuleNode for cfg_file_a.rs to have file attribute #[cfg(feature = \"feature_a\")]"
+        module_a.cfgs().contains(&"feature = \"feature_a\"".to_string()),
+        "FAILED: Expected ModuleNode for cfg_file_a.rs to have `cfgs` containing 'feature = \"feature_a\"'. Found: {:?}",
+        module_a.cfgs()
     );
 
-    // Assert that the correct file-level cfg attribute is present on module_not_a
+    let expected_cfg_not_a = "not (feature = \"feature_a\")"; // Expect space after 'not'
+                                                              // Assert that the correct file-level cfg attribute is present on module_not_a's cfgs field
     assert!(
-        module_not_a
-            .file_attrs()
-            .expect("Module Not_A should be file-based and have file_attrs")
-            .iter()
-            .any(|a| a.name == "cfg" && a.args.contains(&"not (feature = \"feature_a\")".to_string())),
-        "FAILED: Expected ModuleNode for cfg_file_not_a.rs to have file attribute #[cfg(not(feature = \"feature_a\"))]"
+        module_not_a.cfgs().contains(&expected_cfg_not_a.to_string()), // Note: syn might normalize spacing
+        "FAILED: Expected ModuleNode for cfg_file_not_a.rs to have `cfgs` containing 'not(feature = \"feature_a\")'. Found: {:?}",
+        module_not_a.cfgs()
     );
 }

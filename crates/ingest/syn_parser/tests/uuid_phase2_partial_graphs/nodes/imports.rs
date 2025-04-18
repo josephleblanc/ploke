@@ -377,6 +377,7 @@ fn test_import_node_field_id_regeneration() {
         id_gen_name,          // Use visible name or "<glob>" for ID gen
         item_kind,            // Pass the determined ItemKind
         Some(module_node.id), // Pass the containing module's ID
+        None,                 // Assume no relevant CFGs for this test case
     );
 
     assert!(

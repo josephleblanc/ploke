@@ -95,6 +95,21 @@ pub fn find_enum_node_paranoid<'a>(
     provisional_effective_cfgs.sort_unstable();
     let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
 
+    // --- DEBUG PRINT ---
+    eprintln!(
+        "[Helper find_enum_node_paranoid for '{}' ({:?})]",
+        enum_name,
+        ItemKind::Enum
+    );
+    eprintln!("  crate_namespace: {}", crate_namespace);
+    eprintln!("  file_path: {:?}", file_path);
+    eprintln!("  relative_path: {:?}", expected_module_path);
+    eprintln!("  item_name: {}", enum_name);
+    eprintln!("  item_kind: {:?}", ItemKind::Enum);
+    eprintln!("  parent_scope_id: {:?}", Some(module_node.id));
+    eprintln!("  cfg_bytes: {:?}", cfg_bytes.as_deref());
+    // --- END DEBUG PRINT ---
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data

@@ -245,6 +245,7 @@ fn test_value_node_field_id_regeneration() {
         value_name,
         item_kind,            // Pass the determined ItemKind
         Some(module_node.id), // Pass the containing module's ID
+        None,                 // Assume no relevant CFGs for this test case
     );
 
     // Assert the ID is synthetic (basic check) - still useful
@@ -638,35 +639,30 @@ fn test_value_node_field_attributes_single() {
 
     let node = find_value_node_basic(graph, &module_path, value_name);
 
+    // Assert that the `cfgs` field contains the expected string
     assert_eq!(
-        node.attributes.len(),
+        node.cfgs.len(),
         1,
-        "Node '{}': Expected 1 attribute, found {}. Attrs: {:?}",
+        "Node '{}': Expected 1 cfg string, found {}. Cfgs: {:?}",
         value_name,
-        node.attributes.len(),
+        node.cfgs.len(),
+        node.cfgs
+    );
+    // Check the content of the cfg string (whitespace might be normalized)
+    let expected_cfg = "target_os = \"linux\"";
+    assert!(
+        node.cfgs[0].contains("target_os") && node.cfgs[0].contains("linux"),
+        "Node '{}': CFG string mismatch. Expected contains '{}', Actual: '{}'",
+        value_name,
+        expected_cfg,
+        node.cfgs[0]
+    );
+    // Also assert that the main attributes list is now empty for this node
+    assert!(
+        node.attributes.is_empty(),
+        "Node '{}': Expected attributes list to be empty after filtering cfg, found: {:?}",
+        value_name,
         node.attributes
-    );
-
-    let attr = &node.attributes[0];
-    assert_eq!(
-        attr.name, "cfg",
-        "Node '{}': Attribute name mismatch. Expected 'cfg', found '{}'",
-        value_name, attr.name
-    );
-    // Note: syn parses `#[cfg(..)]` args differently. It becomes a nested Meta::List.
-    // Checking the exact string representation of args might be brittle.
-    // Let's check if the essential parts are present in the stringified args.
-    let args_string = attr.args.join(", "); // Reconstruct a string for checking
-    assert!(
-        args_string.contains("target_os") && args_string.contains("linux"),
-        "Node '{}': Attribute args mismatch. Expected contains 'target_os = \"linux\"', found args: {:?}",
-        value_name, attr.args
-    );
-    assert!(
-        attr.value.is_none(),
-        "Node '{}': Attribute value should be None for #[cfg(...)]. Found: {:?}",
-        value_name,
-        attr.value
     );
 }
 

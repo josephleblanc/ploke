@@ -357,15 +357,17 @@ fn test_other_union_nodes() {
         .iter()
         .find(|f| f.name.as_deref() == Some("always_present"))
         .expect("Field 'always_present' not found");
-    assert!(field_always.attributes.is_empty());
-    // Check that at least one of the cfg'd fields has attributes (exact check depends on target)
-    let has_cfg_attr = node
+    assert!(field_always.attributes.is_empty(), "Field 'always_present' should have no non-cfg attributes");
+    assert!(field_always.cfgs.is_empty(), "Field 'always_present' should have no cfgs");
+
+    // Check that at least one of the other fields has a non-empty cfgs list
+    let has_cfg_string = node
         .fields
         .iter()
-        .any(|f| f.name.as_deref() != Some("always_present") && !f.attributes.is_empty());
+        .any(|f| f.name.as_deref() != Some("always_present") && !f.cfgs.is_empty());
     assert!(
-        has_cfg_attr,
-        "Expected at least one cfg'd field to have attributes"
+        has_cfg_string,
+        "Expected at least one cfg'd field ('big_endian_data' or 'little_endian_data') to have a non-empty cfgs list"
     );
     assert_relation_exists(
         graph,

@@ -812,8 +812,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 cfgs: item_cfgs, // Store union's own cfgs
             }));
 
-        // Continue visiting (union_id is already off the stack)
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
+
+        // Continue visiting children (fields handled above, visit generics/where clauses if needed)
         visit::visit_item_union(self, item_union);
+
+        // Pop the union's CFG scope from the stack
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        // Note: union_id was already popped from definition scope stack after processing generics
+        // --- End CFG Scope Management ---
     }
 
     // Visit enum definitions
@@ -1043,10 +1055,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Continue visiting children (variants/fields handled above, visit generics/where)
         visit::visit_item_enum(self, item_enum);
 
-        // Pop the enum's CFG scope and definition ID from the stacks
+        // Pop the enum's CFG scope from the stack
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        self.state.current_definition_scope.pop(); // Pop enum ID
-                                                   // --- End CFG Scope Management ---
+        // Note: enum_id was already popped from definition scope stack after processing generics
+        // --- End CFG Scope Management ---
     }
 
     // Visit impl blocks
@@ -1269,10 +1281,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Continue visiting children (methods handled above, visit generics/where)
         visit::visit_item_impl(self, item_impl);
 
-        // Pop the impl's CFG scope and definition ID from the stacks
+        // Pop the impl's definition ID *after* visiting children
+        self.state.current_definition_scope.pop(); // <<< ADD THIS MISSING POP
+
+        // Pop the impl's CFG scope from the stack
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        self.state.current_definition_scope.pop(); // Pop impl ID
-                                                   // --- End CFG Scope Management ---
+        // --- End CFG Scope Management ---
     }
 
     // Visit trait definitions
@@ -1476,10 +1490,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Continue visiting children (methods handled above, visit generics/where/supertraits)
         visit::visit_item_trait(self, item_trait);
 
-        // Pop the trait's CFG scope and definition ID from the stacks
+        // Pop the trait's CFG scope from the stack
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        self.state.current_definition_scope.pop(); // Pop trait ID
-                                                   // --- End CFG Scope Management ---
+        // Note: trait_id was already popped from definition scope stack after processing generics/supertraits/items
+        // --- End CFG Scope Management ---
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {

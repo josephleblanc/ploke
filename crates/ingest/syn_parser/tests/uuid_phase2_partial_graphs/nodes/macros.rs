@@ -194,6 +194,7 @@ fn test_macro_node_field_id_regeneration() {
         macro_name,
         item_kind,            // Pass ItemKind::Macro
         Some(module_node.id), // Pass the containing module's ID
+        None,                 // Assume no relevant CFGs for this test case
     );
 
     assert!(

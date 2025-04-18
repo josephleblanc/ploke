@@ -511,7 +511,7 @@ impl Visible for MacroNode {
     }
 
     fn cfgs(&self) -> &[String] {
-        todo!()
+        &self.cfgs // Simply return a slice reference to the stored cfgs
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

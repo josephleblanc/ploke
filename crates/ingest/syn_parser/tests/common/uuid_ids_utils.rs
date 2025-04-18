@@ -761,32 +761,29 @@ pub fn find_method_node_paranoid<'a>(
     // --- 3. PARANOID CHECK: Regenerate Method's NodeId ---
     // Now that we have the unique method_node and its parent_node_id
     let method_id = method_node.id();
-    // The context for the method's ID includes the module path containing the parent impl/trait,
-    // the method's name, its kind, and the parent impl/trait's ID.
-    let regenerated_id = NodeId::generate_synthetic(
-        crate_namespace,
-        file_path,
-        expected_module_path, // Module path containing the parent impl/trait
-        method_name,
-        ploke_core::ItemKind::Function, // Methods are functions
-        Some(parent_node_id),           // Parent scope is the impl/trait ID found above
-    ); // Remove the incorrect None argument
 
     // --- 4. Calculate expected CFG hash bytes ---
     let item_cfgs = &method_node.cfgs; // Get the method's own CFGs
-    let scope_cfgs: Vec<String> = graph // Use the main graph from target_data
+                                       // Explicitly use target_data.graph to avoid potential shadowing issues
+    let scope_cfgs: Vec<String> = target_data.graph
         .find_node(parent_node_id) // Find the parent impl/trait node
         .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs
-        .unwrap_or_default(); // Default to empty if parent not found (shouldn't happen here)
+        .unwrap_or_else(|| {
+            eprintln!("Warning: Could not find parent node {:?} to get scope CFGs for method '{}'. Defaulting to empty.", parent_node_id, method_name);
+            Vec::new() // Default to empty if parent not found
+        });
 
-    let provisional_effective_cfgs: Vec<String> = scope_cfgs
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs // Renamed to avoid shadowing
         .iter()
         .cloned()
         .chain(item_cfgs.iter().cloned())
         .collect();
+    provisional_effective_cfgs.sort_unstable(); // Sort before hashing
     let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
 
     // --- 5. Regenerate ID *with* calculated CFG bytes ---
+    // The context for the method's ID includes the module path containing the parent impl/trait,
+    // the method's name, its kind, the parent impl/trait's ID, and the combined CFG hash.
     let regenerated_id_with_cfg = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
@@ -800,8 +797,8 @@ pub fn find_method_node_paranoid<'a>(
     // --- 6. Assert Regenerated ID Matches Actual ID ---
     assert_eq!(
         method_id, regenerated_id_with_cfg, // Compare with the ID generated *with* CFG context
-        "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}' (ScopeCFGs: {:?}, ItemCFGs: {:?})",
-        method_id, regenerated_id_with_cfg, method_name, parent_node_id, parent_context, file_path.display(), scope_cfgs, item_cfgs
+        "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}'.\nScopeCFGs: {:?}\nItemCFGs: {:?}\nCombinedCFGs: {:?}",
+        method_id, regenerated_id_with_cfg, method_name, parent_node_id, parent_context, file_path.display(), scope_cfgs, item_cfgs, provisional_effective_cfgs // Use renamed variable
     );
 
     // --- 7. Return the validated method node ---

@@ -130,7 +130,12 @@ pub(crate) fn extract_cfg_strings(attrs: &[syn::Attribute]) -> Vec<String> {
             // Extract the tokens inside the cfg(...)
             match &attr.meta {
                 syn::Meta::List(list) => {
-                    let cfg_content = list.tokens.to_string().trim().to_string();
+                    let mut cfg_content = list.tokens.to_string();
+                    // Normalize whitespace: replace multiple spaces with one, trim ends
+                    cfg_content = cfg_content
+                        .split_whitespace()
+                        .collect::<Vec<&str>>()
+                        .join(" ");
                     if cfg_content.is_empty() {
                         None // Ignore empty #[cfg()]
                     } else {
