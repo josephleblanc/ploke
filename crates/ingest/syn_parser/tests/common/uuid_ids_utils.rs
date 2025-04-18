@@ -595,26 +595,52 @@ pub fn find_function_node_paranoid<'a>(
             // if expected_module_path == ["crate"] { None } else { panic!(...) }
         });
 
-    let regenerated_id = NodeId::generate_synthetic(
+    // 7. PARANOID CHECK: Calculate expected CFG hash bytes
+    let item_cfgs = &func_node.cfgs; // Get the function's own CFGs
+    let scope_cfgs: Vec<String> = actual_parent_scope_id
+        .and_then(|p_id| graph.find_node(p_id)) // Find the parent node
+        .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs using the Visible trait method
+        .unwrap_or_default(); // Default to empty if no parent found (e.g., root module items)
+
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs // Combine parent and item cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    provisional_effective_cfgs.sort_unstable(); // Sort for deterministic hashing input
+
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs); // Hash the sorted, combined list
+
+    // 8. Regenerate ID *with* calculated CFG bytes
+    let regenerated_id = NodeId::generate_synthetic( // Renamed back to regenerated_id for consistency
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Still use the expected module path for context hashing
         func_name,
         ploke_core::ItemKind::Function, // Pass the correct ItemKind
-        actual_parent_scope_id,         // Pass the parent scope ID found via the Contains relation
+        actual_parent_scope_id, // Pass the parent scope ID found via the Contains/Method relation
+        cfg_bytes.as_deref(),   // Pass the calculated bytes
     );
-    let possible_parent = graph.find_node(actual_parent_scope_id.unwrap());
 
+    // 9. Assert Regenerated ID Matches Actual ID
+    let possible_parent = actual_parent_scope_id.and_then(|id| graph.find_node(id));
     assert_eq!(
-        func_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}' with expected module path {:?} (ItemKind: {:?}, ParentScope: {:?})
-FOUND FUNCTION NODE: {:#?}
-",
-        func_id, regenerated_id, func_name, file_path.display(), expected_module_path, ploke_core::ItemKind::Function, actual_parent_scope_id, // Use actual parent scope in message
-        possible_parent.unwrap().name()
+        func_id, regenerated_id, // Compare actual ID with the regenerated ID (which now includes CFG)
+        "PARANOID CHECK FAILED: Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}'.\nExpected Module Path: {:?}\nParent Scope ID: {:?}\nParent Node Name: {}\nScope CFGs (Parent): {:?}\nItem CFGs (Function): {:?}\nCombined & Sorted CFGs for Hash: {:?}\nFOUND FUNCTION NODE: {:#?}",
+        func_id,
+        regenerated_id,
+        func_name,
+        file_path.display(),
+        expected_module_path,
+        actual_parent_scope_id,
+        possible_parent.map(|n| n.name()).unwrap_or("<None>"), // Safely get parent name
+        scope_cfgs, // Include scope CFGs in assertion message
+        item_cfgs, // Include item CFGs in assertion message
+        provisional_effective_cfgs, // Include the actual list used for hashing
+        func_node // Print the found node for debugging
     );
 
-    // 7. Return the validated node
+    // 10. Return the validated node
     func_node
 }
 
@@ -742,16 +768,41 @@ pub fn find_method_node_paranoid<'a>(
         method_name,
         ploke_core::ItemKind::Function, // Methods are functions
         Some(parent_node_id),           // Parent scope is the impl/trait ID found above
+    ); // Remove the incorrect None argument
+
+    // --- 4. Calculate expected CFG hash bytes ---
+    let item_cfgs = &method_node.cfgs; // Get the method's own CFGs
+    let scope_cfgs: Vec<String> = graph // Use the main graph from target_data
+        .find_node(parent_node_id) // Find the parent impl/trait node
+        .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs
+        .unwrap_or_default(); // Default to empty if parent not found (shouldn't happen here)
+
+    let provisional_effective_cfgs: Vec<String> = scope_cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+
+    // --- 5. Regenerate ID *with* calculated CFG bytes ---
+    let regenerated_id_with_cfg = NodeId::generate_synthetic(
+        crate_namespace,
+        file_path,
+        expected_module_path, // Module path containing the parent impl/trait
+        method_name,
+        ploke_core::ItemKind::Function, // Methods are functions
+        Some(parent_node_id),           // Parent scope is the impl/trait ID found above
+        cfg_bytes.as_deref(),           // Pass the calculated bytes
     );
 
-    // --- 4. Assert Regenerated ID Matches Actual ID ---
+    // --- 6. Assert Regenerated ID Matches Actual ID ---
     assert_eq!(
-        method_id, regenerated_id,
-        "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}'",
-        method_id, regenerated_id, method_name, parent_node_id, parent_context, file_path.display()
+        method_id, regenerated_id_with_cfg, // Compare with the ID generated *with* CFG context
+        "Mismatch between method's actual ID ({}) and regenerated ID ({}) for method '{}' in parent {:?} (context: {:?}) file '{}' (ScopeCFGs: {:?}, ItemCFGs: {:?})",
+        method_id, regenerated_id_with_cfg, method_name, parent_node_id, parent_context, file_path.display(), scope_cfgs, item_cfgs
     );
 
-    // --- 5. Return the validated method node ---
+    // --- 7. Return the validated method node ---
     method_node
 }
 

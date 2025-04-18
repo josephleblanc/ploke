@@ -237,15 +237,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cfg-expr"
-version = "0.15.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d067ad48b8650848b989a59a86c6c36a995d02d2bf778d45c3c5d57bc2718f02"
-dependencies = [
- "smallvec",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1923,7 +1914,6 @@ dependencies = [
 name = "syn_parser"
 version = "0.1.0"
 dependencies = [
- "cfg-expr",
  "cozo",
  "dashmap 6.1.0",
  "flume",
@@ -1937,7 +1927,6 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
- "target-lexicon",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -1945,12 +1934,6 @@ dependencies = [
  "uuid",
  "walkdir",
 ]
-
-[[package]]
-name = "target-lexicon"
-version = "0.12.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 
 [[package]]
 name = "tempfile"

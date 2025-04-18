@@ -18,7 +18,6 @@ use crate::parser::nodes::ModuleDef;
 use ploke_core::{ItemKind, TypeKind}; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
-use cfg_expr::Expression; // NEW: Import Expression
 use ploke_core::byte_hasher::ByteHasher; // NEW: Import ByteHasher
 use quote::ToTokens;
 use syn::spanned::Spanned;
@@ -38,8 +37,13 @@ impl<'a> CodeVisitor<'a> {
     }
 
     // Helper method to extract path segments from a use tree
-
-    fn process_use_tree(&mut self, tree: &syn::UseTree, base_path: &[String]) -> Vec<ImportNode> {
+    // Needs cfg_bytes passed down from visit_item_use
+    fn process_use_tree(
+        &mut self,
+        tree: &syn::UseTree,
+        base_path: &[String],
+        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    ) -> Vec<ImportNode> {
         let mut imports = Vec::new();
 
         match tree {
@@ -47,7 +51,8 @@ impl<'a> CodeVisitor<'a> {
                 let mut new_base = base_path.to_vec();
                 new_base.push(path.ident.to_string());
 
-                imports.extend(self.process_use_tree(&path.tree, &new_base));
+                imports.extend(self.process_use_tree(&path.tree, &new_base, cfg_bytes));
+                // Pass cfg_bytes down
             }
             syn::UseTree::Name(name) => {
                 let mut full_path = base_path.to_vec();
@@ -63,8 +68,12 @@ impl<'a> CodeVisitor<'a> {
                     full_path.push(use_name.clone());
                     use_name // This is the visible name in this case
                 };
-                // Pass the *visible name* (checked_name) and ItemKind::Import
-                let import_id = self.add_contains_rel(&checked_name, ItemKind::Import);
+                // Pass the *visible name*, ItemKind::Import, and the statement's CFG bytes
+                let import_id = self.add_contains_rel(
+                    &checked_name,
+                    ItemKind::Import,
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
 
                 imports.push(ImportNode {
                     id: import_id,
@@ -75,6 +84,7 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: false,
                     span,
                     is_self_import,
+                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
                 });
             }
             syn::UseTree::Rename(rename) => {
@@ -83,8 +93,12 @@ impl<'a> CodeVisitor<'a> {
                 let visible_name = rename.rename.to_string(); // The 'as' name
 
                 let span = rename.extract_span_bytes();
-                // Pass the *visible name* and ItemKind::Import
-                let import_id = self.add_contains_rel(&visible_name, ItemKind::Import);
+                // Pass the *visible name*, ItemKind::Import, and the statement's CFG bytes
+                let import_id = self.add_contains_rel(
+                    &visible_name,
+                    ItemKind::Import,
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
 
                 full_path.push(original_name.clone()); // Path still uses original name segment
 
@@ -97,11 +111,16 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: false,
                     span,
                     is_self_import: false,
+                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
                 });
             }
-            syn::UseTree::Glob(_) => {
+            syn::UseTree::Glob(glob) => {
                 // Use a placeholder name like "<glob>" for the ID, pass ItemKind::Import
-                let import_id = self.add_contains_rel("<glob>", ItemKind::Import);
+                let import_id = self.add_contains_rel(
+                    "<glob>",
+                    ItemKind::Import,
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
 
                 // Path stored should be the path *to* the glob, not including '*'
                 let full_path = base_path.to_vec();
@@ -113,13 +132,15 @@ impl<'a> CodeVisitor<'a> {
                     visible_name: "*".to_string(), // Visual representation
                     original_name: None,
                     is_glob: true,
-                    span: tree.extract_span_bytes(),
+                    span: glob.extract_span_bytes(), // Use glob span
                     is_self_import: false,
+                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
                 });
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
-                    imports.extend(self.process_use_tree(item, base_path));
+                    imports.extend(self.process_use_tree(item, base_path, cfg_bytes));
+                    // Pass cfg_bytes down
                 }
             }
         }
@@ -227,11 +248,17 @@ impl<'a> CodeVisitor<'a> {
     /// Generates a new `NodeId::Synthetic` for the item being visited using the
     /// `VisitorState` helper, ensuring it's immediately linked to the current
     /// module via a `Contains` relation.
-    /// Requires the item's name and kind for UUID generation.
-    fn add_contains_rel(&mut self, item_name: &str, item_kind: ItemKind) -> NodeId {
-        // 1. Generate the Synthetic NodeId using the state helper
-        //    This now uses item_kind instead of span and passes None for parent_scope_id.
-        let node_id = self.state.generate_synthetic_node_id(item_name, item_kind);
+    /// Requires the item's name, kind, and calculated CFG bytes for UUID generation.
+    fn add_contains_rel(
+        &mut self,
+        item_name: &str,
+        item_kind: ItemKind,
+        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    ) -> NodeId {
+        // 1. Generate the Synthetic NodeId using the state helper, passing CFG bytes
+        let node_id = self
+            .state
+            .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
 
         // 2. Add the Contains relation using the new ID and GraphId wrapper
         // Find the parent module based on the *current path*, not just the last pushed module.
@@ -309,56 +336,27 @@ impl<'a> CodeVisitor<'a> {
         // 3. Return the newly generated NodeId enum
         node_id
     }
+}
 
-    /// Combines an inherited scope CFG expression with an item's own CFG expression
-    /// into a new, canonical `Expression`.
-    /// Handles None cases and ensures deterministic combination by sorting the
-    /// `.original()` strings before creating and re-parsing an `all(...)` string.
-    fn combine_cfgs(
-        scope_cfg: Option<&Expression>,
-        item_cfg: Option<&Expression>,
-    ) -> Option<Expression> {
-        match (scope_cfg, item_cfg) {
-            (None, None) => None,
-            // If only one exists, clone it (its .original() is already canonical for itself).
-            (Some(s), None) => Some(s.clone()),
-            (None, Some(i)) => Some(i.clone()),
-            (Some(s), Some(i)) => {
-                // Combine using a canonical "all(...)" string and re-parse.
-                let mut original_strings = [s.original(), i.original()];
-                // Sort alphabetically for determinism.
-                original_strings.sort_unstable();
-
-                let combined_string =
-                    format!("all({}, {})", original_strings[0], original_strings[1]);
-
-                // Re-parse the combined string.
-                match Expression::parse(&combined_string) {
-                    Ok(combined_expr) => Some(combined_expr),
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to re-parse combined scope/item cfg expression '{}': {}",
-                            combined_string, e
-                        );
-                        // Fallback: Perhaps return the scope_cfg or item_cfg? Or None?
-                        // Returning None seems safest if combination fails.
-                        None
-                    }
-                }
-            }
-        }
+/// Calculates a hash for a list of raw CFG strings.
+/// Sorts the strings before joining and hashing to ensure deterministic output.
+/// Returns None if the input slice is empty.
+pub fn calculate_cfg_hash_bytes(cfgs: &[String]) -> Option<Vec<u8>> {
+    if cfgs.is_empty() {
+        return None;
     }
 
-    /// Hashes the canonical string representation (`.original()`) of an Option<&Expression>
-    /// into Option<Vec<u8>> using ByteHasher.
-    fn hash_expression(expr: Option<&Expression>) -> Option<Vec<u8>> {
-        expr.map(|e| {
-            let mut hasher = ByteHasher::default();
-            // Hash the bytes of the canonical .original() string.
-            hasher.write(e.original().as_bytes());
-            hasher.finish_bytes() // finish_bytes() is now pub
-        })
-    }
+    // Clone and sort for determinism
+    let mut sorted_cfgs = cfgs.to_vec();
+    sorted_cfgs.sort_unstable();
+
+    // Join with a separator (important if a cfg string could contain the separator)
+    let joined_cfgs = sorted_cfgs.join("::CFG::");
+
+    // Hash the joined string
+    let mut hasher = ByteHasher::default();
+    hasher.write(joined_cfgs.as_bytes());
+    Some(hasher.finish_bytes())
 }
 
 #[allow(clippy::needless_lifetimes)]
@@ -377,10 +375,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Are we processing the proc_macro functions twice?
         // We don't want to deal with the more complex aspects of macros, but do want to note their
         // location, name, and other metadata that might be useful for the RAG to get easy wins.
+        // Use if/else to prevent double processing
         if is_proc_macro {
             let macro_name = func.sig.ident.to_string();
-            // Pass ItemKind::Macro
-            let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro);
+
+            // --- CFG Handling for Proc Macro (Raw Strings) ---
+            let scope_cfgs = self.state.current_scope_cfgs.clone();
+            let item_cfgs = super::attribute_processing::extract_cfg_strings(&func.attrs);
+            let provisional_effective_cfgs: Vec<String> = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect();
+            let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Pass ItemKind::Macro and cfg_bytes
+            let macro_id =
+                self.add_contains_rel(&macro_name, ItemKind::Macro, cfg_bytes.as_deref());
 
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(&macro_name, macro_id);
@@ -424,95 +436,119 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 body,
                 span,
                 tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
+                cfgs: item_cfgs, // Store proc macro's own cfgs
             };
 
             // Add the macro to the code graph
             self.state.code_graph.macros.push(macro_node);
-            // Don't push proc macro IDs onto the definition scope stack,
-            // as they don't typically define nested items in the same way.
-            // Continue visiting the function body for regular functions below.
-        }
+            // Don't visit the body of the proc macro function itself with visit_item_fn
+        } else {
+            // --- Handle Regular Functions ---
+            let fn_name = func.sig.ident.to_string();
 
-        // --- Handle Regular Functions ---
-        let fn_name = func.sig.ident.to_string();
-        // Pass ItemKind::Function
-        let fn_id = self.add_contains_rel(&fn_name, ItemKind::Function);
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&fn_name, fn_id);
+            // --- CFG Handling (Raw Strings) ---
+            let scope_cfgs = self.state.current_scope_cfgs.clone();
+            let item_cfgs = super::attribute_processing::extract_cfg_strings(&func.attrs);
+            let provisional_effective_cfgs: Vec<String> = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect();
+            let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+            // --- End CFG Handling ---
 
-        let byte_range = func.span().byte_range();
-        let span = (byte_range.start, byte_range.end);
+            // Pass ItemKind::Function and cfg_bytes
+            let fn_id = self.add_contains_rel(&fn_name, ItemKind::Function, cfg_bytes.as_deref());
+            #[cfg(feature = "verbose_debug")]
+            self.debug_new_id(&fn_name, fn_id);
 
-        // Push the function's ID onto the scope stack BEFORE processing types/generics
-        self.state.current_definition_scope.push(fn_id);
+            let byte_range = func.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
 
-        // Process function parameters
-        let mut parameters = Vec::new();
-        for arg in &func.sig.inputs {
-            if let Some(param) = self.state.process_fn_arg(arg) {
-                // Add relation between function and parameter
+            // Push the function's ID onto the scope stack BEFORE processing types/generics
+            self.state.current_definition_scope.push(fn_id);
 
-                self.state.code_graph.relations.push(Relation {
-                    source: GraphId::Node(fn_id),
-                    target: GraphId::Type(param.type_id),
-                    kind: RelationKind::FunctionParameter,
-                });
-                parameters.push(param);
+            // Process function parameters
+            let mut parameters = Vec::new();
+            for arg in &func.sig.inputs {
+                if let Some(param) = self.state.process_fn_arg(arg) {
+                    // Add relation between function and parameter
+
+                    self.state.code_graph.relations.push(Relation {
+                        source: GraphId::Node(fn_id),
+                        target: GraphId::Type(param.type_id),
+                        kind: RelationKind::FunctionParameter,
+                    });
+                    parameters.push(param);
+                }
             }
-        }
 
-        // Extract return type if it exists
-        let return_type = match &func.sig.output {
-            ReturnType::Default => None,
-            ReturnType::Type(_, ty) => {
-                let type_id = get_or_create_type(self.state, ty);
-                // Add relation between function and return type
-                self.state.code_graph.relations.push(Relation {
-                    source: GraphId::Node(fn_id),
-                    target: GraphId::Type(type_id),
-                    kind: RelationKind::FunctionReturn,
-                });
-                Some(type_id)
-            }
-        };
+            // Extract return type if it exists
+            let return_type = match &func.sig.output {
+                ReturnType::Default => None,
+                ReturnType::Type(_, ty) => {
+                    let type_id = get_or_create_type(self.state, ty);
+                    // Add relation between function and return type
+                    self.state.code_graph.relations.push(Relation {
+                        source: GraphId::Node(fn_id),
+                        target: GraphId::Type(type_id),
+                        kind: RelationKind::FunctionReturn,
+                    });
+                    Some(type_id)
+                }
+            };
 
-        // Process generic parameters
-        let generic_params = self.state.process_generics(&func.sig.generics);
+            // Process generic parameters
+            let generic_params = self.state.process_generics(&func.sig.generics);
 
-        // Pop the function's ID from the scope stack AFTER processing types/generics
-        self.state.current_definition_scope.pop();
+            // Pop the function's ID from the scope stack AFTER processing types/generics
+            self.state.current_definition_scope.pop();
 
-        // Extract doc comments and other attributes
-        let docstring = extract_docstring(&func.attrs);
-        let attributes = extract_attributes(&func.attrs);
+            // Extract doc comments and other attributes
+            let docstring = extract_docstring(&func.attrs);
+            let attributes = extract_attributes(&func.attrs);
 
-        // Extract function body as a string
-        let body = Some(func.block.to_token_stream().to_string());
+            // Extract function body as a string
+            let body = Some(func.block.to_token_stream().to_string());
 
-        // Store function info
-        self.state.code_graph.functions.push(FunctionNode {
-            id: fn_id,
-            name: fn_name,
-            span,
-            visibility: self.state.convert_visibility(&func.vis),
-            parameters,
-            return_type,
-            generic_params,
-            attributes,
-            docstring,
-            body,
-            tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-        });
+            // Store function info
+            self.state.code_graph.functions.push(FunctionNode {
+                id: fn_id,
+                name: fn_name,
+                span,
+                visibility: self.state.convert_visibility(&func.vis),
+                parameters,
+                return_type,
+                generic_params,
+                attributes,
+                docstring,
+                body,
+                tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
+                cfgs: item_cfgs, // Store only the item's own cfgs
+            });
 
-        // Continue visiting the function body (fn_id is already off the stack)
-        visit::visit_item_fn(self, func);
+            // Continue visiting the function body (fn_id is already off the stack)
+            visit::visit_item_fn(self, func);
+        } // End else block for regular functions
     }
 
     // Visit struct definitions
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_name = item_struct.ident.to_string();
-        // Pass ItemKind::Struct
-        let struct_id = self.add_contains_rel(&struct_name, ItemKind::Struct);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_struct.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Struct and cfg_bytes
+        let struct_id = self.add_contains_rel(&struct_name, ItemKind::Struct, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&struct_name, struct_id);
@@ -527,12 +563,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let mut fields = Vec::new();
         for field in &item_struct.fields {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-            // Pass ItemKind::Field
+
+            // --- CFG Handling for Field (Raw Strings) ---
+            let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+            let field_item_cfgs = super::attribute_processing::extract_cfg_strings(&field.attrs);
+            let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                .iter()
+                .cloned()
+                .chain(field_item_cfgs.iter().cloned())
+                .collect();
+            let field_cfg_bytes = calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Pass ItemKind::Field and field_cfg_bytes
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field_in_{}", struct_name)), // Use clearer placeholder
+                    .unwrap_or_else(|| format!("unnamed_field_in_{}", struct_name)),
                 ItemKind::Field,
+                field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
 
             #[cfg(feature = "verbose_debug")]
@@ -553,7 +602,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 name: field_name,
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
-                attributes: extract_attributes(&field.attrs),
+                attributes: extract_attributes(&field.attrs), // Non-CFG attributes
+                cfgs: field_item_cfgs,                        // Store only the field's own cfgs
             };
 
             // Add relation between struct and field
@@ -566,11 +616,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             fields.push(field_node);
         }
 
-        // Process generic parameters
+        // Process generic parameters (still within struct's scope)
         let generic_params = self.state.process_generics(&item_struct.generics);
-
-        // Pop the struct's ID from the scope stack AFTER processing fields/generics
-        self.state.current_definition_scope.pop();
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_struct.attrs);
@@ -593,17 +640,43 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     self.state
                         .generate_tracking_hash(&item_struct.to_token_stream()),
                 ),
+                cfgs: item_cfgs.clone(), // Store struct's own cfgs
             }));
 
-        // Continue visiting (struct_id is already off the stack)
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
+
+        // Continue visiting children (fields are handled above, visit generics/where clauses if needed)
         visit::visit_item_struct(self, item_struct);
+
+        // Pop the struct's CFG scope and definition ID from the stacks
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // Use default (empty vec) if stack empty
+        self.state.current_definition_scope.pop(); // Pop struct ID
+                                                   // --- End CFG Scope Management ---
     }
 
     // Visit type alias definitions
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
         let type_alias_name = item_type.ident.to_string();
-        // Pass ItemKind::TypeAlias
-        let type_alias_id = self.add_contains_rel(&type_alias_name, ItemKind::TypeAlias);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_type.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::TypeAlias and cfg_bytes
+        let type_alias_id =
+            self.add_contains_rel(&type_alias_name, ItemKind::TypeAlias, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&type_alias_name, type_alias_id);
@@ -642,18 +715,31 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     self.state
                         .generate_tracking_hash(&item_type.to_token_stream()),
                 ),
+                cfgs: item_cfgs, // Store type alias's own cfgs
             }));
 
-        // Type aliases don't typically define nested scopes in the same way
-        // as structs/enums/fns, so we don't push their ID onto the definition stack.
+        // Type aliases don't define a new CFG scope for children.
+        // Continue visiting (type_alias_id is already off the definition stack)
         visit::visit_item_type(self, item_type);
     }
 
     // Visit union definitions
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
         let union_name = item_union.ident.to_string();
-        // Pass ItemKind::Union
-        let union_id = self.add_contains_rel(&union_name, ItemKind::Union);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_union.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Union and cfg_bytes
+        let union_id = self.add_contains_rel(&union_name, ItemKind::Union, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&union_name, union_id);
@@ -667,12 +753,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let mut fields = Vec::new();
         for field in &item_union.fields.named {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-            // Pass ItemKind::Field
+
+            // --- CFG Handling for Field (Raw Strings) ---
+            let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+            let field_item_cfgs = super::attribute_processing::extract_cfg_strings(&field.attrs);
+            let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                .iter()
+                .cloned()
+                .chain(field_item_cfgs.iter().cloned())
+                .collect();
+            let field_cfg_bytes = calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Pass ItemKind::Field and field_cfg_bytes
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field_in_{}", union_name)), // Use clearer placeholder
+                    .unwrap_or_else(|| format!("unnamed_field_in_{}", union_name)),
                 ItemKind::Field,
+                field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
             #[cfg(feature = "verbose_debug")]
             self.debug_new_id(
@@ -689,6 +788,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
                 attributes: extract_attributes(&field.attrs),
+                cfgs: field_item_cfgs, // Store field's own cfgs
             };
 
             // Add relation between union and field
@@ -727,6 +827,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     self.state
                         .generate_tracking_hash(&item_union.to_token_stream()),
                 ),
+                cfgs: item_cfgs, // Store union's own cfgs
             }));
 
         // Continue visiting (union_id is already off the stack)
@@ -736,8 +837,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit enum definitions
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
         let enum_name = item_enum.ident.to_string();
-        // Pass ItemKind::Enum
-        let enum_id = self.add_contains_rel(&enum_name, ItemKind::Enum);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_enum.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Enum and cfg_bytes
+        let enum_id = self.add_contains_rel(&enum_name, ItemKind::Enum, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&enum_name, enum_id);
@@ -748,10 +861,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let mut variants = Vec::new();
         for variant in &item_enum.variants {
             let variant_name = variant.ident.to_string();
-            // Pass ItemKind::Variant
-            let variant_id = self
-                .state
-                .generate_synthetic_node_id(&variant_name, ItemKind::Variant);
+
+            // --- CFG Handling for Variant (Raw Strings) ---
+            let variant_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+            let variant_item_cfgs =
+                super::attribute_processing::extract_cfg_strings(&variant.attrs);
+            let variant_provisional_effective_cfgs: Vec<String> = variant_scope_cfgs
+                .iter()
+                .cloned()
+                .chain(variant_item_cfgs.iter().cloned())
+                .collect();
+            let variant_cfg_bytes = calculate_cfg_hash_bytes(&variant_provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Pass ItemKind::Variant and variant_cfg_bytes
+            let variant_id = self.state.generate_synthetic_node_id(
+                &variant_name,
+                ItemKind::Variant,
+                variant_cfg_bytes.as_deref(), // Pass variant's CFG bytes
+            );
 
             // Push the variant's ID onto the scope stack BEFORE processing its fields
             self.state.current_definition_scope.push(variant_id);
@@ -762,12 +890,27 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 syn::Fields::Named(fields_named) => {
                     for field in &fields_named.named {
                         let field_name = field.ident.as_ref().map(|ident| ident.to_string());
-                        // Pass ItemKind::Field
+
+                        // --- CFG Handling for Variant Field (Raw Strings) ---
+                        let field_scope_cfgs = self.state.current_scope_cfgs.clone();
+                        let field_item_cfgs =
+                            super::attribute_processing::extract_cfg_strings(&field.attrs);
+                        let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                            .iter()
+                            .cloned()
+                            .chain(field_item_cfgs.iter().cloned())
+                            .collect();
+                        let field_cfg_bytes =
+                            calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+                        // --- End CFG Handling ---
+
+                        // Pass ItemKind::Field and field_cfg_bytes
                         let field_id = self.state.generate_synthetic_node_id(
                             &field_name
                                 .clone()
-                                .unwrap_or_else(|| format!("unnamed_field_in_{}", variant_name)), // Scope to variant
+                                .unwrap_or_else(|| format!("unnamed_field_in_{}", variant_name)),
                             ItemKind::Field,
+                            field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id(
@@ -783,8 +926,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             name: field_name,
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
-                            attributes: extract_attributes(&field.attrs),
-                        }; // Add relation between variant and named field
+                            attributes: extract_attributes(&field.attrs), // Non-CFG attributes
+                            cfgs: field_item_cfgs,                        // Store field's own cfgs
+                        };
+                        // Add relation between variant and named field
                         self.state.code_graph.relations.push(Relation {
                             source: GraphId::Node(variant_id),
                             target: GraphId::Node(field_id),
@@ -797,11 +942,28 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 syn::Fields::Unnamed(fields_unnamed) => {
                     for (index, field) in fields_unnamed.unnamed.iter().enumerate() {
                         // Use index for unnamed fields
-                        let field_name = format!("unnamed_field_{}_in_{}", index, variant_name);
-                        // Pass ItemKind::Field
-                        let field_id = self
-                            .state
-                            .generate_synthetic_node_id(&field_name, ItemKind::Field);
+                        let field_name_placeholder =
+                            format!("unnamed_field_{}_in_{}", index, variant_name);
+
+                        // --- CFG Handling for Variant Field (Raw Strings) ---
+                        let field_scope_cfgs = self.state.current_scope_cfgs.clone();
+                        let field_item_cfgs =
+                            super::attribute_processing::extract_cfg_strings(&field.attrs);
+                        let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                            .iter()
+                            .cloned()
+                            .chain(field_item_cfgs.iter().cloned())
+                            .collect();
+                        let field_cfg_bytes =
+                            calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+                        // --- End CFG Handling ---
+
+                        // Pass ItemKind::Field and field_cfg_bytes
+                        let field_id = self.state.generate_synthetic_node_id(
+                            &field_name_placeholder, // Use placeholder for ID generation
+                            ItemKind::Field,
+                            field_cfg_bytes.as_deref(),
+                        );
                         let type_id = get_or_create_type(self.state, &field.ty);
                         #[cfg(feature = "verbose_debug")]
                         self.debug_new_id("unnamed_enum_field", field_id);
@@ -811,7 +973,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             name: None, // Tuple fields don't have names
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
-                            attributes: extract_attributes(&field.attrs),
+                            attributes: extract_attributes(&field.attrs), // Non-CFG attributes
+                            cfgs: field_item_cfgs,                        // Store field's own cfgs
                         };
                         // Add relation between variant and unnamed field
                         self.state.code_graph.relations.push(Relation {
@@ -842,7 +1005,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 name: variant_name,
                 fields,
                 discriminant,
-                attributes: extract_attributes(&variant.attrs),
+                attributes: extract_attributes(&variant.attrs), // Non-CFG attributes
+                cfgs: variant_item_cfgs,                        // Store variant's own cfgs
             };
 
             // Add relation between enum and variant
@@ -884,17 +1048,42 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     self.state
                         .generate_tracking_hash(&item_enum.to_token_stream()),
                 ),
+                cfgs: item_cfgs.clone(), // Store enum's own cfgs
             }));
 
-        // Continue visiting (enum_id is already off the stack)
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs;
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
+
+        // Continue visiting children (variants/fields handled above, visit generics/where)
         visit::visit_item_enum(self, item_enum);
+
+        // Pop the enum's CFG scope and definition ID from the stacks
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        self.state.current_definition_scope.pop(); // Pop enum ID
+                                                   // --- End CFG Scope Management ---
     }
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
-                                              // Pass ItemKind::Impl
-        let impl_id = self.add_contains_rel(&impl_name, ItemKind::Impl);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_impl.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Impl and cfg_bytes
+        let impl_id = self.add_contains_rel(&impl_name, ItemKind::Impl, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&impl_name, impl_id); // Log with the generated name
@@ -960,8 +1149,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             //       to handle syn::ImplItem::Const or syn::ImplItem::Type
             if let syn::ImplItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
-                // Pass ItemKind::Function for the method
-                let method_node_id = self.add_contains_rel(&method_name, ItemKind::Function);
+
+                // --- CFG Handling for Method (Raw Strings) ---
+                let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+                let method_item_cfgs =
+                    super::attribute_processing::extract_cfg_strings(&method.attrs);
+                let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
+                    .iter()
+                    .cloned()
+                    .chain(method_item_cfgs.iter().cloned())
+                    .collect();
+                let method_cfg_bytes = calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
+                // --- End CFG Handling ---
+
+                // Pass ItemKind::Function and method_cfg_bytes
+                let method_node_id = self.add_contains_rel(
+                    &method_name,
+                    ItemKind::Function,
+                    method_cfg_bytes.as_deref(),
+                );
 
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
@@ -1028,9 +1234,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     docstring,
                     body,
                     tracking_hash: Some(
-                        self.state
-                            .generate_tracking_hash(&method_name.to_token_stream()),
+                        self.state.generate_tracking_hash(&method.to_token_stream()), // Use method tokens
                     ),
+                    cfgs: method_item_cfgs, // Store method's own cfgs
                 };
 
                 methods.push(method_node);
@@ -1048,6 +1254,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             trait_type: trait_type_id,
             methods,
             generic_params,
+            cfgs: item_cfgs, // Store impl's own cfgs
         };
         self.state.code_graph.impls.push(impl_node);
 
@@ -1070,20 +1277,39 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // Already pushed the impl's ID to stack before calling `get_or_create_type` on the `Self`
-        // type above.
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs;
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
 
+        // Continue visiting children (methods handled above, visit generics/where)
         visit::visit_item_impl(self, item_impl);
 
-        // Pop the impl's ID from the scope stack
-        self.state.current_definition_scope.pop();
+        // Pop the impl's CFG scope and definition ID from the stacks
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        self.state.current_definition_scope.pop(); // Pop impl ID
+                                                   // --- End CFG Scope Management ---
     }
 
     // Visit trait definitions
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
         let trait_name = item_trait.ident.to_string();
-        // Pass ItemKind::Trait
-        let trait_id = self.add_contains_rel(&trait_name, ItemKind::Trait);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_trait.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Trait and cfg_bytes
+        let trait_id = self.add_contains_rel(&trait_name, ItemKind::Trait, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&trait_name, trait_id);
@@ -1093,11 +1319,26 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for item in &item_trait.items {
             if let syn::TraitItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
-                // Pass ItemKind::Function
+
+                // --- CFG Handling for Trait Method (Raw Strings) ---
+                let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+                let method_item_cfgs =
+                    super::attribute_processing::extract_cfg_strings(&method.attrs);
+                let method_provisional_effective_cfgs: Vec<String> = method_scope_cfgs
+                    .iter()
+                    .cloned()
+                    .chain(method_item_cfgs.iter().cloned())
+                    .collect();
+                let method_cfg_bytes = calculate_cfg_hash_bytes(&method_provisional_effective_cfgs);
+                // --- End CFG Handling ---
+
+                // Pass ItemKind::Function and method_cfg_bytes
                 // Note: This ID is for the *definition* within the trait.
-                let method_node_id = self
-                    .state
-                    .generate_synthetic_node_id(&method_name, ItemKind::Function);
+                let method_node_id = self.state.generate_synthetic_node_id(
+                    &method_name,
+                    ItemKind::Function,
+                    method_cfg_bytes.as_deref(),
+                );
 
                 #[cfg(feature = "verbose_debug")]
                 self.debug_new_id(&method_name, method_node_id);
@@ -1166,6 +1407,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         self.state
                             .generate_tracking_hash(&method.clone().to_token_stream()),
                     ),
+                    cfgs: method_item_cfgs, // Store method's own cfgs
                 };
                 methods.push(method_node);
             }
@@ -1228,6 +1470,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_trait.to_token_stream()),
             ),
+            cfgs: item_cfgs.clone(), // Store trait's own cfgs
         };
         self.state.code_graph.traits.push(trait_node);
         // }
@@ -1241,14 +1484,38 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // Continue visiting (trait_id is already off the stack)
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs;
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
+
+        // Continue visiting children (methods handled above, visit generics/where/supertraits)
         visit::visit_item_trait(self, item_trait);
+
+        // Pop the trait's CFG scope and definition ID from the stacks
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        self.state.current_definition_scope.pop(); // Pop trait ID
+                                                   // --- End CFG Scope Management ---
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
         let module_name = module.ident.to_string();
-        // Pass ItemKind::Module
-        let module_id = self.add_contains_rel(&module_name, ItemKind::Module);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&module.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Module and cfg_bytes
+        let module_id = self.add_contains_rel(&module_name, ItemKind::Module, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_mod_stack();
@@ -1272,10 +1539,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             Some(_) => ModuleDef::Inline {
                 items: Vec::new(),
                 span,
+                // Inline modules don't store their own CFG here; it's part of the scope.
             },
             None => ModuleDef::Declaration {
                 declaration_span: span,
                 resolved_definition: None, // Resolved during phase 3 resolution
+                                           // cfgs removed from here, belongs on ModuleNode
             },
         };
         let module_node = ModuleNode {
@@ -1290,6 +1559,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             span, // Assign the extracted span
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
             module_def,
+            cfgs: item_cfgs, // Store module's own cfgs
         };
 
         // Restore parent path after processing module
@@ -1322,14 +1592,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         self.state.code_graph.modules.push(module_node);
 
-        // Push the module's ID onto the scope stack *before* visiting children
+        // --- CFG Scope Management (Raw Strings) ---
+        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = next_scope_cfgs;
+
+        // Push the module's ID onto the definition scope stack *before* visiting children
         self.state.current_definition_scope.push(module_id);
 
-        // continue visiting.
+        // Continue visiting children.
         visit::visit_item_mod(self, module);
 
-        // Pop the module's ID *after* visiting children
+        // Pop the module's definition ID *after* visiting children
         self.state.current_definition_scope.pop();
+
+        // Pop the module's CFG scope *after* visiting children
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        // --- End CFG Scope Management ---
 
         let _popped = self.state.current_module.pop();
         #[cfg(feature = "verbose_debug")]
@@ -1355,13 +1636,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&use_item.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
         // Process the use tree first
         let base_path = if use_item.leading_colon.is_some() {
             vec!["".to_string()] // Absolute path
         } else {
             Vec::new() // Relative path
         };
-        let imports = self.process_use_tree(&use_item.tree, &base_path);
+        // Pass cfg_bytes down to process_use_tree
+        let imports = self.process_use_tree(&use_item.tree, &base_path, cfg_bytes.as_deref());
 
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
@@ -1399,6 +1692,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     ///     - Adds a new `Contains` relation with current module (through `add_contains_rel`)
     ///     - `NodeId::Synthetic` created through `add_contains_rel` using the *visible name*.
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&extern_crate.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
         // Determine the visible name (alias or original name)
         let visible_name = extern_crate
             .rename
@@ -1406,8 +1710,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .map(|(_, id)| id.to_string()) // Use the rename identifier if present
             .unwrap_or_else(|| extern_crate.ident.to_string()); // Otherwise, use the original identifier
 
-        // Pass the *visible name* and ItemKind::ExternCrate to generate the ID
-        let import_id = self.add_contains_rel(&visible_name, ItemKind::ExternCrate);
+        // Pass the *visible name*, ItemKind::ExternCrate, and cfg_bytes
+        let import_id = self.add_contains_rel(
+            &visible_name,
+            ItemKind::ExternCrate,
+            cfg_bytes.as_deref(), // Pass CFG bytes
+        );
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&visible_name, import_id); // Log with visible name
@@ -1431,6 +1739,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             original_name: extern_crate.rename.as_ref().map(|_| crate_name.clone()),
             is_glob: false,
             is_self_import: false,
+            cfgs: item_cfgs, // Store extern crate's own cfgs
         };
         let module_id = if let Some(module) = self
             .state
@@ -1492,8 +1801,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let const_name = item_const.ident.to_string();
-        // Pass ItemKind::Const
-        let const_id = self.add_contains_rel(&const_name, ItemKind::Const);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_const.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Const and cfg_bytes
+        let const_id = self.add_contains_rel(&const_name, ItemKind::Const, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&const_name, const_id);
@@ -1534,6 +1855,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_const.to_token_stream()),
             ),
+            cfgs: item_cfgs, // Store const's own cfgs
         };
 
         // Add the constant to the code graph
@@ -1558,8 +1880,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit static items
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
         let static_name = item_static.ident.to_string();
-        // Pass ItemKind::Static
-        let static_id = self.add_contains_rel(&static_name, ItemKind::Static);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_static.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Static and cfg_bytes
+        let static_id = self.add_contains_rel(&static_name, ItemKind::Static, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&static_name, static_id);
@@ -1595,6 +1929,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_static.to_token_stream()),
             ),
+            cfgs: item_cfgs, // Store static's own cfgs
         };
 
         // Add the static to the code graph
@@ -1645,8 +1980,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .as_ref()
             .map(|ident| ident.to_string())
             .unwrap_or_else(|| "unnamed_macro".to_string());
-        // Pass ItemKind::Macro
-        let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro);
+
+        // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_macro.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+
+        // Pass ItemKind::Macro and cfg_bytes
+        let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro, cfg_bytes.as_deref());
 
         #[cfg(feature = "verbose_debug")]
         self.debug_new_id(&macro_name, macro_id);
@@ -1671,6 +2018,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_macro.to_token_stream()),
             ),
+            cfgs: item_cfgs, // Store macro's own cfgs
         };
 
         self.state.code_graph.macros.push(macro_node);

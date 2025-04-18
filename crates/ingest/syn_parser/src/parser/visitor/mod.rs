@@ -99,9 +99,15 @@ pub fn analyze_file_phase2(
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
 
-    use attribute_processing::{extract_file_level_attributes, extract_file_level_docstring};
+    use attribute_processing::{
+        extract_cfg_strings, // NEW: Import raw string extractor
+        extract_file_level_attributes, extract_file_level_docstring,
+        // Removed parse_and_combine_cfgs_from_attrs import
+    };
+    // Removed code_visitor helper imports (combine_cfgs, hash_expression)
 
     use super::nodes::ModuleDef;
+    use super::visitor::code_visitor::calculate_cfg_hash_bytes; // NEW: Import new helper
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -115,7 +121,16 @@ pub fn analyze_file_phase2(
     // Set the correct initial module path for the visitor
     state.current_module_path = logical_module_path.clone();
 
-    // 2. Generate root module ID using the derived logical path context
+    // --- NEW: Initialize CFG State (Raw Strings) ---
+    // Extract raw file-level CFG strings (#![cfg(...)])
+    let file_cfgs = extract_cfg_strings(&file.attrs);
+    // Set the initial scope CFGs for the visitor state
+    state.current_scope_cfgs = file_cfgs.clone();
+    // Hash the file-level CFG strings for the root module ID
+    let root_cfg_bytes = calculate_cfg_hash_bytes(&file_cfgs);
+    // --- END NEW ---
+
+    // 2. Generate root module ID using the derived logical path context AND CFG context
     let root_module_name = logical_module_path
         .last()
         .cloned()
@@ -133,9 +148,7 @@ pub fn analyze_file_phase2(
         &root_module_name,
         ItemKind::Module, // Pass correct ItemKind
         None,             // Root module has no parent scope ID within the file context
-        // TODO: Pass cfg_bytes for the root module (derived from file_cfg_expr)
-        None, // Temporary placeholder
-              // todo!("Pass cfg_bytes for root module"),
+        root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
     );
 
     #[cfg(feature = "verbose_debug")]
@@ -168,9 +181,11 @@ pub fn analyze_file_phase2(
         module_def: ModuleDef::FileBased {
             items: Vec::new(),
             file_path: file_path.clone(),
-            file_attrs: extract_file_level_attributes(&file.attrs),
+            file_attrs: extract_file_level_attributes(&file.attrs), // Non-CFG attributes
             file_docs: extract_file_level_docstring(&file.attrs),
+            // cfgs removed from here, belongs on ModuleNode
         },
+        cfgs: file_cfgs, // Store raw file-level CFGs on the ModuleNode
     });
 
     // 4. Create and run the visitor

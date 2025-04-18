@@ -1,4 +1,4 @@
-use cfg_expr::Expression; // NEW: Import Expression
+// Removed cfg_expr::Expression import
 use quote::ToTokens;
 use syn::{parse::Parser, spanned::Spanned};
 
@@ -114,6 +114,43 @@ pub(crate) fn extract_attributes(attrs: &[syn::Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
+/// Extracts the raw string content from `#[cfg(...)]` attributes.
+///
+/// # Arguments
+/// * `attrs` - A slice of `syn::Attribute` to parse.
+///
+/// # Returns
+/// A `Vec<String>` containing the trimmed string representation of the tokens
+/// inside each valid `#[cfg(...)]` attribute. Returns an empty Vec if none are found.
+pub(crate) fn extract_cfg_strings(attrs: &[syn::Attribute]) -> Vec<String> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .filter_map(|attr| {
+            // Extract the tokens inside the cfg(...)
+            match &attr.meta {
+                syn::Meta::List(list) => {
+                    let cfg_content = list.tokens.to_string().trim().to_string();
+                    if cfg_content.is_empty() {
+                        None // Ignore empty #[cfg()]
+                    } else {
+                        Some(cfg_content)
+                    }
+                }
+                _ => {
+                    // Log a warning for malformed #[cfg] attributes if needed
+                    eprintln!(
+                        "Warning: Found #[cfg] attribute without list-like tokens: {:?}",
+                        attr.path().to_token_stream()
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+
 /// Parses `#[cfg(...)]` attributes from a slice, combines them deterministically,
 /// and returns a single `Option<Expression>`.
 ///
@@ -127,70 +164,8 @@ pub(crate) fn extract_attributes(attrs: &[syn::Attribute]) -> Vec<Attribute> {
 /// # Determinism
 /// If multiple `#[cfg]` attributes are present, they are combined into an
 /// `Expression::All([...])`. The order of expressions within the `All` vector
-/// is determined by sorting the string representations of the individual expressions
-/// alphabetically and combining them into a new `all(...)` expression string, which
-/// is then re-parsed. This ensures that the order of attributes in the source code
-/// does not affect the resulting combined `Expression`'s `.original()` string.
-pub(crate) fn parse_and_combine_cfgs_from_attrs(attrs: &[syn::Attribute]) -> Option<Expression> {
-    let mut initial_expressions: Vec<Expression> = attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("cfg"))
-        .filter_map(|attr| {
-            // Extract the tokens inside the cfg(...)
-            let tokens = match &attr.meta {
-                syn::Meta::List(list) => Some(list.tokens.clone()),
-                _ => {
-                    eprintln!(
-                        "Warning: Found #[cfg] attribute without list-like tokens: {:?}",
-                        attr.path().to_token_stream()
-                    );
-                    None
-                }
-            };
+// Removed parse_and_combine_cfgs_from_attrs function
 
-            tokens.and_then(|t| {
-                match Expression::parse(&t.to_string()) {
-                    Ok(expr) => Some(expr),
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Failed to parse cfg expression '{}': {}",
-                            t.to_string(),
-                            e
-                        );
-                        None // Skip invalid expressions
-                    }
-                }
-            })
-        })
-        .collect();
-
-    match initial_expressions.len() {
-        0 => None,
-        1 => initial_expressions.pop(), // Take the single expression
-        _ => {
-            // Multiple expressions: Combine into a canonical "all(...)" string and re-parse.
-            let mut original_strings: Vec<&str> =
-                initial_expressions.iter().map(|e| e.original()).collect();
-            // Sort alphabetically for determinism.
-            original_strings.sort_unstable();
-
-            let combined_string = format!("all({})", original_strings.join(", "));
-
-            // Re-parse the combined string.
-            match Expression::parse(&combined_string) {
-                Ok(combined_expr) => Some(combined_expr),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to re-parse combined cfg expression '{}': {}",
-                        combined_string, e
-                    );
-                    // Fallback: Return None if re-parsing fails, though this shouldn't ideally happen.
-                    None
-                }
-            }
-        }
-    }
-}
 
 // --- NEW: Functions for File-Level (Inner) Attributes ---
 

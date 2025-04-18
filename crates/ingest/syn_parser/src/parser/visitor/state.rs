@@ -1,10 +1,11 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
-use cfg_expr::Expression; // NEW: Import Expression
+// Removed cfg_expr::Expression import
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
-use super::type_processing::get_or_create_type;
+use super::code_visitor::calculate_cfg_hash_bytes;
+use super::type_processing::get_or_create_type; // NEW: Import helper
 
 use {
     crate::parser::nodes::ParamData,
@@ -27,14 +28,14 @@ pub struct VisitorState {
     // current_module_path seems more aligned with UUID generation needs.
     // USER response: Agreed, should re-evaluate post-refactor of uuid system.
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
-    pub(crate) current_module: Vec<String>, // Stack of module IDs/names? Needs clarification.
+    pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
     // Stack tracking the NodeId of the current definition scope (e.g., struct, fn, impl, trait)
     pub(crate) current_definition_scope: Vec<NodeId>,
     // --- NEW CFG Tracking Fields ---
-    /// The combined CFG expression inherited from the current scope (file, module, struct, etc.)
-    pub(crate) current_scope_cfg: Option<Expression>,
-    /// Stack to save/restore `current_scope_cfg` when entering/leaving scopes.
-    pub(crate) cfg_stack: Vec<Option<Expression>>,
+    /// The combined raw CFG strings inherited from the current scope (file, module, struct, etc.)
+    pub(crate) current_scope_cfgs: Vec<String>,
+    /// Stack to save/restore `current_scope_cfgs` when entering/leaving scopes.
+    pub(crate) cfg_stack: Vec<Vec<String>>,
 }
 
 impl VisitorState {
@@ -64,14 +65,20 @@ impl VisitorState {
             current_module: Vec::new(),
             current_definition_scope: Vec::new(), // Initialize empty scope stack
             // Initialize new CFG fields
-            current_scope_cfg: None,
+            current_scope_cfgs: Vec::new(),
             cfg_stack: Vec::new(),
         }
     }
 
     /// Helper to generate a synthetic NodeId using the current visitor state.
     /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
-    pub(crate) fn generate_synthetic_node_id(&self, name: &str, item_kind: ItemKind) -> NodeId {
+    /// Accepts the calculated hash bytes of the effective CFG strings.
+    pub(crate) fn generate_synthetic_node_id(
+        &self,
+        name: &str,
+        item_kind: ItemKind,
+        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    ) -> NodeId {
         // Get the last pushed scope ID as the parent, if available
         let parent_scope_id = self.current_definition_scope.last().copied();
 
@@ -82,9 +89,7 @@ impl VisitorState {
             name,
             item_kind,
             parent_scope_id, // Pass the parent scope ID from the stack
-            // TODO: Pass cfg_bytes here once calculated by the caller (visitor)
-            None, // Temporary placeholder
-                  // todo!("Pass cfg_bytes here"),
+            cfg_bytes,       // Pass the provided CFG bytes
         )
     }
 
@@ -182,10 +187,14 @@ impl VisitorState {
                         get_or_create_type(self, expr)
                     });
 
-                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
+                    // Calculate CFG hash based on the *current scope* where the generic is defined
+                    let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
+
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
                     let param_node_id = self.generate_synthetic_node_id(
                         &format!("generic_type_{}", ident), // Use a distinct name format
                         ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
                     );
 
                     params.push(GenericParamNode {
@@ -204,10 +213,14 @@ impl VisitorState {
                         .map(|bound| self.process_lifetime_bound(bound))
                         .collect();
 
-                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
+                    // Calculate CFG hash based on the *current scope*
+                    let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
+
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
                     let param_node_id = self.generate_synthetic_node_id(
                         &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
                         ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
                     );
 
                     params.push(GenericParamNode {
@@ -221,10 +234,14 @@ impl VisitorState {
                 syn::GenericParam::Const(const_param) => {
                     let type_id = super::type_processing::get_or_create_type(self, &const_param.ty);
 
-                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam
+                    // Calculate CFG hash based on the *current scope*
+                    let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
+
+                    // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
                     let param_node_id = self.generate_synthetic_node_id(
                         &format!("generic_const_{}", const_param.ident), // Use a distinct name format
                         ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
                     );
 
                     params.push(GenericParamNode {

@@ -33,16 +33,18 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     //    This handles recursion internally.
     let (type_kind, related_types) = process_type(state, ty);
 
-    // 2. Get the current parent scope ID from the state
-    let parent_scope_id = state.current_definition_scope.last().copied();
+    // 2. Get the current parent scope ID from the state.
+    //    Assume it's always present because the root module ID is pushed first.
+    let parent_scope_id = state.current_definition_scope.last().copied()
+        .expect("VisitorState's current_definition_scope should not be empty during type processing");
 
     // 3. Generate the new Synthetic Type ID using structural info AND parent scope
     let new_id = TypeId::generate_synthetic(
         state.crate_namespace,
         &state.current_file_path,
-        &type_kind,      // Pass the determined TypeKind
-        &related_types,  // Pass the determined related TypeIds
-        parent_scope_id, // Pass the parent scope ID
+        &type_kind,     // Pass the determined TypeKind
+        &related_types, // Pass the determined related TypeIds
+        Some(parent_scope_id), // Pass the non-optional parent scope ID wrapped in Some
     );
 
     // --- DEBUGGING TEMPORARY ---

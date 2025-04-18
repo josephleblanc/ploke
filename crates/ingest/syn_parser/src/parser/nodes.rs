@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
 use crate::parser::types::{GenericParamNode, VisibilityKind};
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Use new types when feature is enabled // Import ItemKind from ploke_core
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+// Removed cfg_expr::Expression import
 
 // ANCHOR: ItemFn
 // Represents a function definition
@@ -16,6 +17,9 @@ impl Visible for ModuleNode {
 
     fn name(&self) -> &str {
         &self.name
+    }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
     }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -31,6 +35,7 @@ pub struct FunctionNode {
     pub docstring: Option<String>,
     pub body: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 //ANCHOR_END: ItemFn
 impl Visible for FunctionNode {
@@ -43,6 +48,9 @@ impl Visible for FunctionNode {
 
     fn name(&self) -> &str {
         &self.name
+    }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
     }
 }
 
@@ -91,6 +99,14 @@ impl Visible for TypeDefNode {
             TypeDefNode::Union(union_node) => union_node.id(),
         }
     }
+    fn cfgs(&self) -> &[String] {
+        match self {
+            TypeDefNode::Struct(n) => n.cfgs(),
+            TypeDefNode::Enum(n) => n.cfgs(),
+            TypeDefNode::TypeAlias(n) => n.cfgs(),
+            TypeDefNode::Union(n) => n.cfgs(),
+        }
+    }
 }
 
 // ANCHOR: StructNode
@@ -106,6 +122,9 @@ impl Visible for StructNode {
     fn name(&self) -> &str {
         &self.name
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StructNode {
@@ -118,6 +137,7 @@ pub struct StructNode {
     pub attributes: Vec<Attribute>, // Replace Vec<String>
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 //ANCHOR_END: StructNode
 
@@ -133,6 +153,9 @@ impl Visible for EnumNode {
     fn name(&self) -> &str {
         &self.name
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnumNode {
@@ -145,6 +168,7 @@ pub struct EnumNode {
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // ANCHOR: field_node
@@ -156,6 +180,7 @@ pub struct FieldNode {
     pub type_id: TypeId,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 //ANCHOR_END: field_node
 
@@ -167,6 +192,7 @@ pub struct VariantNode {
     pub fields: Vec<FieldNode>,
     pub discriminant: Option<String>,
     pub attributes: Vec<Attribute>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // Represents a type alias (type NewType = OldType)
@@ -181,6 +207,9 @@ impl Visible for TypeAliasNode {
     fn name(&self) -> &str {
         &self.name
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeAliasNode {
@@ -193,6 +222,7 @@ pub struct TypeAliasNode {
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // Represents a union definition
@@ -207,6 +237,9 @@ impl Visible for UnionNode {
     fn name(&self) -> &str {
         &self.name
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UnionNode {
@@ -219,6 +252,7 @@ pub struct UnionNode {
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
     pub span: (usize, usize),
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // ANCHOR: ImplNode
@@ -231,6 +265,7 @@ pub struct ImplNode {
     pub trait_type: Option<TypeId>,
     pub methods: Vec<FunctionNode>,
     pub generic_params: Vec<GenericParamNode>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 impl Visible for ImplNode {
@@ -246,6 +281,9 @@ impl Visible for ImplNode {
 
     fn id(&self) -> NodeId {
         self.id
+    }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
     }
 }
 //ANCHOR_END: ItemImpl
@@ -264,6 +302,9 @@ impl Visible for TraitNode {
     fn id(&self) -> NodeId {
         self.id
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TraitNode {
@@ -277,6 +318,7 @@ pub struct TraitNode {
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 //ANCHOR_END: TraitNode
 
@@ -286,13 +328,14 @@ pub struct ModuleNode {
     pub name: String,
     pub path: Vec<String>,
     pub visibility: VisibilityKind,
-    pub attributes: Vec<Attribute>,
+    pub attributes: Vec<Attribute>, // Attributes on the `mod foo { ... }` item itself
     pub docstring: Option<String>,
     pub imports: Vec<ImportNode>,
     pub exports: Vec<NodeId>, // TODO: Confirm if exports need tracking hash? Likely not.
     pub span: (usize, usize), // Add span field
     pub tracking_hash: Option<TrackingHash>,
     pub module_def: ModuleDef,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item (`#[cfg] mod foo;` or `#[cfg] mod foo {}`)
 }
 
 impl ModuleNode {
@@ -408,7 +451,7 @@ pub enum ModuleDef {
     FileBased {
         items: Vec<NodeId>, // Probably temporary while gaining confidence in Relation::Contains
         file_path: PathBuf,
-        file_attrs: Vec<Attribute>, // #![...]
+        file_attrs: Vec<Attribute>, // Non-CFG #![...] attributes
         file_docs: Option<String>,  // //!
     },
     /// Inline module (mod name { ... })
@@ -435,6 +478,9 @@ impl Visible for ValueNode {
     fn name(&self) -> &str {
         &self.name
     }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ValueNode {
@@ -448,6 +494,7 @@ pub struct ValueNode {
     pub docstring: Option<String>,
     pub span: (usize, usize),
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // Represents a macro definition
@@ -462,6 +509,10 @@ impl Visible for MacroNode {
     fn name(&self) -> &str {
         &self.name
     }
+
+    fn cfgs(&self) -> &[String] {
+        todo!()
+    }
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroNode {
@@ -474,6 +525,7 @@ pub struct MacroNode {
     pub docstring: Option<String>,
     pub body: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 // Represents a macro rule
@@ -599,6 +651,7 @@ pub struct ImportNode {
 
     /// Whether this is a 'self' import, e.g. `std::fs::{self}`
     pub is_self_import: bool,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
 impl ImportNode {
@@ -629,11 +682,13 @@ pub enum VisibilityResult {
         allowed_scopes: Option<Vec<String>>,
     },
 }
-/// Trait for nodes that have visibility information                   
+/// Trait for nodes that have visibility and CFG information
 pub trait Visible {
     fn visibility(&self) -> VisibilityKind;
     fn name(&self) -> &str;
     fn id(&self) -> NodeId;
+    /// Returns the raw CFG strings directly attached to this node item.
+    fn cfgs(&self) -> &[String];
 }
 
 /// Detailed reasons for out-of-scope items
