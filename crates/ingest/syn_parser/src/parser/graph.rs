@@ -12,11 +12,23 @@ use crate::parser::{
 
 use serde::{Deserialize, Serialize};
 
-use super::nodes::ImportNode;
+use super::nodes::{ImportNode, StructNode}; // Added StructNode
 
 impl CodeGraph {
+    /// Finds a module node by its full path.
     pub fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
         self.modules.iter().find(|m| m.path == path)
+    }
+
+    /// Finds a struct node by its ID.
+    ///
+    /// Iterates through the defined types and returns a reference to the
+    /// `StructNode` if a matching `TypeDefNode::Struct` is found.
+    pub fn get_struct(&self, id: NodeId) -> Option<&StructNode> {
+        self.defined_types.iter().find_map(|def| match def {
+            TypeDefNode::Struct(s) if s.id == id => Some(s),
+            _ => None,
+        })
     }
 
     /// Gets the full module path for an item by searching through all modules
