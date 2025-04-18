@@ -20,6 +20,8 @@ pub struct EnumNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
+impl EnumNode {}
+
 // Represents a variant in an enum
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct VariantNode {
