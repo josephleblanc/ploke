@@ -35,6 +35,14 @@ pub enum SynParserError {
     /// Indicates that the root module ("crate") could not be found.
     #[error("Root module ('crate') not found in the graph.")]
     RootModuleNotFound,
+
+    /// Indicates that a module with the specified path was not found.
+    #[error("Module with path {0:?} not found.")]
+    ModulePathNotFound(Vec<String>),
+
+    /// Indicates that multiple modules were found for the specified path.
+    #[error("Duplicate modules found for path {0:?}.")]
+    DuplicateModulePath(Vec<String>),
 }
 
 // Optional: Implement From<std::io::Error> for SynParserError
