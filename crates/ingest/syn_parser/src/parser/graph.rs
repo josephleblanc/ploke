@@ -12,7 +12,7 @@ use crate::parser::{
 
 use serde::{Deserialize, Serialize};
 
-use super::nodes::{ImportNode, StructNode}; // Added StructNode
+use super::nodes::{EnumNode, ImportNode, StructNode, TypeAliasNode, UnionNode}; // Added EnumNode, TypeAliasNode, UnionNode
 
 impl CodeGraph {
     /// Finds a module node by its full path.
@@ -30,6 +30,40 @@ impl CodeGraph {
             _ => None,
         })
     }
+
+    /// Finds an enum node by its ID.
+    ///
+    /// Iterates through the defined types and returns a reference to the
+    /// `EnumNode` if a matching `TypeDefNode::Enum` is found.
+    pub fn get_enum(&self, id: NodeId) -> Option<&EnumNode> {
+        self.defined_types.iter().find_map(|def| match def {
+            TypeDefNode::Enum(e) if e.id == id => Some(e),
+            _ => None,
+        })
+    }
+
+    /// Finds a type alias node by its ID.
+    ///
+    /// Iterates through the defined types and returns a reference to the
+    /// `TypeAliasNode` if a matching `TypeDefNode::TypeAlias` is found.
+    pub fn get_type_alias(&self, id: NodeId) -> Option<&TypeAliasNode> {
+        self.defined_types.iter().find_map(|def| match def {
+            TypeDefNode::TypeAlias(t) if t.id == id => Some(t),
+            _ => None,
+        })
+    }
+
+    /// Finds a union node by its ID.
+    ///
+    /// Iterates through the defined types and returns a reference to the
+    /// `UnionNode` if a matching `TypeDefNode::Union` is found.
+    pub fn get_union(&self, id: NodeId) -> Option<&UnionNode> {
+        self.defined_types.iter().find_map(|def| match def {
+            TypeDefNode::Union(u) if u.id == id => Some(u),
+            _ => None,
+        })
+    }
+
 
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
