@@ -31,6 +31,10 @@ pub enum SynParserError {
     /// Indicates that merging requires at least one graph.
     #[error("Merging code graphs requires at least one graph as input.")]
     MergeRequiresInput,
+
+    /// Indicates that the root module ("crate") could not be found.
+    #[error("Root module ('crate') not found in the graph.")]
+    RootModuleNotFound,
 }
 
 // Optional: Implement From<std::io::Error> for SynParserError
