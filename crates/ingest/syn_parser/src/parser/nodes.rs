@@ -557,6 +557,21 @@ pub enum ValueKind {
     Static { is_mutable: bool },
 }
 
+impl ValueKind {
+    pub fn is_constant(&self) -> bool {
+        matches!(self, Self::Constant)
+    }
+    pub fn is_static(&self) -> bool {
+        matches!(self, Self::Static { .. })
+    }
+    pub fn is_static_mut(&self) -> bool {
+        match self {
+            Self::Static { is_mutable } => *is_mutable,
+            Self::Constant => false,
+        }
+    }
+}
+
 /// Represents all import/export semantics in the code graph, including:
 /// - Regular `use` statements
 /// - `pub use` re-exports
