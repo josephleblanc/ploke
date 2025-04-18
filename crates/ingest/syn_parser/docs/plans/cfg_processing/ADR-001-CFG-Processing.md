@@ -1,7 +1,9 @@
 # ADR-001: CFG Attribute Processing Strategy
 
 ## Status
-PROPOSED
+PROPOSED (Partially addressed by ADR-002)
+
+**Note:** The immediate goal of ensuring unique *synthetic* IDs is addressed by [ADR-002](./ADR-002-Minimal-CFG-Hashing.md), which implements the Phase 2 hashing logic described below as a first step. This ADR outlines the full plan, including Phase 3 and RAG integration.
 
 ## Context
 The `syn_parser` needs to correctly interpret `#[cfg(...)]` attributes found in Rust source code. This is necessary for two primary reasons:

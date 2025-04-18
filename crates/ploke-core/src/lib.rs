@@ -154,6 +154,7 @@ mod ids {
             item_name: &str,
             item_kind: crate::ItemKind, // Use ItemKind from this crate
             parent_scope_id: Option<NodeId>,
+            cfg_bytes: Option<&[u8]>,
         ) -> Self {
             let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
             // Use discriminant of ItemKind for hashing (stable and simple)
@@ -179,6 +180,7 @@ mod ids {
                 .chain(&item_kind_bytes) // Add item kind bytes
                 .chain(b"::NAME::")
                 .chain(item_name.as_bytes())
+                .chain(cfg_bytes.unwrap_or(&[0u8; 0]))
                 .copied()
                 .collect();
 
@@ -283,7 +285,7 @@ mod ids {
             type_kind.hash(&mut hasher);
             related_type_ids.hash(&mut hasher);
 
-            // Conditionally hash the parent scope ID using the uuid() method
+            // // Conditionally hash the parent scope ID using the uuid() method
             if let Some(parent_id) = parent_scope_id {
                 hasher.write(parent_id.uuid().as_bytes()); // Use the uuid() method
             }
