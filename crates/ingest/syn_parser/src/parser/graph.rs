@@ -51,20 +51,15 @@ impl CodeGraph {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     pub fn get_enum_checked(&self, id: NodeId) -> Result<&EnumNode, SynParserError> {
-        let matches: Vec<&EnumNode> = self
-            .defined_types
-            .iter()
-            .filter_map(|def| match def {
-                TypeDefNode::Enum(e) if e.id == id => Some(e),
-                _ => None,
-            })
-            .collect();
-
-        match matches.len() {
-            0 => Err(SynParserError::NotFound(id)),
-            1 => Ok(matches[0]),
-            _ => Err(SynParserError::DuplicateNode(id)),
+        let mut matches = self.defined_types.iter().filter_map(|def| match def {
+            TypeDefNode::Enum(e) if e.id == id => Some(e),
+            _ => None,
+        });
+        let first = matches.next();
+        if matches.next().is_some() {
+            return Err(SynParserError::DuplicateNode(id));
         }
+        first.ok_or(SynParserError::NotFound(id))
     }
 
     /// Finds a type alias node by its ID.
