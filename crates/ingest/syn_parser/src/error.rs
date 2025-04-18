@@ -23,6 +23,10 @@ pub enum SynParserError {
     /// Indicates an invalid state or inconsistency within the visitor or graph.
     #[error("Internal state error: {0}")]
     InternalState(String),
+
+    /// Indicates a failure to merge graphs
+    #[error("Failed to merge CodeGraphs")]
+    MergeError,
 }
 
 // Optional: Implement From<std::io::Error> for SynParserError
