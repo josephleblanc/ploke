@@ -23,12 +23,12 @@ This plan adopts the "Alternative A" strategy, where the final evaluation of CFG
 **3.1. Dependencies:**
 -   Ensure `cfg-expr = { version = "0.15", features = ["serde", "hash"] }` is present in `syn_parser/Cargo.toml`. (`hash` might be default, verify).
 
-**3.2. `ploke-core` Changes (Potential - Defer if possible):**
--   `cfg_expr::Expression` needs to derive `Serialize`, `Deserialize`, `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash`. Verify this in the `cfg-expr` crate or add necessary wrappers/feature flags if missing. (Seems likely `Hash` and `Eq` are derived, `serde` is feature-gated).
--   Consider if `NodeId::generate_synthetic` needs direct `Expression` input or if hashing bytes provided by `syn_parser` is sufficient. Assume the latter for now.
+**3.2. `ploke-core` Changes:**
+-   **Confirmed:** `cfg-expr` with the `serde` feature derives `Serialize`, `Deserialize`, `Clone`, `Debug`, `PartialEq`, `Eq`, `Hash`. No changes needed in `ploke-core` itself for this.
+-   **Decision:** `NodeId::generate_synthetic` will *not* take `Expression` directly. The `syn_parser` visitor will handle hashing the `Expression` (if present) and provide the resulting bytes to `NodeId::generate_synthetic`.
 
 **3.3. `syn_parser::parser::nodes` Changes:**
--   Add `effective_cfg: Option<cfg_expr::Expression>` field to relevant node structs:
+-   Add `provisional_effective_cfg: Option<cfg_expr::Expression>` field to relevant node structs (renamed from `effective_cfg` for clarity):
     -   `FunctionNode`
     -   `StructNode`
     *   `EnumNode`
@@ -41,53 +41,75 @@ This plan adopts the "Alternative A" strategy, where the final evaluation of CFG
     *   `ImportNode`
     *   `FieldNode`
     *   `VariantNode`
-    *   `ModuleNode` (Store the module's *own* item-level CFG here, e.g., `item_cfg: Option<Expression>`)
--   Add `declaration_cfg: Option<cfg_expr::Expression>` field to `ModuleDef::Declaration`.
+-   Modify `ModuleNode`:
+    -   Add `item_cfg: Option<cfg_expr::Expression>` (Stores the module's *own* item-level CFG, e.g., `#[cfg(...)] mod my_mod { ... }`).
+-   Modify `ModuleDef`:
+    -   Add `declaration_cfg: Option<cfg_expr::Expression>` field to `ModuleDef::Declaration` (Stores CFG from `#[cfg(...)] mod my_mod;`).
+    -   Add `file_cfg: Option<cfg_expr::Expression>` field to `ModuleDef::FileBased` (Stores CFG from `#![cfg(...)]` at file level).
 
 **3.4. `syn_parser::parser::visitor::state::VisitorState` Changes:**
 -   Add state fields:
-    -   `current_effective_cfg: Option<cfg_expr::Expression>`
-    -   `cfg_stack: Vec<Option<cfg_expr::Expression>>`
--   Add helper method: `generate_synthetic_node_id_with_cfg(...)` that takes context (path, name, kind, parent ID) and `effective_cfg: Option<&Expression>`, constructs the byte vector including hashing the `effective_cfg` if `Some`, and calls the core `NodeId::generate_synthetic` function.
+    -   `current_scope_cfg: Option<cfg_expr::Expression>` (Renamed from `current_effective_cfg` for clarity - represents the CFG inherited from the surrounding scope).
+    -   `cfg_stack: Vec<Option<cfg_expr::Expression>>` (Stores previous `current_scope_cfg` values when entering new scopes).
+-   Modify helper method: `generate_synthetic_node_id`:
+    -   Change signature to `generate_synthetic_node_id(&self, name: &str, item_kind: ItemKind, cfg_bytes: Option<&[u8]>) -> NodeId`.
+    -   The caller (visitor) is now responsible for hashing the `Expression` and providing the bytes.
+    -   Inside the method:
+        -   Construct the standard byte vector (namespace, file path, relative path, parent ID bytes, item kind bytes, item name bytes).
+        -   If `cfg_bytes` is `Some(bytes)`, append `bytes` to the standard vector.
+        -   Call `uuid::Uuid::new_v5(&ploke_core::PROJECT_NAMESPACE_UUID, &combined_bytes)`.
+        -   Return `NodeId::Synthetic`.
 
 **3.5. `syn_parser::parser::visitor::attribute_processing` Changes:**
 -   Add helper function: `parse_and_combine_cfgs_from_attrs(attrs: &[syn::Attribute]) -> Option<Expression>`:
     -   Filters for `#[cfg(...)]` attributes.
-    -   Parses the inner tokens using `cfg_expr::Expression::parse`. Handle errors appropriately.
-    *   If multiple `#[cfg]` attributes exist, combine them into a single `Expression::All(...)`. Ensure the inner `Vec` is sorted based on the `Expression`'s `Hash` or `Ord` implementation before creating `All` to guarantee deterministic representation.
+    -   Parses the inner tokens using `cfg_expr::Expression::parse`. Handle errors appropriately (log warning, return `None`).
+    -   If multiple `#[cfg]` attributes exist, combine them into a single `Expression::All(...)`. **Crucially:** Ensure the inner `Vec<Expression>` within `All` is sorted deterministically (e.g., based on the `Debug` representation or hash of each sub-expression) before creating the `All` variant. This guarantees that `#[cfg(A)] #[cfg(B)]` produces the same combined `Expression` (and thus hash) as `#[cfg(B)] #[cfg(A)]`.
     -   Returns `Some(Expression)` if any valid `cfg` attributes are found, `None` otherwise.
--   Modify `extract_attributes` to filter out and ignore `#[cfg(...)]` attributes.
+-   Modify `extract_attributes` to filter out and ignore `#[cfg(...)]` attributes (they are handled by the new function).
 
 **3.6. `syn_parser::parser::visitor::mod` Changes (`analyze_file_phase2`):**
--   Call `parse_and_combine_cfgs_from_attrs` on `file.attrs` to get `file_expr`.
--   Initialize `state.current_effective_cfg = file_expr.clone()`.
--   Store `file_expr` in the root `ModuleNode`'s `FileBased` definition (e.g., add `file_cfg: Option<Expression>` field to `ModuleDef::FileBased`).
+-   Call `parse_and_combine_cfgs_from_attrs` on `file.attrs` to get `file_cfg_expr`.
+-   Initialize `state.current_scope_cfg = file_cfg_expr.clone()`.
+-   Store `file_cfg_expr` in the root `ModuleNode`'s `FileBased` definition using the new `file_cfg` field.
+-   Update the `NodeId::generate_synthetic` call for the `root_module_id`:
+    -   Hash `file_cfg_expr` (if `Some`) into `cfg_bytes`.
+    -   Call `NodeId::generate_synthetic(...)` passing the optional `cfg_bytes`.
 
 **3.7. `syn_parser::parser::visitor::code_visitor::CodeVisitor` Changes:**
--   **Helper:** Implement `combine_cfgs(opt_a: Option<Expression>, opt_b: Option<Expression>) -> Option<Expression>` (handles `None` cases and creates `Expression::All` for `Some`/`Some`, ensuring deterministic ordering within `All`).
+-   **Helper:** Implement `combine_cfgs(scope_cfg: Option<&Expression>, item_cfg: Option<&Expression>) -> Option<Expression>` (handles `None` cases and creates `Expression::All` for `Some`/`Some`, ensuring deterministic ordering within `All`). Clones expressions internally as needed.
+-   **Helper:** Implement `hash_expression(expr: Option<&Expression>) -> Option<Vec<u8>>`. Uses `ByteHasher` and the `Expression`'s `Hash` impl.
+-   **ID Generation:** Modify the `add_contains_rel` helper function (and other direct calls to `generate_synthetic_node_id`):
+    -   It should take the calculated `provisional_effective_cfg: Option<Expression>` for the item.
+    -   Call `hash_expression` on the `provisional_effective_cfg`.
+    -   Call `state.generate_synthetic_node_id(...)` passing the resulting `Option<Vec<u8>>`.
 -   **`visit_item_mod`:**
-    -   Parse `mod_expr` from `module.attrs`.
-    -   Calculate `new_effective_cfg = combine_cfgs(state.current_effective_cfg.clone(), mod_expr.clone())`.
-    -   Store `mod_expr` on the `ModuleNode` being created (`item_cfg` field).
-    -   If it's a `Declaration`, store `mod_expr` in `ModuleDef::Declaration.declaration_cfg`.
-    -   Push old `state.current_effective_cfg` to `state.cfg_stack`.
-    -   Set `state.current_effective_cfg = new_effective_cfg`.
-    -   Visit children.
-    -   Pop `state.cfg_stack` to restore `state.current_effective_cfg`.
+    1.  Get `scope_cfg = state.current_scope_cfg.clone()`.
+    2.  Parse `item_cfg_expr` from `module.attrs` using `parse_and_combine_cfgs_from_attrs`.
+    3.  Calculate `provisional_effective_cfg = combine_cfgs(scope_cfg.as_ref(), item_cfg_expr.as_ref())`.
+    4.  Generate `module_id` using `add_contains_rel` (which now handles hashing `provisional_effective_cfg`).
+    5.  Store `item_cfg_expr` in `ModuleNode.item_cfg`.
+    6.  If it's a `Declaration`, store `item_cfg_expr` in `ModuleDef::Declaration.declaration_cfg`.
+    7.  Calculate `next_scope_cfg = provisional_effective_cfg.clone()` (this module's combined CFG becomes the scope for its children).
+    8.  Push old `state.current_scope_cfg` to `state.cfg_stack`.
+    9.  Set `state.current_scope_cfg = next_scope_cfg`.
+    10. Visit children.
+    11. Pop `state.cfg_stack` to restore `state.current_scope_cfg`.
 -   **`visit_item_*` (General Pattern):**
-    1.  Get `scope_cfg = state.current_effective_cfg.clone()`.
-    2.  Parse `item_expr` from the item's attributes using `parse_and_combine_cfgs_from_attrs`.
-    3.  Calculate `provisional_effective_cfg = combine_cfgs(scope_cfg, item_expr)`.
-    4.  Generate `NodeId::Synthetic` using `state.generate_synthetic_node_id_with_cfg(...)` passing the `provisional_effective_cfg`.
-    5.  Store `provisional_effective_cfg` in the new `effective_cfg` field of the `*Node` struct being created.
-    6.  **Scope Update (If item defines a CFG-affecting scope for children, e.g., struct, enum):**
-        *   Push old `state.current_effective_cfg` to `state.cfg_stack`.
-        *   Set `state.current_effective_cfg = provisional_effective_cfg.clone()` (The item's combined CFG becomes the scope CFG for its direct children like fields/variants).
-        *   Visit children (fields, variants, generics, etc.).
+    1.  Get `scope_cfg = state.current_scope_cfg.clone()`.
+    2.  Parse `item_cfg_expr` from the item's attributes using `parse_and_combine_cfgs_from_attrs`.
+    3.  Calculate `provisional_effective_cfg = combine_cfgs(scope_cfg.as_ref(), item_cfg_expr.as_ref())`.
+    4.  Generate `node_id` using `add_contains_rel` or `state.generate_synthetic_node_id` (passing the hashed `provisional_effective_cfg`).
+    5.  Store `provisional_effective_cfg` in the `provisional_effective_cfg` field of the `*Node` struct being created.
+    6.  **Scope Update (If item defines a CFG-affecting scope for children, e.g., struct, enum, impl):**
+        *   Calculate `next_scope_cfg = provisional_effective_cfg.clone()`.
+        *   Push old `state.current_scope_cfg` to `state.cfg_stack`.
+        *   Set `state.current_scope_cfg = next_scope_cfg`.
+        *   Visit children (fields, variants, methods, etc.).
         *   Pop `state.cfg_stack`.
-    7.  **Scope Update (If item does *not* define CFG scope, e.g., function, type alias):**
-        *   Visit children without changing `state.current_effective_cfg`.
--   **Field/Variant Visits (within Struct/Enum):** Follow the general pattern, using the (temporarily updated) `state.current_effective_cfg` as the scope CFG.
+    7.  **Scope Update (If item does *not* define CFG scope, e.g., function, type alias, const, static):**
+        *   Visit children without changing `state.current_scope_cfg`.
+-   **Field/Variant/Method Visits:** Follow the general pattern, using the (potentially updated) `state.current_scope_cfg` as the scope CFG when calculating their *own* `provisional_effective_cfg`.
 
 ## 4. Phase 3 Changes (Resolution / DB Prep)
 
@@ -127,7 +149,7 @@ This plan adopts the "Alternative A" strategy, where the final evaluation of CFG
             -   Insert `HasCondition { node_id: node.id.uuid(), cond_id }`.
 
 **4.4. `NodeId::Resolved` Generation:**
--   Consider modifying the generation logic to include the `cond_id` (derived from the *final* effective CFG) as part of the input hash, ensuring resolved IDs are also unique based on the final CFG.
+-   Modify the generation logic to include the `cond_id` (derived from the *final* effective CFG) as part of the input hash. This ensures resolved IDs are unique based on the final CFG, distinguishing, e.g., `#[cfg(unix)] struct Foo` from `#[cfg(windows)] struct Foo`.
 
 ## 5. RAG Querying Changes
 
@@ -150,7 +172,7 @@ This plan adopts the "Alternative A" strategy, where the final evaluation of CFG
 -   **Empty CFGs `#[cfg()]`:** `cfg-expr` should handle this (likely evaluates to true). Need verification.
 -   **Complex/Nested Logic:** Handled correctly by `cfg-expr` parsing and evaluation.
 -   **Deterministic Combination:** Ensure `combine_cfgs` produces a deterministic result (e.g., by sorting predicates within `Expression::All`).
--   **Hashing Stability:** Ensure the `Hash` implementation for `cfg_expr::Expression` is stable across versions if relying on it for `NodeId` generation. Hashing the serialized string might be safer long-term.
+-   **Hashing Stability:** Relying on `cfg_expr::Expression`'s `Hash` implementation is convenient but carries a risk if the implementation changes between versions. Hashing a canonical serialized string representation (e.g., sorted JSON or RON) of the `Expression` offers better long-term stability, although it adds serialization overhead in Phase 2. **Decision:** Start with direct `Hash` for simplicity, but monitor `cfg-expr` updates and be prepared to switch to serialized string hashing if stability issues arise or become a concern. The deterministic sorting within `combine_cfgs` is crucial for either approach.
 
 ## 7. Testing Strategy
 
@@ -158,15 +180,16 @@ This plan adopts the "Alternative A" strategy, where the final evaluation of CFG
 -   Unit tests for `VisitorState` CFG tracking logic.
 -   Unit tests for `calculate_final_effective_cfg` logic.
 -   Integration tests (`syn_parser`) using fixtures with various combinations:
-    -   File-level `cfg`.
-    -   Inline module `cfg`.
-    *   Item-level `cfg`.
-    *   `cfg` on `mod x;` declarations (testing Phase 3 combination).
-    *   Nested `cfg` logic (`all`, `any`, `not`).
-    *   Multiple `cfg` attributes on one item.
--   Verify `NodeId::Synthetic` uniqueness/difference for items under different provisional CFGs.
+    -   File-level `cfg` (`#![cfg(...)]`).
+    -   Item-level `cfg` on inline modules (`#[cfg(...)] mod foo { ... }`).
+    -   Item-level `cfg` on various items (structs, fns, enums, etc.).
+    -   `cfg` on `mod x;` declarations (testing Phase 3 combination).
+    -   Nested `cfg` logic (`all`, `any`, `not`).
+    -   Multiple `cfg` attributes on one item (testing deterministic combination).
+    -   Items nested within CFG'd scopes (e.g., fields in a CFG'd struct).
+-   Verify `NodeId::Synthetic` uniqueness/difference for items under different provisional CFGs using paranoid helpers.
 -   Verify `NodeId::Resolved` uniqueness/difference based on final CFGs (if implemented).
--   Tests for the RAG filtering logic, simulating different `TargetContext`s and verifying correct node inclusion/exclusion.
+-   Tests for the RAG filtering logic, simulating different `TargetContext`s and verifying correct node inclusion/exclusion based on final CFGs.
 
 This plan provides a detailed roadmap for implementing the CFG processing functionality.
 
