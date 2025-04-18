@@ -1,3 +1,4 @@
+use crate::error::SynParserError; // Added error import
 use crate::parser::relations::GraphId;
 use ploke_core::NodeId;
 
