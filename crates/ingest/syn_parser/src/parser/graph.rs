@@ -1,7 +1,7 @@
 use crate::parser::relations::GraphId;
 use ploke_core::NodeId;
 
-use super::nodes::Visible;
+use super::nodes::GraphNode;
 use super::relations::RelationKind;
 use crate::parser::nodes::VisibilityResult;
 use crate::parser::{
@@ -102,19 +102,19 @@ impl CodeGraph {
             })
     }
 
-    pub fn find_node(&self, item_id: NodeId) -> Option<&dyn Visible> {
+    pub fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
 
         self.functions
             .iter()
             .find(|n| n.id == item_id)
-            .map(|n| n as &dyn Visible)
+            .map(|n| n as &dyn GraphNode)
             .or_else(|| {
                 self.defined_types.iter().find_map(|n| match n {
-                    TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn Visible),
-                    TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn Visible),
-                    TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn Visible),
-                    TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn Visible),
+                    TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
+                    TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
+                    TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
+                    TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
                     _ => None,
                 })
             })
@@ -123,25 +123,25 @@ impl CodeGraph {
                     .iter()
                     .chain(&self.private_traits)
                     .find(|n| n.id == item_id)
-                    .map(|n| n as &dyn Visible)
+                    .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.modules
                     .iter()
                     .find(|n| n.id == item_id)
-                    .map(|n| n as &dyn Visible)
+                    .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.values
                     .iter()
                     .find(|n| n.id == item_id)
-                    .map(|n| n as &dyn Visible)
+                    .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.macros
                     .iter()
                     .find(|n| n.id == item_id)
-                    .map(|n| n as &dyn Visible)
+                    .map(|n| n as &dyn GraphNode)
             })
             // TODO: Kind of a hack, or at least not logically clean - since nodes should really be
             // top-level elements in a vec in the CodeGraph. Just change CodeGraph to have a field
@@ -151,7 +151,7 @@ impl CodeGraph {
                     i.methods
                         .iter()
                         .find(|n| n.id == item_id)
-                        .map(|n| n as &dyn Visible)
+                        .map(|n| n as &dyn GraphNode)
                 })
             })
     }
