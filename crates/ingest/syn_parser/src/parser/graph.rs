@@ -64,7 +64,6 @@ impl CodeGraph {
         })
     }
 
-
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     pub fn debug_print_all_visible(&self) {
