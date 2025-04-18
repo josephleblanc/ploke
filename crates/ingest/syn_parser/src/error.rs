@@ -27,6 +27,10 @@ pub enum SynParserError {
     /// Indicates a failure to merge graphs
     #[error("Failed to merge CodeGraphs")]
     MergeError,
+
+    /// Indicates that merging requires at least one graph.
+    #[error("Merging code graphs requires at least one graph as input.")]
+    MergeRequiresInput,
 }
 
 // Optional: Implement From<std::io::Error> for SynParserError
