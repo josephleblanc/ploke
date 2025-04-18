@@ -1,25 +1,37 @@
-use super::*;
-use crate::parser::types::GenericParamNode;
-use ploke_core::{TrackingHash, TypeId};
+use ploke_core::{NodeId, TrackingHash};
 use serde::{Deserialize, Serialize};
 
+use crate::parser::types::GenericParamNode;
+
+use super::*;
+
+// Represents an enum definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct FunctionNode {
+pub struct EnumNode {
     pub id: NodeId,
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
-    pub parameters: Vec<ParamData>,
-    pub return_type: Option<TypeId>,
+    pub variants: Vec<VariantNode>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
-    pub body: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
-impl GraphNode for FunctionNode {
+// Represents a variant in an enum
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct VariantNode {
+    pub id: NodeId,
+    pub name: String,
+    pub fields: Vec<FieldNode>,
+    pub discriminant: Option<String>,
+    pub attributes: Vec<Attribute>,
+    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+}
+
+impl GraphNode for EnumNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -33,21 +45,4 @@ impl GraphNode for FunctionNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
-}
-
-impl FunctionNode {
-    /// Validates the function node structure
-    pub fn validate(&self) -> Result<(), super::NodeError> {
-        todo!()
-        // ... validation logic
-    }
-}
-
-// Represents a parameter in a function
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct ParamData {
-    pub name: Option<String>,
-    pub type_id: TypeId, // The ID of the parameter's type
-    pub is_mutable: bool,
-    pub is_self: bool,
 }

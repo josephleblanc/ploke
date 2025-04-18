@@ -4,6 +4,7 @@ pub mod nodes;
 pub mod relations;
 pub mod types;
 pub mod utils;
+pub mod visibility;
 pub mod visitor;
 
 // Re-export key items

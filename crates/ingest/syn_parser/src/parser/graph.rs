@@ -1,10 +1,10 @@
 use crate::error::SynParserError; // Added error import
 use crate::parser::relations::GraphId;
-use ploke_core::NodeId;
+use ploke_core::{NodeId, TypeId, TypeKind};
 
-use super::nodes::GraphNode;
+use super::nodes::{EnumNode, GraphNode, ImportNode, StructNode, TypeAliasNode, UnionNode};
 use super::relations::RelationKind;
-use crate::parser::nodes::VisibilityResult;
+use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
     relations::Relation,
@@ -14,15 +14,18 @@ use crate::parser::{
 use serde::{Deserialize, Serialize};
 
 // Ensure all necessary node types are imported
-use super::nodes::{
-    EnumNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StructNode, TraitNode,
-    TypeAliasNode, UnionNode, ValueNode,
-};
 
 impl CodeGraph {
     /// Finds a module node by its full path.
     pub fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
         self.modules.iter().find(|m| m.path == path)
+    }
+    pub fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
+        self.type_graph.iter().find(|t| t.id == type_id)
+    }
+
+    pub fn get_type_kind(&self, type_id: TypeId) -> Option<&TypeKind> {
+        self.resolve_type(type_id).map(|t| &t.kind)
     }
 
     /// Finds a struct node by its ID.
@@ -84,7 +87,6 @@ impl CodeGraph {
         }
         first.ok_or(SynParserError::NotFound(id))
     }
-
 
     /// Finds a type alias node by its ID.
     ///
@@ -270,9 +272,6 @@ impl CodeGraph {
                     .find(|n| n.id == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
-            // TODO: Kind of a hack, or at least not logically clean - since nodes should really be
-            // top-level elements in a vec in the CodeGraph. Just change CodeGraph to have a field
-            // for methods already.
             .or_else(|| {
                 self.impls.iter().find_map(|i| {
                     i.methods
@@ -281,6 +280,21 @@ impl CodeGraph {
                         .map(|n| n as &dyn GraphNode)
                 })
             })
+    }
+
+    pub fn get_nodes_by_ids(&self, ids: &[NodeId]) -> Vec<&dyn GraphNode> {
+        ids.iter().filter_map(|id| self.find_node(*id)).collect()
+    }
+
+    pub fn get_children(&self, node_id: NodeId) -> Vec<&dyn GraphNode> {
+        self.relations
+            .iter()
+            .filter(|r| r.source == GraphId::Node(node_id) && r.kind == RelationKind::Contains)
+            .filter_map(|r| match r.target {
+                GraphId::Node(id) => self.find_node(id),
+                GraphId::Type(_) => None,
+            })
+            .collect()
     }
 
     pub fn module_contains_node(&self, module_id: NodeId, item_id: NodeId) -> bool {
