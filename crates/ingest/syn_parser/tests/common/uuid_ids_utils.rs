@@ -4,6 +4,7 @@ use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::relations::{GraphId, RelationKind};
 use syn_parser::parser::types::TypeNode;
+use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 // Removed `use syn_parser::parser::visitor::ParsedCodeGraph;` - import directly in tests
 use syn_parser::parser::{analyze_files_parallel, nodes::*, visitor::ParsedCodeGraph}; // Import ParsedCodeGraph here if needed internally
 
@@ -612,7 +613,8 @@ pub fn find_function_node_paranoid<'a>(
     let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs); // Hash the sorted, combined list
 
     // 8. Regenerate ID *with* calculated CFG bytes
-    let regenerated_id = NodeId::generate_synthetic( // Renamed back to regenerated_id for consistency
+    let regenerated_id = NodeId::generate_synthetic(
+        // Renamed back to regenerated_id for consistency
         crate_namespace,
         file_path,            // Use the file_path from the target_data
         expected_module_path, // Still use the expected module path for context hashing

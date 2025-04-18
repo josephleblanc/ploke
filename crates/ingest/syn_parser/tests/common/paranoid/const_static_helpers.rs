@@ -2,7 +2,7 @@ use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::{
     nodes::{ValueKind, ValueNode, Visible}, // Added ValueNode, Visible
-    visitor::ParsedCodeGraph,
+    visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
 };
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ValueNode
@@ -92,7 +92,7 @@ pub fn find_value_node_paranoid<'a>(
 
     let value_node = module_candidates[0];
     let value_id = value_node.id();
-    // let actual_span = value_node.span; // Span no longer used for ID generation
+    let item_cfgs = value_node.cfgs(); // Get the value's own CFGs
 
     // Determine ItemKind based on ValueNodeKind
     let item_kind = match value_node.kind {
@@ -100,7 +100,17 @@ pub fn find_value_node_paranoid<'a>(
         ValueKind::Static { .. } => ItemKind::Static,
     };
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context, ItemKind, and CFGs
+    // Calculate expected CFG hash bytes
+    let scope_cfgs = module_node.cfgs(); // Get parent module's CFGs
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    provisional_effective_cfgs.sort_unstable();
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,            // Use the file_path from the target_data
@@ -108,12 +118,13 @@ pub fn find_value_node_paranoid<'a>(
         value_name,
         item_kind,            // Pass the determined ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
+        cfg_bytes.as_deref(), // Pass calculated CFG bytes
     );
 
     assert_eq!(
         value_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        value_id, regenerated_id, value_name, expected_module_path, file_path.display(), item_kind, Some(module_node.id)
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for value '{}' in module {:?} file '{}'.\nItemKind: {:?}\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
+        value_id, regenerated_id, value_name, expected_module_path, file_path.display(), item_kind, Some(module_node.id), scope_cfgs, item_cfgs, provisional_effective_cfgs
     );
 
     // 8. Return the validated node

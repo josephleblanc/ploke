@@ -1,7 +1,9 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
-use syn_parser::parser::nodes::*;
-use syn_parser::parser::visitor::ParsedCodeGraph;
+use syn_parser::parser::{
+    nodes::*,
+    visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
+};
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the TypeAliasNode
 /// within that graph, performs paranoid checks, and returns a reference.
@@ -80,9 +82,19 @@ pub fn find_type_alias_node_paranoid<'a>(
 
     let type_alias_node = module_candidates[0];
     let alias_id = type_alias_node.id();
-    // let actual_span = type_alias_node.span; // Span no longer used for ID generation
+    let item_cfgs = type_alias_node.cfgs(); // Get the type alias's own CFGs
 
-    // 6. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    // 6. PARANOID CHECK: Regenerate expected ID using node's context, ItemKind, and CFGs
+    // Calculate expected CFG hash bytes
+    let scope_cfgs = module_node.cfgs(); // Get parent module's CFGs
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    provisional_effective_cfgs.sort_unstable();
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path, // Use the file_path from the target_data
@@ -90,12 +102,13 @@ pub fn find_type_alias_node_paranoid<'a>(
         alias_name,
         ItemKind::TypeAlias,  // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
+        cfg_bytes.as_deref(), // Pass calculated CFG bytes
     );
 
     assert_eq!(
         alias_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        alias_id, regenerated_id, alias_name, file_path.display(), ItemKind::TypeAlias, Some(module_node.id)
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for type alias '{}' in module {:?} file '{}'.\nItemKind: {:?}\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
+        alias_id, regenerated_id, alias_name, expected_module_path, file_path.display(), ItemKind::TypeAlias, Some(module_node.id), scope_cfgs, item_cfgs, provisional_effective_cfgs
     );
 
     // 7. Return the validated node

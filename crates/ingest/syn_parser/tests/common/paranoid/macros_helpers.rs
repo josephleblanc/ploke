@@ -1,7 +1,9 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
-use syn_parser::parser::nodes::*;
-use syn_parser::parser::visitor::ParsedCodeGraph; // Added MacroNode, Visible
+use syn_parser::parser::{
+    nodes::*,
+    visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
+};
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the MacroNode
 /// within that graph corresponding to the given module path and name,
@@ -90,11 +92,21 @@ pub fn find_macro_node_paranoid<'a>(
 
     let macro_node = module_candidates[0];
     let macro_id = macro_node.id();
-    // let actual_span = macro_node.span; // Span no longer used for ID generation
+    let item_cfgs = macro_node.cfgs(); // Get the macro's own CFGs
 
     // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
     // The visitor uses the module path where the item is defined as context.
     // The helper must use the same path for regeneration.
+
+    // Calculate expected CFG hash bytes
+    let scope_cfgs = module_node.cfgs(); // Get parent module's CFGs
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    provisional_effective_cfgs.sort_unstable();
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
 
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
@@ -103,12 +115,13 @@ pub fn find_macro_node_paranoid<'a>(
         macro_name,
         ItemKind::Macro,      // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
+        cfg_bytes.as_deref(), // Pass calculated CFG bytes
     );
 
     assert_eq!(
         macro_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}' (ItemKind: {:?}, ParentScope: {:?})",
-        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id)
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for macro '{}' in module {:?} file '{}'.\nItemKind: {:?}\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}",
+        macro_id, regenerated_id, macro_name, expected_module_path, file_path.display(), ItemKind::Macro, Some(module_node.id), scope_cfgs, item_cfgs, provisional_effective_cfgs
     );
 
     // 8. Return the validated node

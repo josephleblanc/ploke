@@ -11,14 +11,13 @@ use crate::parser::nodes::{
 };
 use crate::parser::relations::*;
 use crate::parser::types::*;
+use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
-use std::hash::Hasher;
 
 use crate::parser::nodes::ModuleDef;
 use ploke_core::{ItemKind, TypeKind}; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
-use ploke_core::byte_hasher::ByteHasher; // NEW: Import ByteHasher
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -341,23 +340,6 @@ impl<'a> CodeVisitor<'a> {
 /// Calculates a hash for a list of raw CFG strings.
 /// Sorts the strings before joining and hashing to ensure deterministic output.
 /// Returns None if the input slice is empty.
-pub fn calculate_cfg_hash_bytes(cfgs: &[String]) -> Option<Vec<u8>> {
-    if cfgs.is_empty() {
-        return None;
-    }
-
-    // Clone and sort for determinism
-    let mut sorted_cfgs = cfgs.to_vec();
-    sorted_cfgs.sort_unstable();
-
-    // Join with a separator (important if a cfg string could contain the separator)
-    let joined_cfgs = sorted_cfgs.join("::CFG::");
-
-    // Hash the joined string
-    let mut hasher = ByteHasher::default();
-    hasher.write(joined_cfgs.as_bytes());
-    Some(hasher.finish_bytes())
-}
 
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {

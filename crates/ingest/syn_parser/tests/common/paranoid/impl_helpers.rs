@@ -1,8 +1,10 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId, TypeId};
 use quote::ToTokens;
-use syn_parser::parser::nodes::*;
-use syn_parser::parser::visitor::ParsedCodeGraph;
+use syn_parser::parser::{
+    nodes::*,
+    visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
+};
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ImplNode
 /// within that graph based on type info, performs paranoid checks, and returns a reference.
@@ -161,9 +163,9 @@ pub fn find_impl_node_paranoid<'a>(
 
     let impl_node = type_candidates[0];
     let impl_id = impl_node.id();
-    // let actual_span = impl_node.span; // Span no longer used for ID generation
+    let item_cfgs = impl_node.cfgs(); // Get the impl's own CFGs
 
-    // 7. PARANOID CHECK: Regenerate expected ID using node's context and ItemKind
+    // 7. PARANOID CHECK: Regenerate expected ID using node's context, ItemKind, and CFGs
     //    Need to generate the expected name based on type strings.
     let expected_name = match trait_type_str {
         Some(t) => format!("impl {} for {}", t, self_type_str),
@@ -172,6 +174,16 @@ pub fn find_impl_node_paranoid<'a>(
     // Note: This name generation might differ slightly from the visitor if to_string() representations vary.
     // It assumes simple type strings are sufficient.
 
+    // Calculate expected CFG hash bytes
+    let scope_cfgs = module_node.cfgs(); // Get parent module's CFGs
+    let mut provisional_effective_cfgs: Vec<String> = scope_cfgs
+        .iter()
+        .cloned()
+        .chain(item_cfgs.iter().cloned())
+        .collect();
+    provisional_effective_cfgs.sort_unstable();
+    let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+
     let regenerated_id = NodeId::generate_synthetic(
         crate_namespace,
         file_path,
@@ -179,6 +191,7 @@ pub fn find_impl_node_paranoid<'a>(
         &expected_name,       // Use the generated name
         ItemKind::Impl,       // Pass the correct ItemKind
         Some(module_node.id), // Pass the containing module's ID as parent scope
+        cfg_bytes.as_deref(), // Pass calculated CFG bytes
     );
 
     // We compare the regenerated ID against the actual ID found on the node.
@@ -186,8 +199,8 @@ pub fn find_impl_node_paranoid<'a>(
     // doesn't perfectly match the one used inside the visitor's `add_contains_rel` call.
     assert_eq!(
         impl_id, regenerated_id,
-        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in file '{}' (ItemKind: {:?}, ParentScope: {:?}). Name generation might be the cause.",
-        impl_id, regenerated_id, expected_name, file_path.display(), ItemKind::Impl, Some(module_node.id)
+        "Mismatch between node's actual ID ({}) and regenerated ID ({}) for impl block '{}' in module {:?} file '{}'.\nItemKind: {:?}\nParentScope: {:?}\nScope CFGs: {:?}\nItem CFGs: {:?}\nCombined CFGs: {:?}\nName generation might be the cause.",
+        impl_id, regenerated_id, expected_name, expected_module_path, file_path.display(), ItemKind::Impl, Some(module_node.id), scope_cfgs, item_cfgs, provisional_effective_cfgs
     );
 
     // 8. Return the validated node

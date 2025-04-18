@@ -4,7 +4,7 @@ use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
-use super::code_visitor::calculate_cfg_hash_bytes;
+use super::calculate_cfg_hash_bytes;
 use super::type_processing::get_or_create_type; // NEW: Import helper
 
 use {

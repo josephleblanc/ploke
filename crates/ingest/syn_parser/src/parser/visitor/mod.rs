@@ -1,5 +1,7 @@
+use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
 use serde::{Deserialize, Serialize};
+use std::hash::Hasher;
 use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
@@ -101,13 +103,13 @@ pub fn analyze_file_phase2(
 
     use attribute_processing::{
         extract_cfg_strings, // NEW: Import raw string extractor
-        extract_file_level_attributes, extract_file_level_docstring,
+        extract_file_level_attributes,
+        extract_file_level_docstring,
         // Removed parse_and_combine_cfgs_from_attrs import
     };
     // Removed code_visitor helper imports (combine_cfgs, hash_expression)
 
     use super::nodes::ModuleDef;
-    use super::visitor::code_visitor::calculate_cfg_hash_bytes; // NEW: Import new helper
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -146,8 +148,8 @@ pub fn analyze_file_phase2(
         &file_path,
         &root_module_parent_path, // Use parent path for ID generation context
         &root_module_name,
-        ItemKind::Module, // Pass correct ItemKind
-        None,             // Root module has no parent scope ID within the file context
+        ItemKind::Module,          // Pass correct ItemKind
+        None,                      // Root module has no parent scope ID within the file context
         root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
     );
 
@@ -261,4 +263,22 @@ pub fn analyze_files_parallel(
             })
         })
         .collect() // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
+}
+
+pub fn calculate_cfg_hash_bytes(cfgs: &[String]) -> Option<Vec<u8>> {
+    if cfgs.is_empty() {
+        return None;
+    }
+
+    // Clone and sort for determinism
+    let mut sorted_cfgs = cfgs.to_vec();
+    sorted_cfgs.sort_unstable();
+
+    // Join with a separator (important if a cfg string could contain the separator)
+    let joined_cfgs = sorted_cfgs.join("::CFG::");
+
+    // Hash the joined string
+    let mut hasher = ByteHasher::default();
+    hasher.write(joined_cfgs.as_bytes());
+    Some(hasher.finish_bytes())
 }
