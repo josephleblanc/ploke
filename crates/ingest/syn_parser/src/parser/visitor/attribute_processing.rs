@@ -155,25 +155,7 @@ pub(crate) fn extract_cfg_strings(attrs: &[syn::Attribute]) -> Vec<String> {
         .collect()
 }
 
-
-/// Parses `#[cfg(...)]` attributes from a slice, combines them deterministically,
-/// and returns a single `Option<Expression>`.
-///
-/// # Arguments
-/// * `attrs` - A slice of `syn::Attribute` to parse.
-///
-/// # Returns
-/// * `Some(Expression)` if one or more valid `cfg` attributes are found.
-/// * `None` if no `cfg` attributes are found or if parsing fails.
-///
-/// # Determinism
-/// If multiple `#[cfg]` attributes are present, they are combined into an
-/// `Expression::All([...])`. The order of expressions within the `All` vector
 // Removed parse_and_combine_cfgs_from_attrs function
-
-
-// --- NEW: Functions for File-Level (Inner) Attributes ---
-
 /// Extracts the inner docstring (`//!`) from file attributes.
 /// Expects `file.attrs` as input.
 // NOTE: Purposefully duplicating logic here

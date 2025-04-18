@@ -5,7 +5,7 @@ use ploke_core::NodeId;
 use syn_parser::parser::nodes::ImportKind; // Import ImportKind
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{ImportNode, Visible}, // Import ImportNode
+    nodes::{ImportNode, GraphNode}, // Import ImportNode
     relations::{GraphId, RelationKind},
 };
 
@@ -587,7 +587,7 @@ fn test_import_node_field_visible_name_simple() {
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
 }
 
 #[test]
@@ -610,7 +610,7 @@ fn test_import_node_field_visible_name_renamed() {
     let node1 = find_import_node_basic(graph, &module_path, visible_name1, expected_path_suffix1);
     assert_eq!(
         node1.visible_name, visible_name1,
-        "Visible name mismatch for IoResult"
+        "GraphNode name mismatch for IoResult"
     );
 
     // Target 2: SerdeAlias
@@ -619,7 +619,7 @@ fn test_import_node_field_visible_name_renamed() {
     let node2 = find_import_node_basic(graph, &module_path, visible_name2, expected_path_suffix2);
     assert_eq!(
         node2.visible_name, visible_name2,
-        "Visible name mismatch for SerdeAlias"
+        "GraphNode name mismatch for SerdeAlias"
     );
 }
 
@@ -644,7 +644,7 @@ fn test_import_node_field_visible_name_glob() {
 
     assert_eq!(
         node.visible_name, visible_name,
-        "Visible name mismatch for glob"
+        "GraphNode name mismatch for glob"
     );
 }
 
@@ -1033,7 +1033,7 @@ fn test_import_node_paranoid_simple() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
@@ -1121,7 +1121,7 @@ fn test_import_node_paranoid_renamed() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
@@ -1208,7 +1208,7 @@ fn test_import_node_paranoid_glob() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
@@ -1299,7 +1299,7 @@ fn test_import_node_paranoid_self() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
@@ -1386,7 +1386,7 @@ fn test_import_node_paranoid_extern_crate() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
@@ -1473,7 +1473,7 @@ fn test_import_node_paranoid_extern_crate_renamed() {
     );
 
     // 2. Assert all fields
-    assert_eq!(node.visible_name, visible_name, "Visible name mismatch");
+    assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
     assert_eq!(node.path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,

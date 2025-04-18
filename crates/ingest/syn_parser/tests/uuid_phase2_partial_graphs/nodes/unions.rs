@@ -5,7 +5,7 @@ use ploke_core::{NodeId, TypeKind}; // Import TypeKind from ploke_core
 // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
-    nodes::Visible,
+    nodes::GraphNode,
     relations::{GraphId, RelationKind},
     types::GenericParamKind,
 };

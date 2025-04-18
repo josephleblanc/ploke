@@ -1,5 +1,5 @@
 use ploke_core::NodeId;
-use syn_parser::parser::{graph::CodeGraph, nodes::Visible};
+use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 
 pub fn find_import_id(
     graph: &CodeGraph,

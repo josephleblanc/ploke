@@ -265,6 +265,9 @@ pub fn analyze_files_parallel(
         .collect() // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
 }
 
+/// Calculates a hash for a list of raw CFG strings.
+/// Sorts the strings before joining and hashing to ensure deterministic output.
+/// Returns None if the input slice is empty.
 pub fn calculate_cfg_hash_bytes(cfgs: &[String]) -> Option<Vec<u8>> {
     if cfgs.is_empty() {
         return None;

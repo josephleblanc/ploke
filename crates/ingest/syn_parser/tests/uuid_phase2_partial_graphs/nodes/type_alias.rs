@@ -3,7 +3,7 @@ use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
-    nodes::Visible,
+    nodes::GraphNode,
     relations::{GraphId, RelationKind},
     types::GenericParamKind,
 };

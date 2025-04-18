@@ -8,7 +8,7 @@ use syn_parser::{
     discovery::run_discovery_phase,
     parser::{
         analyze_files_parallel,
-        nodes::{ImportNode, Visible},
+        nodes::{ImportNode, GraphNode},
         relations::{GraphId, RelationKind},
         visitor::ParsedCodeGraph,
     },

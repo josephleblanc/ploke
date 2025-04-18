@@ -104,7 +104,7 @@ mod inner {
     }
 
     // Trait using super
-    pub(super) trait SuperVisibleTrait: super::SimpleTrait {
+    pub(super) trait SuperGraphNodeTrait: super::SimpleTrait {
         fn super_visible_op(&self);
     }
 }

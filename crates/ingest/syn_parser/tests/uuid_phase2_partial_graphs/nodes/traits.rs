@@ -5,7 +5,7 @@ use ploke_core::{NodeId, TypeKind}; // Import TypeKind from ploke_core
 // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
-    nodes::Visible,
+    nodes::GraphNode,
     relations::{GraphId, RelationKind},
 };
 
@@ -526,8 +526,8 @@ fn test_other_trait_nodes() {
         trait_name,
     );
 
-    // SuperVisibleTrait (pub(super))
-    let trait_name = "SuperVisibleTrait";
+    // SuperGraphNodeTrait (pub(super))
+    let trait_name = "SuperGraphNodeTrait";
     let node = find_trait_node_paranoid(
         &results,
         fixture_name,

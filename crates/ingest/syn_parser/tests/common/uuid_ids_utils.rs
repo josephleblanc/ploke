@@ -77,7 +77,7 @@ m.items() = {:#?}",
 
     // 3. Search defined types (Struct, Enum, Union, TypeAlias)
     let type_def_id = graph.defined_types.iter().find_map(|td| {
-        // Use the Visible trait implemented by node types
+        // Use the GraphNode trait implemented by node types
         if td.name() == name && parent_module.items().is_some_and(|m| m.contains(&td.id())) {
             Some(td.id())
         } else {
@@ -115,7 +115,7 @@ m.items() = {:#?}",
         return module_id;
     }
 
-    // ... add searches for other relevant node types that implement Visible and belong in ModuleNode.items
+    // ... add searches for other relevant node types that implement GraphNode and belong in ModuleNode.items
 
     None
 }
@@ -600,7 +600,7 @@ pub fn find_function_node_paranoid<'a>(
     let item_cfgs = &func_node.cfgs; // Get the function's own CFGs
     let scope_cfgs: Vec<String> = actual_parent_scope_id
         .and_then(|p_id| graph.find_node(p_id)) // Find the parent node
-        .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs using the Visible trait method
+        .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs using the GraphNode trait method
         .unwrap_or_default(); // Default to empty if no parent found (e.g., root module items)
 
     let mut provisional_effective_cfgs: Vec<String> = scope_cfgs // Combine parent and item cfgs

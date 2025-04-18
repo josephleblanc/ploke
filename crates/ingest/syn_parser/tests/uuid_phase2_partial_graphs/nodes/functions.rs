@@ -4,7 +4,7 @@ use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
 use syn_parser::parser::{
-    nodes::Visible,
+    nodes::GraphNode,
     // Remove TypeKind from here
 };
 

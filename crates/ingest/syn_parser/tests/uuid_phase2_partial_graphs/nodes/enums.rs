@@ -3,7 +3,7 @@ use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
-    nodes::Visible,
+    nodes::GraphNode,
     relations::{GraphId, RelationKind},
 };
 

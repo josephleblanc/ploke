@@ -15,7 +15,7 @@ use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
 
 use crate::parser::nodes::ModuleDef;
-use ploke_core::{ItemKind, TypeKind}; // Import TypeKind
+use ploke_core::ItemKind; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
 use quote::ToTokens;
@@ -336,10 +336,6 @@ impl<'a> CodeVisitor<'a> {
         node_id
     }
 }
-
-/// Calculates a hash for a list of raw CFG strings.
-/// Sorts the strings before joining and hashing to ensure deterministic output.
-/// Returns None if the input slice is empty.
 
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
@@ -1111,31 +1107,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             get_or_create_type(self.state, &ty)
         });
 
-        // Handle trait visibility filtering when feature is enabled
-        if let Some(trait_type_id) = trait_type_id {
-            if let Some(trait_type) = self
-                .state
-                .code_graph
-                .type_graph
-                .iter()
-                .find(|t| t.id == trait_type_id)
-            {
-                if let TypeKind::Named { path, .. } = &trait_type.kind {
-                    let trait_name = path.last().unwrap_or(&String::new()).to_string();
-
-                    // Check both public and private traits
-                    // TODO: Add implements trait relation here
-                    #[allow(unused_variables, reason = "useful later")]
-                    let trait_def = self
-                        .state
-                        .code_graph
-                        .traits
-                        .iter()
-                        .chain(&self.state.code_graph.private_traits)
-                        .find(|t| t.name == trait_name);
-                }
-            }
-        }
         // Process methods
         let mut methods = Vec::new();
         for item in &item_impl.items {

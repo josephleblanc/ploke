@@ -101,7 +101,7 @@ mod internal {
 
     mod restricted {
         pub struct RestrictedItem;
-        // Visible only within crate::internal module and its descendants
+        // GraphNode only within crate::internal module and its descendants
         pub(in crate::internal) fn restricted_func() {}
     }
 

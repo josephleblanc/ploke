@@ -7,7 +7,7 @@ use syn_parser::parser::nodes::ValueKind;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{ValueNode, Visible},
+    nodes::{ValueNode, GraphNode},
     relations::{GraphId, RelationKind},
     visitor::ParsedCodeGraph,
 };

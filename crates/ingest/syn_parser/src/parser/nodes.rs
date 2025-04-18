@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 // ANCHOR: ItemFn
 // Represents a function definition
-impl Visible for ModuleNode {
+impl GraphNode for ModuleNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -38,7 +38,7 @@ pub struct FunctionNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 //ANCHOR_END: ItemFn
-impl Visible for FunctionNode {
+impl GraphNode for FunctionNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -72,7 +72,7 @@ pub enum TypeDefNode {
     Union(UnionNode),
 }
 
-impl Visible for TypeDefNode {
+impl GraphNode for TypeDefNode {
     fn visibility(&self) -> VisibilityKind {
         match self {
             TypeDefNode::Struct(struct_node) => struct_node.visibility.clone(),
@@ -111,7 +111,7 @@ impl Visible for TypeDefNode {
 
 // ANCHOR: StructNode
 // Represents a struct definition
-impl Visible for StructNode {
+impl GraphNode for StructNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -142,7 +142,7 @@ pub struct StructNode {
 //ANCHOR_END: StructNode
 
 // Represents an enum definition
-impl Visible for EnumNode {
+impl GraphNode for EnumNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -196,7 +196,7 @@ pub struct VariantNode {
 }
 
 // Represents a type alias (type NewType = OldType)
-impl Visible for TypeAliasNode {
+impl GraphNode for TypeAliasNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -226,7 +226,7 @@ pub struct TypeAliasNode {
 }
 
 // Represents a union definition
-impl Visible for UnionNode {
+impl GraphNode for UnionNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -268,7 +268,7 @@ pub struct ImplNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
-impl Visible for ImplNode {
+impl GraphNode for ImplNode {
     fn visibility(&self) -> VisibilityKind {
         VisibilityKind::Public
     }
@@ -290,7 +290,7 @@ impl Visible for ImplNode {
 
 // ANCHOR: TraitNode
 // Represents a trait definition
-impl Visible for TraitNode {
+impl GraphNode for TraitNode {
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
     }
@@ -467,7 +467,7 @@ pub enum ModuleDef {
 }
 
 // Represents a constant or static variable
-impl Visible for ValueNode {
+impl GraphNode for ValueNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -498,7 +498,7 @@ pub struct ValueNode {
 }
 
 // Represents a macro definition
-impl Visible for MacroNode {
+impl GraphNode for MacroNode {
     fn id(&self) -> NodeId {
         self.id
     }
@@ -683,7 +683,7 @@ pub enum VisibilityResult {
     },
 }
 /// Trait for nodes that have visibility and CFG information
-pub trait Visible {
+pub trait GraphNode {
     fn visibility(&self) -> VisibilityKind;
     fn name(&self) -> &str;
     fn id(&self) -> NodeId;

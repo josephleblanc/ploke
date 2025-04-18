@@ -14,7 +14,7 @@ use crate::common::{
 };
 use ploke_common::fixtures_crates_dir; // For constructing paths
                                        // use std::path::PathBuf; // Removed unused import
-use syn_parser::parser::{nodes::Visible, visitor::ParsedCodeGraph}; // Import directly
+use syn_parser::parser::{nodes::GraphNode, visitor::ParsedCodeGraph}; // Import directly
 
 const FIXTURE_NAME: &str = "fixture_conflation";
 

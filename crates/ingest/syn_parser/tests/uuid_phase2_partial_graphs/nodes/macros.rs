@@ -6,7 +6,7 @@ use syn_parser::parser::nodes::{MacroKind, ProcMacroKind}; // Import macro kinds
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{MacroNode, Visible}, // Import MacroNode
+    nodes::{MacroNode, GraphNode}, // Import MacroNode
     relations::{GraphId, RelationKind},
 };
 

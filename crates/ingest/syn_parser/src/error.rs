@@ -1,5 +1,5 @@
-use thiserror::Error;
 use ploke_core::NodeId;
+use thiserror::Error;
 
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
