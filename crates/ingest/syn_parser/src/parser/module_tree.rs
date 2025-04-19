@@ -57,7 +57,7 @@ pub enum ModuleTreeError {
     DuplicatePath(NodeId),
 
     #[error("Duplicate module ID found in module tree for ModuleNode: {0:?}")]
-    DuplicateModuleId(ModuleNode),
+    DuplicateModuleId(Box<ModuleNode>), // Box the large ModuleNode
 
     /// Wraps SynParserError for convenience when using TryFrom<Vec<String>> for NodePath
     #[error("Node path validation error: {0}")]
@@ -100,9 +100,11 @@ impl ModuleTree {
             return Err(ModuleTreeError::DuplicatePath(dup));
         }
         // insert module to tree
-        let dup_node = self.modules.insert(ModuleNodeId::new(module.id()), module);
+        let module_id = ModuleNodeId::new(module.id()); // Store ID before potential move
+        let dup_node = self.modules.insert(module_id, module);
         if let Some(dup) = dup_node {
-            return Err(ModuleTreeError::DuplicateModuleId(dup));
+            // Box the duplicate node when creating the error variant
+            return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
         }
         Ok(())
     }
