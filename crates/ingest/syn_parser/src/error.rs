@@ -63,6 +63,9 @@ pub enum SynParserError {
     /// Indicates a duplicate module ID was encountered when building the ModuleTree.
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
+
+    #[error("Module definition not found for path: {0}")]
+    ModuleDefinitionNotFound(String), // Store path string representation
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -104,6 +107,9 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
             crate::parser::module_tree::ModuleTreeError::NodePathValidation(syn_err) => {
                 // If it's already a SynParserError, just return it
                 syn_err
+            }
+            crate::parser::module_tree::ModuleTreeError::DefinitionNotFound(path) => {
+                SynParserError::ModuleDefinitionNotFound(path.to_string())
             }
         }
     }

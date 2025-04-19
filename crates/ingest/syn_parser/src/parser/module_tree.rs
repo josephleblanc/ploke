@@ -83,7 +83,9 @@ pub enum ModuleTreeError {
     /// Wraps SynParserError for convenience when using TryFrom<Vec<String>> for NodePath
     #[error("Node path validation error: {0}")]
     NodePathValidation(#[from] SynParserError),
-    // Add other module tree specific errors here
+
+    #[error("Definition not found in path_index for path: {0}")]
+    DefinitionNotFound(NodePath), // Store the path that wasn't found
 }
 
 impl ModuleTree {
@@ -138,23 +140,34 @@ impl ModuleTree {
         Ok(())
     }
 
-    pub fn build_file_rels(&mut self, graph: &CodeGraph) {
+    /// Builds 'Contains' relations between module declarations and their file-based definitions.
+    /// This function assumes the `path_index` has been populated correctly.
+    pub fn build_file_rels(&self, graph: &CodeGraph) -> Result<Vec<Relation>, ModuleTreeError> {
         let mut new_contains: Vec<Relation> = Vec::new();
         for module in graph.modules.iter().filter(|m| m.is_file_based()) {
-            // Get the Vec<String> path
+            let defn_path_vec = module.defn_path();
+            let defn_path_slice = defn_path_vec.as_slice();
 
-            let decl_id = self
-                .path_index
-                .get(module.defn_path().as_slice())
-                // AI: Need to implement this new error type
-                .unwrap_or_else(|| ModuleTreeError::DefinitionNotFound(Box::new(module)));
+            // Look up the path in the index.
+            let decl_id_ref = self.path_index.get(defn_path_slice).ok_or_else(|| {
+                // If not found, create the NodePath for the error message.
+                // This assumes NodePath::try_from won't fail here if it succeeded during insertion.
+                // Consider adding a direct conversion or handling potential error.
+                let node_path = NodePath::try_from(defn_path_vec.clone())
+                    .expect("Failed to create NodePath from defn_path during error generation"); // Or handle error properly
+                ModuleTreeError::DefinitionNotFound(node_path)
+            })?; // Use `?` to propagate the error
+
+            // `decl_id_ref` is `&NodeId`. We need the actual `NodeId` value.
+            let decl_id = *decl_id_ref;
+
             new_contains.push(Relation {
-                source: GraphId::Node(module.id()),
-                target: GraphId::Node(decl_id.uuid()), // AI: needs ModuleId -> NodeId, can you implement trait?
-                kind: RelationKind::Contains,
-            })
-            // AI!
+                source: GraphId::Node(module.id()), // Source is the file-based module definition
+                target: GraphId::Node(decl_id),     // Target is the module declaration ID found in the index
+                kind: RelationKind::Contains,       // Represents that the declaration "contains" the definition conceptually
+            });
         }
+        Ok(new_contains) // Return the generated relations
     }
 }
 
