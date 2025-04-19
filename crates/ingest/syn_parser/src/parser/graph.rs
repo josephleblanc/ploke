@@ -1,8 +1,11 @@
-use crate::error::SynParserError; // Added error import
+use crate::error::SynParserError;
 use crate::parser::relations::GraphId;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
-use super::nodes::{EnumNode, GraphNode, ImportNode, StructNode, TypeAliasNode, UnionNode};
+use super::module_tree::ModuleTree;
+use super::nodes::{
+    EnumNode, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode, UnionNode,
+};
 use super::relations::RelationKind;
 use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
@@ -13,12 +16,288 @@ use crate::parser::{
 
 use serde::{Deserialize, Serialize};
 
-// Ensure all necessary node types are imported
+// Main structure representing the entire code graph
+// Derive Send and Sync automatically since all component types implement them
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CodeGraph {
+    // Functions defined in the code
+    pub functions: Vec<FunctionNode>,
+    // Types (structs, enums) defined in the code
+    pub defined_types: Vec<TypeDefNode>,
+    // All observed types, including nested and generic types
+    pub type_graph: Vec<TypeNode>,
+    // Implementation blocks
+    pub impls: Vec<ImplNode>,
+    // Public traits defined in the code
+    pub traits: Vec<TraitNode>,
+    // Private traits defined in the code
+    pub private_traits: Vec<TraitNode>,
+    // Relations between nodes
+    pub relations: Vec<Relation>,
+    // Modules defined in the code
+    pub modules: Vec<ModuleNode>,
+    // Constants and static variables
+    pub values: Vec<ValueNode>,
+    // Macros defined in the code
+    pub macros: Vec<MacroNode>,
+    pub use_statements: Vec<ImportNode>,
+}
 
 impl CodeGraph {
+    // Here is the overall breakdown on what we are doing:
+    // So we do a parsing using `syn` in another file, traversing the tree and processing the
+    // code items into these `ModuleNode`, `FunctionNode`, `ImportNode`, etc,
+    // We basically get the processed nodes by doing the following:
+    //  - Phase 1: File discovery phase (implemented)
+    //      - traverse directories without parsing files
+    //      - get list of `.rs` files for later parsing
+    //      - process file names into best guess at module path
+    //  - Phase 2: Parallel parse (implemented)
+    //      - parse all files in parallel to form partial code graphs.
+    //          - no shared state, but initialized with file path
+    //      - file-level modules get the best guess made in Phase 1 as module path
+    //          - file-level modules initialized and added to state before parsing file, all direct
+    //          children of file-level module are added to `ModuleNode.items` of file-level module.
+    //      - generated unique Uuids for all defined items e.g. `FunctionNode`
+    //          - Note: this is complex, using deterministic hashing to enable later incremental parsing,
+    //          but we are more concerned with the module tree and path resolution here. Just know
+    //          that we have validated all nodes to have unique IDs.
+    //      - type definitions for struct, union, enum, type alias stored in nested `TypeDefNode`
+    //      - all primary defined items are children of `ModuleNode`, child `NodeId` added to
+    //        `ModuleNode.items`, including:
+    //          - `FunctionNode`, `TraitNode`, `StructNode` etc.
+    //          - `StructField`, `GenericParam`, etc
+    //      - special treatment of `ImportNode`, stored as both `use_statements` in `CodeGraph` and
+    //      as `ModuleNode.imports`. `ModuleNode.exports` not currently used in processing, could
+    //      be good for tracking the `pub use` statements of re-exports.
+    //      - `#cfg` attributes naively stored as string with spaces between,
+    //          e.g. ( feature = \"feature\" )``
+    //          may be processed later using `cfg_expr`.
+    //      - attributes processed and stored in `attributes` field on all applicable items, e.g.
+    //          `#[path = ".."]`
+    //  - Phase 3: Merge and Resolution (unimplemented)
+    //      - Create module tree
+    //          - This may be complex, because what we need to do is be able to map every defined
+    //          type, no matter the path, to two different paths:
+    //              1. Canonical path, e.g.
+    //                  - project_name::mod_a::mod_b::DefinedItem
+    //                  - project_name::mod_a::mod_b::DefinedItem::example_method
+    //              2. Shortest public path, e.g. if mod_a re-exports DefinedItem,
+    //                  - project_name::mod_a::DefinedItem
+    //          - Our goal is to be able to resolve all defined item paths to the same path whether
+    //          the item is used in the user's crate or if the defined item is used in a
+    //          dependency.
+    //              - We want to allow for parsing both the users crate and optionally
+    //              dependencies, and connect the usage of the code item in the user's crate to the
+    //              definition of the item in the dependency.
+    //          - To achieve our goal I *think* we need to have both the canonical path and
+    //          shortest public path, but I'm not sure. The most important thing is that we are
+    //          able to take any given defined item and resolve it to the same path for both the
+    //          user's crate and dependencies if parsed separately with no communication.
+    //  So I'm trying to think through what methods we will want to have available in
+    //  `ModuleNode`, `ImportNode`, and `CodeGraph`, and if we want to make a new struct maybe for
+    //  the tree that enables the resolution of the paths.
+    // You mentioned wanting to build the graph tree from relations, but we have chosen to
+    // generate the relations after we create the tree. Because we are parsing in parallel, we
+    // cannot resolve all re-export targets during the parsing process. Therefore we need to
+    // create the tree in order to build most relations. We are currently experimenting with
+    // whether it is better to build the graph by relying on a "Relation" struct that has
+    // source_id/target_id/kind like `Contains` for ModuleNode->direct children, or whether this is better
+    // handled by nested data structures like ModuleNode { items: NodeId }. There are different
+    // tradeoffs we would need to make regarding our parsing pipeline, but for now we are trying to
+    // go with nested data structures and handle all relations at once during phase 3 resolution.
+    // We will need to take the NodeId::Synthetic(Uuid) of each item and resolve it into a
+    // NodeId::Resolved(Uuid), using a v5 hash. You can see a description of the overall `NodeId`
+    // uuid system of generating ids in `crates/ploke-core/src/lib.rs`
+    // I hope you were able to see all 50 lines of the immediately preceding description.
+    // Please tell me if it seems like it is cut-off or missing parts.
+    // You recently said that we were transferring ownership **to** the `CodeGraph`, but we are
+    // really cloning **from** `CodeGraph`. `CodeGraph` itself will need to have its elements
+    // mutated since we are processing all of the `NodeId::Synthetic` into `NodeId::Resolved`. The
+    // `CodeGraph` will be consumed by another process that will process the nodes into a database.
+    // However, we want to keep the `ModuleTree` so we can do incremental parsing later. I just
+    // want to confirm that you can see the entire logic of our overall goal here so your code
+    // suggestions are more helpful. Does that make sense? If so, please provide a summary of what
+    // we are working on so I can confirm your understanding.
+    //
+    // Clarifying Questions:
+    //
+    // 1. About path Resolution:
+    //
+    //  - Should we prioritize implementing canonical path resolution first, then add shortest
+    //    public path logic later?
+    //
+    //  Yes, we can prioritize canonical path first. Also, can you please define exactly what
+    //  "canonical path" means? I've been using the phrase assuming it means the path that matches
+    //  the file path + inline module path, but I'm not sure that is correct.
+    //
+    //  - How should we handle edge cases where the canonical path differs from the shortest public
+    //    path due to re-exports?
+    //
+    //  We want to resolve to the shortest public path. However, I would like you to check my logic
+    //  on this point: Our overall goal is to be able to have different partial `CodeGraph`s of two
+    //  different files resolve the same path, whether the two files are both in the user's crate,
+    //  both in a dependency of the user's crate, or one file is in the user's crate and one file
+    //  is in the dependency. You can assume that we have the name and version of the user's
+    //  dependencies, and that the versions are the same for the parsed dependency and the version
+    //  of the dependency used in the user's crate.
+    //
+    // 2. About Edge Cases
+    //
+    //  - For `#[path]` attributes, should we: a) Resolve to the actual file path, or b) Maintain
+    //  the logical path?
+    //
+    //  We should maintain the logical path. However, because we have parsed the source code target
+    //  files in parallel after a file discovery phase, each partial graph is initialized with a
+    //  module that uses the "best guess" module path processed from the directory and file name of
+    //  its targe. Therefore our initial merged code graph will contain only these elements. We may
+    //  need to resolve them into a different logical structure for the `#[path]` attribute. Give
+    //  me a quick recap on how the `#[path]` attribute works.
+    //
+    //  - For #[cfg], should we filter out inactive items during resolution or keep them with
+    //  metadata?
+    //
+    //  We should parse them all together. We are inserting all elements into our database, and the
+    //  database later on. We want to allow the database to query for items depending on cfg.
+    //
+    // 3. About Architecture:
+    //
+    //  - Would it make sense to create a dedicated PathResolver struct that:
+    //    • Takes the ModuleTree
+    //    • Processes all edge cases
+    //    • Produces resolved paths
+    //  • Or should this logic live directly in ModuleTree?
+    //
+    //  Yes, it would make sense to have a PathResolver as described. The ModuleTree should have
+    //  all the data required to take any valid path for an item within the module tree path
+    //  structure and let it be resolved into the desired module tree. Whether the logic that
+    //  handles the edge cases lives in the module tree or elsewhere may be decided as needed for
+    //  the best implementation.
+    //
+    // 4. About Validation:
+    //    • Should we add validation to detect:
+    //      • Conflicting paths after resolution? Yes.
+    //      • Invalid visibility chains? Yes.
+    //      • Broken re-exports? No.
+    //
+    //  The goal is to construct a code graph to be inserted into the database. We want to abort if
+    //  invalid paths are contained. We want to avoid database corruption and fail gracefully.
+    //
+    // 5. About Macros:
+    //    • Even if we're not handling proc macros fully, should we still:
+    //      • Preserve their paths in the graph? Yes.
+    //      • Mark them as "unresolved" for now? No. Maybe.
+
+    pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, Box<SynParserError>> {
+        let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
+        for graph in graphs {
+            new_graph.append_all(graph)?;
+        }
+
+        Ok(new_graph)
+    }
+
+    pub(crate) fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
+        self.functions.append(&mut other.functions);
+        self.defined_types.append(&mut other.defined_types);
+        self.type_graph.append(&mut other.type_graph);
+        self.impls.append(&mut other.impls);
+        self.traits.append(&mut other.traits);
+        self.private_traits.append(&mut other.private_traits);
+        self.relations.append(&mut other.relations);
+        self.modules.append(&mut other.modules);
+        self.values.append(&mut other.values);
+        self.macros.append(&mut other.macros);
+        self.use_statements.append(&mut other.use_statements);
+        Ok(())
+    }
+
+    pub fn build_module_tree(&self) -> Result<ModuleTree, Box<SynParserError>> {
+        let root_module = self.get_root_module_checked()?;
+        let mut tree = ModuleTree::new_from_root(ModuleNodeId::new(root_module.id));
+
+        // First: Register all modules with their containment info
+        for module in &self.modules {
+            tree.add_module(module.clone())?;
+        }
+
+        // Process direct contains relationships
+        // if let Some(items) = module.items() {
+        //     for item_id in items {
+        //         tree.register_containment(module.id, *item_id)?;
+        //     }
+        // }
+
+        // Then: Process imports/exports after all modules exist
+        // for module in &self.modules {
+        //     for import in &module.imports {
+        //         tree.register_import(module.id, import.clone())?;
+        //     }
+        //     for export_id in &module.exports {
+        //         tree.register_export(module.id, *export_id)?;
+        //     }
+        // }
+
+        Ok(tree)
+    }
+
+    /// Filters and allocates a new Vec for direct children of module id.
+    pub fn get_child_modules(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+        self.relations
+            .iter()
+            .filter(|r| r.source == GraphId::Node(module_id) && r.kind == RelationKind::Contains)
+            .filter_map(|r| match r.target {
+                GraphId::Node(id) => self.get_module(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn get_child_modules_inline(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+        self.get_child_modules(module_id)
+            .into_iter()
+            .filter(|m| matches!(m.module_def, ModuleDef::Inline { .. }))
+            .collect()
+    }
+
+    pub fn get_child_modules_decl(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+        self.get_child_modules(module_id)
+            .into_iter()
+            .filter(|m| matches!(m.module_def, ModuleDef::Declaration { .. }))
+            .collect()
+    }
+
+    pub fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
+        self.find_module_by_path(&["crate".to_string()])
+            .ok_or(SynParserError::RootModuleNotFound)
+    }
+
+    pub fn get_root_module(&self) -> Option<&ModuleNode> {
+        self.find_module_by_path(&["crate".to_string()])
+    }
+
     /// Finds a module node by its full path.
     pub fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
         self.modules.iter().find(|m| m.path == path)
+    }
+    /// Finds a module node by its full path, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the modules, collects all matching `ModuleNode`s based on the path,
+    /// and returns:
+    /// - `Ok(&ModuleNode)` if exactly one match is found.
+    /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
+    pub fn find_module_by_path_checked(
+        &self,
+        path: &[String],
+    ) -> Result<&ModuleNode, SynParserError> {
+        let mut matches = self.modules.iter().filter(|m| m.path == path);
+        let first = matches.next();
+        if matches.next().is_some() {
+            // Convert path slice to Vec<String> for the error variant
+            return Err(SynParserError::DuplicateModulePath(path.to_vec()));
+        }
+        first.ok_or_else(|| SynParserError::ModulePathNotFound(path.to_vec()))
     }
     pub fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         self.type_graph.iter().find(|t| t.id == type_id)
@@ -504,31 +783,4 @@ impl CodeGraph {
         }
         first.ok_or(SynParserError::NotFound(id))
     }
-}
-
-// Main structure representing the entire code graph
-// Derive Send and Sync automatically since all component types implement them
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CodeGraph {
-    // Functions defined in the code
-    pub functions: Vec<FunctionNode>,
-    // Types (structs, enums) defined in the code
-    pub defined_types: Vec<TypeDefNode>,
-    // All observed types, including nested and generic types
-    pub type_graph: Vec<TypeNode>,
-    // Implementation blocks
-    pub impls: Vec<ImplNode>,
-    // Public traits defined in the code
-    pub traits: Vec<TraitNode>,
-    // Private traits defined in the code
-    pub private_traits: Vec<TraitNode>,
-    // Relations between nodes
-    pub relations: Vec<Relation>,
-    // Modules defined in the code
-    pub modules: Vec<ModuleNode>,
-    // Constants and static variables
-    pub values: Vec<ValueNode>,
-    // Macros defined in the code
-    pub macros: Vec<MacroNode>,
-    pub use_statements: Vec<ImportNode>,
 }
