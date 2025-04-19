@@ -2,6 +2,7 @@ pub mod channel;
 pub mod graph; // Make these public
 pub mod module_tree;
 pub mod nodes;
+pub mod relation_builder;
 pub mod relations;
 pub mod types;
 pub mod utils;

@@ -5,20 +5,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
 
-use super::nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath};
+use super::{
+    nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
+    relations::Relation,
+    CodeGraph,
+};
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
+    // ModuleNodeId of the root file-level module, e.g. `main.rs`, `lib.rs`, used to initialize the
+    // ModuleTree.
     root: ModuleNodeId,
+    // Index of all modules in the merged `CodeGraph`, in a HashMap for efficient lookup
     modules: HashMap<ModuleNodeId, ModuleNode>,
     // Temporary storage for unresolved imports (e.g. `use` statements)
     pending_imports: Vec<PendingImport>,
+    // Temporary storage for unresolved exports (e.g. `pub use` statements)
+    pending_exports: Vec<PendingExport>,
     // pending_mod_decl: Vec<PendingModDecl>,
-    // Reverse indexes (built during resolution)
+    // Reverse indexes
     path_index: HashMap<NodePath, NodeId>,
-    // TODO: Use export_index during Phase 3 resolution for re-exports.
-    #[allow(dead_code)]
-    export_index: HashMap<NodeId, Vec<ImportNode>>,
 }
 
 // #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -46,6 +52,21 @@ impl PendingImport {
         PendingImport {
             module_node_id: ModuleNodeId::new(import.id),
             import_node: import,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PendingExport {
+    module_node_id: ModuleNodeId,
+    export_node: ImportNode,
+}
+
+impl PendingExport {
+    fn from_export(export: ImportNode) -> Self {
+        PendingExport {
+            module_node_id: ModuleNodeId::new(export.id),
+            export_node: export,
         }
     }
 }
@@ -79,9 +100,9 @@ impl ModuleTree {
             root,
             modules: HashMap::new(),
             pending_imports: vec![],
+            pending_exports: vec![],
             // pending_mod_decl: vec![],
             path_index: HashMap::new(),
-            export_index: HashMap::new(),
         }
     }
 
@@ -90,7 +111,14 @@ impl ModuleTree {
         self.pending_imports.extend(
             imports
                 .iter()
+                .filter(|imp| imp.is_inherited_use())
                 .map(|imp| PendingImport::from_import(imp.clone())),
+        );
+        self.pending_exports.extend(
+            imports
+                .iter()
+                .filter(|imp| imp.is_reexport())
+                .map(|imp| PendingExport::from_export(imp.clone())),
         );
 
         let node_path = NodePath::try_from(module.defn_path())?;
@@ -106,7 +134,15 @@ impl ModuleTree {
             // Box the duplicate node when creating the error variant
             return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
         }
+
         Ok(())
+    }
+
+    pub fn build_file_rels(&mut self, graph: &CodeGraph) {
+        let mut new_contains: Vec<Relation> = Vec::new();
+        for module in graph.modules.iter().filter(|m| m.is_file_based()) {
+            self.path_index.get(module.defn_path());
+        }
     }
 }
 
