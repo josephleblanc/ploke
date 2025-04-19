@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ResolutionError, SynParserError};
+use crate::error::SynParserError;
 
 use super::nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath};
 
@@ -83,8 +83,7 @@ impl ModuleTree {
         }
     }
 
-    /// Initial processing of module into the module tree
-    pub fn add_module(&mut self, module: ModuleNode) -> Result<(), Box<ModuleTreeError>> {
+    pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
         let imports = module.imports.clone();
         self.pending_imports.extend(
             imports
@@ -95,12 +94,12 @@ impl ModuleTree {
         let node_path = NodePath::try_from(module.defn_path())?;
         let dup_path = self.path_index.insert(node_path, NodeId::from(module.id));
         if let Some(dup) = dup_path {
-            return Err(Box::new(ModuleTreeError::DuplicatePath(dup)));
+            return Err(ModuleTreeError::DuplicatePath(dup));
         }
         // insert module to tree
         let dup_node = self.modules.insert(ModuleNodeId::new(module.id()), module);
         if let Some(dup) = dup_node {
-            return Err(Box::new(ModuleTreeError::DuplicateModuleId(dup)));
+            return Err(ModuleTreeError::DuplicateModuleId(dup));
         }
         Ok(())
     }
@@ -132,14 +131,14 @@ impl ModuleTree {
 // }
 
 impl ModuleTree {
-    pub fn resolve_path(&self, path: &[String]) -> Result<ModuleNodeId, Box<SynParserError>> {
+    pub fn resolve_path(&self, _path: &[String]) -> Result<ModuleNodeId, Box<SynParserError>> {
         // 1. Try direct canonical path match
         // 2. Check re-exports in parent modules
         // 3. Try relative paths (self/super/crate)
         todo!()
     }
 
-    pub fn shortest_public_path(&self, module_id: ModuleNodeId) -> Vec<String> {
+    pub fn shortest_public_path(&self, _module_id: ModuleNodeId) -> Vec<String> {
         // Returns the shortest accessible path considering visibility
         todo!()
     }
