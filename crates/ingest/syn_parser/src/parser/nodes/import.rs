@@ -111,3 +111,9 @@ pub enum ImportKind {
     ExternCrate,
     UseStatement(VisibilityKind),
 }
+
+// AI: Please implement a method for `ImportNode` that will tell us if this is a re-export, e.g.
+// `pub use some::import::path::Item;`, etc.
+//
+//
+// Go ahead and implement the new method. Remember to follow best rust practices AI!

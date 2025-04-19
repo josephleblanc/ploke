@@ -133,6 +133,7 @@ impl GenericParamKind {
 //  - Good jumping off point to find more docs/source describing exactly how visibility is handled,
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum VisibilityKind {
+    // AI: VisibilityKind details here
     Public,
     Crate,
     Restricted(Vec<String>), // Path components of restricted visibility
