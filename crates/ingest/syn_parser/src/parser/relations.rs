@@ -1,6 +1,14 @@
 use ploke_core::NodeId;
 use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
+use thiserror::Error; // Add thiserror import
+
+// Define the new error type
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RelationConversionError {
+    #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
+    NotApplicable(RelationKind),
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum GraphId {
