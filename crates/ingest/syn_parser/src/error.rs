@@ -1,7 +1,7 @@
 use ploke_core::NodeId;
 use thiserror::Error;
 
-use crate::parser::nodes::ModuleNode;
+use crate::parser::nodes::{ModuleNode, NodeError};
 
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -77,10 +77,10 @@ impl From<std::io::Error> for SynParserError {
 }
 
 // Implement From<NodeError> for SynParserError
-impl From<super::nodes::NodeError> for SynParserError {
-    fn from(err: super::nodes::NodeError) -> Self {
+impl From<NodeError> for SynParserError {
+    fn from(err: crate::parser::nodes::NodeError) -> Self {
         match err {
-            super::nodes::NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
+            NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
             // Add other NodeError variants here if they exist in the future
         }
     }
