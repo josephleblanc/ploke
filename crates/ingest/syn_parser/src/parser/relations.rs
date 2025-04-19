@@ -60,20 +60,25 @@ pub enum RelationKind {
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
-}
+use std::convert::TryInto; // Import TryInto trait
 
 impl RelationKind {
-    // AI: Use the `try_into` implementation and `.is_err()` to fill out these methods AI!
-    pub fn is_scoping() {
-        todo!()
+    /// Checks if this relation kind implies a scoping relationship (either requiring a parent or allowing use).
+    /// Returns `true` if `try_into::<ScopeKind>()` succeeds, `false` otherwise.
+    pub fn is_scoping(self) -> bool {
+        self.try_into().is_ok()
     }
 
-    pub fn is_parent_required() {
-        todo!()
+    /// Checks if this relation kind specifically requires a parent scope.
+    /// Returns `true` if `try_into::<ScopeKind>()` results in `Ok(ScopeKind::RequiresParent)`.
+    pub fn is_parent_required(self) -> bool {
+        matches!(self.try_into(), Ok(ScopeKind::RequiresParent))
     }
 
-    pub fn is_use() {
-        todo!()
+    /// Checks if this relation kind represents a usage relationship (can use).
+    /// Returns `true` if `try_into::<ScopeKind>()` results in `Ok(ScopeKind::CanUse)`.
+    pub fn is_use(self) -> bool {
+        matches!(self.try_into(), Ok(ScopeKind::CanUse))
     }
 }
 
