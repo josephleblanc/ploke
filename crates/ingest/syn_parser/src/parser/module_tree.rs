@@ -91,6 +91,9 @@ pub enum ModuleTreeError {
 
     #[error("Definition not found in path_index for path: {0}")]
     DefinitionNotFound(NodePath), // Store the path that wasn't found
+
+    #[error("Containing module not found for node ID: {0}")]
+    ContainingModuleNotFound(NodeId), // Added error variant
 }
 
 impl ModuleTree {
@@ -193,8 +196,9 @@ impl ModuleTree {
             .iter()
             .find(|m| m.items().is_some_and(|m| m.contains(&node.id())))
             .map(|m| m.visibility())
-            .unwrap_or(ModuleTreeError::PathNotFound)?; // Create a new error variant AI!
-        todo!()
+            // Use ok_or_else to handle Option and create the specific error
+            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node.id()))?;
+        todo!() // Rest of the visibility logic still needs implementation
     }
 
     pub fn shortest_public_path(&self, id: NodeId) -> Result<Vec<String>, ModuleTreeError> {
