@@ -61,30 +61,26 @@ pub enum ScopeKind {
 }
 
 impl TryInto<ScopeKind> for RelationKind {
-    // AI: Correct the `None` values to an appropriate Error
-    type Error;
+    type Error = RelationConversionError; // Use the new error type
 
     fn try_into(self) -> Result<ScopeKind, Self::Error> {
-        match Self {
+        match self {
             Self::FunctionParameter => Ok(ScopeKind::RequiresParent),
             Self::FunctionReturn => Ok(ScopeKind::RequiresParent),
             Self::StructField => Ok(ScopeKind::RequiresParent),
             Self::Method => Ok(ScopeKind::RequiresParent),
             Self::EnumVariant => Ok(ScopeKind::RequiresParent),
             Self::VariantField => Ok(ScopeKind::RequiresParent),
-            Self::ImplementsFor => None,
-            Self::ImplementsTrait => None,
-            Self::Inherits => None,
-            Self::References => None,
+            Self::ImplementsFor => Err(RelationConversionError::NotApplicable(self)),
+            Self::ImplementsTrait => Err(RelationConversionError::NotApplicable(self)),
+            Self::Inherits => Err(RelationConversionError::NotApplicable(self)),
+            Self::References => Err(RelationConversionError::NotApplicable(self)),
             Self::Contains => Ok(ScopeKind::CanUse),
             Self::Uses => Ok(ScopeKind::CanUse),
             Self::ValueType => Ok(ScopeKind::CanUse),
-            Self::MacroUse => None, // We don't handle macros too much.
+            Self::MacroUse => Err(RelationConversionError::NotApplicable(self)), // We don't handle macros too much.
             Self::ModuleImports => Ok(ScopeKind::CanUse),
-            Self::ResolvesToDefinition => None,
+            Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
         }
     }
 }
-
-// AI: Implement a new custom error type.
-// It should use thiserror, and be compatable `SynParserError` AI!

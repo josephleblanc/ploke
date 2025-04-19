@@ -66,6 +66,9 @@ pub enum SynParserError {
 
     #[error("Module definition not found for path: {0}")]
     ModuleDefinitionNotFound(String), // Store path string representation
+
+    #[error("Relation conversion error: {0}")]
+    RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
