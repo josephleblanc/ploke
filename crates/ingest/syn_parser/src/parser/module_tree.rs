@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
-use ploke_core::NodeId;
+use ploke_core::{IdTrait, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
 
 use super::{
     nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
-    relations::Relation,
+    relations::{GraphId, Relation, RelationKind},
     CodeGraph,
 };
 
@@ -142,11 +142,18 @@ impl ModuleTree {
         let mut new_contains: Vec<Relation> = Vec::new();
         for module in graph.modules.iter().filter(|m| m.is_file_based()) {
             // Get the Vec<String> path
-            let defn_path_vec = module.defn_path();
-            // Pass a slice reference &[String] to get, leveraging the Borrow trait
-            // Note: We are just calling .get() here, not using the result yet.
-            // This function likely needs further implementation later.
-            let _ = self.path_index.get(defn_path_vec.as_slice());
+
+            let decl_id = self
+                .path_index
+                .get(module.defn_path().as_slice())
+                // AI: Need to implement this new error type
+                .unwrap_or_else(|| ModuleTreeError::DefinitionNotFound(Box::new(module)));
+            new_contains.push(Relation {
+                source: GraphId::Node(module.id()),
+                target: GraphId::Node(decl_id.uuid()), // AI: needs ModuleId -> NodeId, can you implement trait?
+                kind: RelationKind::Contains,
+            })
+            // AI!
         }
     }
 }
