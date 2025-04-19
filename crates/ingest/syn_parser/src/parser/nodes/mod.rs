@@ -80,12 +80,16 @@ impl Display for NodePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.join("::"))
     }
+use crate::error::SynParserError; // Add import for SynParserError
+
 }
 
 impl NodePath {
-    pub fn new(segments: Vec<String>) -> Result<Self, NodeError> {
+    pub fn new(segments: Vec<String>) -> Result<Self, SynParserError> {
         if segments.is_empty() {
-            return Err(NodeError::Validation("Empty module path".into()));
+            // The `?` operator won't work here directly as we need to construct the error first.
+            // We return the specific SynParserError variant directly.
+            return Err(SynParserError::NodeValidation("Empty module path".into()));
         }
         Ok(Self(segments))
     }
@@ -120,17 +124,20 @@ mod tests {
     }
 }
 
-// For ergonomic conversions
-impl From<Vec<String>> for NodePath {
-    fn from(value: Vec<String>) -> Self {
-        Self::new(value).expect("Invalid empty module path")
-    }
-}
-
 // Add these trait implementations
 impl AsRef<[String]> for NodePath {
     fn as_ref(&self) -> &[String] {
         &self.0
+    }
+}
+
+// Implement TryFrom for fallible conversion from Vec<String>
+impl TryFrom<Vec<String>> for NodePath {
+    type Error = SynParserError; // The error type is SynParserError
+
+    fn try_from(value: Vec<String>) -> Result<Self, Self::Error> {
+        // Call the fallible `new` method and propagate its error using `?`
+        NodePath::new(value)
     }
 }
 

@@ -51,6 +51,10 @@ pub enum SynParserError {
 
     #[error("Resolution error: {0}")]
     ResolutionError(#[from] ResolutionError),
+
+    /// Indicates a validation error related to node structure (e.g., NodePath).
+    #[error("Node validation error: {0}")]
+    NodeValidation(String),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -69,6 +73,16 @@ pub enum ResolutionError {
 impl From<std::io::Error> for SynParserError {
     fn from(err: std::io::Error) -> Self {
         SynParserError::Io(err.to_string())
+    }
+}
+
+// Implement From<NodeError> for SynParserError
+impl From<super::nodes::NodeError> for SynParserError {
+    fn from(err: super::nodes::NodeError) -> Self {
+        match err {
+            super::nodes::NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
+            // Add other NodeError variants here if they exist in the future
+        }
     }
 }
 
