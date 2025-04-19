@@ -1,6 +1,8 @@
 use ploke_core::NodeId;
 use thiserror::Error;
 
+use crate::parser::nodes::ModuleNode;
+
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum SynParserError {
@@ -11,6 +13,9 @@ pub enum SynParserError {
     /// Indicates that multiple nodes were found when exactly one was expected.
     #[error("Duplicate node found for ID {0} when only one was expected.")]
     DuplicateNode(NodeId),
+
+    #[error("Duplicate node found for ModuleNode in ModuleTree construction: {0:?} ")]
+    DuplicateInModuleTree(ModuleNode),
 
     /// Represents an I/O error during file discovery or reading.
     #[error("I/O error: {0}")]
@@ -43,6 +48,21 @@ pub enum SynParserError {
     /// Indicates that multiple modules were found for the specified path.
     #[error("Duplicate modules found for path {0:?}.")]
     DuplicateModulePath(Vec<String>),
+
+    #[error("Resolution error: {0}")]
+    ResolutionError(#[from] ResolutionError),
+}
+
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+pub enum ResolutionError {
+    #[error("Private item: {0:?}")]
+    PrivateItem(Vec<String>),
+
+    #[error("Ambiguous path. Candidates: {0:?}")]
+    AmbiguousPath(Vec<Vec<String>>),
+
+    #[error("Not found: {0:?}")]
+    NotFound(Vec<String>),
 }
 
 // Optional: Implement From<std::io::Error> for SynParserError

@@ -10,8 +10,25 @@ mod type_alias;
 mod union;
 mod value;
 
+use std::fmt::Display;
+
+use super::types::VisibilityKind;
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
+
+// Re-export all node types from submodules
+pub use enums::{EnumNode, VariantNode};
+pub use function::{FunctionNode, ParamData};
+pub use impls::ImplNode;
+pub use import::{ImportKind, ImportNode};
+pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
+pub use module::{ModuleDef, ModuleNode};
+pub use structs::{FieldNode, StructNode};
+pub use traits::TraitNode;
+pub use type_alias::TypeAliasNode;
+pub use union::UnionNode;
+pub use value::{ValueKind, ValueNode};
+// ... other re-exports
 
 /// Core trait for all graph nodes
 pub trait GraphNode {
@@ -29,24 +46,96 @@ pub enum NodeError {
     // ... others
 }
 
-// Re-export all node types from submodules
-pub use enums::{EnumNode, VariantNode};
-pub use function::{FunctionNode, ParamData};
-pub use impls::ImplNode;
-pub use import::{ImportKind, ImportNode};
-pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
-pub use module::{ModuleDef, ModuleNode};
-pub use structs::{FieldNode, StructNode};
-pub use traits::TraitNode;
-pub use type_alias::TypeAliasNode;
-pub use union::UnionNode;
-pub use value::{ValueKind, ValueNode};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleNodeId(NodeId);
+impl ModuleNodeId {
+    /// Create from raw NodeId
+    pub fn new(id: NodeId) -> Self {
+        Self(id)
+    }
 
-use super::types::VisibilityKind;
-// ... other re-exports
+    /// Get inner NodeId
+    pub fn into_inner(self) -> NodeId {
+        self.0
+    }
+
+    /// Get reference to inner NodeId
+    pub fn as_inner(&self) -> &NodeId {
+        &self.0
+    }
+}
+
+/// Full module path name,
+/// e.g. for an item in project/src/a/mod.rs mod b { fn func() {} }
+///     ["project", "a", "b", "func"]
+/// May be composed of relative or absolute elements, e.g. "super", "crate"
+/// Glob imports are included.
+/// Will not contain "self" (already resolved in Phase 2 processing)
+///     - see `visit_item_use` method of `CodeGraph` in code_graph.rs for details on resolution of
+///     `syn::UseTree` into ImportNode.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct NodePath(Vec<String>);
+
+impl Display for NodePath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join("::"))
+    }
+}
+
+impl NodePath {
+    pub fn new(segments: Vec<String>) -> Result<Self, NodeError> {
+        if segments.is_empty() {
+            return Err(NodeError::Validation("Empty module path".into()));
+        }
+        Ok(Self(segments))
+    }
+
+    pub fn as_segments(&self) -> &[String] {
+        &self.0
+    }
+
+    // Conversion helpers
+    pub fn from_str_path(path: &str) -> Self {
+        Self(path.split("::").map(|s| s.to_string()).collect())
+    }
+
+    // Compare with any string-like iterator
+    pub fn matches<'a, I>(&self, other: I) -> bool
+    where
+        I: Iterator<Item = &'a str>,
+    {
+        self.0.iter().map(|s| s.as_str()).eq(other)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mod_paths() {
+        let path = NodePath::new(vec!["crate".into(), "mod_a".into()]).unwrap();
+        assert!(path.matches(["crate", "mod_a"].into_iter()));
+        assert!(!path.matches(["mod_a"].into_iter()));
+    }
+}
+
+// For ergonomic conversions
+impl From<Vec<String>> for NodePath {
+    fn from(value: Vec<String>) -> Self {
+        Self::new(value).expect("Invalid empty module path")
+    }
+}
+
+// Add these trait implementations
+impl AsRef<[String]> for NodePath {
+    fn as_ref(&self) -> &[String] {
+        &self.0
+    }
+}
 
 // Represent an attribute
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Attribute {
     pub span: (usize, usize),  // Byte start/end offsets
     pub name: String,          // e.g., "derive", "cfg", "serde"
