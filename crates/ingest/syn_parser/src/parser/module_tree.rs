@@ -16,6 +16,8 @@ pub struct ModuleTree {
     // pending_mod_decl: Vec<PendingModDecl>,
     // Reverse indexes (built during resolution)
     path_index: HashMap<NodePath, NodeId>,
+    // TODO: Use export_index during Phase 3 resolution for re-exports.
+    #[allow(dead_code)]
     export_index: HashMap<NodeId, Vec<ImportNode>>,
 }
 

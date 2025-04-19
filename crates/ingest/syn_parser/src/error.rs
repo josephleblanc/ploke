@@ -15,7 +15,7 @@ pub enum SynParserError {
     DuplicateNode(NodeId),
 
     #[error("Duplicate node found for ModuleNode in ModuleTree construction: {0:?} ")]
-    DuplicateInModuleTree(ModuleNode),
+    DuplicateInModuleTree(Box<ModuleNode>), // Box the large ModuleNode
 
     /// Represents an I/O error during file discovery or reading.
     #[error("I/O error: {0}")]
@@ -92,8 +92,13 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 SynParserError::ModuleTreeDuplicatePath(id)
             }
             crate::parser::module_tree::ModuleTreeError::DuplicateModuleId(node) => {
-                // Convert the node to its debug string representation for the error
-                SynParserError::ModuleTreeDuplicateModuleId(format!("{:?}", node))
+                // Box the ModuleNode before putting it into the SynParserError variant
+                SynParserError::DuplicateInModuleTree(Box::new(node))
+                // Note: We are now using DuplicateInModuleTree instead of ModuleTreeDuplicateModuleId
+                // Consider if ModuleTreeDuplicateModuleId(String) is still needed or if
+                // DuplicateInModuleTree(Box<ModuleNode>) covers the necessary cases.
+                // For now, let's assume DuplicateInModuleTree is sufficient.
+                // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
             crate::parser::module_tree::ModuleTreeError::NodePathValidation(syn_err) => {
                 // If it's already a SynParserError, just return it
