@@ -94,7 +94,8 @@ impl ModuleTree {
         );
 
         let node_path = NodePath::try_from(module.defn_path())?;
-        let dup_path = self.path_index.insert(node_path, NodeId::from(module.id));
+        // Use module.id() directly, removing the useless NodeId::from() conversion.
+        let dup_path = self.path_index.insert(node_path, module.id());
         if let Some(dup) = dup_path {
             return Err(ModuleTreeError::DuplicatePath(dup));
         }
