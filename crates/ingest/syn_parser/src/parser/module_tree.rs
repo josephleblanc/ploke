@@ -141,13 +141,12 @@ impl ModuleTree {
     pub fn build_file_rels(&mut self, graph: &CodeGraph) {
         let mut new_contains: Vec<Relation> = Vec::new();
         for module in graph.modules.iter().filter(|m| m.is_file_based()) {
-            // Convert the Vec<String> to NodePath before getting
-            if let Ok(node_path) = NodePath::try_from(module.defn_path()) {
-                 self.path_index.get(&node_path); // Pass &NodePath
-            } else {
-                // Handle or log the error if NodePath creation fails (e.g., empty path)
-                eprintln!("Warning: Could not create NodePath for module {:?}", module.id);
-            }
+            // Get the Vec<String> path
+            let defn_path_vec = module.defn_path();
+            // Pass a slice reference &[String] to get, leveraging the Borrow trait
+            // Note: We are just calling .get() here, not using the result yet.
+            // This function likely needs further implementation later.
+            let _ = self.path_index.get(defn_path_vec.as_slice());
         }
     }
 }
