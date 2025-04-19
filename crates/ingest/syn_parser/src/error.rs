@@ -115,7 +115,6 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
     }
 }
 
-
 // Implement From<NodeError> for SynParserError
 impl From<NodeError> for SynParserError {
     fn from(err: crate::parser::nodes::NodeError) -> Self {

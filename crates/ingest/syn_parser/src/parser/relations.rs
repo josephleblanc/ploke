@@ -27,7 +27,6 @@ pub struct Relation {
     pub kind: RelationKind,
 }
 
-// ANCHOR: Uses
 // Different kinds of relations
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RelationKind {
@@ -46,9 +45,46 @@ pub enum RelationKind {
     ValueType,
     MacroUse,
     ModuleImports,
+    /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
+    /// `mod foo { ... }`).
+    /// Direction: `Declaration ModuleNode` -> `Definition ModuleNode`.
+    ResolvesToDefinition,
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
 }
-//ANCHOR_END: Uses
-//ANCHOR_END: Relation
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ScopeKind {
+    RequiresParent,
+    CanUse,
+}
+
+impl TryInto<ScopeKind> for RelationKind {
+    // AI: Correct the `None` values to an appropriate Error
+    type Error;
+
+    fn try_into(self) -> Result<ScopeKind, Self::Error> {
+        match Self {
+            Self::FunctionParameter => Ok(ScopeKind::RequiresParent),
+            Self::FunctionReturn => Ok(ScopeKind::RequiresParent),
+            Self::StructField => Ok(ScopeKind::RequiresParent),
+            Self::Method => Ok(ScopeKind::RequiresParent),
+            Self::EnumVariant => Ok(ScopeKind::RequiresParent),
+            Self::VariantField => Ok(ScopeKind::RequiresParent),
+            Self::ImplementsFor => None,
+            Self::ImplementsTrait => None,
+            Self::Inherits => None,
+            Self::References => None,
+            Self::Contains => Ok(ScopeKind::CanUse),
+            Self::Uses => Ok(ScopeKind::CanUse),
+            Self::ValueType => Ok(ScopeKind::CanUse),
+            Self::MacroUse => None, // We don't handle macros too much.
+            Self::ModuleImports => Ok(ScopeKind::CanUse),
+            Self::ResolvesToDefinition => None,
+        }
+    }
+}
+
+// AI: Implement a new custom error type.
+// It should use thiserror, and be compatable `SynParserError` AI!
