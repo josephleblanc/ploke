@@ -108,17 +108,15 @@ impl ImportNode {
     ///
     /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
     /// Returns `false` otherwise (including for `extern crate` or non-public `use` statements).
+    // We need to account for more situations as well. What about pub(crate) or pub(in path)? AI!
     pub fn is_reexport(&self) -> bool {
-        matches!(
-            self.kind,
-            ImportKind::UseStatement(VisibilityKind::Public)
-        )
+        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Public))
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
-    ImportNode, // Placeholder or potentially for future import types
+    ImportNode,                   // Placeholder or potentially for future import types
     ExternCrate, // Represents an `extern crate foo;` or `extern crate foo as Bar;` statement
     UseStatement(VisibilityKind), // Represents a `use` statement, capturing its visibility
 }
