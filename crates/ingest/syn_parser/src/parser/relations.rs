@@ -62,6 +62,21 @@ pub enum RelationKind {
     // would probably go here.
 }
 
+impl RelationKind {
+    // AI: Use the `try_into` implementation and `.is_err()` to fill out these methods AI!
+    pub fn is_scoping() {
+        todo!()
+    }
+
+    pub fn is_parent_required() {
+        todo!()
+    }
+
+    pub fn is_use() {
+        todo!()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScopeKind {
     RequiresParent,
