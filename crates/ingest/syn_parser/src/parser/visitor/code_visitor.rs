@@ -42,6 +42,7 @@ impl<'a> CodeVisitor<'a> {
         tree: &syn::UseTree,
         base_path: &[String],
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+        vis_kind: &VisibilityKind,
     ) -> Vec<ImportNode> {
         let mut imports = Vec::new();
 
@@ -50,7 +51,7 @@ impl<'a> CodeVisitor<'a> {
                 let mut new_base = base_path.to_vec();
                 new_base.push(path.ident.to_string());
 
-                imports.extend(self.process_use_tree(&path.tree, &new_base, cfg_bytes));
+                imports.extend(self.process_use_tree(&path.tree, &new_base, cfg_bytes, vis_kind));
                 // Pass cfg_bytes down
             }
             syn::UseTree::Name(name) => {
@@ -77,7 +78,7 @@ impl<'a> CodeVisitor<'a> {
                 imports.push(ImportNode {
                     id: import_id,
                     path: full_path,
-                    kind: ImportKind::UseStatement,
+                    kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: checked_name,
                     original_name: None,
                     is_glob: false,
@@ -104,7 +105,7 @@ impl<'a> CodeVisitor<'a> {
                 imports.push(ImportNode {
                     id: import_id,
                     path: full_path, // Path uses original name segment
-                    kind: ImportKind::UseStatement,
+                    kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name,                       // The 'as' name
                     original_name: Some(original_name), // The original name before 'as'
                     is_glob: false,
@@ -127,7 +128,7 @@ impl<'a> CodeVisitor<'a> {
                 imports.push(ImportNode {
                     id: import_id,
                     path: full_path, // Path to the glob
-                    kind: ImportKind::UseStatement,
+                    kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: "*".to_string(), // Visual representation
                     original_name: None,
                     is_glob: true,
@@ -138,7 +139,7 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
-                    imports.extend(self.process_use_tree(item, base_path, cfg_bytes));
+                    imports.extend(self.process_use_tree(item, base_path, cfg_bytes, vis_kind));
                     // Pass cfg_bytes down
                 }
             }
@@ -1620,8 +1621,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         } else {
             Vec::new() // Relative path
         };
+
+        let vis_kind = self.state.convert_visibility(&use_item.vis);
         // Pass cfg_bytes down to process_use_tree
-        let imports = self.process_use_tree(&use_item.tree, &base_path, cfg_bytes.as_deref());
+        let imports =
+            self.process_use_tree(&use_item.tree, &base_path, cfg_bytes.as_deref(), &vis_kind);
 
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;

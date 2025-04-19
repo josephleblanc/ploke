@@ -24,7 +24,9 @@ members = [
     "tests/fixture_crates/fixture_macros",
     "tests/fixture_crates/fixture_tracking_hash",
     "tests/fixture_crates/fixture_types",
-    "tests/fixture_crates/simple_crate", "tests/fixture_crates/fixture_nodes", "tests/fixture_crates/fixture_conflation",
+    "tests/fixture_crates/simple_crate",
+    "tests/fixture_crates/fixture_nodes",
+    "tests/fixture_crates/fixture_conflation",
     # Add more modules as needed
 ]
 
@@ -52,6 +54,9 @@ uuid = { version = "1.16.0", features = ["v5", "atomic"] }
 
 # Error handling
 thiserror = "2"
+
+# Debugging
+log = "0.4"
 
 [workspace.metadata]
 fixtures_dir = "tests/fixtures"

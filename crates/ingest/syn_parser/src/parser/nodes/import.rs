@@ -25,7 +25,7 @@ use super::*;
 ///     visible_name: "HashMap",
 ///     original_name: None,
 ///     is_glob: false,
-///     kind: ImportKind::UseStatement,
+///     kind: ImportKind::UseStatement(_),
 ///     ...
 /// }
 /// ```
@@ -42,7 +42,7 @@ use super::*;
 ///         visible_name: "Map",
 ///         original_name: Some("HashMap"),
 ///         is_glob: false,
-///         kind: ImportKind::UseStatement,
+///         kind: ImportKind::UseStatement(_),
 ///         ...
 ///     },
 ///     ImportNode {
@@ -50,7 +50,7 @@ use super::*;
 ///         visible_name: "BTreeSet",
 ///         original_name: None,
 ///         is_glob: false,
-///         kind: ImportKind::UseStatement,
+///         kind: ImportKind::UseStatement(_),
 ///         ...
 ///     }
 /// ]
@@ -67,11 +67,11 @@ use super::*;
 ///     visible_name: "public_api",
 ///     original_name: Some("api"),
 ///     is_glob: false,
-///     kind: ImportKind::UseStatement,
+///     kind: ImportKind::UseStatement(_),
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
     pub id: NodeId,
@@ -105,9 +105,9 @@ impl ImportNode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
     ImportNode,
     ExternCrate,
-    UseStatement,
+    UseStatement(VisibilityKind),
 }

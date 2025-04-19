@@ -279,6 +279,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "colored"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fde0e0ec90c9dfb3b4b1a0891a7dcd0e2bffde2f7efed5fe7c9bb00e5bfb915e"
+dependencies = [
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1914,9 +1923,11 @@ dependencies = [
 name = "syn_parser"
 version = "0.1.0"
 dependencies = [
+ "colored",
  "cozo",
  "dashmap 6.1.0",
  "flume",
+ "log",
  "petgraph",
  "ploke-common",
  "ploke-core",

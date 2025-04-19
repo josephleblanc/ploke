@@ -1,47 +1,18 @@
 use crate::common::uuid_ids_utils::*;
-use ploke_common::{fixtures_crates_dir, workspace_root};
+use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
-use syn_parser::{
-    discovery::run_discovery_phase,
-    parser::{
-        analyze_files_parallel,
-        nodes::{ImportNode, GraphNode},
-        relations::{GraphId, RelationKind},
-        visitor::ParsedCodeGraph,
-    },
+use syn_parser::parser::{
+    nodes::{GraphNode, ImportNode},
+    relations::{GraphId, RelationKind},
 };
 // ----- paranoid helper functions ------
 use crate::common::paranoid::{
     find_declaration_node_paranoid, find_file_module_node_paranoid,
     find_inline_module_node_paranoid,
 };
-
-// Helper function to run Phase 1 & 2 and collect results
-fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
-    let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
-        .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
-
-    let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
-        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
-
-    // Collect successful results, panicking if any file failed to parse in Phase 2
-    results_with_errors
-        .into_iter()
-        .map(|res| {
-            res.unwrap_or_else(|e| {
-                panic!(
-                    "Phase 2 parsing failed for a file in fixture {}: {:?}",
-                    fixture_name, e
-                )
-            })
-        })
-        .collect()
-}
 
 #[test]
 fn test_module_node_top_pub_mod_paranoid() {

@@ -2,6 +2,8 @@ use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 
 use serde::{Deserialize, Serialize};
 
+use std::fmt;
+
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -129,13 +131,27 @@ impl GenericParamKind {
 //  - ~/clones/syn/src/restriction.rs
 //  - Contains definition of Visibility
 //  - Good jumping off point to find more docs/source describing exactly how visibility is handled,
-//  Questions:
-//  - What exactly is the `Path` type used in `VisRestricted`?
-//  - Can we link the `Path` type to a file and/or span?
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum VisibilityKind {
     Public,
     Crate,
     Restricted(Vec<String>), // Path components of restricted visibility
     Inherited,               // Default visibility
+}
+
+impl fmt::Display for VisibilityKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            VisibilityKind::Public => write!(f, "pub"),
+            VisibilityKind::Crate => write!(f, "pub(crate)"),
+            VisibilityKind::Restricted(path) => {
+                if path.is_empty() {
+                    write!(f, "pub")
+                } else {
+                    write!(f, "pub(in {})", path.join("::"))
+                }
+            }
+            VisibilityKind::Inherited => write!(f, ""), // Empty for inherited
+        }
+    }
 }

@@ -2,10 +2,12 @@ use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
-use syn_parser::parser::nodes::ImportKind; // Import ImportKind
+use syn_parser::parser::nodes::ImportKind;
+use syn_parser::parser::types::VisibilityKind;
+// Import ImportKind
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{ImportNode, GraphNode}, // Import ImportNode
+    nodes::{GraphNode, ImportNode}, // Import ImportNode
     relations::{GraphId, RelationKind},
 };
 
@@ -304,8 +306,8 @@ fn test_import_node_basic_smoke_test_full_parse() {
 
         // Check Kind Discriminant
         match (&node.kind, &kind_disc) {
-            (ImportKind::UseStatement, _) => {} // Match
-            (ImportKind::ExternCrate, _) => {}  // Match
+            (ImportKind::UseStatement(_), _) => {} // Match
+            (ImportKind::ExternCrate, _) => {}     // Match
             _ => panic!(
                 "Node '{}' path={:?}: Kind mismatch. Expected discriminant '{}', found {:?}",
                 name, node.path, kind_disc, node.kind
@@ -344,7 +346,7 @@ fn test_import_node_field_id_regeneration() {
 
     // Determine ItemKind based on the node found
     let item_kind = match node.kind {
-        ImportKind::UseStatement => ploke_core::ItemKind::Import,
+        ImportKind::UseStatement(_) => ploke_core::ItemKind::Import,
         ImportKind::ExternCrate => ploke_core::ItemKind::ExternCrate,
         ImportKind::ImportNode => ploke_core::ItemKind::Import, // Treat like UseStatement
     };
@@ -526,14 +528,16 @@ fn test_import_node_field_kind_use() {
         "collections".to_string(),
         "HashMap".to_string(),
     ];
-    let expected_kind = ImportKind::UseStatement;
+    let _expected_kind = ImportKind::UseStatement(VisibilityKind::Inherited);
 
     let node = find_import_node_basic(graph, &module_path, visible_name, expected_path_suffix);
 
-    assert_eq!(
-        node.kind, expected_kind,
+    assert!(
+        matches!(&node.kind, _expected_kind),
         "Kind mismatch for '{}'. Expected {:?}, Actual {:?}",
-        visible_name, expected_kind, node.kind
+        visible_name,
+        _expected_kind,
+        node.kind
     );
 }
 
@@ -1041,7 +1045,10 @@ fn test_import_node_paranoid_simple() {
         "Original name mismatch"
     );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
-    assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
+    assert!(
+        matches!(node.kind, ImportKind::UseStatement(_)),
+        "Kind mismatch"
+    );
     assert_ne!(node.span, (0, 0), "Span should not be default");
 
     // 3. Verify Relations
@@ -1129,7 +1136,10 @@ fn test_import_node_paranoid_renamed() {
         "Original name mismatch"
     );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
-    assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
+    assert!(
+        matches!(node.kind, ImportKind::UseStatement(_)),
+        "Kind mismatch"
+    );
     assert_ne!(node.span, (0, 0), "Span should not be default");
 
     // 3. Verify Relations
@@ -1216,7 +1226,10 @@ fn test_import_node_paranoid_glob() {
         "Original name mismatch"
     );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
-    assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
+    assert!(
+        matches!(node.kind, ImportKind::UseStatement(_)),
+        "Kind mismatch"
+    );
     assert_ne!(node.span, (0, 0), "Span should not be default");
 
     // 3. Verify Relations
@@ -1307,7 +1320,10 @@ fn test_import_node_paranoid_self() {
         "Original name mismatch"
     );
     assert_eq!(node.is_glob, expected_is_glob, "is_glob mismatch");
-    assert_eq!(node.kind, ImportKind::UseStatement, "Kind mismatch");
+    assert!(
+        matches!(node.kind, ImportKind::UseStatement(_)),
+        "Kind mismatch"
+    );
     assert_ne!(node.span, (0, 0), "Span should not be default");
 
     // 3. Verify Relations

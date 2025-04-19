@@ -1,10 +1,14 @@
-use std::path::PathBuf;
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+};
 
 use ploke_core::{NodeId, TrackingHash};
 
 use super::*;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+// #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
@@ -73,6 +77,24 @@ impl ModuleNode {
         }
     }
 
+    /// Returns the file path relative to a given `Path` if this is a file-based module,
+    /// None otherwise.
+    pub fn file_path_relative_to(&self, base: &Path) -> Option<&Path> {
+        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+            file_path.strip_prefix(base).ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn file_name(&self) -> Option<&OsStr> {
+        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+            file_path.file_name()
+        } else {
+            None
+        }
+    }
+
     /// Returns the file attributes if this is a file-based module, None otherwise
     pub fn file_attrs(&self) -> Option<&[Attribute]> {
         if let ModuleDef::FileBased { file_attrs, .. } = &self.module_def {
@@ -127,7 +149,7 @@ impl ModuleNode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ModuleDef {
     /// File-based module (src/module/mod.rs)
     FileBased {

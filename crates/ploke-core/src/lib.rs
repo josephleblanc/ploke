@@ -80,6 +80,12 @@ mod ids {
 
     use crate::PROJECT_NAMESPACE_UUID;
 
+    pub trait IdTrait {
+        fn uuid(&self) -> Uuid;
+        fn is_resolved(&self) -> bool;
+        fn is_synthetic(&self) -> bool;
+    }
+
     /// Unique identifier for code elements (functions, structs, modules, etc.).
     /// - `Resolved`: Stable ID based on the item's absolute path within the project/crate namespace.
     /// - `Synthetic`: Temporary ID generated during parallel parsing, resolved later to `Path` if possible.
@@ -186,13 +192,24 @@ mod ids {
 
             Self::Synthetic(uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
         }
-
+    }
+    impl IdTrait for NodeId {
         /// Returns the inner Uuid regardless of the variant (Resolved or Synthetic).
-        pub fn uuid(&self) -> Uuid {
+        fn uuid(&self) -> Uuid {
             match self {
                 NodeId::Resolved(uuid) => *uuid,
                 NodeId::Synthetic(uuid) => *uuid,
             }
+        }
+
+        /// Check if this is a Resolved variant
+        fn is_resolved(&self) -> bool {
+            matches!(self, NodeId::Resolved(_))
+        }
+
+        /// Check if this is a Synthetic variant
+        fn is_synthetic(&self) -> bool {
+            matches!(self, NodeId::Synthetic(_))
         }
     }
     impl std::fmt::Display for NodeId {
@@ -307,6 +324,25 @@ mod ids {
         //     // ... hash defining_crate_namespace + canonical_type_path ...
         //     Self::Resolved(resolved_uuid)
         // }
+    }
+    impl IdTrait for TypeId {
+        /// Returns the inner Uuid regardless of the variant (Resolved or Synthetic).
+        fn uuid(&self) -> Uuid {
+            match self {
+                TypeId::Resolved(uuid) => *uuid,
+                TypeId::Synthetic(uuid) => *uuid,
+            }
+        }
+
+        /// Check if this is a Resolved variant
+        fn is_resolved(&self) -> bool {
+            matches!(self, TypeId::Resolved(_))
+        }
+
+        /// Check if this is a Synthetic variant
+        fn is_synthetic(&self) -> bool {
+            matches!(self, TypeId::Synthetic(_))
+        }
     }
     impl std::fmt::Display for TypeId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -12,6 +12,8 @@ mod value;
 
 use std::fmt::Display;
 
+use crate::error::SynParserError;
+
 use super::types::VisibilityKind;
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
@@ -80,8 +82,6 @@ impl Display for NodePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.join("::"))
     }
-use crate::error::SynParserError; // Add import for SynParserError
-
 }
 
 impl NodePath {

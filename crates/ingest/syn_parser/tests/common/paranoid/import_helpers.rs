@@ -1,7 +1,7 @@
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::{
-    nodes::{ImportNode, GraphNode},                         // Added ImportNode
+    nodes::{GraphNode, ImportNode}, // Added ImportNode
     visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
 };
 
@@ -110,7 +110,7 @@ pub fn find_import_node_paranoid<'a>(
     };
     // Handle all variants of ImportKind
     let item_kind = match import_node.kind {
-        syn_parser::parser::nodes::ImportKind::UseStatement => ItemKind::Import,
+        syn_parser::parser::nodes::ImportKind::UseStatement(_) => ItemKind::Import,
         syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
         // Add the missing variant - treat it like a standard UseStatement for ItemKind
         syn_parser::parser::nodes::ImportKind::ImportNode => ItemKind::Import,

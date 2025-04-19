@@ -35,43 +35,25 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
 
     // 2. Get the current parent scope ID from the state.
     //    Assume it's always present because the root module ID is pushed first.
-    let parent_scope_id = state.current_definition_scope.last().copied()
-        .expect("VisitorState's current_definition_scope should not be empty during type processing");
+    let parent_scope_id = state.current_definition_scope.last().copied().expect(
+        "VisitorState's current_definition_scope should not be empty during type processing",
+    );
 
     // 3. Generate the new Synthetic Type ID using structural info AND parent scope
     let new_id = TypeId::generate_synthetic(
         state.crate_namespace,
         &state.current_file_path,
-        &type_kind,     // Pass the determined TypeKind
-        &related_types, // Pass the determined related TypeIds
+        &type_kind,            // Pass the determined TypeKind
+        &related_types,        // Pass the determined related TypeIds
         Some(parent_scope_id), // Pass the non-optional parent scope ID wrapped in Some
     );
-
-    // --- DEBUGGING TEMPORARY ---
-    eprintln!(
-        "[Visitor get_or_create_type for {:?}] Generated new_id: {}",
-        type_kind, new_id
-    );
-    let exists = state.code_graph.type_graph.iter().any(|tn| tn.id == new_id);
-    eprintln!("  Checking if new_id exists in type_graph... {}", exists);
-    eprintln!("  Returning existing new_id: {}", new_id); // Should not happen for INNER_MUT_STATIC's bool
-                                                          // --- END DEBUGGING TEMPORARY ---
 
     // 4. Check if a TypeNode with this ID already exists (handles recursion/cycles)
     //    We avoid adding duplicate TypeNodes.
     // NOTE: Might be slightly more efficient to reverse the iter here. Try benchmarking someday.
     if state.code_graph.type_graph.iter().any(|tn| tn.id == new_id) {
-        // --- DEBUGGING TEMPORARY ---
-        println!("  Returning existing new_id: {}", new_id); // Should not happen for INNER_MUT_STATIC's bool
-
-        // --- END DEBUGGING TEMPORARY ---
-
         return new_id; // Already processed and added due to recursion
     }
-    eprintln!(
-        "  Adding new TypeNode with id: {} to graph and returning it.",
-        new_id
-    ); // This SHOULD happen for INNER_MUT_STATIC's bool
 
     // 5. Create the TypeNode containing the structural information if it's new
     let type_node = TypeNode {

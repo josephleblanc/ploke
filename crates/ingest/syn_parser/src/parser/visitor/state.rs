@@ -1,5 +1,6 @@
 use crate::parser::graph::CodeGraph;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use log::debug;
 // Removed cfg_expr::Expression import
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
@@ -14,7 +15,7 @@ use {
     uuid::Uuid,
 };
 
-// --- End Conditional Imports ---
+const LOG_TARGET: &str = "node_id";
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -83,17 +84,17 @@ impl VisitorState {
         let parent_scope_id = self.current_definition_scope.last().copied();
 
         // --- DEBUG PRINT ---
-        eprintln!(
+        debug!(target: LOG_TARGET,
             "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
             name, item_kind
         );
-        eprintln!("  crate_namespace: {}", self.crate_namespace);
-        eprintln!("  file_path: {:?}", self.current_file_path);
-        eprintln!("  relative_path: {:?}", self.current_module_path);
-        eprintln!("  item_name: {}", name);
-        eprintln!("  item_kind: {:?}", item_kind);
-        eprintln!("  parent_scope_id: {:?}", parent_scope_id);
-        eprintln!("  cfg_bytes: {:?}", cfg_bytes);
+        debug!(target: LOG_TARGET, "  crate_namespace: {}", self.crate_namespace);
+        debug!(target: LOG_TARGET, "  file_path: {:?}", self.current_file_path);
+        debug!(target: LOG_TARGET, "  relative_path: {:?}", self.current_module_path);
+        debug!(target: LOG_TARGET, "  item_name: {}", name);
+        debug!(target: LOG_TARGET, "  item_kind: {:?}", item_kind);
+        debug!(target: LOG_TARGET, "  parent_scope_id: {:?}", parent_scope_id);
+        debug!(target: LOG_TARGET, "  cfg_bytes: {:?}", cfg_bytes);
         // --- END DEBUG PRINT ---
 
         NodeId::generate_synthetic(
