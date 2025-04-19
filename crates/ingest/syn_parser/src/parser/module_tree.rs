@@ -8,6 +8,8 @@ use crate::error::SynParserError;
 use super::{
     nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
     relations::{GraphId, Relation, RelationKind},
+    types::VisibilityKind,
+    CodeGraph,
 };
 
 #[derive(Debug, Clone)]
@@ -180,7 +182,22 @@ impl ModuleTree {
         Ok(())
     }
 
-    pub fn shortest_public_path(&self, module_id: ModuleNodeId) -> Vec<String> {
+    // Resolves visibility for target node
+    pub fn resolve_visibility<T: GraphNode>(
+        &self,
+        node: &T,
+        graph: &CodeGraph,
+    ) -> Result<VisibilityKind, ModuleTreeError> {
+        let parent_module_vis = graph
+            .modules
+            .iter()
+            .find(|m| m.items().is_some_and(|m| m.contains(&node.id())))
+            .map(|m| m.visibility())
+            .unwrap_or(ModuleTreeError::PathNotFound)?; // Create a new error variant AI!
+        todo!()
+    }
+
+    pub fn shortest_public_path(&self, id: NodeId) -> Result<Vec<String>, ModuleTreeError> {
         // Returns the shortest accessible path considering visibility
         todo!()
     }
