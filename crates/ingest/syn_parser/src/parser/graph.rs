@@ -212,12 +212,16 @@ impl CodeGraph {
         Ok(())
     }
 
-    pub fn build_module_tree(&self) -> Result<ModuleTree, Box<SynParserError>> {
+    pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(ModuleNodeId::new(root_module.id));
 
         // First: Register all modules with their containment info
         for module in &self.modules {
+            // Now the `?` works:
+            // - add_module returns Result<_, ModuleTreeError>
+            // - build_module_tree returns Result<_, SynParserError>
+            // - `?` calls .into() which uses From<ModuleTreeError> for SynParserError
             tree.add_module(module.clone())?;
         }
 
