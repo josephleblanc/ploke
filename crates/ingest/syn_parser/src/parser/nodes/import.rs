@@ -103,17 +103,22 @@ impl ImportNode {
     pub fn path(&self) -> &[String] {
         &self.path
     }
+
+    /// Checks if this import node represents a public re-export (`pub use`).
+    ///
+    /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
+    /// Returns `false` otherwise (including for `extern crate` or non-public `use` statements).
+    pub fn is_reexport(&self) -> bool {
+        matches!(
+            self.kind,
+            ImportKind::UseStatement(VisibilityKind::Public)
+        )
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
-    ImportNode,
-    ExternCrate,
-    UseStatement(VisibilityKind),
+    ImportNode, // Placeholder or potentially for future import types
+    ExternCrate, // Represents an `extern crate foo;` or `extern crate foo as Bar;` statement
+    UseStatement(VisibilityKind), // Represents a `use` statement, capturing its visibility
 }
-
-// AI: Please implement a method for `ImportNode` that will tell us if this is a re-export, e.g.
-// `pub use some::import::path::Item;`, etc.
-//
-//
-// Go ahead and implement the new method. Remember to follow best rust practices AI!

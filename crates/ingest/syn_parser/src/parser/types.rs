@@ -133,11 +133,18 @@ impl GenericParamKind {
 //  - Good jumping off point to find more docs/source describing exactly how visibility is handled,
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub enum VisibilityKind {
-    // AI: VisibilityKind details here
+    /// Corresponds to `pub` visibility.
     Public,
+    /// Corresponds to `pub(crate)` visibility.
     Crate,
-    Restricted(Vec<String>), // Path components of restricted visibility
-    Inherited,               // Default visibility
+    /// Corresponds to restricted visibility like `pub(in path)` or `pub(super)`.
+    /// The `Vec<String>` contains the path segments (e.g., `["super"]` or `["crate", "module"]`).
+    /// An empty path `[]` within `Restricted` is technically possible if `syn` parses `pub(in)` without a path,
+    /// but typically implies `Public`. We might normalize this later if needed.
+    Restricted(Vec<String>),
+    /// Corresponds to the absence of an explicit visibility keyword (e.g., `fn foo() {}` inside a module).
+    /// The actual visibility depends on the context (private to the module by default).
+    Inherited,
 }
 
 impl fmt::Display for VisibilityKind {
