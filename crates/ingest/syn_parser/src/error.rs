@@ -55,6 +55,14 @@ pub enum SynParserError {
     /// Indicates a validation error related to node structure (e.g., NodePath).
     #[error("Node validation error: {0}")]
     NodeValidation(String),
+
+    /// Indicates a duplicate path was encountered when building the ModuleTree.
+    #[error("Duplicate path found in module tree for NodeId: {0}")]
+    ModuleTreeDuplicatePath(NodeId),
+
+    /// Indicates a duplicate module ID was encountered when building the ModuleTree.
+    #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
+    ModuleTreeDuplicateModuleId(String), // Store Debug representation
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -75,6 +83,26 @@ impl From<std::io::Error> for SynParserError {
         SynParserError::Io(err.to_string())
     }
 }
+
+// Implement From<ModuleTreeError> for SynParserError
+impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
+    fn from(err: crate::parser::module_tree::ModuleTreeError) -> Self {
+        match err {
+            crate::parser::module_tree::ModuleTreeError::DuplicatePath(id) => {
+                SynParserError::ModuleTreeDuplicatePath(id)
+            }
+            crate::parser::module_tree::ModuleTreeError::DuplicateModuleId(node) => {
+                // Convert the node to its debug string representation for the error
+                SynParserError::ModuleTreeDuplicateModuleId(format!("{:?}", node))
+            }
+            crate::parser::module_tree::ModuleTreeError::NodePathValidation(syn_err) => {
+                // If it's already a SynParserError, just return it
+                syn_err
+            }
+        }
+    }
+}
+
 
 // Implement From<NodeError> for SynParserError
 impl From<NodeError> for SynParserError {

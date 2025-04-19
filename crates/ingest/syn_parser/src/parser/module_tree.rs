@@ -48,6 +48,21 @@ impl PendingImport {
     }
 }
 
+// Define the new ModuleTreeError enum
+#[derive(thiserror::Error, Debug, Clone, PartialEq)]
+pub enum ModuleTreeError {
+    #[error("Duplicate path found in module tree for NodeId: {0}")]
+    DuplicatePath(NodeId),
+
+    #[error("Duplicate module ID found in module tree for ModuleNode: {0:?}")]
+    DuplicateModuleId(ModuleNode),
+
+    /// Wraps SynParserError for convenience when using TryFrom<Vec<String>> for NodePath
+    #[error("Node path validation error: {0}")]
+    NodePathValidation(#[from] SynParserError),
+    // Add other module tree specific errors here
+}
+
 impl ModuleTree {
     pub fn root(&self) -> ModuleNodeId {
         self.root
@@ -80,10 +95,6 @@ impl ModuleTree {
         let node_path = NodePath::try_from(module.defn_path())?;
         let dup_path = self.path_index.insert(node_path, NodeId::from(module.id));
         if let Some(dup) = dup_path {
-            // AI: I'd like you to implement the new error type ModuleTreeError and implement
-            // Into<SynParserError> as well as From<ModuleTreeError> for SynParserError with new
-            // error types in SynParserError as needed. Put the new ModuleTreeError at the end of
-            // this file. AI!
             return Err(Box::new(ModuleTreeError::DuplicatePath(dup)));
         }
         // insert module to tree
