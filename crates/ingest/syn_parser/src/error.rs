@@ -92,8 +92,9 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 SynParserError::ModuleTreeDuplicatePath(id)
             }
             crate::parser::module_tree::ModuleTreeError::DuplicateModuleId(node) => {
-                // Box the ModuleNode before putting it into the SynParserError variant
-                SynParserError::DuplicateInModuleTree(Box::new(node))
+                // The `node` variable is already a Box<ModuleNode> from the ModuleTreeError variant.
+                // Pass it directly to the SynParserError variant which expects a Box<ModuleNode>.
+                SynParserError::DuplicateInModuleTree(node)
                 // Note: We are now using DuplicateInModuleTree instead of ModuleTreeDuplicateModuleId
                 // Consider if ModuleTreeDuplicateModuleId(String) is still needed or if
                 // DuplicateInModuleTree(Box<ModuleNode>) covers the necessary cases.
