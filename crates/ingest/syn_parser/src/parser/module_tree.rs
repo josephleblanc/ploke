@@ -141,7 +141,13 @@ impl ModuleTree {
     pub fn build_file_rels(&mut self, graph: &CodeGraph) {
         let mut new_contains: Vec<Relation> = Vec::new();
         for module in graph.modules.iter().filter(|m| m.is_file_based()) {
-            self.path_index.get(module.defn_path());
+            // Convert the Vec<String> to NodePath before getting
+            if let Ok(node_path) = NodePath::try_from(module.defn_path()) {
+                 self.path_index.get(&node_path); // Pass &NodePath
+            } else {
+                // Handle or log the error if NodePath creation fails (e.g., empty path)
+                eprintln!("Warning: Could not create NodePath for module {:?}", module.id);
+            }
         }
     }
 }

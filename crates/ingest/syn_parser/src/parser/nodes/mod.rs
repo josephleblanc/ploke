@@ -10,6 +10,7 @@ mod type_alias;
 mod union;
 mod value;
 
+use std::borrow::Borrow;
 use std::fmt::Display;
 
 use crate::error::SynParserError;
@@ -130,6 +131,14 @@ impl AsRef<[String]> for NodePath {
         &self.0
     }
 }
+
+// Allow HashMap<&NodePath, V> to be queried with &[String]
+impl Borrow<[String]> for NodePath {
+    fn borrow(&self) -> &[String] {
+        &self.0
+    }
+}
+
 
 // Implement TryFrom for fallible conversion from Vec<String>
 impl TryFrom<Vec<String>> for NodePath {
