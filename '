@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use ploke_core::NodeId;
+use ploke_core::{IdTrait, NodeId};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
@@ -8,6 +8,7 @@ use crate::error::SynParserError;
 use super::{
     nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
     relations::{GraphId, Relation, RelationKind},
+    CodeGraph,
 };
 
 #[derive(Debug, Clone)]
@@ -113,14 +114,12 @@ impl ModuleTree {
 
     pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
         let imports = module.imports.clone();
-        // Add all private imports
         self.pending_imports.extend(
             imports
                 .iter()
                 .filter(|imp| imp.is_inherited_use())
                 .map(|imp| PendingImport::from_import(imp.clone())),
         );
-        // Add all re-exports
         self.pending_exports.extend(
             imports
                 .iter()
@@ -129,6 +128,7 @@ impl ModuleTree {
         );
 
         let node_path = NodePath::try_from(module.defn_path())?;
+        // Use module.id() directly, removing the useless NodeId::from() conversion.
         let dup_path = self.path_index.insert(node_path, module.id());
         if let Some(dup) = dup_path {
             return Err(ModuleTreeError::DuplicatePath(dup));
@@ -146,9 +146,9 @@ impl ModuleTree {
 
     /// Builds 'Contains' relations between module declarations and their file-based definitions.
     /// This function assumes the `path_index` has been populated correctly.
-    pub fn build_logical_paths(&mut self, modules: &[ModuleNode]) -> Result<(), ModuleTreeError> {
+    pub fn build_file_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
         let mut new_contains: Vec<TreeRelation> = Vec::new();
-        for module in modules.iter().filter(|m| m.is_file_based()) {
+        for module in graph.modules.iter().filter(|m| m.is_file_based()) {
             let defn_path_vec = module.defn_path();
             let defn_path_slice = defn_path_vec.as_slice();
 
@@ -166,22 +166,11 @@ impl ModuleTree {
             };
             new_contains.push(logical_contains.into());
         }
-        self.tree_relations.append(&mut new_contains);
+        self.tree_relations.append(new_contains.into_iter());
         Ok(()) // Return the generated relations
     }
 
-    pub fn register_containment_batch(
-        &mut self,
-        relations: &[Relation],
-    ) -> Result<(), ModuleTreeError> {
-        for rel in relations.iter() {
-            self.tree_relations.push((*rel).into());
-        }
-        Ok(())
-    }
-
-    pub fn shortest_public_path(&self, module_id: ModuleNodeId) -> Vec<String> {
-        // Returns the shortest accessible path considering visibility
+    pub fn build_logical_paths(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
         todo!()
     }
 }
@@ -216,6 +205,11 @@ impl ModuleTree {
         // 1. Try direct canonical path match
         // 2. Check re-exports in parent modules
         // 3. Try relative paths (self/super/crate)
+        todo!()
+    }
+
+    pub fn shortest_public_path(&self, _module_id: ModuleNodeId) -> Vec<String> {
+        // Returns the shortest accessible path considering visibility
         todo!()
     }
 }

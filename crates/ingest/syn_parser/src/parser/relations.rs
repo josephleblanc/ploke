@@ -60,13 +60,13 @@ pub enum RelationKind {
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
-use std::convert::TryInto; // Import TryInto trait
+}
 
 impl RelationKind {
     /// Checks if this relation kind implies a scoping relationship (either requiring a parent or allowing use).
-    /// Returns `true` if `try_into::<ScopeKind>()` succeeds, `false` otherwise.
+    /// Returns `true` if `TryInto::<ScopeKind>::try_into(self)` succeeds, `false` otherwise.
     pub fn is_scoping(self) -> bool {
-        self.try_into().is_ok()
+        TryInto::<ScopeKind>::try_into(self).is_ok()
     }
 
     /// Checks if this relation kind specifically requires a parent scope.
@@ -82,9 +82,12 @@ impl RelationKind {
     }
 }
 
+/// The kind of scope used
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScopeKind {
+    /// Requires parent in path, e.g. `SomeStruct::associated_func()`
     RequiresParent,
+    /// Can be used in a `use` statement, e.g. `use a::b::SomeStruct;`
     CanUse,
 }
 

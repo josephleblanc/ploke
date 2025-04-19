@@ -216,31 +216,16 @@ impl CodeGraph {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(ModuleNodeId::new(root_module.id));
 
-        // First: Register all modules with their containment info
+        // 1: Register all modules with their containment info
         for module in &self.modules {
-            // Now the `?` works:
-            // - add_module returns Result<_, ModuleTreeError>
-            // - build_module_tree returns Result<_, SynParserError>
-            // - `?` calls .into() which uses From<ModuleTreeError> for SynParserError
             tree.add_module(module.clone())?;
         }
 
-        // Process direct contains relationships
-        // if let Some(items) = module.items() {
-        //     for item_id in items {
-        //         tree.register_containment(module.id, *item_id)?;
-        //     }
-        // }
+        // 2: Process direct contains relationships between files
+        tree.register_containment_batch(&self.relations)?;
 
-        // Then: Process imports/exports after all modules exist
-        // for module in &self.modules {
-        //     for import in &module.imports {
-        //         tree.register_import(module.id, import.clone())?;
-        //     }
-        //     for export_id in &module.exports {
-        //         tree.register_export(module.id, *export_id)?;
-        //     }
-        // }
+        // 3: Construct relations between module declarations and definitions
+        tree.build_logical_paths(&self.modules)?;
 
         Ok(tree)
     }
