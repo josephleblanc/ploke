@@ -122,8 +122,26 @@ impl ImportNode {
             )
         )
     }
-    // Without removing the previous implementation, add other convenience methods for each
-    // visibility variant. AI!
+
+    /// Checks if this import is a `pub use` statement.
+    pub fn is_public_use(&self) -> bool {
+        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Public))
+    }
+
+    /// Checks if this import is a `pub(crate) use` statement.
+    pub fn is_crate_use(&self) -> bool {
+        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Crate))
+    }
+
+    /// Checks if this import is a restricted `pub(in path) use` statement.
+    pub fn is_restricted_use(&self) -> bool {
+        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Restricted(_)))
+    }
+
+    /// Checks if this import is a private `use` statement (inherited visibility).
+    pub fn is_inherited_use(&self) -> bool {
+        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Inherited))
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
