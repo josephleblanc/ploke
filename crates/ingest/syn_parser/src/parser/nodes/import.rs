@@ -122,6 +122,8 @@ impl ImportNode {
             )
         )
     }
+    // Without removing the previous implementation, add other convenience methods for each
+    // visibility variant. AI!
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
