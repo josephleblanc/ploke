@@ -108,9 +108,19 @@ impl ImportNode {
     ///
     /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
     /// Returns `false` otherwise (including for `extern crate` or non-public `use` statements).
-    // We need to account for more situations as well. What about pub(crate) or pub(in path)? AI!
+    /// Checks if this import node represents a re-export, meaning it makes an imported item
+    /// visible outside the current module scope via a `use` statement with explicit `pub` visibility.
+    ///
+    /// This includes `pub use`, `pub(crate) use`, and `pub(in path) use`.
+    /// It returns `false` for `extern crate` statements and `use` statements with
+    /// inherited (private) visibility.
     pub fn is_reexport(&self) -> bool {
-        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Public))
+        matches!(
+            self.kind,
+            ImportKind::UseStatement(
+                VisibilityKind::Public | VisibilityKind::Crate | VisibilityKind::Restricted(_)
+            )
+        )
     }
 }
 
