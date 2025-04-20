@@ -333,7 +333,12 @@ impl CodeGraph {
             // Convert path slice to Vec<String> for the error variant
             return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
         }
-        first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
+
+        eprintln!("DEBUG: Found unique non-declaration node: {:?}", first.map(|n| n.id)); // DEBUG
+        first.ok_or_else(|| {
+             eprintln!("DEBUG: No non-declaration node found!"); // DEBUG
+            SynParserError::ModulePathNotFound(defn_path.to_vec())
+        })
     }
 
     /// Finds a module node by its file path relative to the crate root,
