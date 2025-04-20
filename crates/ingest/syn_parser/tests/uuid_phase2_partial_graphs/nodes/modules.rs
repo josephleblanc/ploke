@@ -748,15 +748,20 @@ fn test_module_node_nested_example_submod_paranoid() {
         .expect("Graph for definition file not found");
     let definition_graph = &definition_graph_data.graph;
 
+    let sibling_one_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_one")
+            .expect("Failed to find NodeId for item_in_example_submod");
+    let sibling_two_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_two")
+            .expect("Failed to find NodeId for item_in_example_submod");
+    let sibling_private_id =
+        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_private")
+            .expect("Failed to find NodeId for item_in_example_submod");
     let func_id =
         find_node_id_by_path_and_name(definition_graph, &module_path_vec, "item_in_example_submod")
             .expect("Failed to find NodeId for item_in_example_submod");
-    // Note: submod_sibling_one/two/private are files, not declared modules inside example_submod/mod.rs
-    // The visitor currently doesn't create ModuleNode declarations for sibling files automatically.
-    // This might be a Phase 3 task or a visitor enhancement. For Phase 2, we expect the items list
-    // only to contain items explicitly defined *within* the mod.rs file.
 
-    let expected_item_ids = vec![func_id]; // Only the function is defined in the mod.rs
+    let expected_item_ids = vec![sibling_one_id, sibling_two_id, sibling_private_id, func_id];
     let definition_items = definition_node
         .items()
         .expect("FileBased module node should have items");

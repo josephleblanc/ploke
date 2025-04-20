@@ -17,16 +17,22 @@ pub struct ModuleTree {
     // ModuleNodeId of the root file-level module, e.g. `main.rs`, `lib.rs`, used to initialize the
     // ModuleTree.
     root: ModuleNodeId,
-    // Index of all modules in the merged `CodeGraph`, in a HashMap for efficient lookup
+    /// Index of all modules in the merged `CodeGraph`, in a HashMap for efficient lookup
     modules: HashMap<ModuleNodeId, ModuleNode>,
-    // Temporary storage for unresolved imports (e.g. `use` statements)
+    /// Temporary storage for unresolved imports (e.g. `use` statements)
     pending_imports: Vec<PendingImport>,
-    // Temporary storage for unresolved exports (e.g. `pub use` statements)
+    /// Temporary storage for unresolved exports (e.g. `pub use` statements)
     pending_exports: Vec<PendingExport>,
-    // pending_mod_decl: Vec<PendingModDecl>,
-    // Reverse indexes
-    // HashMap appropriate for many -> few possible mapping
+    /// Reverse path indexing to find NodeId on a given path
+    /// HashMap appropriate for many -> few possible mapping
+    /// Contains all `NodeId` items except module declarations due to path collision with defining
+    /// module.
     path_index: HashMap<NodePath, NodeId>,
+    /// Separate HashMap for module declarations.
+    /// Reverse lookup, but can't be in the same HashMap as the modules that define them, since
+    /// they both have the same `path`. This should be the only case in which two items have the
+    /// same path.
+    decl_index: HashMap<NodePath, NodeId>,
     tree_relations: Vec<TreeRelation>,
 }
 
@@ -164,6 +170,7 @@ impl ModuleTree {
             pending_imports: vec![],
             pending_exports: vec![],
             path_index: HashMap::new(),
+            decl_index: HashMap::new(),
             tree_relations: vec![],
         }
     }
@@ -188,20 +195,39 @@ impl ModuleTree {
         let node_path = NodePath::try_from(module.defn_path().clone())?;
         let conflicting_id = module.id(); // ID of the module we are trying to add
                                           // Use entry API for clarity and efficiency
-        match self.path_index.entry(node_path.clone()) {
-            // Clone node_path for the error case
-            std::collections::hash_map::Entry::Occupied(entry) => {
-                // Path already exists
-                let existing_id = *entry.get();
-                return Err(ModuleTreeError::DuplicatePath {
-                    path: node_path, // Use the cloned path
-                    existing_id,
-                    conflicting_id,
-                });
+        if module.is_declaration() {
+            match self.decl_index.entry(node_path.clone()) {
+                // Clone node_path for the error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Path already exists
+                    let existing_id = *entry.get();
+                    return Err(ModuleTreeError::DuplicatePath {
+                        path: node_path, // Use the cloned path
+                        existing_id,
+                        conflicting_id,
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Path is free, insert it
+                    entry.insert(conflicting_id);
+                }
             }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                // Path is free, insert it
-                entry.insert(conflicting_id);
+        } else {
+            match self.path_index.entry(node_path.clone()) {
+                // Clone node_path for the error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Path already exists
+                    let existing_id = *entry.get();
+                    return Err(ModuleTreeError::DuplicatePath {
+                        path: node_path, // Use the cloned path
+                        existing_id,
+                        conflicting_id,
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Path is free, insert it
+                    entry.insert(conflicting_id);
+                }
             }
         }
 
@@ -220,12 +246,16 @@ impl ModuleTree {
     /// This function assumes the `path_index` has been populated correctly.
     pub fn build_logical_paths(&mut self, modules: &[ModuleNode]) -> Result<(), ModuleTreeError> {
         let mut new_contains: Vec<TreeRelation> = Vec::new();
-        for module in modules.iter().filter(|m| m.is_file_based()) {
+        let root_id = self.root();
+        for module in modules
+            .iter()
+            .filter(|m| m.is_file_based() && &m.id() != root_id.as_inner())
+        {
             let defn_path_vec = module.defn_path();
             let defn_path_slice = defn_path_vec.as_slice();
 
             // Look up the path in the index.
-            let decl_id = self.path_index.get(defn_path_slice).ok_or_else(|| {
+            let decl_id = self.decl_index.get(defn_path_slice).ok_or_else(|| {
                 // If not found, create the NodePath for the error message.
                 let node_path = NodePath::try_from(defn_path_vec.clone()).unwrap();
                 ModuleTreeError::DefinitionNotFound(node_path)
@@ -275,31 +305,6 @@ impl ModuleTree {
         todo!()
     }
 }
-
-// #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-// struct ModuleInfo {
-//     path: Vec<String>,
-//     contains: Vec<NodeId>, // Immediate children
-//     pending_imports: Vec<ImportNode>,
-//     resolved_exports: Vec<NodeId>,
-// }
-
-// impl ModuleInfo {
-// pub fn new() -> Self {
-//     Self {
-//         path,
-//         short_path,
-//         visibility,
-//         exports,
-//         children,
-//         source_file,
-//     }
-// }
-//
-//     pub fn path(&self) -> &[String] {
-//         &self.path
-//     }
-// }
 
 impl ModuleTree {
     pub fn resolve_path(&self, _path: &[String]) -> Result<ModuleNodeId, Box<SynParserError>> {
