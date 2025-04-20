@@ -488,7 +488,6 @@ impl ModuleTree {
         );
     }
 
-
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         let target_visibility = self.modules.get(&target).map(|m| m.visibility());
@@ -503,22 +502,34 @@ impl ModuleTree {
 
         let result = match target_visibility {
             Some(VisibilityKind::Public) => {
-                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Public Visibility", true);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    target_visibility.as_ref(),
+                    "Public Visibility",
+                    true,
+                );
                 true
             }
             Some(VisibilityKind::Crate) => {
                 // Check if same crate by comparing root paths
-                let source_root = self.get_root_path(source);
+                // let source_root = self.get_root_path(source);
                 let source_root_path = self.get_module_path_vec(source);
                 let target_root_path = self.get_module_path_vec(target);
                 // Check if they share the same crate root (first segment)
                 let accessible = source_root_path.first() == target_root_path.first();
-                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Crate Visibility", accessible);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    target_visibility.as_ref(),
+                    "Crate Visibility",
+                    accessible,
+                );
                 accessible
             }
             // Borrow restricted_path_vec instead of moving it
             Some(VisibilityKind::Restricted(ref restricted_path_vec)) => {
-                 // Remove unused variable warning by prefixing with underscore
+                // Remove unused variable warning by prefixing with underscore
                 let _source_root = self.get_root_path(source);
                 // Convert the restriction path Vec<String> to NodePath for lookup
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
@@ -549,7 +560,13 @@ impl ModuleTree {
                     current_ancestor = self.get_parent_module_id(ancestor_id);
                 }
                 let accessible = false; // Not the module itself or a descendant
-                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Restricted Visibility (Final)", accessible);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    target_visibility.as_ref(),
+                    "Restricted Visibility (Final)",
+                    accessible,
+                );
                 accessible
             }
             Some(VisibilityKind::Inherited) => {
@@ -559,11 +576,23 @@ impl ModuleTree {
                 let source_parent = self.get_parent_module_id(source);
                 let target_parent = self.get_parent_module_id(target);
                 let accessible = source_parent.is_some() && source_parent == target_parent;
-                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Inherited Visibility", accessible);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    target_visibility.as_ref(),
+                    "Inherited Visibility",
+                    accessible,
+                );
                 accessible
             }
             None => {
-                self.log_accessibility_check(source, target, None, "Target Module Not Found", false);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    None,
+                    "Target Module Not Found",
+                    false,
+                );
                 false // Target module not found
             }
         };

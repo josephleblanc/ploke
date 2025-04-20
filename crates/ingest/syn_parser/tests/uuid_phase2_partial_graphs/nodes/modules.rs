@@ -48,8 +48,8 @@ fn test_module_node_top_pub_mod_paranoid() {
     // Basic Properties
     assert_eq!(definition_node.name(), module_name);
     assert_eq!(definition_node.path, module_path_vec);
-    // The file-level module node itself is considered Public within its own file context in Phase 2
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public);
+    // Default to inherited for file-level modules
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited);
     assert!(
         definition_node.attributes.is_empty(),
         "Expected no attributes on top_pub_mod definition node"
@@ -225,7 +225,7 @@ fn test_module_node_top_priv_mod_paranoid() {
     // --- Assertions for DEFINITION Node (top_priv_mod.rs) ---
     assert_eq!(definition_node.name(), module_name);
     assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
     assert_eq!(
@@ -334,7 +334,7 @@ fn test_module_node_crate_visible_mod_paranoid() {
     // --- Assertions for DEFINITION Node (crate_visible_mod.rs) ---
     assert_eq!(definition_node.name(), module_name);
     assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
     assert_eq!(
@@ -456,7 +456,7 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     // The link to "logical_name" happens in Phase 3.
     assert_eq!(definition_node.name(), "real_file"); // Name derived from file stem
     assert_eq!(definition_node.path, definition_file_derived_path_vec); // Path derived from file system
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
     assert_eq!(
@@ -731,7 +731,7 @@ fn test_module_node_nested_example_submod_paranoid() {
     // --- Assertions for DEFINITION Node (example_submod/mod.rs) ---
     assert_eq!(definition_node.name(), module_name);
     assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
     assert_eq!(
@@ -848,7 +848,7 @@ fn test_module_node_deeply_nested_mod_paranoid() {
     // --- Assertions for DEFINITION Node (deeply_nested_mod/mod.rs) ---
     assert_eq!(definition_node.name(), module_name);
     assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Public); // File root default
+    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
     assert!(definition_node.is_file_based());
     assert!(definition_node.tracking_hash.is_none()); // File root has no hash
     assert_eq!(

@@ -14,7 +14,6 @@ use {
     std::path::PathBuf,
     uuid::Uuid,
 };
-
 const LOG_TARGET: &str = "node_id";
 
 pub struct VisitorState {
