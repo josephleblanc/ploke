@@ -7,6 +7,7 @@ use super::nodes::{
     EnumNode, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode, UnionNode,
 };
 use super::relations::RelationKind;
+use crate::parser::module_tree::ModuleTreeError; // Import ModuleTreeError
 use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
@@ -212,11 +213,46 @@ impl CodeGraph {
         }
 
         // 2: Process direct contains relationships between files
-        tree.register_containment_batch(&self.relations)?;
+        tree.register_containment_batch(&self.relations)?; // Assuming this returns Result
 
-        // 3: Construct relations between module declarations and definitions
-        tree.build_logical_paths(&self.modules)?;
+        // 3: Construct 'ResolvesToDefinition' relations.
+        match tree.build_logical_paths(&self.modules) {
+            Ok(()) => {
+                // Complete success, proceed.
+            }
+            Err(module_tree_error) => {
+                // An error occurred, check its type.
+                match module_tree_error {
+                    ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
+                        // This is the non-fatal case. Log warnings.
+                        if !unlinked_infos.is_empty() {
+                             eprintln!(
+                                "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
+                                unlinked_infos.len()
+                            );
+                            for info in unlinked_infos.iter() { // Iterate over the Boxed Vec
+                                eprintln!("  - Path: {}, ID: {}", info.definition_path, info.module_id);
+                                // Optionally include the absolute file path
+                                if let Some(module_node) = self.get_module(info.module_id) {
+                                    if let Some(file_path) = module_node.file_path() {
+                                        eprintln!("    File: {}", file_path.display());
+                                    }
+                                }
+                            }
+                        }
+                        // Proceed with returning Ok(tree) after logging.
+                    }
+                    // Any other error variant is considered fatal.
+                    fatal_error => {
+                        // Convert the fatal ModuleTreeError to SynParserError and return.
+                        return Err(SynParserError::from(fatal_error));
+                    }
+                }
+            }
+        }
 
+        // If we reached here, build_logical_paths either succeeded completely (Ok)
+        // or returned FoundUnlinkedModules (Err), which was handled by logging.
         Ok(tree)
     }
 

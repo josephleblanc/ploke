@@ -72,11 +72,16 @@ pub enum SynParserError {
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
-    #[error("Module definition not found for path: {0}")]
-    ModuleDefinitionNotFound(String), // Store path string representation
+    // Removed ModuleDefinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
+    // #[error("Module definition not found for path: {0}")]
+    // ModuleDefinitionNotFound(String), // Store path string representation
 
     #[error("Relation conversion error: {0}")]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
+
+    // Forward ModuleTreeError variants
+    #[error(transparent)]
+    ModuleTreeError(#[from] ModuleTreeError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -119,19 +124,24 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // For now, let's assume DuplicateInModuleTree is sufficient.
                 // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
-            ModuleTreeError::NodePathValidation(syn_err) => {
-                // If it's already a SynParserError, just return it
-                syn_err
-            }
-            ModuleTreeError::DefinitionNotFound(path) => {
-                SynParserError::ModuleDefinitionNotFound(path.to_string())
-            }
+            ModuleTreeError::NodePathValidation(syn_err) => syn_err, // Already a SynParserError
             ModuleTreeError::ContainingModuleNotFound(node_id) => {
-                // Use InternalState as there's no specific variant for this case.
                 SynParserError::InternalState(format!(
                     "Containing module not found for node ID: {}",
                     node_id
                 ))
+            }
+            // FoundUnlinkedModules is handled within CodeGraph::build_module_tree
+            // and should not typically be converted directly to SynParserError unless
+            // a different error handling strategy is chosen later.
+            // If it *must* be converted, decide how (e.g., InternalState or a new variant).
+            // For now, we assume it's handled before conversion.
+            ModuleTreeError::FoundUnlinkedModules(_) => {
+                // This conversion shouldn't usually happen if handled in the caller.
+                // If it does, it indicates an unexpected flow.
+                SynParserError::InternalState(
+                    "FoundUnlinkedModules error encountered unexpectedly during conversion.".to_string(),
+                )
             }
         }
     }

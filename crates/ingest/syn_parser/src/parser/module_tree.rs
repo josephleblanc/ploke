@@ -4,6 +4,7 @@ use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
+use crate::parser::nodes::NodePath; // Ensure NodePath is imported
 
 use super::{
     nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
@@ -109,6 +110,14 @@ impl From<Relation> for TreeRelation {
     }
 }
 
+// Struct to hold info about unlinked modules
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnlinkedModuleInfo {
+    pub module_id: NodeId,
+    pub definition_path: NodePath, // Store the path that couldn't be linked
+}
+
+
 // Define the new ModuleTreeError enum
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum ModuleTreeError {
@@ -127,11 +136,12 @@ pub enum ModuleTreeError {
     #[error("Node path validation error: {0}")]
     NodePathValidation(#[from] SynParserError),
 
-    #[error("Definition not found in path_index for path: {0}")]
-    DefinitionNotFound(NodePath), // Store the path that wasn't found
-
     #[error("Containing module not found for node ID: {0}")]
     ContainingModuleNotFound(NodeId), // Added error variant
+
+    // NEW: Variant holding a collection of UnlinkedModuleInfo
+    #[error("Found {0} unlinked module file(s) (no corresponding 'mod' declaration).")]
+    FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
 }
 
 impl ModuleTree {
@@ -242,34 +252,63 @@ impl ModuleTree {
         Ok(())
     }
 
-    /// Builds 'Contains' relations between module declarations and their file-based definitions.
-    /// This function assumes the `path_index` has been populated correctly.
-    pub fn build_logical_paths(&mut self, modules: &[ModuleNode]) -> Result<(), ModuleTreeError> {
-        let mut new_contains: Vec<TreeRelation> = Vec::new();
+    /// Builds 'ResolvesToDefinition' relations between module declarations and their file-based definitions.
+    /// Assumes the `path_index` and `decl_index` have been populated correctly by `add_module`.
+    /// Returns `Ok(())` on complete success.
+    /// Returns `Err(ModuleTreeError::FoundUnlinkedModules)` if only unlinked modules are found.
+    /// Returns other `Err(ModuleTreeError)` variants on fatal errors (e.g., path validation).
+    pub fn build_logical_paths(
+        &mut self,
+        modules: &[ModuleNode],
+    ) -> Result<(), ModuleTreeError> { // Return Ok(()) or Err(ModuleTreeError)
+        let mut new_relations: Vec<TreeRelation> = Vec::new();
+        let mut collected_unlinked: Vec<UnlinkedModuleInfo> = Vec::new(); // Store only unlinked info
         let root_id = self.root();
+
         for module in modules
             .iter()
-            .filter(|m| m.is_file_based() && &m.id() != root_id.as_inner())
+            .filter(|m| m.is_file_based() && m.id() != *root_id.as_inner())
         {
             let defn_path_vec = module.defn_path();
             let defn_path_slice = defn_path_vec.as_slice();
 
-            // Look up the path in the index.
-            let decl_id = self.decl_index.get(defn_path_slice).ok_or_else(|| {
-                // If not found, create the NodePath for the error message.
-                let node_path = NodePath::try_from(defn_path_vec.clone()).unwrap();
-                ModuleTreeError::DefinitionNotFound(node_path)
-            })?;
+            match self.decl_index.get(defn_path_slice) {
+                Some(decl_id) => {
+                    // Found declaration, create relation
+                    let logical_relation = Relation {
+                        source: GraphId::Node(module.id()),
+                        target: GraphId::Node(*decl_id),
+                        kind: RelationKind::ResolvesToDefinition,
+                    };
+                    new_relations.push(logical_relation.into());
+                }
+                None => {
+                    // No declaration found. Try to create UnlinkedModuleInfo.
+                    // If NodePath conversion fails, it's a fatal error, return immediately.
+                    let node_path = NodePath::try_from(defn_path_vec.clone())?; // Propagate NodePathValidation error
 
-            let logical_contains = Relation {
-                source: GraphId::Node(module.id()), // Source is the file-based module definition
-                target: GraphId::Node(*decl_id), // Target is the module declaration ID found in the index
-                kind: RelationKind::ResolvesToDefinition,
-            };
-            new_contains.push(logical_contains.into());
+                    // If path conversion succeeded, collect the unlinked info.
+                    collected_unlinked.push(UnlinkedModuleInfo {
+                        module_id: module.id(),
+                        definition_path: node_path,
+                    });
+                }
+            }
         }
-        self.tree_relations.append(&mut new_contains);
-        Ok(()) // Return the generated relations
+
+        // Append relations regardless of whether unlinked modules were found.
+        // We only skip appending if a fatal error occurred earlier (which would have returned Err).
+        self.tree_relations.append(&mut new_relations);
+
+        // Check if any unlinked modules were collected
+        if collected_unlinked.is_empty() {
+            Ok(()) // Complete success
+        } else {
+            // Only non-fatal "unlinked" issues occurred. Return the specific error variant.
+            Err(ModuleTreeError::FoundUnlinkedModules(Box::new(
+                collected_unlinked,
+            )))
+        }
     }
 
     pub fn register_containment_batch(
