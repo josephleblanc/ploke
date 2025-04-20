@@ -553,32 +553,27 @@ impl ModuleTree {
                 self.log_accessibility_check(
                     source,
                     target,
-                    target_visibility.as_ref(),
+                    Some(&effective_visibility), // Log with effective visibility
                     "Public Visibility",
                     true,
                 );
                 true
             }
-            Some(VisibilityKind::Crate) => {
-                // Check if same crate by comparing root paths
-                // let source_root = self.get_root_path(source);
-                let source_root_path = self.get_module_path_vec(source);
-                let target_root_path = self.get_module_path_vec(target);
-                // Check if they share the same crate root (first segment)
-                let accessible = source_root_path.first() == target_root_path.first();
+            VisibilityKind::Crate => {
+                // Correct logic: always true within the same tree/crate
+                let accessible = true;
                 self.log_accessibility_check(
                     source,
                     target,
-                    target_visibility.as_ref(),
+                    Some(&effective_visibility), // Log with effective visibility
                     "Crate Visibility",
                     accessible,
                 );
                 accessible
             }
-            // Borrow restricted_path_vec instead of moving it
-            Some(VisibilityKind::Restricted(ref restricted_path_vec)) => {
-                // Remove unused variable warning by prefixing with underscore
-                let _source_root = self.get_root_path(source);
+            VisibilityKind::Restricted(ref restricted_path_vec) => { // Borrow here
+                 // Remove unused variable warning by prefixing with underscore
+                // let _source_root = self.get_root_path(source); // Keep commented out or remove if truly unused
                 // Convert the restriction path Vec<String> to NodePath for lookup
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
