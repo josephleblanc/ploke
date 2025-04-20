@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use colored::*; // Import colored for terminal colors
+use log::debug; // Import the debug macro
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +14,8 @@ use super::{
     types::VisibilityKind,
     CodeGraph,
 };
+
+const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
@@ -450,19 +454,50 @@ impl ModuleTree {
         })
     }
 
+    /// Logs the details of an accessibility check.
+    fn log_accessibility_check(
+        &self,
+        source: ModuleNodeId,
+        target: ModuleNodeId,
+        target_visibility: Option<&VisibilityKind>,
+        step: &str, // Description of the check step (e.g., "Initial Check", "Restricted Path Check")
+        result: bool,
+    ) {
+        // Use debug! macro with the specific target
+        debug!(target: LOG_TARGET_VIS,
+            "{} {} -> {} | Target Vis: {} | Step: {} | Result: {}",
+            "Accessibility Check:".cyan().bold(),
+            self.modules.get(&source).map(|m| m.name.as_str()).unwrap_or("?").yellow(),
+            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(),
+            target_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red().to_string()),
+            step.white(),
+            if result { "Accessible".green() } else { "Inaccessible".red() }
+        );
+    }
+
+
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
-        match self.modules.get(&target).map(|m| m.visibility()) {
-            Some(VisibilityKind::Public) => true,
+        let target_visibility = self.modules.get(&target).map(|m| m.visibility());
+
+        let result = match target_visibility {
+            Some(VisibilityKind::Public) => {
+                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Public Visibility", true);
+                true
+            }
             Some(VisibilityKind::Crate) => {
                 // Check if same crate by comparing root paths
                 let source_root = self.get_root_path(source);
                 let source_root_path = self.get_module_path_vec(source);
                 let target_root_path = self.get_module_path_vec(target);
                 // Check if they share the same crate root (first segment)
-                source_root_path.first() == target_root_path.first()
+                let accessible = source_root_path.first() == target_root_path.first();
+                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Crate Visibility", accessible);
+                accessible
             }
             Some(VisibilityKind::Restricted(restricted_path_vec)) => {
+                 // Remove unused variable warning by prefixing with underscore
+                let _source_root = self.get_root_path(source);
                 // Convert the restriction path Vec<String> to NodePath for lookup
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
@@ -491,7 +526,9 @@ impl ModuleTree {
                     }
                     current_ancestor = self.get_parent_module_id(ancestor_id);
                 }
-                false // Not the module itself or a descendant
+                let accessible = false; // Not the module itself or a descendant
+                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Restricted Visibility (Final)", accessible);
+                accessible
             }
             Some(VisibilityKind::Inherited) => {
                 // Inherited visibility means private to the defining module.
@@ -499,10 +536,16 @@ impl ModuleTree {
                 // This requires finding the defining module for both source and target.
                 let source_parent = self.get_parent_module_id(source);
                 let target_parent = self.get_parent_module_id(target);
-                source_parent.is_some() && source_parent == target_parent
+                let accessible = source_parent.is_some() && source_parent == target_parent;
+                self.log_accessibility_check(source, target, target_visibility.as_ref(), "Inherited Visibility", accessible);
+                accessible
             }
-            None => false, // Target module not found
-        }
+            None => {
+                self.log_accessibility_check(source, target, None, "Target Module Not Found", false);
+                false // Target module not found
+            }
+        };
+        result // Return the final calculated result
     }
 
     /// Gets the full module path Vec<String> for a given module ID.
