@@ -308,20 +308,12 @@ impl<'a> CodeVisitor<'a> {
         } else {
             // This case should ideally not happen after the root module is created in analyze_file_phase2,
             // but log a warning just in case.
-            log::warn!( // Changed eprintln to log::warn!
-                target: LOG_TARGET_TRACE, // Use trace target for consistency here
-                let parent_name = self
-                    .state
-                    .code_graph
-                    .modules
-                    .iter()
-                    .find(|m| m.id == parent_id)
-                    .map(|m| m.name.as_str())
-                    .unwrap_or("<unknown>");
-                println!("REL_CREATE: Contains relation created for source: {} -> target: {},\n\tsource_id: {}  target_id: {}",
-                      parent_name, item_name, parent_id, node_id
-                  );
-            }
+            // This block corresponds to parent_module_id being None
+            log::warn!(
+                target: LOG_TARGET_TRACE,
+                "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Contains relation not added.",
+                item_name, item_kind, self.state.current_module_path
+            );
 
             // Keep the debug hook, assuming debug_mod_stack_push is updated
             // to handle the NodeId enum (e.g., using its Display impl).
