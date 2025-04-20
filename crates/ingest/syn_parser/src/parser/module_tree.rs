@@ -33,11 +33,12 @@ pub struct ModuleTree {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingImport {
     module_node_id: ModuleNodeId, // Keep private
-    import_node: ImportNode,    // Keep private
+    import_node: ImportNode,      // Keep private
 }
 
 impl PendingImport {
-    pub(crate) fn from_import(import: ImportNode) -> Self { // Make crate-visible if needed internally
+    pub(crate) fn from_import(import: ImportNode) -> Self {
+        // Make crate-visible if needed internally
         PendingImport {
             module_node_id: ModuleNodeId::new(import.id),
             import_node: import,
@@ -58,11 +59,12 @@ impl PendingImport {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingExport {
     module_node_id: ModuleNodeId, // Keep private
-    export_node: ImportNode,    // Keep private
+    export_node: ImportNode,      // Keep private
 }
 
 impl PendingExport {
-    pub(crate) fn from_export(export: ImportNode) -> Self { // Make crate-visible if needed internally
+    pub(crate) fn from_export(export: ImportNode) -> Self {
+        // Make crate-visible if needed internally
         PendingExport {
             module_node_id: ModuleNodeId::new(export.id),
             export_node: export,
@@ -105,7 +107,8 @@ impl From<Relation> for TreeRelation {
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum ModuleTreeError {
     #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
-    DuplicatePath { // Change to a struct variant
+    DuplicatePath {
+        // Change to a struct variant
         path: NodePath,
         existing_id: NodeId,
         conflicting_id: NodeId,
@@ -154,7 +157,6 @@ impl ModuleTree {
         &self.pending_exports
     }
 
-
     pub fn new_from_root(root: ModuleNodeId) -> Self {
         Self {
             root,
@@ -183,10 +185,11 @@ impl ModuleTree {
                 .map(|imp| PendingExport::from_export(imp.clone())),
         );
 
-        let node_path = NodePath::try_from(module.defn_path())?;
+        let node_path = NodePath::try_from(module.defn_path().clone())?;
         let conflicting_id = module.id(); // ID of the module we are trying to add
-        // Use entry API for clarity and efficiency
-        match self.path_index.entry(node_path.clone()) { // Clone node_path for the error case
+                                          // Use entry API for clarity and efficiency
+        match self.path_index.entry(node_path.clone()) {
+            // Clone node_path for the error case
             std::collections::hash_map::Entry::Occupied(entry) => {
                 // Path already exists
                 let existing_id = *entry.get();

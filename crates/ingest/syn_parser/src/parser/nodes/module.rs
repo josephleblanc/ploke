@@ -33,10 +33,8 @@ impl ModuleNode {
     ///         project/module_one/mod.rs -> ["crate", "module_one"]
     ///     in-line module in project/module_one/mod.rs
     ///         `mod module_two {}` -> ["crate", "module_one", "module_two"]
-    pub fn defn_path(&self) -> Vec<String> {
-        let path = self.path.clone();
-        path.to_vec().push(self.name.clone());
-        path
+    pub fn defn_path(&self) -> &Vec<String> {
+        &self.path
     }
 
     /// Returns true if this is a file-based module

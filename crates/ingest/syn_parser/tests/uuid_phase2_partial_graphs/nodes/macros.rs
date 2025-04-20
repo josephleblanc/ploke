@@ -6,7 +6,7 @@ use syn_parser::parser::nodes::{MacroKind, ProcMacroKind}; // Import macro kinds
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{MacroNode, GraphNode}, // Import MacroNode
+    nodes::{GraphNode, MacroNode}, // Import MacroNode
     relations::{GraphId, RelationKind},
 };
 
@@ -177,7 +177,7 @@ fn test_macro_node_field_id_regeneration() {
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == module_path)
+        .find(|m| m.defn_path() == &module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",
