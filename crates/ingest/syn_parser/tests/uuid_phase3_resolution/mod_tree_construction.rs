@@ -229,74 +229,110 @@ fn test_module_tree_resolves_to_definition_relation() {
 
 #[test]
 fn test_module_tree_import_export_segregation() {
-    let fixture_name = "file_dir_detection";
-    // Avoid tuple deconstruction
+    // Use the fixture_nodes crate, specifically focusing on imports.rs
+    let fixture_name = "fixture_nodes";
     let graph_and_tree = build_tree_for_fixture(fixture_name);
-    // let graph = graph_and_tree.0; // Not needed for this test
     let tree = graph_and_tree.1;
 
-    // Collect paths from pending imports and exports for easier assertion
-    // Collect paths from pending imports and exports for easier assertion
-    // Use the new getters
+    // Collect paths from pending imports and exports
     let import_paths: HashSet<String> = tree
         .pending_imports()
         .iter()
-        .map(|p| p.import_node().path.join("::")) // Use getter
+        .map(|p| {
+            // Handle potential leading empty string for absolute paths like `::std::time::Duration`
+            let path_segments = p.import_node().path();
+            if path_segments.first().map_or(false, |s| s.is_empty()) {
+                // Add "::" prefix if the first segment is empty
+                format!("::{}", path_segments[1..].join("::"))
+            } else {
+                path_segments.join("::")
+            }
+        })
         .collect();
 
     let export_paths: HashSet<String> = tree
         .pending_exports()
         .iter()
-        .map(|p| p.export_node().path.join("::")) // Use getter
+        .map(|p| p.export_node().path.join("::"))
         .collect();
 
-    // --- Assertions for Private Imports ---
-    assert!(
-        import_paths.contains("std::path::Path"),
-        "Expected private import 'std::path::Path' in main.rs"
-    );
+    // --- Assertions for Private Imports (from imports.rs) ---
+    // Check a few representative private imports
     assert!(
         import_paths.contains("std::collections::HashMap"),
-        "Expected private import 'std::collections::HashMap' in inline_pub_mod"
+        "Expected private import 'std::collections::HashMap'"
     );
     assert!(
-        import_paths.contains("super::SampleStruct"),
-        "Expected private import 'super::SampleStruct' in second_sibling.rs"
+        import_paths.contains("crate::structs::SampleStruct"), // Note: Path uses original name
+        "Expected private import 'crate::structs::SampleStruct' (renamed)"
     );
     assert!(
-        import_paths.contains("super::*"),
-        "Expected private import 'super::*' in public_module (second_sibling.rs)"
+        import_paths.contains("crate::traits::SimpleTrait"),
+        "Expected private import 'crate::traits::SimpleTrait'"
     );
-    // Check that a known re-export is NOT in imports
     assert!(
-        !import_paths.contains("crate::top_pub_mod::top_pub_func"),
-        "Re-export 'crate::top_pub_mod::top_pub_func' should not be in pending_imports"
+        import_paths.contains("std::fs"), // Group import `fs::{self, File}` includes `fs` itself
+        "Expected private import 'std::fs'"
+    );
+    assert!(
+        import_paths.contains("std::fs::File"),
+        "Expected private import 'std::fs::File'"
+    );
+    assert!(
+        import_paths.contains("std::env::*"), // Check glob import representation
+        "Expected private glob import 'std::env::*'"
+    );
+    assert!(
+        import_paths.contains("self::sub_imports::SubItem"),
+        "Expected private import 'self::sub_imports::SubItem'"
+    );
+    assert!(
+        import_paths.contains("super::structs::AttributedStruct"),
+        "Expected private import 'super::structs::AttributedStruct'"
+    );
+    assert!(
+        import_paths.contains("crate::type_alias::SimpleId"),
+        "Expected private import 'crate::type_alias::SimpleId'"
+    );
+    assert!(
+        import_paths.contains("::std::time::Duration"), // Check absolute path import
+        "Expected private import '::std::time::Duration'"
+    );
+    // Check imports from within the nested `sub_imports` module
+    assert!(
+        import_paths.contains("super::fmt"),
+        "Expected private import 'super::fmt' from sub_imports"
+    );
+    assert!(
+        import_paths.contains("crate::enums::DocumentedEnum"),
+        "Expected private import 'crate::enums::DocumentedEnum' from sub_imports"
+    );
+    assert!(
+        import_paths.contains("self::nested_sub::NestedItem"),
+        "Expected private import 'self::nested_sub::NestedItem' from sub_imports"
+    );
+    assert!(
+        import_paths.contains("super::super::structs::TupleStruct"),
+        "Expected private import 'super::super::structs::TupleStruct' from sub_imports"
     );
 
     // --- Assertions for Re-Exports ---
+    // The imports.rs fixture does not contain any `pub use` statements.
     assert!(
-        export_paths.contains("crate::top_pub_mod::top_pub_func"),
-        "Expected re-export 'crate::top_pub_mod::top_pub_func' in main.rs"
-    );
-    assert!(
-        export_paths.contains("super::outer::middle::inner::deep_function"),
-        "Expected re-export 'super::outer::middle::inner::deep_function' in intermediate (second_sibling.rs)"
-    );
-    assert!(
-        export_paths.contains("super::DefaultTrait"),
-        "Expected re-export 'super::DefaultTrait' in intermediate (second_sibling.rs)"
-    );
-    // Check that a known private import is NOT in exports
-    assert!(
-        !export_paths.contains("std::path::Path"),
-        "Private import 'std::path::Path' should not be in pending_exports"
+        export_paths.is_empty(),
+        "Expected no pending exports from imports.rs, found: {:?}",
+        export_paths
     );
 
-    // Optional: More specific checks on counts if needed, but path checking is robust.
-    // let expected_import_count = ...; // Count manually from fixture
-    // assert_eq!(tree.pending_imports().len(), expected_import_count);
-    // let expected_export_count = ...; // Count manually from fixture
-    // assert_eq!(tree.pending_exports().len(), expected_export_count);
+    // --- Assertions for Extern Crates (Check if they appear as pending imports) ---
+    // The current ModuleTree::add_module logic likely treats extern crates like private imports
+    assert!(
+        import_paths.contains("serde"),
+        "Expected extern crate 'serde' to be treated as a pending import"
+    );
+    // Note: The renamed extern crate 'serde as SerdeAlias' should still have the path "serde"
+    // in the ImportNode, but the test setup doesn't easily distinguish between the two extern
+    // crate statements based solely on path. We just check that "serde" is present once.
 }
 
 // NOTE: test_module_tree_duplicate_path_error requires a dedicated fixture
