@@ -340,7 +340,7 @@ impl<'a> CodeVisitor<'a> {
             self.state.current_scope_cfgs
         );
     }
-// Removed misplaced closing brace for impl CodeVisitor
+} // Added missing closing brace for impl CodeVisitor<'a>
 
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
