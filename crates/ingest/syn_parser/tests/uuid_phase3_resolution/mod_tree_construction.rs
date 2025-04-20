@@ -10,11 +10,8 @@ use syn_parser::parser::nodes::{GraphNode, ModuleDef, ModuleNodeId};
 use syn_parser::parser::relations::{GraphId, Relation, RelationKind};
 use syn_parser::CodeGraph;
 
-// Use existing helpers if suitable, or define local ones
-// Assuming these helpers exist or are adapted in common::uuid_ids_utils
-use crate::common::uuid_ids_utils::{
-    find_module_node_by_defn_path, find_module_node_by_file_path, run_phases_and_collect,
-};
+// Removed unused imports for helpers moved to CodeGraph
+use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for tests
 fn build_tree_for_fixture(fixture_name: &str) -> (CodeGraph, ModuleTree) {
@@ -58,29 +55,35 @@ fn test_module_tree_path_index_correctness() {
 
     // --- Find expected NodeIds from the graph FIRST ---
 
+    // --- Find expected NodeIds from the graph FIRST ---
+    // Use the new CodeGraph methods with error handling
+
     // 1. Crate root (main.rs)
     let crate_root_path = Path::new("src/main.rs"); // Relative to fixture root
-    let crate_root_node = find_module_node_by_file_path(&graph, crate_root_path)
+    let crate_root_node = graph
+        .find_module_by_file_path_checked(crate_root_path)
         .expect("Could not find crate root module node (main.rs)");
     let crate_root_id = crate_root_node.id;
 
     // 2. Top-level file module (top_pub_mod.rs)
     let top_pub_mod_path = Path::new("src/top_pub_mod.rs");
-    let top_pub_mod_node = find_module_node_by_file_path(&graph, top_pub_mod_path)
+    let top_pub_mod_node = graph
+        .find_module_by_file_path_checked(top_pub_mod_path)
         .expect("Could not find top_pub_mod.rs module node");
     let top_pub_mod_id = top_pub_mod_node.id;
 
     // 3. Nested file module (nested_pub.rs)
     let nested_pub_path = Path::new("src/top_pub_mod/nested_pub.rs");
-    let nested_pub_node = find_module_node_by_file_path(&graph, nested_pub_path)
+    let nested_pub_node = graph
+        .find_module_by_file_path_checked(nested_pub_path)
         .expect("Could not find nested_pub.rs module node");
     let nested_pub_id = nested_pub_node.id;
 
     // 4. Inline module (inline_pub_mod in main.rs)
     // We need to find it by its definition path within the crate root
-    let inline_pub_mod_node =
-        find_module_node_by_defn_path(&graph, &["crate".to_string(), "inline_pub_mod".to_string()])
-            .expect("Could not find inline_pub_mod node");
+    let inline_pub_mod_node = graph
+        .find_module_by_defn_path_checked(&["crate".to_string(), "inline_pub_mod".to_string()])
+        .expect("Could not find inline_pub_mod node");
     assert!(
         inline_pub_mod_node.is_inline(),
         "Expected inline_pub_mod to be inline"
@@ -144,11 +147,14 @@ fn test_module_tree_resolves_to_definition_relation() {
 
     // --- Find Declaration and Definition Nodes ---
 
+    // --- Find Declaration and Definition Nodes ---
+
     // 1. Find declaration `mod top_pub_mod;` in `main.rs`
-    let crate_root_node = find_module_node_by_defn_path(&graph, &["crate".to_string()])
+    let crate_root_node = graph
+        .find_module_by_defn_path_checked(&["crate".to_string()])
         .expect("Crate root not found");
     let top_pub_mod_decl_node = graph
-        .get_child_modules_decl(crate_root_node.id)
+        .get_child_modules_decl(crate_root_node.id) // Assuming this helper still works or is adapted
         .into_iter()
         .find(|m| m.name == "top_pub_mod")
         .expect("Declaration 'mod top_pub_mod;' not found in crate root");
@@ -159,11 +165,11 @@ fn test_module_tree_resolves_to_definition_relation() {
     let decl_id = top_pub_mod_decl_node.id;
 
     // 2. Find definition `top_pub_mod.rs`
-    let top_pub_mod_defn_node =
-        find_module_node_by_defn_path(&graph, &["crate".to_string(), "top_pub_mod".to_string()])
-            .expect("Definition module 'crate::top_pub_mod' not found");
+    let top_pub_mod_defn_node = graph
+        .find_module_by_defn_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
+        .expect("Definition module 'crate::top_pub_mod' not found");
     assert!(
-        top_pub_mod_defn_node.is_file_based(),
+        top_pub_mod_defn_node.is_file_based(), // Assuming this helper still works
         "Expected 'crate::top_pub_mod' node to be file-based"
     );
     let defn_id = top_pub_mod_defn_node.id;
@@ -178,7 +184,10 @@ fn test_module_tree_resolves_to_definition_relation() {
     let relation_found = tree
         .tree_relations()
         .iter()
-        .any(|tree_rel| tree_rel.0 == expected_relation);
+    let relation_found = tree
+        .tree_relations()
+        .iter()
+        .any(|tree_rel| *tree_rel.relation() == expected_relation); // Use the getter
 
     assert!(
         relation_found,
@@ -196,9 +205,8 @@ fn test_module_tree_resolves_to_definition_relation() {
     let nested_decl_id = nested_pub_decl_node.id;
 
     // 2. Find definition `nested_pub.rs`
-    let nested_pub_defn_node = find_module_node_by_defn_path(
-        &graph,
-        &[
+    let nested_pub_defn_node = graph.find_module_by_defn_path_checked(
+         &[
             "crate".to_string(),
             "top_pub_mod".to_string(),
             "nested_pub".to_string(),
@@ -217,7 +225,7 @@ fn test_module_tree_resolves_to_definition_relation() {
     let nested_relation_found = tree
         .tree_relations()
         .iter()
-        .any(|tree_rel| tree_rel.0 == expected_nested_relation);
+        .any(|tree_rel| *tree_rel.relation() == expected_nested_relation); // Use the getter
 
     assert!(
         nested_relation_found,
@@ -234,16 +242,18 @@ fn test_module_tree_import_export_segregation() {
     let tree = graph_and_tree.1;
 
     // Collect paths from pending imports and exports for easier assertion
+    // Collect paths from pending imports and exports for easier assertion
+    // Use the new getters
     let import_paths: HashSet<String> = tree
         .pending_imports()
         .iter()
-        .map(|p| p.import_node.path.join("::"))
+        .map(|p| p.import_node().path.join("::")) // Use getter
         .collect();
 
     let export_paths: HashSet<String> = tree
         .pending_exports()
         .iter()
-        .map(|p| p.export_node.path.join("::"))
+        .map(|p| p.export_node().path.join("::")) // Use getter
         .collect();
 
     // --- Assertions for Private Imports ---

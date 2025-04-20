@@ -278,6 +278,67 @@ impl CodeGraph {
         }
         first.ok_or_else(|| SynParserError::ModulePathNotFound(path.to_vec()))
     }
+
+    /// Finds a module node by its definition path (e.g., ["crate", "module", "submodule"]),
+    /// returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the modules, collects all matching `ModuleNode`s based on the definition path,
+    /// and returns:
+    /// - `Ok(&ModuleNode)` if exactly one match is found.
+    /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
+    pub fn find_module_by_defn_path_checked(
+        &self,
+        defn_path: &[String],
+    ) -> Result<&ModuleNode, SynParserError> {
+        let mut matches = self.modules.iter().filter(|m| m.defn_path() == defn_path);
+        let first = matches.next();
+        if matches.next().is_some() {
+            // Convert path slice to Vec<String> for the error variant
+            return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
+        }
+        first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
+    }
+
+    /// Finds a module node by its file path relative to the crate root,
+    /// returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through the modules, collects all matching `ModuleNode`s based on the file path,
+    /// and returns:
+    /// - `Ok(&ModuleNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found (using a generic NotFound for file paths).
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found (using DuplicateNode as path isn't the primary ID).
+    pub fn find_module_by_file_path_checked(
+        &self,
+        relative_file_path: &std::path::Path,
+    ) -> Result<&ModuleNode, SynParserError> {
+        let mut matches = self.modules.iter().filter(|m| {
+            m.file_path()
+                .map(|fp| fp.ends_with(relative_file_path))
+                .unwrap_or(false)
+        });
+        let first = matches.next();
+        if let Some(_second) = matches.next() {
+            // If duplicates found, return DuplicateNode error using the ID of the first match
+            // as an example representative ID involved in the duplication.
+            // We can safely unwrap `first` here because we know `matches.next()` returned Some.
+            return Err(SynParserError::DuplicateNode(first.unwrap().id()));
+        }
+        // If only one or zero found, proceed.
+        // Use ok_or_else to provide a more specific error if needed, but NotFound is general.
+        // We need *an* ID for NotFound, so if `first` is None, we can't provide one easily.
+        // Let's return a more generic error or adjust NotFound if needed.
+        // For now, let's use InternalState if no matches, as it indicates a test setup issue
+        // if the expected file isn't found.
+        first.ok_or_else(|| {
+            SynParserError::InternalState(format!(
+                "ModuleNode with file path ending in '{}' not found.",
+                relative_file_path.display()
+            ))
+        })
+    }
+
+
     pub fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         self.type_graph.iter().find(|t| t.id == type_id)
     }

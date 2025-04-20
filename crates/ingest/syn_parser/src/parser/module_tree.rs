@@ -32,41 +32,66 @@ pub struct ModuleTree {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingImport {
-    module_node_id: ModuleNodeId,
-    import_node: ImportNode,
+    module_node_id: ModuleNodeId, // Keep private
+    import_node: ImportNode,    // Keep private
 }
 
 impl PendingImport {
-    fn from_import(import: ImportNode) -> Self {
+    pub(crate) fn from_import(import: ImportNode) -> Self { // Make crate-visible if needed internally
         PendingImport {
             module_node_id: ModuleNodeId::new(import.id),
             import_node: import,
         }
     }
+
+    /// Returns the ID of the module containing this pending import.
+    pub fn module_node_id(&self) -> ModuleNodeId {
+        self.module_node_id
+    }
+
+    /// Returns a reference to the `ImportNode` associated with this pending import.
+    pub fn import_node(&self) -> &ImportNode {
+        &self.import_node
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingExport {
-    module_node_id: ModuleNodeId,
-    export_node: ImportNode,
+    module_node_id: ModuleNodeId, // Keep private
+    export_node: ImportNode,    // Keep private
 }
 
 impl PendingExport {
-    fn from_export(export: ImportNode) -> Self {
+    pub(crate) fn from_export(export: ImportNode) -> Self { // Make crate-visible if needed internally
         PendingExport {
             module_node_id: ModuleNodeId::new(export.id),
             export_node: export,
         }
     }
+
+    /// Returns the ID of the module containing this pending export.
+    pub fn module_node_id(&self) -> ModuleNodeId {
+        self.module_node_id
+    }
+
+    /// Returns a reference to the `ImportNode` associated with this pending export.
+    pub fn export_node(&self) -> &ImportNode {
+        &self.export_node
+    }
 }
 
 /// Relations useful in the module tree.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TreeRelation(Relation);
+pub struct TreeRelation(Relation); // Keep inner field private
 
 impl TreeRelation {
     pub fn new(relation: Relation) -> Self {
         Self(relation)
+    }
+
+    /// Returns a reference to the inner `Relation`.
+    pub fn relation(&self) -> &Relation {
+        &self.0
     }
 }
 

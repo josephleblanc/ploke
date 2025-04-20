@@ -1,12 +1,9 @@
 use std::path::Path;
 
 use colored::Colorize;
-use ploke_core::NodeId;
+// Removed unused: use ploke_core::NodeId;
 use syn_parser::{
-    parser::{
-        nodes::{GraphNode, ImportKind, ModuleDef},
-        types::VisibilityKind,
-    },
+    parser::nodes::GraphNode, // Removed unused: ImportKind, ModuleDef, types::VisibilityKind
     CodeGraph,
 };
 
