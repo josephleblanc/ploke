@@ -345,7 +345,7 @@ impl CodeGraph {
         for node in &matching_nodes {
             let def_type = if node.is_declaration() { "Decl".red() } else { "Def".green() };
             debug!(target: LOG_TARGET,
-                "  - {}: {} | {} | Path: {} | Def: {:?}",
+                "  - {}: {} | {} | Path: {} | Def: {}", // Changed {:?} to {} for def_type
                 "ID".bold(), node.id.to_string().magenta(),
                 "Name".bold(), node.name.yellow(),
                 node.path.join("::").blue(),
