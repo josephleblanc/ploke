@@ -7,6 +7,7 @@ This document lists the `target` strings used with the `log` crate macros (`debu
 *   **`graph_find`**: Used for logging within search/find methods in `crates/ingest/syn_parser/src/parser/graph.rs`.
 *   **`node_id`**: Used for logging within ID generation methods in `crates/ingest/syn_parser/src/parser/visitor/state.rs`.
 *   **`mod_tree_vis`**: Used for logging within visibility checking methods (like `is_accessible`) in `crates/ingest/syn_parser/src/parser/module_tree.rs`.
+*   **`mod_tree_build`**: Used for logging during the construction phase of `ModuleTree`.
 
 ## Usage
 

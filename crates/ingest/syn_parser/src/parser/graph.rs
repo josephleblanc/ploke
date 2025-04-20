@@ -2,7 +2,7 @@ use crate::error::SynParserError;
 use crate::parser::relations::GraphId;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
-use super::module_tree::ModuleTree;
+use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
 use super::nodes::{
     EnumNode, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode, UnionNode,
 };
@@ -19,7 +19,8 @@ use colored::*; // Import colored for terminal colors
 use log::debug; // Import the debug macro
 use serde::{Deserialize, Serialize};
 
-const LOG_TARGET: &str = "graph_find"; // Define log target for this file
+const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
+const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
 
 // Main structure representing the entire code graph
 // Derive Send and Sync automatically since all component types implement them
@@ -216,6 +217,7 @@ impl CodeGraph {
 
         // 1: Register all modules with their containment info
         for module in &self.modules {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Processing module for tree: {} ({}) | Visibility: {:?}", module.name, module.id, module.visibility);
             tree.add_module(module.clone())?;
         }
 
@@ -334,14 +336,14 @@ impl CodeGraph {
         &self,
         defn_path: &[String],
     ) -> Result<&ModuleNode, SynParserError> {
-        debug!(target: LOG_TARGET, "{} {}", "Searching for defn_path:".cyan(), defn_path.join("::").yellow());
+        debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Searching for defn_path:".cyan(), defn_path.join("::").yellow());
         let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
             .modules
             .iter()
             .filter(|m| m.defn_path() == defn_path)
             .collect();
 
-        debug!(target: LOG_TARGET, "Found {} nodes matching path:", matching_nodes.len().to_string().green());
+        debug!(target: LOG_TARGET_GRAPH_FIND, "Found {} nodes matching path:", matching_nodes.len().to_string().green());
         for node in &matching_nodes {
             let def_type = if node.is_declaration() {
                 "Decl".red()
@@ -368,7 +370,7 @@ impl CodeGraph {
 
         if second.is_some() {
             // If second exists, there was a duplicate *after* filtering
-            debug!(target: LOG_TARGET, "{}", "Found duplicate non-declaration nodes!".red().bold());
+            debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "Found duplicate non-declaration nodes!".red().bold());
             // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
             let all_matches: Vec<_> = self
                 .modules
@@ -377,7 +379,7 @@ impl CodeGraph {
                 .collect();
             // Log only the IDs of duplicates for brevity
             let duplicate_ids: Vec<String> = all_matches.iter().map(|m| m.id.to_string()).collect();
-            debug!(target: LOG_TARGET,
+            debug!(target: LOG_TARGET_GRAPH_FIND,
                 "Duplicate non-declaration modules found for path {}: [{}]",
                 defn_path.join("::").yellow(), duplicate_ids.join(", ").magenta()
             );
@@ -386,9 +388,9 @@ impl CodeGraph {
 
         match first {
             Some(node) => {
-                debug!(target: LOG_TARGET, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta())
+                debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta())
             }
-            None => debug!(target: LOG_TARGET, "{}", "No non-declaration node found!".yellow()),
+            None => debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "No non-declaration node found!".yellow()),
         }
 
         first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))

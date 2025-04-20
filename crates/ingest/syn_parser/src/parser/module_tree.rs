@@ -16,6 +16,7 @@ use super::{
 };
 
 const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
+const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
@@ -249,9 +250,12 @@ impl ModuleTree {
 
         // insert module to tree
         let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
-        let dup_node = self.modules.insert(module_id, module);
+        debug!(target: LOG_TARGET_BUILD, "Inserting into tree.modules: {} ({}) | Visibility: {:?}", module.name, module_id, module.visibility);
+        let dup_node = self.modules.insert(module_id, module); // module is moved here
         if let Some(dup) = dup_node {
             // Box the duplicate node when creating the error variant
+            // Log the duplicate insertion before returning error
+            debug!(target: LOG_TARGET_BUILD, "Duplicate module ID insertion detected: {} ({})", dup.name, dup.id);
             return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
         }
 
@@ -479,6 +483,13 @@ impl ModuleTree {
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         let target_visibility = self.modules.get(&target).map(|m| m.visibility());
+
+        // Log the retrieved visibility *before* the match
+        debug!(target: LOG_TARGET_VIS, "Retrieved visibility for target {} ({}): {:?}",
+            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?"),
+            target,
+            target_visibility.as_ref().map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red())
+        );
 
         let result = match target_visibility {
             Some(VisibilityKind::Public) => {
