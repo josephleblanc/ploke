@@ -59,9 +59,14 @@ pub enum SynParserError {
     #[error("Node validation error: {0}")]
     NodeValidation(String),
 
-    /// Indicates a duplicate path was encountered when building the ModuleTree.
-    #[error("Duplicate path found in module tree for NodeId: {0}")]
-    ModuleTreeDuplicatePath(NodeId),
+    /// Indicates a duplicate definition path was encountered when building the ModuleTree.
+    #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    ModuleTreeDuplicateDefnPath { // New variant
+        path: String, // Store path as String for simplicity in SynParserError
+        existing_id: NodeId,
+        conflicting_id: NodeId,
+    },
+
 
     /// Indicates a duplicate module ID was encountered when building the ModuleTree.
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
@@ -97,7 +102,13 @@ impl From<std::io::Error> for SynParserError {
 impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
     fn from(err: crate::parser::module_tree::ModuleTreeError) -> Self {
         match err {
-            ModuleTreeError::DuplicatePath(id) => SynParserError::ModuleTreeDuplicatePath(id),
+            ModuleTreeError::DuplicatePath { path, existing_id, conflicting_id } => {
+                SynParserError::ModuleTreeDuplicateDefnPath {
+                    path: path.to_string(), // Convert NodePath to String
+                    existing_id,
+                    conflicting_id,
+                }
+            }
             ModuleTreeError::DuplicateModuleId(node) => {
                 // The `node` variable is already a Box<ModuleNode> from the ModuleTreeError variant.
                 // Pass it directly to the SynParserError variant which expects a Box<ModuleNode>.

@@ -104,8 +104,12 @@ impl From<Relation> for TreeRelation {
 // Define the new ModuleTreeError enum
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
 pub enum ModuleTreeError {
-    #[error("Duplicate path found in module tree for NodeId: {0}")]
-    DuplicatePath(NodeId),
+    #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    DuplicatePath { // Change to a struct variant
+        path: NodePath,
+        existing_id: NodeId,
+        conflicting_id: NodeId,
+    },
 
     #[error("Duplicate module ID found in module tree for ModuleNode: {0:?}")]
     DuplicateModuleId(Box<ModuleNode>), // Box the large ModuleNode
