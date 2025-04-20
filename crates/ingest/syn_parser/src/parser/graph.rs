@@ -15,6 +15,7 @@ use crate::parser::{
     types::TypeNode,
 };
 
+use colored::*; // Import colored for terminal colors
 use log::debug; // Import the debug macro
 use serde::{Deserialize, Serialize};
 
@@ -333,22 +334,22 @@ impl CodeGraph {
         &self,
         defn_path: &[String],
     ) -> Result<&ModuleNode, SynParserError> {
-        debug!(target: LOG_TARGET, "Searching for defn_path: {:?}", defn_path);
+        debug!(target: LOG_TARGET, "{} {}", "Searching for defn_path:".cyan(), defn_path.join("::").yellow());
         let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
             .modules
             .iter()
             .filter(|m| m.defn_path() == defn_path)
             .collect();
 
-        debug!(target: LOG_TARGET, "Found {} nodes matching path:", matching_nodes.len());
+        debug!(target: LOG_TARGET, "Found {} nodes matching path:", matching_nodes.len().to_string().green());
         for node in &matching_nodes {
+            let def_type = if node.is_declaration() { "Decl".red() } else { "Def".green() };
             debug!(target: LOG_TARGET,
-                "  - ID: {}, Name: {}, Path: {:?}, IsDecl: {}, Def: {:?}",
-                node.id,
-                node.name,
-                node.path,
-                node.is_declaration(),
-                node.module_def
+                "  - {}: {} | {} | Path: {} | Def: {:?}",
+                "ID".bold(), node.id.to_string().magenta(),
+                "Name".bold(), node.name.yellow(),
+                node.path.join("::").blue(),
+                def_type // Simplified Def output for brevity
             );
         }
 
@@ -362,28 +363,28 @@ impl CodeGraph {
 
         if second.is_some() {
             // If second exists, there was a duplicate *after* filtering
-            debug!(target: LOG_TARGET, "Found duplicate non-declaration nodes!");
+            debug!(target: LOG_TARGET, "{}", "Found duplicate non-declaration nodes!".red().bold());
             // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
             let all_matches: Vec<_> = self
                 .modules
                 .iter()
                 .filter(|m| m.defn_path() == defn_path && !m.is_declaration())
                 .collect();
+            // Log only the IDs of duplicates for brevity
+            let duplicate_ids: Vec<String> = all_matches.iter().map(|m| m.id.to_string()).collect();
             debug!(target: LOG_TARGET,
-                "Duplicate non-declaration modules found for path {:?}: {:?}",
-                defn_path, all_matches
+                "Duplicate non-declaration modules found for path {}: [{}]",
+                defn_path.join("::").yellow(), duplicate_ids.join(", ").magenta()
             );
             return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
         }
 
-        debug!(target: LOG_TARGET,
-            "Found unique non-declaration node: {:?}",
-            first.map(|n| n.id)
-        );
-        first.ok_or_else(|| {
-            debug!(target: LOG_TARGET, "No non-declaration node found!");
-            SynParserError::ModulePathNotFound(defn_path.to_vec())
-        })
+        match first {
+            Some(node) => debug!(target: LOG_TARGET, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta()),
+            None => debug!(target: LOG_TARGET, "{}", "No non-declaration node found!".yellow()),
+        }
+
+        first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
     }
 
     /// Finds a module node by its file path relative to the crate root,
