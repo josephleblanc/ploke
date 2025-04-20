@@ -490,18 +490,66 @@ impl ModuleTree {
 
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
-        let target_visibility = self.modules.get(&target).map(|m| m.visibility());
+        // 1. Get the target definition node from the map
+        let target_defn_node = match self.modules.get(&target) {
+            Some(node) => node,
+            None => {
+                // Target module doesn't even exist in the tree
+                self.log_accessibility_check(source, target, None, "Target Module Not Found", false);
+                return false;
+            }
+        };
 
-        // Log the retrieved visibility *before* the match
+        // 2. Determine the *effective* visibility to check against
+        let effective_visibility = if target_defn_node.is_inline() || target == self.root {
+            // For inline modules or the crate root, the stored visibility is the effective one
+            target_defn_node.visibility()
+        } else {
+            // For file-based modules (that aren't the root), find the corresponding declaration
+            let target_defn_id = target_defn_node.id();
+            let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
+                let rel = tr.relation();
+                if rel.source == GraphId::Node(target_defn_id) && rel.kind == RelationKind::ResolvesToDefinition {
+                    match rel.target {
+                        GraphId::Node(id) => Some(id),
+                        _ => None, // Should not happen for this relation kind
+                    }
+                } else {
+                    None
+                }
+            });
+
+            match decl_id_opt {
+                Some(decl_id) => {
+                    // Found the declaration, get its visibility
+                    self.modules.get(&ModuleNodeId::new(decl_id))
+                        .map(|decl_node| decl_node.visibility())
+                        .unwrap_or_else(|| {
+                            // Should not happen if tree is consistent, but default to Inherited if decl node missing
+                            log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id, target_defn_id);
+                            VisibilityKind::Inherited // Default to Inherited if decl node missing
+                        })
+                }
+                None => {
+                    // No declaration found (e.g., unlinked module file). Treat as private/inherited.
+                    // This aligns with how unlinked files behave.
+                    target_defn_node.visibility() // Use the definition's (likely Inherited) visibility
+                }
+            }
+        };
+
+        // Log the *effective* visibility being used for the check
         debug!(target: LOG_TARGET_VIS, "{} {} ({}): {}",
-            "Retrieved visibility for target".italic(), // Italic description
-            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(), // Target blue
+            "Effective visibility for target".italic(), // Italic description
+            target_defn_node.name.blue(), // Target name blue
             target.to_string().magenta(), // Target ID magenta
-            target_visibility.as_ref().map(|v| format!("{:?}", v).cyan()).unwrap_or_else(|| "NotFound".red().bold()) // Visibility cyan or bold red
+            format!("{:?}", effective_visibility).cyan() // Effective visibility cyan
         );
 
-        let result = match target_visibility {
-            Some(VisibilityKind::Public) => {
+
+        // 3. Perform the accessibility check using the effective_visibility
+        let result = match effective_visibility { // Use effective_visibility here
+            VisibilityKind::Public => {
                 self.log_accessibility_check(
                     source,
                     target,
@@ -534,17 +582,23 @@ impl ModuleTree {
                 // Convert the restriction path Vec<String> to NodePath for lookup
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
-                    Err(_) => return false, // Invalid restriction path
+                    Err(_) => {
+                         self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Invalid Path)", false);
+                         return false; // Invalid restriction path
+                    }
                 };
-
                 // Find the NodeId of the module defining the restriction scope
                 let restriction_module_id = match self.path_index.get(&restriction_path) {
                     Some(id) => ModuleNodeId::new(*id),
-                    None => return false, // Restriction path doesn't exist in the index
+                    None => {
+                        self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Path Not Found)", false);
+                        return false; // Restriction path doesn't exist in the index
+                    }
                 };
 
                 // Check if the source module *is* the restriction module
                 if source == restriction_module_id {
+                     self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Source is Restriction)", true);
                     return true;
                 }
 
@@ -552,6 +606,7 @@ impl ModuleTree {
                 let mut current_ancestor = self.get_parent_module_id(source);
                 while let Some(ancestor_id) = current_ancestor {
                     if ancestor_id == restriction_module_id {
+                         self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Ancestor Match)", true);
                         return true; // Found restriction module in ancestors
                     }
                     if ancestor_id == self.root {
@@ -563,38 +618,29 @@ impl ModuleTree {
                 self.log_accessibility_check(
                     source,
                     target,
-                    target_visibility.as_ref(),
+                    Some(&effective_visibility), // Log with effective visibility
                     "Restricted Visibility (Final)",
                     accessible,
                 );
                 accessible
             }
-            Some(VisibilityKind::Inherited) => {
+            VisibilityKind::Inherited => {
                 // Inherited visibility means private to the defining module.
                 // Access is only allowed if source and target are in the *same* defining module.
-                // This requires finding the defining module for both source and target.
+                // For inherited visibility, the target's *definition* parent matters.
                 let source_parent = self.get_parent_module_id(source);
-                let target_parent = self.get_parent_module_id(target);
+                let target_parent = self.get_parent_module_id(target); // Get parent of the target definition node
                 let accessible = source_parent.is_some() && source_parent == target_parent;
                 self.log_accessibility_check(
                     source,
                     target,
-                    target_visibility.as_ref(),
+                    Some(&effective_visibility), // Log with effective visibility
                     "Inherited Visibility",
                     accessible,
                 );
                 accessible
             }
-            None => {
-                self.log_accessibility_check(
-                    source,
-                    target,
-                    None,
-                    "Target Module Not Found",
-                    false,
-                );
-                false // Target module not found
-            }
+            // Note: The None case for target_visibility was handled at the start by checking target_defn_node.
         };
         result // Return the final calculated result
     }
