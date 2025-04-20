@@ -140,7 +140,8 @@ pub enum ModuleTreeError {
     ContainingModuleNotFound(NodeId), // Added error variant
 
     // NEW: Variant holding a collection of UnlinkedModuleInfo
-    #[error("Found {0.len()} unlinked module file(s) (no corresponding 'mod' declaration).")] // Use .len()
+    // Corrected format string - the caller logs the count/details
+    #[error("Found unlinked module file(s) (no corresponding 'mod' declaration).")]
     FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
 }
 
@@ -202,7 +203,9 @@ impl ModuleTree {
                 .map(|imp| PendingExport::from_export(imp.clone())),
         );
 
-        let node_path = NodePath::try_from(module.defn_path().clone())?;
+        // Use map_err for explicit conversion from SynParserError to ModuleTreeError
+        let node_path = NodePath::try_from(module.defn_path().clone())
+            .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
         let conflicting_id = module.id(); // ID of the module we are trying to add
                                           // Use entry API for clarity and efficiency
         if module.is_declaration() {
@@ -284,8 +287,9 @@ impl ModuleTree {
                 }
                 None => {
                     // No declaration found. Try to create UnlinkedModuleInfo.
-                    // If NodePath conversion fails, it's a fatal error, return immediately.
-                    let node_path = NodePath::try_from(defn_path_vec.clone())?; // Propagate NodePathValidation error
+                    // Use map_err for explicit conversion from SynParserError to ModuleTreeError
+                    let node_path = NodePath::try_from(defn_path_vec.clone())
+                        .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
                     // If path conversion succeeded, collect the unlinked info.
                     collected_unlinked.push(UnlinkedModuleInfo {
