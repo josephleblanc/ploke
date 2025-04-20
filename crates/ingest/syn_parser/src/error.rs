@@ -7,7 +7,7 @@ use crate::parser::{
 };
 
 /// Custom error type for the syn_parser crate.
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, PartialEq)] // Removed Eq
 pub enum SynParserError {
     /// Indicates that a requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
@@ -78,9 +78,9 @@ pub enum SynParserError {
     #[error("Relation conversion error: {0}")]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 
-    // Forward ModuleTreeError variants
+    // Forward ModuleTreeError variants - REMOVED #[from]
     #[error(transparent)]
-    ModuleTreeError(#[from] ModuleTreeError),
+    ModuleTreeError(ModuleTreeError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -127,7 +127,8 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // For now, let's assume DuplicateInModuleTree is sufficient.
                 // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
-            ModuleTreeError::NodePathValidation(syn_err) => syn_err, // Already a SynParserError
+            // Handle the boxed error
+            ModuleTreeError::NodePathValidation(boxed_syn_err) => *boxed_syn_err,
             ModuleTreeError::ContainingModuleNotFound(node_id) => SynParserError::InternalState(
                 format!("Containing module not found for node ID: {}", node_id),
             ),

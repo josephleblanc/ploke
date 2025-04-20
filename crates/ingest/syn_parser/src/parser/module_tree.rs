@@ -7,7 +7,7 @@ use crate::error::SynParserError;
 use crate::parser::nodes::NodePath; // Ensure NodePath is imported
 
 use super::{
-    nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId, NodePath},
+    nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Removed NodePath from here
     relations::{GraphId, Relation, RelationKind},
     types::VisibilityKind,
     CodeGraph,
@@ -134,13 +134,13 @@ pub enum ModuleTreeError {
 
     /// Wraps SynParserError for convenience when using TryFrom<Vec<String>> for NodePath
     #[error("Node path validation error: {0}")]
-    NodePathValidation(#[from] SynParserError),
+    NodePathValidation(Box<SynParserError>), // Box the recursive type
 
     #[error("Containing module not found for node ID: {0}")]
     ContainingModuleNotFound(NodeId), // Added error variant
 
     // NEW: Variant holding a collection of UnlinkedModuleInfo
-    #[error("Found {0} unlinked module file(s) (no corresponding 'mod' declaration).")]
+    #[error("Found {0.len()} unlinked module file(s) (no corresponding 'mod' declaration).")] // Use .len()
     FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
 }
 
