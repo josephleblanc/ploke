@@ -39,7 +39,6 @@ pub fn find_trait_node_paranoid<'a>(
     let name_candidates: Vec<&TraitNode> = graph
         .traits // Check public/crate traits first
         .iter()
-        .chain(graph.private_traits.iter()) // Then check private traits
         .filter(|t| t.name() == trait_name)
         .collect();
 

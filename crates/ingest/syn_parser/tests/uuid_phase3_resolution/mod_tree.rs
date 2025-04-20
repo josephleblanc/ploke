@@ -31,3 +31,28 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[test]
+fn test_import_merging() -> Result<(), Box<dyn std::error::Error>> {
+    let fixture_name = "fixture_nodes";
+    let results = run_phases_and_collect(fixture_name);
+    let mut graphs: Vec<CodeGraph> = Vec::new();
+
+    for parsed in results {
+        graphs.push(parsed.graph);
+    }
+
+    let merged = CodeGraph::merge_new(graphs)?;
+
+    println!("File paths in merged modules:");
+    let base_path: &Path =
+        Path::new("/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes");
+
+    let root_modules = merged.modules.iter().filter(|m| m.is_file_based());
+    println!("{}", "Module Tree:".bold().underline());
+    for module in root_modules {
+        print_module_tree(&merged, module.id, "", false, base_path)?;
+    }
+
+    Ok(())
+}

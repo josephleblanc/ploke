@@ -31,8 +31,6 @@ pub struct CodeGraph {
     pub impls: Vec<ImplNode>,
     // Public traits defined in the code
     pub traits: Vec<TraitNode>,
-    // Private traits defined in the code
-    pub private_traits: Vec<TraitNode>,
     // Relations between nodes
     pub relations: Vec<Relation>,
     // Modules defined in the code
@@ -194,7 +192,6 @@ impl CodeGraph {
         self.type_graph.append(&mut other.type_graph);
         self.impls.append(&mut other.impls);
         self.traits.append(&mut other.traits);
-        self.private_traits.append(&mut other.private_traits);
         self.relations.append(&mut other.relations);
         self.modules.append(&mut other.modules);
         self.values.append(&mut other.values);
@@ -226,12 +223,16 @@ impl CodeGraph {
                     ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
                         // This is the non-fatal case. Log warnings.
                         if !unlinked_infos.is_empty() {
-                             eprintln!(
+                            eprintln!(
                                 "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
                                 unlinked_infos.len()
                             );
-                            for info in unlinked_infos.iter() { // Iterate over the Boxed Vec
-                                eprintln!("  - Path: {}, ID: {}", info.definition_path, info.module_id);
+                            for info in unlinked_infos.iter() {
+                                // Iterate over the Boxed Vec
+                                eprintln!(
+                                    "  - Path: {}, ID: {}",
+                                    info.definition_path, info.module_id
+                                );
                                 // Optionally include the absolute file path
                                 if let Some(module_node) = self.get_module(info.module_id) {
                                     if let Some(file_path) = module_node.file_path() {
@@ -332,9 +333,14 @@ impl CodeGraph {
 
         eprintln!("DEBUG: Found {} nodes matching path:", matching_nodes.len()); // DEBUG
         for node in &matching_nodes {
-            eprintln!( // DEBUG
+            eprintln!(
+                // DEBUG
                 "  - ID: {}, Name: {}, Path: {:?}, IsDecl: {}, Def: {:?}",
-                node.id, node.name, node.path, node.is_declaration(), node.module_def
+                node.id,
+                node.name,
+                node.path,
+                node.is_declaration(),
+                node.module_def
             );
         }
 
@@ -346,17 +352,28 @@ impl CodeGraph {
         let first = non_decl_matches.next();
         let second = non_decl_matches.next(); // Check if there's a second match *after* filtering
 
-        if second.is_some() { // If second exists, there was a duplicate *after* filtering
-             eprintln!("DEBUG: Found duplicate non-declaration nodes!"); // DEBUG
-             // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
-             let all_matches: Vec<_> = self.modules.iter().filter(|m| m.defn_path() == defn_path && !m.is_declaration()).collect();
-             eprintln!("Duplicate non-declaration modules found for path {:?}: {:?}", defn_path, all_matches);
+        if second.is_some() {
+            // If second exists, there was a duplicate *after* filtering
+            eprintln!("DEBUG: Found duplicate non-declaration nodes!"); // DEBUG
+                                                                        // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
+            let all_matches: Vec<_> = self
+                .modules
+                .iter()
+                .filter(|m| m.defn_path() == defn_path && !m.is_declaration())
+                .collect();
+            eprintln!(
+                "Duplicate non-declaration modules found for path {:?}: {:?}",
+                defn_path, all_matches
+            );
             return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
         }
 
-        eprintln!("DEBUG: Found unique non-declaration node: {:?}", first.map(|n| n.id)); // DEBUG
+        eprintln!(
+            "DEBUG: Found unique non-declaration node: {:?}",
+            first.map(|n| n.id)
+        ); // DEBUG
         first.ok_or_else(|| {
-             eprintln!("DEBUG: No non-declaration node found!"); // DEBUG
+            eprintln!("DEBUG: No non-declaration node found!"); // DEBUG
             SynParserError::ModulePathNotFound(defn_path.to_vec())
         })
     }
@@ -398,7 +415,6 @@ impl CodeGraph {
             ))
         })
     }
-
 
     pub fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         self.type_graph.iter().find(|t| t.id == type_id)
@@ -538,7 +554,6 @@ impl CodeGraph {
             all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.impls.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.traits.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.private_traits.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.modules.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.values.iter().map(|n| (n.name(), n.id())));
             all_ids.extend(self.macros.iter().map(|n| (n.name(), n.id())));
@@ -630,7 +645,6 @@ impl CodeGraph {
             .or_else(|| {
                 self.traits
                     .iter()
-                    .chain(&self.private_traits)
                     .find(|n| n.id == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
@@ -795,20 +809,13 @@ impl CodeGraph {
 
     /// Finds a trait node by its ID, searching both public and private traits.
     pub fn get_trait(&self, id: NodeId) -> Option<&TraitNode> {
-        self.traits
-            .iter()
-            .chain(self.private_traits.iter())
-            .find(|t| t.id == id)
+        self.traits.iter().find(|t| t.id == id)
     }
 
     /// Finds a trait node by its ID, searching both public and private traits,
     /// returning an error if not found or if duplicates exist across both lists.
     pub fn get_trait_checked(&self, id: NodeId) -> Result<&TraitNode, SynParserError> {
-        let mut matches = self
-            .traits
-            .iter()
-            .chain(self.private_traits.iter())
-            .filter(|t| t.id == id);
+        let mut matches = self.traits.iter().filter(|t| t.id == id);
         let first = matches.next();
         if matches.next().is_some() {
             return Err(SynParserError::DuplicateNode(id));

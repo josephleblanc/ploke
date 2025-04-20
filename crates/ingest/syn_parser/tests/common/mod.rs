@@ -1,8 +1,8 @@
+use ploke_core::TypeKind; // Import directly from ploke_core
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::parser::graph::CodeGraph;
-use ploke_core::TypeKind; // Import directly from ploke_core
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
 use syn_parser::parser::{nodes::*, ExtractSpan};
 use thiserror::Error;
@@ -96,11 +96,7 @@ pub fn find_enum_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a Enu
 
 /// Find a trait by name in the code graph
 pub fn find_trait_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a TraitNode> {
-    graph
-        .traits
-        .iter()
-        .find(|t| t.name == name)
-        .or_else(|| graph.private_traits.iter().find(|t| t.name == name))
+    graph.traits.iter().find(|t| t.name == name)
 }
 
 /// Find a function by name in the code graph

@@ -1,6 +1,5 @@
 pub mod discovery;
 pub mod error;
-pub mod merge;
 pub mod parser;
 
 // Re-export key items for easier access

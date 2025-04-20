@@ -167,7 +167,6 @@ mod determinism_tests {
         );
         compare_vecs_by_id!(impls, NodeId, ImplNode, |n: &ImplNode| n.id);
         compare_vecs_by_id!(traits, NodeId, TraitNode, |n: &TraitNode| n.id);
-        compare_vecs_by_id!(private_traits, NodeId, TraitNode, |n: &TraitNode| n.id);
         compare_vecs_by_id!(modules, NodeId, ModuleNode, |n: &ModuleNode| n.id);
         compare_vecs_by_id!(values, NodeId, ValueNode, |n: &ValueNode| n.id);
         compare_vecs_by_id!(macros, NodeId, MacroNode, |n: &MacroNode| n.id);
