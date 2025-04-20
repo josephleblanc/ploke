@@ -196,11 +196,11 @@ fn test_import_node_basic_smoke_test_full_parse() {
             "UseStatement".to_string(),
         ),
         (
-            "MyId".to_string(),
+            "SimpleId".to_string(),
             [
                 "crate".to_string(),
                 "type_alias".to_string(),
-                "MyId".to_string(),
+                "SimpleId".to_string(),
             ]
             .to_vec(),
             "UseStatement".to_string(),

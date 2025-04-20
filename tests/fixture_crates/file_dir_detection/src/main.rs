@@ -16,6 +16,8 @@ pub mod top_pub_mod;
 // Add a private top-level module declared via file
 mod top_priv_mod;
 
+// pub mod second_sibling;
+
 // Add a crate-visible top-level module declared via file
 pub(crate) mod crate_visible_mod;
 

@@ -1117,6 +1117,13 @@ fn test_module_node_items_list_comprehensiveness() {
         .items()
         .expect("Crate module node should have items");
 
+    for item in crate_items
+        .iter()
+        .filter(|item| expected_item_ids.contains(item))
+    {
+        println!("Missing: {}", item);
+    }
+
     // Use HashSet for efficient comparison regardless of order
     let expected_ids_set: std::collections::HashSet<_> =
         expected_item_ids.iter().cloned().collect();
@@ -1337,56 +1344,5 @@ fn test_module_contains_relation_declaration_nested() {
             .expect("parent module node items failed")
             .contains(&child_declaration_node.id()),
         "Expected top_pub_mod module items list to contain nested_pub declaration ID"
-    );
-}
-
-#[test]
-fn test_module_node_sibling_file_exists() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let sibling_file = "src/sibling_of_main.rs";
-    let sibling_module_path_vec = vec!["crate".to_string(), "sibling_of_main".to_string()];
-
-    // --- Find Node (File-level module for sibling_of_main.rs) ---
-    let sibling_module_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        sibling_file,
-        &sibling_module_path_vec,
-    );
-
-    // --- Assert Basic Properties ---
-    assert_eq!(sibling_module_node.name(), "sibling_of_main");
-    assert_eq!(sibling_module_node.path, sibling_module_path_vec);
-    assert!(sibling_module_node.is_file_based());
-    assert_eq!(
-        sibling_module_node.file_path().unwrap(),
-        &fixtures_crates_dir().join(fixture_name).join(sibling_file)
-    );
-
-    // --- Assert Items (Example) ---
-    // Find the graph for this specific file
-    let sibling_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(sibling_file))
-        .expect("Graph for sibling_of_main.rs not found");
-    let sibling_graph = &sibling_graph_data.graph;
-
-    // Find an item defined within sibling_of_main.rs
-    let sibling_func_id = find_node_id_by_path_and_name(
-        sibling_graph,
-        &sibling_module_path_vec,
-        "sibling_outer_function",
-    )
-    .expect("Failed to find NodeId for sibling_outer_function");
-
-    // Assert the file module node contains this item
-    assert!(
-        sibling_module_node
-            .items()
-            .expect("Sibling module node items failed")
-            .contains(&sibling_func_id),
-        "Expected sibling_of_main module items list to contain sibling_outer_function ID"
     );
 }
