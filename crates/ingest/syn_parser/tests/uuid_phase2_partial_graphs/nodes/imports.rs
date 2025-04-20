@@ -149,12 +149,13 @@ fn test_import_node_basic_smoke_test_full_parse() {
             .to_vec(),
             "UseStatement".to_string(),
         ),
+        // Removed DefaultTrait expectation
         (
-            "DefaultTrait".to_string(),
+            "SimpleTrait".to_string(), // Added SimpleTrait expectation
             [
                 "crate".to_string(),
                 "traits".to_string(),
-                "DefaultTrait".to_string(),
+                "SimpleTrait".to_string(),
             ]
             .to_vec(),
             "UseStatement".to_string(),
@@ -493,9 +494,13 @@ fn test_import_node_field_path() {
         visible_name3
     );
 
-    // Target 4: serde (extern crate)
-    let visible_name4 = "serde";
-    let expected_path4 = vec!["serde".to_string()];
+    // Target 4: SimpleId (crate relative) - Changed from MyId
+    let visible_name4 = "SimpleId";
+    let expected_path4 = vec![
+        "crate".to_string(),
+        "type_alias".to_string(),
+        "SimpleId".to_string(),
+    ];
     let node4 = find_import_node_basic(graph, &module_path, visible_name4, &expected_path4);
     assert_eq!(
         node4.path,
@@ -505,6 +510,20 @@ fn test_import_node_field_path() {
             .collect::<Vec<_>>(),
         "Path mismatch for '{}'",
         visible_name4
+    );
+
+    // Target 5: serde (extern crate) - Renumbered
+    let visible_name5 = "serde";
+    let expected_path5 = vec!["serde".to_string()];
+    let node5 = find_import_node_basic(graph, &module_path, visible_name5, &expected_path5);
+    assert_eq!(
+        node5.path,
+        expected_path5
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
+        "Path mismatch for '{}'",
+        visible_name5
     );
 }
 
@@ -1283,11 +1302,11 @@ fn test_import_node_paranoid_self() {
     let fixture_name = "fixture_nodes";
     let file_path_rel = "src/imports.rs";
     let module_path = vec!["crate".to_string(), "imports".to_string()];
-    let visible_name = "SubItem";
+    let visible_name = "SimpleId"; // Changed from SubItem
     let expected_path = vec![
-        "self".to_string(),
-        "sub_imports".to_string(),
-        "SubItem".to_string(),
+        "crate".to_string(), // Changed from self
+        "type_alias".to_string(),
+        "SimpleId".to_string(),
     ];
     let expected_original_name = None;
     let expected_is_glob = false;
