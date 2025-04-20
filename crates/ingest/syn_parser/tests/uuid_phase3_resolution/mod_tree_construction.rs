@@ -349,3 +349,112 @@ fn test_module_tree_import_export_segregation() {
 
 // NOTE: test_module_tree_duplicate_path_error requires a dedicated fixture
 // as described in the previous plan. Skipping implementation for now.
+
+#[test]
+fn test_module_tree_imports_fixture_nodes() {
+    let fixture_name = "fixture_nodes";
+    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let tree = graph_and_tree.1; // We only need the tree for this test
+
+    // --- Check Pending Exports ---
+    assert!(
+        tree.pending_exports().is_empty(),
+        "Expected no pending exports from fixture_nodes/imports.rs, found: {:?}",
+        tree.pending_exports()
+            .iter()
+            .map(|p| p.export_node().path.join("::"))
+            .collect::<Vec<_>>()
+    );
+
+    // --- Check Pending Imports ---
+    // Collect details for easier assertion
+    let pending_imports_details: HashSet<(String, bool, bool)> = tree
+        .pending_imports()
+        .iter()
+        .map(|p| {
+            let node = p.import_node();
+            let path_str = node.path.join("::");
+            // Return tuple: (path_string, is_glob, is_extern_crate)
+            (path_str, node.is_glob, node.is_extern_crate())
+        })
+        .collect();
+
+    // Define expected imports (path_string, is_glob, is_extern_crate)
+    let expected_imports: HashSet<(String, bool, bool)> = [
+        // --- From imports.rs top level ---
+        ("crate::structs::TupleStruct".to_string(), false, false),
+        ("std::collections::HashMap".to_string(), false, false),
+        ("std::fmt".to_string(), false, false),
+        ("std::sync::Arc".to_string(), false, false),
+        ("crate::structs::SampleStruct".to_string(), false, false), // Renamed
+        ("std::io::Result".to_string(), false, false),              // Renamed
+        ("crate::enums::EnumWithData".to_string(), false, false),   // Grouped
+        ("crate::enums::SampleEnum1".to_string(), false, false),    // Grouped
+        ("crate::traits::GenericTrait".to_string(), false, false),  // Grouped + Renamed
+        ("crate::traits::SimpleTrait".to_string(), false, false),   // Grouped
+        ("std::fs".to_string(), false, false),                      // Grouped (module)
+        ("std::fs::File".to_string(), false, false),                // Grouped (item)
+        ("std::path::Path".to_string(), false, false),              // Grouped
+        ("std::path::PathBuf".to_string(), false, false),           // Grouped
+        ("std::env".to_string(), true, false),                      // Glob import (path is to the module)
+        ("self::sub_imports::SubItem".to_string(), false, false),   // Relative self
+        ("super::structs::AttributedStruct".to_string(), false, false), // Relative super
+        ("crate::type_alias::SimpleId".to_string(), false, false), // Relative crate
+        ("::std::time::Duration".to_string(), false, false),       // Absolute path
+        ("serde".to_string(), false, true),                         // Extern crate
+                                                                    // Renamed extern crate 'serde as SerdeAlias' also has path "serde"
+                                                                    // --- From imports.rs -> sub_imports module ---
+        ("super::fmt".to_string(), false, false),
+        ("crate::enums::DocumentedEnum".to_string(), false, false),
+        ("std::sync::Arc".to_string(), false, false), // Duplicate path, but different context (ok)
+        ("self::nested_sub::NestedItem".to_string(), false, false),
+        ("super::super::structs::TupleStruct".to_string(), false, false),
+    ]
+    .into_iter()
+    .map(|(s, g, e)| (s.to_string(), g, e)) // Ensure owned Strings
+    .collect();
+
+    // Assert equality between the sets
+    assert_eq!(
+        pending_imports_details, expected_imports,
+        "Mismatch in pending imports.\nActual: {:#?}\nExpected: {:#?}",
+        pending_imports_details, expected_imports
+    );
+
+    // Optional: Spot check specific nodes for more details if needed
+    let hashmap_import = tree
+        .pending_imports()
+        .iter()
+        .find(|p| p.import_node().path.join("::") == "std::collections::HashMap")
+        .map(|p| p.import_node())
+        .expect("HashMap import not found");
+    assert!(!hashmap_import.is_reexport());
+    assert!(hashmap_import.is_inherited_use()); // Should be inherited visibility or extern crate
+
+    let renamed_struct_import = tree
+        .pending_imports()
+        .iter()
+        .find(|p| {
+            let node = p.import_node();
+            node.path.join("::") == "crate::structs::SampleStruct" && node.visible_name == "MySimpleStruct"
+        })
+        .map(|p| p.import_node())
+        .expect("Renamed SampleStruct import not found");
+    assert_eq!(renamed_struct_import.original_name, Some("SampleStruct".to_string()));
+
+    let glob_import = tree
+        .pending_imports()
+        .iter()
+        .find(|p| p.import_node().is_glob && p.import_node().path.join("::") == "std::env")
+        .map(|p| p.import_node())
+        .expect("Glob import 'std::env::*' not found");
+    assert_eq!(glob_import.visible_name, "*");
+
+    let extern_serde = tree
+        .pending_imports()
+        .iter()
+        .find(|p| p.import_node().is_extern_crate() && p.import_node().path.join("::") == "serde")
+        .map(|p| p.import_node())
+        .expect("Extern crate serde not found");
+    assert!(extern_serde.is_inherited_use()); // Extern crates are treated as inherited for pending list
+}
