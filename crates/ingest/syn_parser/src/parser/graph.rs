@@ -7,7 +7,6 @@ use super::nodes::{
     EnumNode, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode, UnionNode,
 };
 use super::relations::RelationKind;
-use crate::parser::module_tree::ModuleTreeError; // Import ModuleTreeError
 use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
@@ -390,7 +389,9 @@ impl CodeGraph {
             Some(node) => {
                 debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta())
             }
-            None => debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "No non-declaration node found!".yellow()),
+            None => {
+                debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "No non-declaration node found!".yellow())
+            }
         }
 
         first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
