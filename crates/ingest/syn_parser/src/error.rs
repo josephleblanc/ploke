@@ -1,7 +1,10 @@
 use ploke_core::NodeId;
 use thiserror::Error;
 
-use crate::parser::nodes::{ModuleNode, NodeError};
+use crate::parser::{
+    module_tree::ModuleTreeError,
+    nodes::{ModuleNode, NodeError},
+};
 
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -94,10 +97,8 @@ impl From<std::io::Error> for SynParserError {
 impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
     fn from(err: crate::parser::module_tree::ModuleTreeError) -> Self {
         match err {
-            crate::parser::module_tree::ModuleTreeError::DuplicatePath(id) => {
-                SynParserError::ModuleTreeDuplicatePath(id)
-            }
-            crate::parser::module_tree::ModuleTreeError::DuplicateModuleId(node) => {
+            ModuleTreeError::DuplicatePath(id) => SynParserError::ModuleTreeDuplicatePath(id),
+            ModuleTreeError::DuplicateModuleId(node) => {
                 // The `node` variable is already a Box<ModuleNode> from the ModuleTreeError variant.
                 // Pass it directly to the SynParserError variant which expects a Box<ModuleNode>.
                 SynParserError::DuplicateInModuleTree(node)
@@ -107,12 +108,19 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // For now, let's assume DuplicateInModuleTree is sufficient.
                 // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
-            crate::parser::module_tree::ModuleTreeError::NodePathValidation(syn_err) => {
+            ModuleTreeError::NodePathValidation(syn_err) => {
                 // If it's already a SynParserError, just return it
                 syn_err
             }
-            crate::parser::module_tree::ModuleTreeError::DefinitionNotFound(path) => {
+            ModuleTreeError::DefinitionNotFound(path) => {
                 SynParserError::ModuleDefinitionNotFound(path.to_string())
+            }
+            ModuleTreeError::ContainingModuleNotFound(node_id) => {
+                // Use InternalState as there's no specific variant for this case.
+                SynParserError::InternalState(format!(
+                    "Containing module not found for node ID: {}",
+                    node_id
+                ))
             }
         }
     }
