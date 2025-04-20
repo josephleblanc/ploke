@@ -18,6 +18,8 @@ use crate::parser::nodes::ModuleDef;
 use ploke_core::ItemKind; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
+use colored::*; // Import colored
+use log::trace; // Import trace macro
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -29,6 +31,8 @@ use syn::{
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
 }
+
+const LOG_TARGET_TRACE: &str = "visitor_trace"; // Define log target for trace logs
 
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
@@ -148,102 +152,93 @@ impl<'a> CodeVisitor<'a> {
         imports
     }
 
-    #[cfg(feature = "verbose_debug")]
+    // Removed #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack(&mut self) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
-            let modules: Vec<(NodeId, String)> = self
+            let modules: Vec<(String, String)> = self // Changed to String tuples for display
                 .state
                 .code_graph
                 .modules
-                .iter()
-                .map(|m| (m.id, m.name.clone()))
+                .map(|m| (m.id.to_string(), m.name.clone())) // Convert ID to string
                 .collect();
 
-            let depth = self.state.code_graph.modules.len();
-            //     .iter()
-            //     .enumerate()
-            //     .find(|(_i, m)| m.id == current_mod.id)
-            //     .map(|(i, _m)| i)
-            //     .unwrap();
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│");
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            print!("└");
-            print!("{:─<3}", "");
+            let items_str = current_mod
+                .items()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "<None>".to_string());
 
-            println!(" current_mod.name: {:?}", current_mod.name);
-            print!("{: <3}", "");
-            (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   id: {}", current_mod.id);
-            print!("{: <3}", "");
-            (0..depth).for_each(|_| print!("{: <3}", ""));
-            print!("│   items: ",);
-            if let Some(item) = current_mod.items().as_ref() {
-                item.iter().for_each(|i| print!("|{}|", i))
-            }
-            print!("{: <3}", "");
-            (0..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│   self.state.code_graph.modules names: {:?}", modules);
+            trace!(target: LOG_TARGET_TRACE, "{}", "--- Module Stack Debug ---".dimmed());
+            trace!(target: LOG_TARGET_TRACE, "  Current Mod: {} ({})", current_mod.name.cyan(), current_mod.id.to_string().magenta());
+            trace!(target: LOG_TARGET_TRACE, "  Items: [{}]", items_str.yellow());
+            trace!(target: LOG_TARGET_TRACE, "  All Modules: {:?}", modules); // Keep this simple for now
+            trace!(target: LOG_TARGET_TRACE, "{}", "--------------------------".dimmed());
         }
     }
-    #[cfg(feature = "verbose_debug")]
+    // Removed #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
-        let depth = self.state.code_graph.modules.len();
         if let Some(current_mod) = self
             .state
+            .code_graph
+            .modules
             .code_graph
             .modules
             .iter()
             .find(|m| m.items().is_some_and(|items| items.contains(&node_id)))
         {
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│");
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            print!("└");
-            print!("{:─<3}", "");
+            let items_str = current_mod
+                .items()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "<None>".to_string());
 
-            print!(
-                " current mod: \"{}\" -> pushing name {} (id: {}) to items: now items = ",
-                current_mod.name, name, node_id,
+            trace!(target: LOG_TARGET_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
+                current_mod.name.cyan(),
+                name.yellow(),
+                node_id.to_string().magenta(),
+                items_str.dimmed()
             );
-            if let Some(item) = current_mod.items().as_ref() {
-                item.iter().for_each(|i| print!("|{}|", i))
-            }
-            println!();
         } else {
-            panic!(
-                "Could not find containing module for node with name {}, id {}",
-                name, node_id
-            );
+            // Log warning instead of panic
+            log::warn!(target: LOG_TARGET_TRACE, "Could not find containing module for node with name {}, id {}", name, node_id);
         }
     }
-    #[cfg(feature = "verbose_debug")]
+    // Removed #[cfg(feature = "verbose_debug")]
     fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
-            let depth = self.state.code_graph.modules.len();
-
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            println!("│");
-            (1..depth).for_each(|_| print!("{: <3}", ""));
-            print!("└");
-            print!("{:─<3}", "");
-
-            println!(
-                " in {} ++ new id created name: \"{}\" (id: {:?})",
-                current_mod.name, name, node_id
+             trace!(target: LOG_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
+                current_mod.name.cyan(),
+                name.yellow(),
+                node_id.to_string().magenta()
             );
         }
     }
-    #[cfg(feature = "verbose_debug")]
-    fn log_push(&self, name: &str, stack: &[String]) {
-        println!("{:+^10} (+) pushed {} <- {:?}", "", name, stack.last());
-        println!("{:+^13} {} now: {:?}", "", name, stack);
+    // Removed #[cfg(feature = "verbose_debug")]
+    fn log_push(&self, stack_name: &str, stack: &[String]) {
+        trace!(target: LOG_TARGET_TRACE, "  [PUSH STACK] {}: {:?} -> {:?}",
+            stack_name.blue(),
+            stack.last().unwrap_or(&"<empty>".to_string()).green(),
+            stack
+        );
     }
 
-    #[cfg(feature = "verbose_debug")]
-    fn log_pop(&self, name: &str, popped: Option<String>, stack: &[String]) {
-        println!("{:+^10} (-) popped {} -> {:?}", "", name, popped);
-        println!("{:+^13} {} now: {:?}", "", name, stack);
+    // Removed #[cfg(feature = "verbose_debug")]
+    fn log_pop(&self, stack_name: &str, popped: Option<String>, stack: &[String]) {
+         trace!(target: LOG_TARGET_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
+            stack_name.blue(),
+            popped.unwrap_or("<empty>".to_string()).red(),
+            stack
+        );
     }
     /// Generates a new `NodeId::Synthetic` for the item being visited using the
     /// `VisitorState` helper, ensuring it's immediately linked to the current
@@ -304,9 +299,17 @@ impl<'a> CodeVisitor<'a> {
                 target: GraphId::Node(node_id),   // Wrap new item ID
                 kind: RelationKind::Contains,
             });
-            #[cfg(feature = "verbose_debug")]
-            {
-                // Find parent name again for logging (or pass it down)
+            // Removed #[cfg(feature = "verbose_debug")] block
+            // Logging is now handled by debug_mod_stack_push if needed
+            // Keep the debug hook, assuming debug_mod_stack_push is updated
+            // to handle the NodeId enum (e.g., using its Display impl).
+            // Removed #[cfg(feature = "verbose_debug")]
+            self.debug_mod_stack_push(item_name.to_owned(), node_id);
+        } else {
+            // This case should ideally not happen after the root module is created in analyze_file_phase2,
+            // but log a warning just in case.
+            log::warn!( // Changed eprintln to log::warn!
+                target: LOG_TARGET_TRACE, // Use trace target for consistency here
                 let parent_name = self
                     .state
                     .code_graph
@@ -335,6 +338,27 @@ impl<'a> CodeVisitor<'a> {
 
         // 3. Return the newly generated NodeId enum
         node_id
+    }
+
+    // Helper to push scope and log (using trace!)
+    fn push_scope(&mut self, name: &str, id: NodeId, cfgs: Vec<String>) {
+        self.state.current_definition_scope.push(id);
+        self.state.cfg_stack.push(self.state.current_scope_cfgs.clone());
+        self.state.current_scope_cfgs = cfgs;
+        trace!(target: LOG_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+    }
+
+    // Helper to pop scope and log (using trace!)
+    fn pop_scope(&mut self, name: &str) {
+        let popped_id = self.state.current_definition_scope.pop();
+        let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+            name.cyan(),
+            popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
+            popped_cfgs,
+            self.state.current_scope_cfgs
+        );
     }
 }
 
@@ -373,8 +397,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let macro_id =
                 self.add_contains_rel(&macro_name, ItemKind::Macro, cfg_bytes.as_deref());
 
-            #[cfg(feature = "verbose_debug")]
-            self.debug_new_id(&macro_name, macro_id);
+            // Removed #[cfg] block
+            self.debug_new_id(&macro_name, macro_id); // Now uses trace!
 
             let span = func.extract_span_bytes();
 
@@ -438,14 +462,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Pass ItemKind::Function and cfg_bytes
             let fn_id = self.add_contains_rel(&fn_name, ItemKind::Function, cfg_bytes.as_deref());
-            #[cfg(feature = "verbose_debug")]
-            self.debug_new_id(&fn_name, fn_id);
+            // Removed #[cfg] block
+            self.debug_new_id(&fn_name, fn_id); // Now uses trace!
 
             let byte_range = func.span().byte_range();
             let span = (byte_range.start, byte_range.end);
 
             // Push the function's ID onto the scope stack BEFORE processing types/generics
-            self.state.current_definition_scope.push(fn_id);
+            // Use helper function for logging
+            self.push_scope(&fn_name, fn_id, provisional_effective_cfgs);
 
             // Process function parameters
             let mut parameters = Vec::new();
@@ -481,7 +506,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let generic_params = self.state.process_generics(&func.sig.generics);
 
             // Pop the function's ID from the scope stack AFTER processing types/generics
-            self.state.current_definition_scope.pop();
+            // Use helper function for logging
+            self.pop_scope(&fn_name);
 
             // Extract doc comments and other attributes
             let docstring = extract_docstring(&func.attrs);
@@ -529,14 +555,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Struct and cfg_bytes
         let struct_id = self.add_contains_rel(&struct_name, ItemKind::Struct, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&struct_name, struct_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&struct_name, struct_id); // Now uses trace!
 
         let byte_range = item_struct.span().byte_range();
         let span = (byte_range.start, byte_range.end);
 
         // Push the struct's ID onto the scope stack BEFORE processing fields/generics
-        self.state.current_definition_scope.push(struct_id);
+        // Use helper function for logging
+        self.push_scope(&struct_name, struct_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
 
         // Process fields
         let mut fields = Vec::new();
@@ -563,8 +590,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
 
-            #[cfg(feature = "verbose_debug")]
-            self.debug_new_id(
+            // Removed #[cfg] block
+            self.debug_new_id( // Now uses trace!
                 &field
                     .ident
                     .as_ref()
@@ -622,20 +649,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 cfgs: item_cfgs.clone(), // Store struct's own cfgs
             }));
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
         // Continue visiting children (fields are handled above, visit generics/where clauses if needed)
+        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
         visit::visit_item_struct(self, item_struct);
 
-        // Pop the struct's CFG scope and definition ID from the stacks
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // Use default (empty vec) if stack empty
-        self.state.current_definition_scope.pop(); // Pop struct ID
-                                                   // --- End CFG Scope Management ---
+        // Pop the struct's scope using the helper
+        self.pop_scope(&struct_name);
     }
 
     // Visit type alias definitions
@@ -657,13 +676,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let type_alias_id =
             self.add_contains_rel(&type_alias_name, ItemKind::TypeAlias, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&type_alias_name, type_alias_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&type_alias_name, type_alias_id); // Now uses trace!
 
         let span = item_type.extract_span_bytes();
 
         // Push the type alias's ID onto the scope stack BEFORE processing type/generics
-        self.state.current_definition_scope.push(type_alias_id);
+        // Type aliases don't introduce a new CFG scope, so pass current scope cfgs
+        self.push_scope(&type_alias_name, type_alias_id, self.state.current_scope_cfgs.clone());
 
         // Process the aliased type
         let type_id = get_or_create_type(self.state, &item_type.ty);
@@ -672,7 +692,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_type.generics);
 
         // Pop the type alias's ID from the scope stack AFTER processing type/generics
-        self.state.current_definition_scope.pop();
+        // Use helper function for logging
+        self.pop_scope(&type_alias_name);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_type.attrs);
@@ -720,13 +741,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Union and cfg_bytes
         let union_id = self.add_contains_rel(&union_name, ItemKind::Union, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&union_name, union_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&union_name, union_id); // Now uses trace!
 
         let span = item_union.extract_span_bytes();
 
         // Push the union's ID onto the scope stack BEFORE processing fields/generics
-        self.state.current_definition_scope.push(union_id);
+        // Use helper function for logging
+        self.push_scope(&union_name, union_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
 
         // Process fields
         let mut fields = Vec::new();
@@ -752,8 +774,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ItemKind::Field,
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
-            #[cfg(feature = "verbose_debug")]
-            self.debug_new_id(
+            // Removed #[cfg] block
+            self.debug_new_id( // Now uses trace!
                 &field_name
                     .clone()
                     .unwrap_or_else(|| format!("Unnamed field of {}", union_name.clone())),
@@ -784,7 +806,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_union.generics);
 
         // Pop the union's ID from the scope stack AFTER processing fields/generics
-        self.state.current_definition_scope.pop();
+        // Note: This pop happens *before* visiting children, which might be incorrect
+        // if generics/where clauses need the union scope. Let's move the pop after visit.
+        // self.state.current_definition_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_union.attrs);
@@ -809,20 +833,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 cfgs: item_cfgs, // Store union's own cfgs
             }));
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
         // Continue visiting children (fields handled above, visit generics/where clauses if needed)
+        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
         visit::visit_item_union(self, item_union);
 
-        // Pop the union's CFG scope from the stack
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        // Note: union_id was already popped from definition scope stack after processing generics
-        // --- End CFG Scope Management ---
+        // Pop the union's scope using the helper *after* visiting children
+        self.pop_scope(&union_name);
     }
 
     // Visit enum definitions
@@ -843,8 +859,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Enum and cfg_bytes
         let enum_id = self.add_contains_rel(&enum_name, ItemKind::Enum, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&enum_name, enum_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&enum_name, enum_id); // Now uses trace!
 
         let span = item_enum.extract_span_bytes();
 
@@ -873,7 +889,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             );
 
             // Push the variant's ID onto the scope stack BEFORE processing its fields
-            self.state.current_definition_scope.push(variant_id);
+            // Variants don't introduce a new CFG scope, pass current (enum's) scope cfgs
+            self.push_scope(&variant_name, variant_id, self.state.current_scope_cfgs.clone());
 
             // Process fields of the variant
             let mut fields = Vec::new();
@@ -903,8 +920,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             ItemKind::Field,
                             field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
-                        #[cfg(feature = "verbose_debug")]
-                        self.debug_new_id(
+                        // Removed #[cfg] block
+                        self.debug_new_id( // Now uses trace!
                             &field_name
                                 .clone()
                                 .unwrap_or("unnamed_enum_field".to_string()),
@@ -956,8 +973,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(),
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
-                        #[cfg(feature = "verbose_debug")]
-                        self.debug_new_id("unnamed_enum_field", field_id);
+                        // Removed #[cfg] block
+                        self.debug_new_id("unnamed_enum_field", field_id); // Now uses trace!
 
                         let field_node = FieldNode {
                             id: field_id,
@@ -983,7 +1000,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             }
 
             // Pop the variant's ID from the scope stack AFTER processing its fields
-            self.state.current_definition_scope.pop();
+            // Use helper function for logging
+            self.pop_scope(&variant_name);
 
             // Extract discriminant if any
             let discriminant = variant
@@ -1011,13 +1029,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         // Push the enum's ID onto the scope stack BEFORE processing its generics
-        self.state.current_definition_scope.push(enum_id);
+        // Use helper function for logging
+        self.push_scope(&enum_name, enum_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
 
         // Pop the enum's ID from the scope stack AFTER processing its generics
-        self.state.current_definition_scope.pop();
+        // Note: This pop happens *before* visiting children, which might be incorrect
+        // if generics/where clauses need the enum scope. Let's move the pop after visit.
+        // self.state.current_definition_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_enum.attrs);
@@ -1042,20 +1063,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 cfgs: item_cfgs.clone(), // Store enum's own cfgs
             }));
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs;
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
         // Continue visiting children (variants/fields handled above, visit generics/where)
+        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
         visit::visit_item_enum(self, item_enum);
 
-        // Pop the enum's CFG scope from the stack
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        // Note: enum_id was already popped from definition scope stack after processing generics
-        // --- End CFG Scope Management ---
+        // Pop the enum's scope using the helper *after* visiting children
+        self.pop_scope(&enum_name);
     }
 
     // Visit impl blocks
@@ -1076,8 +1089,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Impl and cfg_bytes
         let impl_id = self.add_contains_rel(&impl_name, ItemKind::Impl, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&impl_name, impl_id); // Log with the generated name
+        // Removed #[cfg] block
+        self.debug_new_id(&impl_name, impl_id); // Log with the generated name, now uses trace!
 
         // Process self type,
         // // Case 1: Simple struct
@@ -1094,7 +1107,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // // item_impl.trait_ = Some for "MyTrait"
 
         // Pushing parent node id to stack BEFORE generating self type.
-        self.state.current_definition_scope.push(impl_id);
+        // Use helper function for logging
+        self.push_scope(&impl_name, impl_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -1135,11 +1149,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     method_cfg_bytes.as_deref(),
                 );
 
-                #[cfg(feature = "verbose_debug")]
-                self.debug_new_id(&method_name, method_node_id);
+                // Removed #[cfg] block
+                self.debug_new_id(&method_name, method_node_id); // Now uses trace!
 
                 // Push the method's ID onto the scope stack BEFORE processing its types/generics
-                self.state.current_definition_scope.push(method_node_id);
+                // Methods don't introduce a new CFG scope, pass current (impl's) scope cfgs
+                self.push_scope(&method_name, method_node_id, self.state.current_scope_cfgs.clone());
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1178,7 +1193,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
-                self.state.current_definition_scope.pop();
+                // Use helper function for logging
+                self.pop_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1243,22 +1259,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs;
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
         // Continue visiting children (methods handled above, visit generics/where)
+        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
         visit::visit_item_impl(self, item_impl);
 
-        // Pop the impl's definition ID *after* visiting children
-        self.state.current_definition_scope.pop(); // <<< ADD THIS MISSING POP
-
-        // Pop the impl's CFG scope from the stack
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        // --- End CFG Scope Management ---
+        // Pop the impl's scope using the helper *after* visiting children
+        self.pop_scope(&impl_name);
     }
 
     // Visit trait definitions
@@ -1279,8 +1285,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Trait and cfg_bytes
         let trait_id = self.add_contains_rel(&trait_name, ItemKind::Trait, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&trait_name, trait_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&trait_name, trait_id); // Now uses trace!
 
         // Process methods
         let mut methods = Vec::new();
@@ -1308,11 +1314,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     method_cfg_bytes.as_deref(),
                 );
 
-                #[cfg(feature = "verbose_debug")]
-                self.debug_new_id(&method_name, method_node_id);
+                // Removed #[cfg] block
+                self.debug_new_id(&method_name, method_node_id); // Now uses trace!
 
                 // Push the method's ID onto the scope stack BEFORE processing its types/generics
-                self.state.current_definition_scope.push(method_node_id);
+                // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
+                self.push_scope(&method_name, method_node_id, self.state.current_scope_cfgs.clone());
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1347,7 +1354,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
-                self.state.current_definition_scope.pop();
+                // Use helper function for logging
+                self.pop_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1382,7 +1390,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         }
 
         // Push the trait's ID onto the scope stack BEFORE processing its generics/supertraits
-        self.state.current_definition_scope.push(trait_id);
+        // Use helper function for logging
+        self.push_scope(&trait_name, trait_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_trait.generics);
@@ -1417,7 +1426,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .collect();
 
         // Pop the trait's ID from the scope stack AFTER processing its generics/supertraits
-        self.state.current_definition_scope.pop();
+        // Note: This pop happens *before* visiting children, which might be incorrect
+        // if generics/where clauses need the trait scope. Let's move the pop after visit.
+        // self.state.current_definition_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_trait.attrs);
@@ -1452,20 +1463,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             });
         }
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs;
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
         // Continue visiting children (methods handled above, visit generics/where/supertraits)
+        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
         visit::visit_item_trait(self, item_trait);
 
-        // Pop the trait's CFG scope from the stack
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        // Note: trait_id was already popped from definition scope stack after processing generics/supertraits/items
-        // --- End CFG Scope Management ---
+        // Pop the trait's scope using the helper *after* visiting children
+        self.pop_scope(&trait_name);
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
@@ -1485,13 +1488,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Module and cfg_bytes
         let module_id = self.add_contains_rel(&module_name, ItemKind::Module, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_mod_stack();
+        // Removed #[cfg] block
+        self.debug_mod_stack(); // Now uses trace!
 
         let span = module.extract_span_bytes();
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&module_name, module_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&module_name, module_id); // Now uses trace!
 
         // Save current path before entering module
         let parent_path = self.state.current_module_path.clone();
@@ -1534,61 +1537,35 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.current_module_path = parent_path;
 
         self.state.current_module.push(module_node.name.clone());
-        #[cfg(feature = "verbose_debug")]
-        {
-            self.log_push("current module", &self.state.current_module);
-            println!(
-                "{:+^13} self.state.current_module now: {:?}",
-                "", self.state.current_module
-            );
-        }
+        // Removed #[cfg] block
+        self.log_push("current module", &self.state.current_module); // Now uses trace!
+
         self.state
             .current_module_path
             .push(module_node.name.clone());
-        #[cfg(feature = "verbose_debug")]
-        {
-            println!(
-                "{:+^10} (+) pushed self.state.current_module_path <- {:?}",
-                "",
-                module_node.name.clone()
-            );
-            println!(
-                "{:+^13} self.state.current_module_path now: {:?}",
-                "", self.state.current_module_path
-            );
-        }
+        // Removed #[cfg] block
+        self.log_push("current_module_path", &self.state.current_module_path); // Now uses trace!
 
         self.state.code_graph.modules.push(module_node);
 
-        // --- CFG Scope Management (Raw Strings) ---
-        let next_scope_cfgs = provisional_effective_cfgs; // Use combined strings for child scope
-        self.state
-            .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
-        self.state.current_scope_cfgs = next_scope_cfgs;
-
-        // Push the module's ID onto the definition scope stack *before* visiting children
-        self.state.current_definition_scope.push(module_id);
+        // Push the module's scope using the helper *before* visiting children
+        self.push_scope(&module_name, module_id, provisional_effective_cfgs);
 
         // Continue visiting children.
         visit::visit_item_mod(self, module);
 
-        // Pop the module's definition ID *after* visiting children
-        self.state.current_definition_scope.pop();
+        // Pop the module's scope using the helper *after* visiting children
+        self.pop_scope(&module_name);
 
-        // Pop the module's CFG scope *after* visiting children
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        // --- End CFG Scope Management ---
+        let popped_mod = self.state.current_module.pop();
+        // Removed #[cfg] block
+        self.log_pop("current_module", popped_mod, &self.state.current_module); // Now uses trace!
 
-        let _popped = self.state.current_module.pop();
-        #[cfg(feature = "verbose_debug")]
-        self.log_pop("current_module", _popped, &self.state.current_module);
-
-        let _popped = self.state.current_module_path.pop();
-        #[cfg(feature = "verbose_debug")]
-        self.log_pop(
+        let popped_path = self.state.current_module_path.pop();
+        // Removed #[cfg] block
+        self.log_pop( // Now uses trace!
             "current_module_path",
-            _popped,
+            popped_path,
             &self.state.current_module_path,
         );
     }
@@ -1688,8 +1665,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             cfg_bytes.as_deref(), // Pass CFG bytes
         );
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&visible_name, import_id); // Log with visible name
+        // Removed #[cfg] block
+        self.debug_new_id(&visible_name, import_id); // Log with visible name, now uses trace!
 
         let crate_name = extern_crate.ident.to_string(); // Keep original name for path etc.
 
@@ -1787,8 +1764,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Const and cfg_bytes
         let const_id = self.add_contains_rel(&const_name, ItemKind::Const, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&const_name, const_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&const_name, const_id); // Now uses trace!
 
         let span = item_const.extract_span_bytes();
 
@@ -1866,8 +1843,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Static and cfg_bytes
         let static_id = self.add_contains_rel(&static_name, ItemKind::Static, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&static_name, static_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&static_name, static_id); // Now uses trace!
 
         let span = item_static.extract_span_bytes();
 
@@ -1966,8 +1943,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pass ItemKind::Macro and cfg_bytes
         let macro_id = self.add_contains_rel(&macro_name, ItemKind::Macro, cfg_bytes.as_deref());
 
-        #[cfg(feature = "verbose_debug")]
-        self.debug_new_id(&macro_name, macro_id);
+        // Removed #[cfg] block
+        self.debug_new_id(&macro_name, macro_id); // Now uses trace!
 
         let span = item_macro.extract_span_bytes();
 

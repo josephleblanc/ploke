@@ -50,10 +50,7 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-default = [
-    # "verbose_debug",
-]
-verbose_debug = []
+default = []
 # Post-MVP feature
 workspace_vis = []
 # Feature flag for the UUID refactor (REMOVED)

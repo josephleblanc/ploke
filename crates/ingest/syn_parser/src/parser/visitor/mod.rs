@@ -169,10 +169,17 @@ pub fn analyze_file_phase2(
     state.current_definition_scope.push(root_module_id);
 
     // 3. Create the root module node using the derived path and name
+    // Determine visibility: Public only for crate root (main.rs/lib.rs), Inherited otherwise
+    let root_visibility = if logical_module_path == ["crate"] {
+        crate::parser::types::VisibilityKind::Public
+    } else {
+        crate::parser::types::VisibilityKind::Inherited
+    };
+
     state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
         name: root_module_name, // Use derived name
-        visibility: crate::parser::types::VisibilityKind::Public, // Assume public for now, Phase 3 resolves
+        visibility: root_visibility, // Use determined visibility
         attributes: Vec::new(),
         docstring: None,
         imports: Vec::new(),
