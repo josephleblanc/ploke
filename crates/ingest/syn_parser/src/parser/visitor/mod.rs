@@ -83,11 +83,11 @@ use {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ParsedCodeGraph {
-    /// The absolute path of the file that was parsed.                                
+    /// The absolute path of the file that was parsed.
     pub file_path: PathBuf,
-    /// The UUID namespace of the crate this file belongs to.                         
+    /// The UUID namespace of the crate this file belongs to.
     pub crate_namespace: Uuid,
-    /// The resulting code graph from parsing the file.                               
+    /// The resulting code graph from parsing the file.
     pub graph: CodeGraph,
     // Potentially add other relevant context if needed in the future
 }
@@ -178,7 +178,7 @@ pub fn analyze_file_phase2(
 
     state.code_graph.modules.push(ModuleNode {
         id: root_module_id,
-        name: root_module_name, // Use derived name
+        name: root_module_name,      // Use derived name
         visibility: root_visibility, // Use determined visibility
         attributes: Vec::new(),
         docstring: None,
@@ -214,7 +214,7 @@ pub fn analyze_file_phase2(
     }
 
     // TODO: Add another debug_print_all_visible function under cfg "uuid_ids", since our recent
-    // chagnes would break the normal version.
+    // changes would break the normal version.
     // visitor.state.code_graph.debug_print_all_visible();
 
     Ok(ParsedCodeGraph {
