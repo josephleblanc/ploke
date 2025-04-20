@@ -61,12 +61,12 @@ pub enum SynParserError {
 
     /// Indicates a duplicate definition path was encountered when building the ModuleTree.
     #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
-    ModuleTreeDuplicateDefnPath { // New variant
+    ModuleTreeDuplicateDefnPath {
+        // New variant
         path: String, // Store path as String for simplicity in SynParserError
         existing_id: NodeId,
         conflicting_id: NodeId,
     },
-
 
     /// Indicates a duplicate module ID was encountered when building the ModuleTree.
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
@@ -75,7 +75,6 @@ pub enum SynParserError {
     // Removed ModuleDefinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
     // ModuleDefinitionNotFound(String), // Store path string representation
-
     #[error("Relation conversion error: {0}")]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 
@@ -107,7 +106,11 @@ impl From<std::io::Error> for SynParserError {
 impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
     fn from(err: crate::parser::module_tree::ModuleTreeError) -> Self {
         match err {
-            ModuleTreeError::DuplicatePath { path, existing_id, conflicting_id } => {
+            ModuleTreeError::DuplicatePath {
+                path,
+                existing_id,
+                conflicting_id,
+            } => {
                 SynParserError::ModuleTreeDuplicateDefnPath {
                     path: path.to_string(), // Convert NodePath to String
                     existing_id,
@@ -125,12 +128,9 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
             ModuleTreeError::NodePathValidation(syn_err) => syn_err, // Already a SynParserError
-            ModuleTreeError::ContainingModuleNotFound(node_id) => {
-                SynParserError::InternalState(format!(
-                    "Containing module not found for node ID: {}",
-                    node_id
-                ))
-            }
+            ModuleTreeError::ContainingModuleNotFound(node_id) => SynParserError::InternalState(
+                format!("Containing module not found for node ID: {}", node_id),
+            ),
             // FoundUnlinkedModules is handled within CodeGraph::build_module_tree
             // and should not typically be converted directly to SynParserError unless
             // a different error handling strategy is chosen later.
@@ -140,7 +140,8 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // This conversion shouldn't usually happen if handled in the caller.
                 // If it does, it indicates an unexpected flow.
                 SynParserError::InternalState(
-                    "FoundUnlinkedModules error encountered unexpectedly during conversion.".to_string(),
+                    "FoundUnlinkedModules error encountered unexpectedly during conversion."
+                        .to_string(),
                 )
             }
         }
