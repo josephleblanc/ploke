@@ -105,6 +105,27 @@ impl ModuleTree {
         &self.modules
     }
 
+    /// Returns a reference to the internal path index mapping canonical paths to NodeIds.
+    pub fn path_index(&self) -> &HashMap<NodePath, NodeId> {
+        &self.path_index
+    }
+
+    /// Returns a slice of the relations relevant to the module tree structure.
+    pub fn tree_relations(&self) -> &[TreeRelation] {
+        &self.tree_relations
+    }
+
+    /// Returns a slice of the pending private imports collected during tree construction.
+    pub fn pending_imports(&self) -> &[PendingImport] {
+        &self.pending_imports
+    }
+
+    /// Returns a slice of the pending public re-exports collected during tree construction.
+    pub fn pending_exports(&self) -> &[PendingExport] {
+        &self.pending_exports
+    }
+
+
     pub fn new_from_root(root: ModuleNodeId) -> Self {
         Self {
             root,
