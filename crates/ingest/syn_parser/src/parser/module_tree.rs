@@ -469,7 +469,7 @@ impl ModuleTree {
             "Accessibility Check:".cyan().bold(),
             self.modules.get(&source).map(|m| m.name.as_str()).unwrap_or("?").yellow(),
             self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(),
-            target_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red().to_string()),
+            target_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red()), // Removed .to_string()
             step.white(),
             if result { "Accessible".green() } else { "Inaccessible".red() }
         );
@@ -495,7 +495,8 @@ impl ModuleTree {
                 self.log_accessibility_check(source, target, target_visibility.as_ref(), "Crate Visibility", accessible);
                 accessible
             }
-            Some(VisibilityKind::Restricted(restricted_path_vec)) => {
+            // Borrow restricted_path_vec instead of moving it
+            Some(VisibilityKind::Restricted(ref restricted_path_vec)) => {
                  // Remove unused variable warning by prefixing with underscore
                 let _source_root = self.get_root_path(source);
                 // Convert the restriction path Vec<String> to NodePath for lookup
