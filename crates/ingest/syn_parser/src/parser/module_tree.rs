@@ -184,12 +184,26 @@ impl ModuleTree {
         );
 
         let node_path = NodePath::try_from(module.defn_path())?;
-        let dup_path = self.path_index.insert(node_path, module.id());
-        if let Some(dup) = dup_path {
-            return Err(ModuleTreeError::DuplicatePath(dup));
+        let conflicting_id = module.id(); // ID of the module we are trying to add
+        // Use entry API for clarity and efficiency
+        match self.path_index.entry(node_path.clone()) { // Clone node_path for the error case
+            std::collections::hash_map::Entry::Occupied(entry) => {
+                // Path already exists
+                let existing_id = *entry.get();
+                return Err(ModuleTreeError::DuplicatePath {
+                    path: node_path, // Use the cloned path
+                    existing_id,
+                    conflicting_id,
+                });
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                // Path is free, insert it
+                entry.insert(conflicting_id);
+            }
         }
+
         // insert module to tree
-        let module_id = ModuleNodeId::new(module.id()); // Store ID before potential move
+        let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
         let dup_node = self.modules.insert(module_id, module);
         if let Some(dup) = dup_node {
             // Box the duplicate node when creating the error variant
