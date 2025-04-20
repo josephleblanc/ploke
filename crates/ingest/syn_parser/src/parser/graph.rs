@@ -351,7 +351,7 @@ impl CodeGraph {
                 "Def".green()
             };
             // Moved comment outside the format string literal
-            debug!(target: LOG_TARGET,
+            debug!(target: LOG_TARGET_GRAPH_FIND,
                 "  - {}: {} | {}: {} | Path: {} | Def: {}",
                 "ID".bold(), node.id.to_string().magenta(),
                 "Name".bold(), node.name.yellow(),
