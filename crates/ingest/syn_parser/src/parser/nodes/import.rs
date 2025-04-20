@@ -138,9 +138,24 @@ impl ImportNode {
         matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Restricted(_)))
     }
 
-    /// Checks if this import is a private `use` statement (inherited visibility).
+    /// Checks if this import is effectively private to the current scope,
+    /// meaning either a `use` statement with inherited visibility or an `extern crate` statement.
+    /// This is used by `ModuleTree::add_module` to populate `pending_imports`.
     pub fn is_inherited_use(&self) -> bool {
+        matches!(
+            self.kind,
+            ImportKind::UseStatement(VisibilityKind::Inherited) | ImportKind::ExternCrate
+        )
+    }
+
+    /// Checks specifically if this import is a `use` statement with inherited (private) visibility.
+    pub fn is_inherited_visibility(&self) -> bool {
         matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Inherited))
+    }
+
+    /// Checks specifically if this import is an `extern crate` statement.
+    pub fn is_extern_crate(&self) -> bool {
+        matches!(self.kind, ImportKind::ExternCrate)
     }
 }
 
