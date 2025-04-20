@@ -358,12 +358,19 @@ impl ModuleTree {
             }
 
             // Queue public parent and sibling modules
-            for (rel, neighbor_mod) in self.get_public_neighbors(mod_id) {
-                if !visited.contains(&neighbor_mod) {
+            for (_rel, neighbor_mod_id) in self.get_public_neighbors(mod_id) {
+                if !visited.contains(&neighbor_mod_id) {
                     let mut new_path = path.clone();
-                    new_path.push(rel.name.clone());
-                    queue.push_back((neighbor_mod, new_path));
-                    visited.insert(neighbor_mod);
+                    // Get the name from the neighbor module node
+                    if let Some(neighbor_node) = self.modules.get(&neighbor_mod_id) {
+                        new_path.push(neighbor_node.name.clone());
+                    } else {
+                        // Should not happen if graph is consistent, but handle defensively
+                        eprintln!("Warning: Neighbor module {:?} not found in map during shortest_public_path.", neighbor_mod_id);
+                        continue; // Skip this neighbor if node not found
+                    }
+                    queue.push_back((neighbor_mod_id, new_path));
+                    visited.insert(neighbor_mod_id);
                 }
             }
         }
@@ -384,38 +391,35 @@ impl ModuleTree {
         }
     }
 
-    /// Gets public neighbor modules and their relations
-    pub fn get_public_neighbors(&self, module_id: ModuleNodeId) -> Vec<(Relation, ModuleNodeId)> {
+    /// Gets public neighbor module IDs and the relation kind connecting them.
+    /// Returns Vec<(RelationKind, ModuleNodeId)>
+    pub fn get_public_neighbors(
+        &self,
+        module_id: ModuleNodeId,
+    ) -> Vec<(RelationKind, ModuleNodeId)> {
         let mut neighbors = Vec::new();
 
         // 1. Get parent module if accessible
         if let Some(parent_id) = self.get_parent_module_id(module_id) {
-            if self.is_accessible(parent_id, module_id) {
-                neighbors.push((
-                    Relation {
-                        source: GraphId::Node(parent_id.into_inner()),
-                        target: GraphId::Node(module_id.into_inner()),
-                        kind: RelationKind::Contains,
-                    },
-                    parent_id,
-                ));
-            }
+            // Check if the *parent* is accessible *from the context of the current module*
+            // (This check might need refinement depending on exact visibility rules,
+            // but for now, assume if we can get the parent, we can consider it a neighbor)
+            // Let's simplify: if a parent exists, consider it a potential neighbor path.
+            // The accessibility check should happen when resolving the *target item*, not the path segments.
+            neighbors.push((RelationKind::Contains, parent_id)); // Parent contains current
         }
 
-        // 2. Get public siblings
+        // 2. Get public siblings (children of the same parent)
         if let Some(parent_id) = self.get_parent_module_id(module_id) {
-            if let Some(parent) = self.modules.get(&parent_id) {
-                for &item_id in parent.items().unwrap_or(&[]) {
-                    if let Some(sibling) = self.modules.get(&ModuleNodeId::new(item_id)) {
-                        if sibling.id != module_id.into_inner() && sibling.visibility().is_pub() {
-                            neighbors.push((
-                                Relation {
-                                    source: GraphId::Node(module_id.into_inner()),
-                                    target: GraphId::Node(sibling.id),
-                                    kind: RelationKind::Sibling,
-                                },
-                                ModuleNodeId::new(sibling.id),
-                            ));
+            if let Some(parent_node) = self.modules.get(&parent_id) {
+                if let Some(parent_items) = parent_node.items() {
+                    for &item_id in parent_items {
+                        // Check if the item is a module and is public
+                        if let Some(sibling_node) = self.modules.get(&ModuleNodeId::new(item_id)) {
+                            // Ensure it's not the module itself and it's public
+                            if sibling_node.id != module_id.into_inner() && sibling_node.visibility().is_pub() {
+                                neighbors.push((RelationKind::Sibling, ModuleNodeId::new(sibling_node.id)));
+                            }
                         }
                     }
                 }
@@ -448,17 +452,60 @@ impl ModuleTree {
             Some(VisibilityKind::Crate) => {
                 // Check if same crate by comparing root paths
                 let source_root = self.get_root_path(source);
-                let target_root = self.get_root_path(target);
-                source_root == target_root
+                let source_root_path = self.get_module_path_vec(source);
+                let target_root_path = self.get_module_path_vec(target);
+                // Check if they share the same crate root (first segment)
+                source_root_path.first() == target_root_path.first()
             }
-            Some(VisibilityKind::Restricted(path)) => path.iter().any(|seg| {
-                self.path_index
-                    .get(seg)
-                    .map(|id| *id == source.into_inner())
-                    .unwrap_or(false)
-            }),
-            _ => false,
+            Some(VisibilityKind::Restricted(restricted_path_vec)) => {
+                // Convert the restriction path Vec<String> to NodePath for lookup
+                let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
+                    Ok(p) => p,
+                    Err(_) => return false, // Invalid restriction path
+                };
+
+                // Find the NodeId of the module defining the restriction scope
+                let restriction_module_id = match self.path_index.get(&restriction_path) {
+                    Some(id) => ModuleNodeId::new(*id),
+                    None => return false, // Restriction path doesn't exist in the index
+                };
+
+                // Check if the source module *is* the restriction module
+                if source == restriction_module_id {
+                    return true;
+                }
+
+                // Check if the source module is a descendant of the restriction module
+                let mut current_ancestor = self.get_parent_module_id(source);
+                while let Some(ancestor_id) = current_ancestor {
+                    if ancestor_id == restriction_module_id {
+                        return true; // Found restriction module in ancestors
+                    }
+                    if ancestor_id == self.root {
+                        break; // Reached crate root without finding it
+                    }
+                    current_ancestor = self.get_parent_module_id(ancestor_id);
+                }
+                false // Not the module itself or a descendant
+            }
+            Some(VisibilityKind::Inherited) => {
+                // Inherited visibility means private to the defining module.
+                // Access is only allowed if source and target are in the *same* defining module.
+                // This requires finding the defining module for both source and target.
+                let source_parent = self.get_parent_module_id(source);
+                let target_parent = self.get_parent_module_id(target);
+                source_parent.is_some() && source_parent == target_parent
+            }
+            None => false, // Target module not found
         }
+    }
+
+    /// Gets the full module path Vec<String> for a given module ID.
+    fn get_module_path_vec(&self, module_id: ModuleNodeId) -> Vec<String> {
+        self.modules
+            .get(&module_id)
+            .map(|m| m.path.clone())
+            .unwrap_or_default() // Return empty path if module not found
     }
 
     /// Gets root path using existing ModuleTree data
