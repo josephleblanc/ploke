@@ -552,6 +552,9 @@ In Actual missing from Expected: {:#?}\n",
 /// with different visibility levels (public, crate, restricted, inherited).
 #[test]
 fn test_module_tree_is_accessible() {
+    // Initialize logger for this test to capture debug output if RUST_LOG is set
+    let _ = env_logger::try_init(); // Use try_init to avoid panic if already initialized
+
     let fixture_name = "file_dir_detection";
     let graph_and_tree = build_tree_for_fixture(fixture_name);
     let graph = graph_and_tree.0;
