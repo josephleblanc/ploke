@@ -594,7 +594,7 @@ impl CodeGraph {
             for (name, id) in all_ids {
                 println!("id: {:?}, name: {}", id, name); // Use Debug print for NodeId enum
             }
-        }
+        // } // Removed corresponding closing brace if block was removed
     }
 
     pub fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {

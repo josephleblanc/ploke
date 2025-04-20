@@ -17,7 +17,8 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let merged = CodeGraph::merge_new(graphs)?;
-    let module_tree = merged.build_module_tree()?;
+    // Prefix with underscore to silence warning, as it's only used for its side effects (building)
+    let _module_tree = merged.build_module_tree()?;
 
     println!("File paths in merged modules:");
     let base_path: &Path = Path::new(

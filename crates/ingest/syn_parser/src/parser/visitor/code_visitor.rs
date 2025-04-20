@@ -159,6 +159,7 @@ impl<'a> CodeVisitor<'a> {
                 .state
                 .code_graph
                 .modules
+                .iter() // Add .iter() here
                 .map(|m| (m.id.to_string(), m.name.clone())) // Convert ID to string
                 .collect();
 
@@ -185,9 +186,7 @@ impl<'a> CodeVisitor<'a> {
         if let Some(current_mod) = self
             .state
             .code_graph
-            .modules
-            .code_graph
-            .modules
+            .modules // Remove extra .code_graph.modules
             .iter()
             .find(|m| m.items().is_some_and(|items| items.contains(&node_id)))
         {
@@ -616,7 +615,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .defined_types
             .push(TypeDefNode::Struct(StructNode {
                 id: struct_id,
-                name: struct_name,
+                name: struct_name.clone(), // Clone here
                 span,
                 visibility: self.state.convert_visibility(&item_struct.vis),
                 fields,
@@ -800,7 +799,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .defined_types
             .push(TypeDefNode::Union(UnionNode {
                 id: union_id,
-                name: union_name,
+                name: union_name.clone(), // Clone here
                 visibility: self.state.convert_visibility(&item_union.vis),
                 fields,
                 generic_params,
@@ -1030,7 +1029,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .defined_types
             .push(TypeDefNode::Enum(EnumNode {
                 id: enum_id,
-                name: enum_name,
+                name: enum_name.clone(), // Clone here
                 span,
                 visibility: self.state.convert_visibility(&item_enum.vis),
                 variants,
