@@ -15,7 +15,10 @@ use crate::parser::{
     types::TypeNode,
 };
 
+use log::debug; // Import the debug macro
 use serde::{Deserialize, Serialize};
+
+const LOG_TARGET: &str = "graph_find"; // Define log target for this file
 
 // Main structure representing the entire code graph
 // Derive Send and Sync automatically since all component types implement them
@@ -330,17 +333,16 @@ impl CodeGraph {
         &self,
         defn_path: &[String],
     ) -> Result<&ModuleNode, SynParserError> {
-        eprintln!("DEBUG: Searching for defn_path: {:?}", defn_path); // DEBUG
+        debug!(target: LOG_TARGET, "Searching for defn_path: {:?}", defn_path);
         let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
             .modules
             .iter()
             .filter(|m| m.defn_path() == defn_path)
             .collect();
 
-        eprintln!("DEBUG: Found {} nodes matching path:", matching_nodes.len()); // DEBUG
+        debug!(target: LOG_TARGET, "Found {} nodes matching path:", matching_nodes.len());
         for node in &matching_nodes {
-            eprintln!(
-                // DEBUG
+            debug!(target: LOG_TARGET,
                 "  - ID: {}, Name: {}, Path: {:?}, IsDecl: {}, Def: {:?}",
                 node.id,
                 node.name,
@@ -360,26 +362,26 @@ impl CodeGraph {
 
         if second.is_some() {
             // If second exists, there was a duplicate *after* filtering
-            eprintln!("DEBUG: Found duplicate non-declaration nodes!"); // DEBUG
-                                                                        // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
+            debug!(target: LOG_TARGET, "Found duplicate non-declaration nodes!");
+            // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
             let all_matches: Vec<_> = self
                 .modules
                 .iter()
                 .filter(|m| m.defn_path() == defn_path && !m.is_declaration())
                 .collect();
-            eprintln!(
+            debug!(target: LOG_TARGET,
                 "Duplicate non-declaration modules found for path {:?}: {:?}",
                 defn_path, all_matches
             );
             return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
         }
 
-        eprintln!(
-            "DEBUG: Found unique non-declaration node: {:?}",
+        debug!(target: LOG_TARGET,
+            "Found unique non-declaration node: {:?}",
             first.map(|n| n.id)
-        ); // DEBUG
+        );
         first.ok_or_else(|| {
-            eprintln!("DEBUG: No non-declaration node found!"); // DEBUG
+            debug!(target: LOG_TARGET, "No non-declaration node found!");
             SynParserError::ModulePathNotFound(defn_path.to_vec())
         })
     }
