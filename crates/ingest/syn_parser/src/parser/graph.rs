@@ -343,10 +343,14 @@ impl CodeGraph {
 
         debug!(target: LOG_TARGET, "Found {} nodes matching path:", matching_nodes.len().to_string().green());
         for node in &matching_nodes {
-            let def_type = if node.is_declaration() { "Decl".red() } else { "Def".green() };
+            let def_type = if node.is_declaration() {
+                "Decl".red()
+            } else {
+                "Def".green()
+            };
             // Moved comment outside the format string literal
             debug!(target: LOG_TARGET,
-                "  - {}: {} | {} | Path: {} | Def: {}",
+                "  - {}: {} | {}: {} | Path: {} | Def: {}",
                 "ID".bold(), node.id.to_string().magenta(),
                 "Name".bold(), node.name.yellow(),
                 node.path.join("::").blue(),
@@ -381,7 +385,9 @@ impl CodeGraph {
         }
 
         match first {
-            Some(node) => debug!(target: LOG_TARGET, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta()),
+            Some(node) => {
+                debug!(target: LOG_TARGET, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta())
+            }
             None => debug!(target: LOG_TARGET, "{}", "No non-declaration node found!".yellow()),
         }
 
