@@ -340,7 +340,7 @@ impl ModuleTree {
         todo!() // Rest of the visibility logic still needs implementation
     }
 
-    fn shortest_public_path(
+    pub fn shortest_public_path(
         &self,
         item_id: NodeId,
         start_module: ModuleNodeId,
@@ -417,8 +417,13 @@ impl ModuleTree {
                         // Check if the item is a module and is public
                         if let Some(sibling_node) = self.modules.get(&ModuleNodeId::new(item_id)) {
                             // Ensure it's not the module itself and it's public
-                            if sibling_node.id != module_id.into_inner() && sibling_node.visibility().is_pub() {
-                                neighbors.push((RelationKind::Sibling, ModuleNodeId::new(sibling_node.id)));
+                            if sibling_node.id != module_id.into_inner()
+                                && sibling_node.visibility().is_pub()
+                            {
+                                neighbors.push((
+                                    RelationKind::Sibling,
+                                    ModuleNodeId::new(sibling_node.id),
+                                ));
                             }
                         }
                     }
@@ -446,7 +451,7 @@ impl ModuleTree {
     }
 
     /// Visibility check using existing types
-    fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
+    pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         match self.modules.get(&target).map(|m| m.visibility()) {
             Some(VisibilityKind::Public) => true,
             Some(VisibilityKind::Crate) => {

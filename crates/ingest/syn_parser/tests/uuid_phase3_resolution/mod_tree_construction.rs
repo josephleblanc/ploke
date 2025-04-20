@@ -19,6 +19,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use syn_parser::parser::module_tree::ModuleTree;
+use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::parser::relations::{GraphId, Relation, RelationKind};
 use syn_parser::CodeGraph;
 
@@ -544,4 +545,164 @@ In Actual missing from Expected: {:#?}\n",
         .map(|p| p.import_node())
         .expect("Extern crate serde not found");
     assert!(extern_serde.is_inherited_use()); // Extern crates are treated as inherited for pending list
+}
+
+/// **Covers:** Basic visibility checks using `ModuleTree::is_accessible`.
+/// It uses the `file_dir_detection` fixture to test access between modules
+/// with different visibility levels (public, crate, restricted, inherited).
+#[test]
+fn test_module_tree_is_accessible() {
+    let fixture_name = "file_dir_detection";
+    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph = graph_and_tree.0;
+    let tree = graph_and_tree.1;
+
+    // --- Get Module IDs ---
+    let crate_root_id = tree.root(); // ID of main.rs
+
+    let top_pub_mod_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
+            .expect("Failed to find top_pub_mod")
+            .id,
+    );
+
+    let top_priv_mod_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&["crate".to_string(), "top_priv_mod".to_string()])
+            .expect("Failed to find top_priv_mod")
+            .id,
+    );
+
+    let nested_pub_in_pub_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&[
+                "crate".to_string(),
+                "top_pub_mod".to_string(),
+                "nested_pub".to_string(),
+            ])
+            .expect("Failed to find nested_pub in top_pub_mod")
+            .id,
+    );
+
+    let nested_priv_in_pub_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&[
+                "crate".to_string(),
+                "top_pub_mod".to_string(),
+                "nested_priv".to_string(),
+            ])
+            .expect("Failed to find nested_priv in top_pub_mod")
+            .id,
+    );
+
+    let nested_pub_in_priv_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&[
+                "crate".to_string(),
+                "top_priv_mod".to_string(),
+                "nested_pub_in_priv".to_string(),
+            ])
+            .expect("Failed to find nested_pub_in_priv")
+            .id,
+    );
+
+    let nested_priv_in_priv_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&[
+                "crate".to_string(),
+                "top_priv_mod".to_string(),
+                "nested_priv_in_priv".to_string(),
+            ])
+            .expect("Failed to find nested_priv_in_priv")
+            .id,
+    );
+
+    let path_visible_mod_id = ModuleNodeId::new(
+        graph
+            .find_module_by_defn_path_checked(&[
+                "crate".to_string(),
+                "top_pub_mod".to_string(),
+                "path_visible_mod".to_string(),
+            ])
+            .expect("Failed to find path_visible_mod")
+            .id,
+    ); // This one is pub(in crate::top_pub_mod)
+
+    // --- Assertions ---
+
+    // 1. Public access: top_pub_mod should be accessible from anywhere (e.g., crate root)
+    assert!(
+        tree.is_accessible(crate_root_id, top_pub_mod_id),
+        "Public module (top_pub_mod) should be accessible from crate root"
+    );
+    assert!(
+        tree.is_accessible(top_priv_mod_id, top_pub_mod_id),
+        "Public module (top_pub_mod) should be accessible from private sibling"
+    );
+    assert!(
+        tree.is_accessible(nested_pub_in_pub_id, top_pub_mod_id),
+        "Public module (top_pub_mod) should be accessible from its public child"
+    );
+
+    // 2. Crate access: crate_visible_mod.rs (implicitly pub(crate))
+    //    Need to add this module to the fixture and find its ID first.
+    //    Skipping crate visibility tests for now as the fixture lacks a clear pub(crate) module.
+
+    // 3. Restricted access: path_visible_mod is pub(in crate::top_pub_mod)
+    assert!(
+        tree.is_accessible(top_pub_mod_id, path_visible_mod_id),
+        "Restricted module (path_visible_mod) should be accessible from within its restriction scope (top_pub_mod)"
+    );
+    assert!(
+        tree.is_accessible(nested_pub_in_pub_id, path_visible_mod_id),
+        "Restricted module (path_visible_mod) should be accessible from descendant of restriction scope (nested_pub_in_pub)"
+    );
+    assert!(
+        !tree.is_accessible(crate_root_id, path_visible_mod_id),
+        "Restricted module (path_visible_mod) should NOT be accessible from outside its restriction scope (crate_root)"
+    );
+    assert!(
+        !tree.is_accessible(top_priv_mod_id, path_visible_mod_id),
+        "Restricted module (path_visible_mod) should NOT be accessible from sibling outside restriction scope (top_priv_mod)"
+    );
+
+    // 4. Inherited access (private):
+    //    - nested_priv_in_pub should only be accessible from top_pub_mod
+    //    - nested_priv_in_priv should only be accessible from top_priv_mod
+    assert!(
+        tree.is_accessible(top_pub_mod_id, nested_priv_in_pub_id),
+        "Inherited module (nested_priv_in_pub) should be accessible from its parent (top_pub_mod)"
+    );
+    assert!(
+        !tree.is_accessible(crate_root_id, nested_priv_in_pub_id),
+        "Inherited module (nested_priv_in_pub) should NOT be accessible from grandparent (crate_root)"
+    );
+    assert!(
+        !tree.is_accessible(nested_pub_in_pub_id, nested_priv_in_pub_id),
+        "Inherited module (nested_priv_in_pub) should NOT be accessible from sibling (nested_pub_in_pub)"
+    );
+
+    assert!(
+        tree.is_accessible(top_priv_mod_id, nested_priv_in_priv_id),
+        "Inherited module (nested_priv_in_priv) should be accessible from its parent (top_priv_mod)"
+    );
+    assert!(
+        !tree.is_accessible(crate_root_id, nested_priv_in_priv_id),
+        "Inherited module (nested_priv_in_priv) should NOT be accessible from grandparent (crate_root)"
+    );
+    assert!(
+        !tree.is_accessible(nested_pub_in_priv_id, nested_priv_in_priv_id),
+        "Inherited module (nested_priv_in_priv) should NOT be accessible from sibling (nested_pub_in_priv)"
+    );
+
+    // 5. Accessing self
+    assert!(
+        tree.is_accessible(top_pub_mod_id, top_pub_mod_id),
+        "Module should be accessible from itself"
+    );
+    assert!(
+        tree.is_accessible(top_priv_mod_id, top_priv_mod_id),
+        "Module should be accessible from itself"
+    );
 }
