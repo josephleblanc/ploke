@@ -413,6 +413,10 @@ fn test_module_tree_imports_fixture_nodes() {
             false,
             false,
         ),
+        // --- Imports from other files in fixture_nodes ---
+        ("std::fmt::Debug".to_string(), false, false), // From traits.rs
+        ("super::SimpleStruct".to_string(), false, false), // From impls.rs (use super::structs::SimpleStruct) - Path relative to impls.rs
+        ("super::SimpleTrait".to_string(), false, false), // From traits.rs inner module (use super::SimpleTrait) - Path relative to traits/inner
     ]
     .into_iter()
     .map(|(s, g, e)| (s.to_string(), g, e)) // Ensure owned Strings
