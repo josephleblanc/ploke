@@ -316,21 +316,41 @@ impl CodeGraph {
     }
 
     /// Finds a module node by its definition path (e.g., ["crate", "module", "submodule"]),
+    /// Finds a module node *definition* (FileBased or Inline) by its definition path,
     /// returning an error if not found or if duplicates exist.
-    ///
-    /// Iterates through the modules, collects all matching `ModuleNode`s based on the definition path,
-    /// and returns:
-    /// - `Ok(&ModuleNode)` if exactly one match is found.
-    /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
-    /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
+    /// Excludes ModuleDef::Declaration nodes.
     pub fn find_module_by_defn_path_checked(
         &self,
         defn_path: &[String],
     ) -> Result<&ModuleNode, SynParserError> {
-        let mut matches = self.modules.iter().filter(|m| m.defn_path() == defn_path);
-        let first = matches.next();
-        if matches.next().is_some() {
-            // Convert path slice to Vec<String> for the error variant
+        eprintln!("DEBUG: Searching for defn_path: {:?}", defn_path); // DEBUG
+        let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
+            .modules
+            .iter()
+            .filter(|m| m.defn_path() == defn_path)
+            .collect();
+
+        eprintln!("DEBUG: Found {} nodes matching path:", matching_nodes.len()); // DEBUG
+        for node in &matching_nodes {
+            eprintln!( // DEBUG
+                "  - ID: {}, Name: {}, Path: {:?}, IsDecl: {}, Def: {:?}",
+                node.id, node.name, node.path, node.is_declaration(), node.module_def
+            );
+        }
+
+        // Now filter the collected nodes
+        let mut non_decl_matches = matching_nodes
+            .into_iter() // Iterate over the collected matches
+            .filter(|m| !m.is_declaration()); // Apply the filter
+
+        let first = non_decl_matches.next();
+        let second = non_decl_matches.next(); // Check if there's a second match *after* filtering
+
+        if second.is_some() { // If second exists, there was a duplicate *after* filtering
+             eprintln!("DEBUG: Found duplicate non-declaration nodes!"); // DEBUG
+             // Collect all non-declaration matches again for error reporting (slightly inefficient but clear)
+             let all_matches: Vec<_> = self.modules.iter().filter(|m| m.defn_path() == defn_path && !m.is_declaration()).collect();
+             eprintln!("Duplicate non-declaration modules found for path {:?}: {:?}", defn_path, all_matches);
             return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
         }
 
