@@ -239,13 +239,25 @@ fn test_module_tree_import_export_segregation() {
         .pending_imports()
         .iter()
         .map(|p| {
-            // Handle potential leading empty string for absolute paths like `::std::time::Duration`
-            let path_segments = p.import_node().path();
-            if path_segments.first().map_or(false, |s| s.is_empty()) {
-                // Add "::" prefix if the first segment is empty
+            let node = p.import_node();
+            let path_segments = node.path();
+            let base_path_str = if path_segments.first().map_or(false, |s| s.is_empty()) {
+                // Handle absolute paths like ::std::time::Duration
                 format!("::{}", path_segments[1..].join("::"))
             } else {
                 path_segments.join("::")
+            };
+
+            // Append "::*" if it's a glob import
+            if node.is_glob {
+                // Handle edge case where path itself might be empty (e.g., `use ::*;` - unlikely but possible)
+                if base_path_str.is_empty() || base_path_str == "::" {
+                     format!("{}*", base_path_str) // Results in "*" or "::*"
+                } else {
+                     format!("{}::*", base_path_str)
+                }
+            } else {
+                base_path_str
             }
         })
         .collect();
