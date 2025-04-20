@@ -373,8 +373,12 @@ impl ModuleTree {
     fn get_public_export_path(&self, mod_id: &ModuleNodeId, item_id: NodeId) -> Option<&[String]> {
         let module = self.modules().get(mod_id)?;
         let items = module.items()?;
-        if module.visibility().is_pub() {
-            Some(module.defn_path())
+        if items.contains(&item_id) {
+            if module.visibility().is_pub() {
+                Some(module.defn_path())
+            } else {
+                None
+            }
         } else {
             None
         }
