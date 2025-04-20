@@ -549,11 +549,27 @@ In Actual missing from Expected: {:#?}\n",
 
 /// **Covers:** Basic visibility checks using `ModuleTree::is_accessible`.
 /// It uses the `file_dir_detection` fixture to test access between modules
+use std::io::Write; // Import Write trait for formatting
+
 /// with different visibility levels (public, crate, restricted, inherited).
 #[test]
 fn test_module_tree_is_accessible() {
-    // Initialize logger for this test to capture debug output if RUST_LOG is set
-    let _ = env_logger::try_init(); // Use try_init to avoid panic if already initialized
+    // Initialize logger with custom format for this test
+    let _ = env_logger::builder()
+        // Parse RUST_LOG environment variable
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
+        // Define custom format without timestamp
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                // Example format: [LEVEL TARGET] Message
+                "[{:<5} {}] {}", // Adjust padding as needed
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .try_init(); // Use try_init to avoid panic if already initialized
 
     let fixture_name = "file_dir_detection";
     let graph_and_tree = build_tree_for_fixture(fixture_name);
