@@ -330,9 +330,10 @@ impl<'a> CodeVisitor<'a> {
         } else {
             // This case should ideally not happen after the root module is created in analyze_file_phase2,
             // but log a warning just in case.
-            eprintln!(
-                "Warning: Attempted to add contains relation for item '{}', but no current module found in VisitorState.",
-                item_name
+            log::warn!(
+                target: LOG_TARGET_TRACE,
+                "Attempted to add contains relation for item '{}', but no current module found in VisitorState matching path {:?}.",
+                item_name, self.state.current_module_path
             );
         }
 
@@ -360,7 +361,7 @@ impl<'a> CodeVisitor<'a> {
             self.state.current_scope_cfgs
         );
     }
-}
+// Removed misplaced closing brace for impl CodeVisitor
 
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
