@@ -186,6 +186,7 @@ impl ModuleTree {
     }
 
     // Resolves visibility for target node
+    #[allow(unused_variables)]
     pub fn resolve_visibility<T: GraphNode>(
         &self,
         node: &T,
@@ -201,6 +202,7 @@ impl ModuleTree {
         todo!() // Rest of the visibility logic still needs implementation
     }
 
+    #[allow(unused_variables)]
     pub fn shortest_public_path(&self, id: NodeId) -> Result<Vec<String>, ModuleTreeError> {
         // Returns the shortest accessible path considering visibility
         todo!()
