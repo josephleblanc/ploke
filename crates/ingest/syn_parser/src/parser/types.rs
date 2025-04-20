@@ -147,6 +147,12 @@ pub enum VisibilityKind {
     Inherited,
 }
 
+impl VisibilityKind {
+    pub fn is_pub(&self) -> bool {
+        *self == Self::Public
+    }
+}
+
 impl fmt::Display for VisibilityKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

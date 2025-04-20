@@ -176,6 +176,12 @@ impl CodeGraph {
     //    • Even if we're not handling proc macros fully, should we still:
     //      • Preserve their paths in the graph? Yes.
     //      • Mark them as "unresolved" for now? No. Maybe.
+    //
+    // We want to work on ensuring we have the correct canonical path for each node. Do you
+    // understand the overall plan and what we are doing? We are working on the processing pipeline
+    // to form a `cozo` database of the code graph, and this is an intermediate step in which we
+    // merge the code graphs and are able to form the `NodeId::Resolved` and `TypeId::Resolved`
+    // from the initial, temporary `NodeId::Synthetic` and `TypeId::Synthetic`
 
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, Box<SynParserError>> {
         let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;

@@ -15,8 +15,8 @@ use std::fmt::Display;
 
 use crate::error::SynParserError;
 
-use super::types::VisibilityKind;
-use ploke_core::NodeId;
+use super::{relations::GraphId, types::VisibilityKind};
+use ploke_core::{NodeId, TypeId};
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
@@ -46,6 +46,9 @@ pub trait GraphNode {
 pub enum NodeError {
     #[error("Invalid node configuration: {0}")]
     Validation(String),
+
+    #[error("Invalid node converstion from GraphId::Type, must be GraphId::Node: {0}")]
+    Conversion(TypeId),
     // ... others
 }
 
@@ -65,6 +68,17 @@ impl ModuleNodeId {
     /// Get reference to inner NodeId
     pub fn as_inner(&self) -> &NodeId {
         &self.0
+    }
+}
+
+impl TryFrom<GraphId> for ModuleNodeId {
+    type Error = NodeError;
+
+    fn try_from(value: GraphId) -> Result<Self, Self::Error> {
+        match value {
+            GraphId::Node(id) => Ok(ModuleNodeId::new(id)),
+            GraphId::Type(id) => Err(NodeError::Conversion(id)),
+        }
     }
 }
 
@@ -138,7 +152,6 @@ impl Borrow<[String]> for NodePath {
         &self.0
     }
 }
-
 
 // Implement TryFrom for fallible conversion from Vec<String>
 impl TryFrom<Vec<String>> for NodePath {

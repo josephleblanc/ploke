@@ -241,7 +241,7 @@ fn test_module_tree_import_export_segregation() {
         .map(|p| {
             let node = p.import_node();
             let path_segments = node.path();
-            let base_path_str = if path_segments.first().map_or(false, |s| s.is_empty()) {
+            let base_path_str = if path_segments.first().is_some_and(|s| s.is_empty()) {
                 // Handle absolute paths like ::std::time::Duration
                 format!("::{}", path_segments[1..].join("::"))
             } else {
@@ -252,9 +252,9 @@ fn test_module_tree_import_export_segregation() {
             if node.is_glob {
                 // Handle edge case where path itself might be empty (e.g., `use ::*;` - unlikely but possible)
                 if base_path_str.is_empty() || base_path_str == "::" {
-                     format!("{}*", base_path_str) // Results in "*" or "::*"
+                    format!("{}*", base_path_str) // Results in "*" or "::*"
                 } else {
-                     format!("{}::*", base_path_str)
+                    format!("{}::*", base_path_str)
                 }
             } else {
                 base_path_str

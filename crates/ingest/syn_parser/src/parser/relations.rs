@@ -60,6 +60,10 @@ pub enum RelationKind {
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
+
+    // TODO: Likely will delete this later.
+    // Using it currently for testing an implementation of `shortest_public_path` in module_tree.rs
+    Sibling,
 }
 
 impl RelationKind {
@@ -109,9 +113,10 @@ impl TryInto<ScopeKind> for RelationKind {
             Self::Contains => Ok(ScopeKind::CanUse),
             Self::Uses => Ok(ScopeKind::CanUse),
             Self::ValueType => Ok(ScopeKind::CanUse),
-            Self::MacroUse => Err(RelationConversionError::NotApplicable(self)), // We don't handle macros too much.
+            Self::MacroUse => Err(RelationConversionError::NotApplicable(self)),
             Self::ModuleImports => Ok(ScopeKind::CanUse),
             Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
+            Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
         }
     }
 }

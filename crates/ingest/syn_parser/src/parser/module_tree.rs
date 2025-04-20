@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
@@ -116,7 +116,6 @@ pub struct UnlinkedModuleInfo {
     pub module_id: NodeId,
     pub definition_path: NodePath, // Store the path that couldn't be linked
 }
-
 
 // Define the new ModuleTreeError enum
 #[derive(thiserror::Error, Debug, Clone, PartialEq)]
@@ -260,10 +259,8 @@ impl ModuleTree {
     /// Returns `Ok(())` on complete success.
     /// Returns `Err(ModuleTreeError::FoundUnlinkedModules)` if only unlinked modules are found.
     /// Returns other `Err(ModuleTreeError)` variants on fatal errors (e.g., path validation).
-    pub fn build_logical_paths(
-        &mut self,
-        modules: &[ModuleNode],
-    ) -> Result<(), ModuleTreeError> { // Return Ok(()) or Err(ModuleTreeError)
+    pub fn build_logical_paths(&mut self, modules: &[ModuleNode]) -> Result<(), ModuleTreeError> {
+        // Return Ok(()) or Err(ModuleTreeError)
         let mut new_relations: Vec<TreeRelation> = Vec::new();
         let mut collected_unlinked: Vec<UnlinkedModuleInfo> = Vec::new(); // Store only unlinked info
         let root_id = self.root();
@@ -325,7 +322,8 @@ impl ModuleTree {
         Ok(())
     }
 
-    // Resolves visibility for target node
+    // Resolves visibility for target node as if it were a dependency.
+    // Only used as a helper in the shortest public path.
     #[allow(unused_variables)]
     pub fn resolve_visibility<T: GraphNode>(
         &self,
@@ -342,12 +340,146 @@ impl ModuleTree {
         todo!() // Rest of the visibility logic still needs implementation
     }
 
-    #[allow(unused_variables)]
-    pub fn shortest_public_path(&self, id: NodeId) -> Result<Vec<String>, ModuleTreeError> {
-        // Returns the shortest accessible path considering visibility
-        todo!()
+    fn shortest_public_path(
+        &self,
+        item_id: NodeId,
+        start_module: ModuleNodeId,
+    ) -> Option<Vec<String>> {
+        // BFS queue: (module_id, current_path)
+        let mut queue = VecDeque::new();
+        let mut visited = HashSet::new();
+
+        queue.push_back((start_module, vec![]));
+
+        while let Some((mod_id, path)) = queue.pop_front() {
+            // Check if current module contains the item publicly
+            if let Some(export_path) = self.get_public_export_path(&mod_id, item_id) {
+                return Some([path, export_path.to_vec()].concat());
+            }
+
+            // Queue public parent and sibling modules
+            for (rel, neighbor_mod) in self.get_public_neighbors(mod_id) {
+                if !visited.contains(&neighbor_mod) {
+                    let mut new_path = path.clone();
+                    new_path.push(rel.name.clone());
+                    queue.push_back((neighbor_mod, new_path));
+                    visited.insert(neighbor_mod);
+                }
+            }
+        }
+
+        None
+    }
+    fn get_public_export_path(&self, mod_id: &ModuleNodeId, item_id: NodeId) -> Option<&[String]> {
+        let module = self.modules().get(mod_id)?;
+        let items = module.items()?;
+        if module.visibility().is_pub() {
+            Some(module.defn_path())
+        } else {
+            None
+        }
+    }
+
+    /// Gets public neighbor modules and their relations
+    pub fn get_public_neighbors(&self, module_id: ModuleNodeId) -> Vec<(Relation, ModuleNodeId)> {
+        let mut neighbors = Vec::new();
+
+        // 1. Get parent module if accessible
+        if let Some(parent_id) = self.get_parent_module_id(module_id) {
+            if self.is_accessible(parent_id, module_id) {
+                neighbors.push((
+                    Relation {
+                        source: GraphId::Node(parent_id.into_inner()),
+                        target: GraphId::Node(module_id.into_inner()),
+                        kind: RelationKind::Contains,
+                    },
+                    parent_id,
+                ));
+            }
+        }
+
+        // 2. Get public siblings
+        if let Some(parent_id) = self.get_parent_module_id(module_id) {
+            if let Some(parent) = self.modules.get(&parent_id) {
+                for &item_id in parent.items().unwrap_or(&[]) {
+                    if let Some(sibling) = self.modules.get(&ModuleNodeId::new(item_id)) {
+                        if sibling.id != module_id.into_inner() && sibling.visibility().is_pub() {
+                            neighbors.push((
+                                Relation {
+                                    source: GraphId::Node(module_id.into_inner()),
+                                    target: GraphId::Node(sibling.id),
+                                    kind: RelationKind::Sibling,
+                                },
+                                ModuleNodeId::new(sibling.id),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        neighbors
+    }
+
+    /// Helper to get parent module ID (using existing ModuleTree fields)
+    fn get_parent_module_id(&self, module_id: ModuleNodeId) -> Option<ModuleNodeId> {
+        self.tree_relations.iter().find_map(|r| {
+            if r.relation().target == GraphId::Node(module_id.into_inner())
+                && r.relation().kind == RelationKind::Contains
+            {
+                match r.relation().source {
+                    GraphId::Node(id) => Some(ModuleNodeId::new(id)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Visibility check using existing types
+    fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
+        match self.modules.get(&target).map(|m| m.visibility()) {
+            Some(VisibilityKind::Public) => true,
+            Some(VisibilityKind::Crate) => {
+                // Check if same crate by comparing root paths
+                let source_root = self.get_root_path(source);
+                let target_root = self.get_root_path(target);
+                source_root == target_root
+            }
+            Some(VisibilityKind::Restricted(path)) => path.iter().any(|seg| {
+                self.path_index
+                    .get(seg)
+                    .map(|id| *id == source.into_inner())
+                    .unwrap_or(false)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Gets root path using existing ModuleTree data
+    fn get_root_path(&self, module_id: ModuleNodeId) -> Vec<String> {
+        let mut path = Vec::new();
+        let mut current = module_id;
+
+        while let Some(parent_id) = self.get_parent_module_id(current) {
+            if let Some(module) = self.modules.get(&current) {
+                path.push(module.name.clone());
+            }
+            current = parent_id;
+        }
+
+        path.push("crate".to_string());
+        path.reverse();
+        path
     }
 }
+
+// #[allow(unused_variables)]
+// pub fn shortest_public_path(&self, id: NodeId) -> Result<Vec<String>, ModuleTreeError> {
+//     // Returns the shortest accessible path considering visibility
+//     todo!()
+// }
 
 impl ModuleTree {
     pub fn resolve_path(&self, _path: &[String]) -> Result<ModuleNodeId, Box<SynParserError>> {

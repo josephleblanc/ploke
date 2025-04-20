@@ -1,4 +1,4 @@
-use ploke_core::NodeId;
+use ploke_core::{NodeId, TypeId};
 use thiserror::Error;
 
 use crate::parser::{
@@ -81,6 +81,9 @@ pub enum SynParserError {
     // Forward ModuleTreeError variants - REMOVED #[from]
     #[error(transparent)]
     ModuleTreeError(ModuleTreeError),
+
+    #[error("Relation conversion error: {0}")]
+    TypeIdConversionError(TypeId),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -154,6 +157,7 @@ impl From<NodeError> for SynParserError {
     fn from(err: crate::parser::nodes::NodeError) -> Self {
         match err {
             NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
+            NodeError::Conversion(msg) => SynParserError::TypeIdConversionError(msg),
             // Add other NodeError variants here if they exist in the future
         }
     }

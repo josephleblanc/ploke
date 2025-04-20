@@ -17,6 +17,7 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let merged = CodeGraph::merge_new(graphs)?;
+    let module_tree = merged.build_module_tree()?;
 
     println!("File paths in merged modules:");
     let base_path: &Path = Path::new(
@@ -28,6 +29,8 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     for module in root_modules {
         print_module_tree(&merged, module.id, "", false, base_path)?;
     }
+
+    merged.find_module_by_path_checked(&["crate".to_string()])?;
 
     Ok(())
 }
