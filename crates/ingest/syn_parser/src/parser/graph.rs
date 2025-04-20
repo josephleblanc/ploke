@@ -571,8 +571,8 @@ impl CodeGraph {
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     pub fn debug_print_all_visible(&self) {
-        #[cfg(feature = "verbose_debug")]
-        {
+        // Removed #[cfg(feature = "verbose_debug")]
+        // { // Keep the block if needed for scope, or remove if unnecessary
             // New implementation using NodeId enum
             let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
             all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
