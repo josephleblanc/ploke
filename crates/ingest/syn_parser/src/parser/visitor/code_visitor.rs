@@ -315,6 +315,7 @@ impl<'a> CodeVisitor<'a> {
                 item_name, item_kind, self.state.current_module_path
             );
             // Removed the stray 'else' block below
+    } // <<< Add missing closing brace for the `if let Some(parent_id) = ...` block
 
         // 3. Return the newly generated NodeId enum
         node_id
