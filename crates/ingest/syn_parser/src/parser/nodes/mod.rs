@@ -71,6 +71,13 @@ impl ModuleNodeId {
     }
 }
 
+impl std::fmt::Display for ModuleNodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Delegate to the inner NodeId's Display implementation
+        write!(f, "{}", self.0)
+    }
+}
+
 impl TryFrom<GraphId> for ModuleNodeId {
     type Error = NodeError;
 
