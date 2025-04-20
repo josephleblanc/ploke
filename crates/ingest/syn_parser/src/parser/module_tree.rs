@@ -250,12 +250,21 @@ impl ModuleTree {
 
         // insert module to tree
         let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
-        debug!(target: LOG_TARGET_BUILD, "Inserting into tree.modules: {} ({}) | Visibility: {:?}", module.name, module_id, module.visibility);
+        debug!(target: LOG_TARGET_BUILD, "{} {} ({}) | Visibility: {}",
+            "Inserting into tree.modules:".green(),
+            module.name.yellow(),
+            module_id.to_string().magenta(),
+            format!("{:?}", module.visibility).cyan()
+        );
         let dup_node = self.modules.insert(module_id, module); // module is moved here
         if let Some(dup) = dup_node {
             // Box the duplicate node when creating the error variant
             // Log the duplicate insertion before returning error
-            debug!(target: LOG_TARGET_BUILD, "Duplicate module ID insertion detected: {} ({})", dup.name, dup.id);
+            debug!(target: LOG_TARGET_BUILD, "{} {} ({})",
+                "Duplicate module ID insertion detected:".red().bold(),
+                dup.name.yellow(),
+                dup.id.to_string().magenta()
+            );
             return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
         }
 
@@ -470,12 +479,12 @@ impl ModuleTree {
         // Use debug! macro with the specific target
         debug!(target: LOG_TARGET_VIS,
             "{} {} -> {} | Target Vis: {} | Step: {} | Result: {}",
-            "Accessibility Check:".cyan().bold(),
-            self.modules.get(&source).map(|m| m.name.as_str()).unwrap_or("?").yellow(),
-            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(),
-            target_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red()), // Removed .to_string()
-            step.white(),
-            if result { "Accessible".green() } else { "Inaccessible".red() }
+            "Accessibility Check:".bold(), // Keep bold, maybe remove cyan
+            self.modules.get(&source).map(|m| m.name.as_str()).unwrap_or("?").yellow(), // Source yellow
+            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(),   // Target blue
+            target_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red().bold()), // Visibility magenta or bold red
+            step.white().italic(), // Step white and italic
+            if result { "Accessible".green().bold() } else { "Inaccessible".red().bold() } // Result bold green/red
         );
     }
 
@@ -485,10 +494,11 @@ impl ModuleTree {
         let target_visibility = self.modules.get(&target).map(|m| m.visibility());
 
         // Log the retrieved visibility *before* the match
-        debug!(target: LOG_TARGET_VIS, "Retrieved visibility for target {} ({}): {:?}",
-            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?"),
-            target,
-            target_visibility.as_ref().map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red())
+        debug!(target: LOG_TARGET_VIS, "{} {} ({}): {}",
+            "Retrieved visibility for target".italic(), // Italic description
+            self.modules.get(&target).map(|m| m.name.as_str()).unwrap_or("?").blue(), // Target blue
+            target.to_string().magenta(), // Target ID magenta
+            target_visibility.as_ref().map(|v| format!("{:?}", v).cyan()).unwrap_or_else(|| "NotFound".red().bold()) // Visibility cyan or bold red
         );
 
         let result = match target_visibility {

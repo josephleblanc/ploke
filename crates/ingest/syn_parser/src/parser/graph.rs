@@ -216,7 +216,12 @@ impl CodeGraph {
 
         // 1: Register all modules with their containment info
         for module in &self.modules {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Processing module for tree: {} ({}) | Visibility: {:?}", module.name, module.id, module.visibility);
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({}) | Visibility: {}",
+                "Processing module for tree:".blue(),
+                module.name.yellow(),
+                module.id.to_string().magenta(),
+                format!("{:?}", module.visibility).cyan()
+            );
             tree.add_module(module.clone())?;
         }
 
