@@ -104,7 +104,7 @@ fn test_import_node_basic_smoke_test_full_parse() {
             [
                 "crate".to_string(),
                 "structs".to_string(),
-                "SimpleStruct".to_string(),
+                "SampleStruct".to_string(), // Updated from SimpleStruct
             ]
             .to_vec(),
             "UseStatement".to_string(),
