@@ -109,16 +109,6 @@ impl CodeGraph {
     // We will need to take the NodeId::Synthetic(Uuid) of each item and resolve it into a
     // NodeId::Resolved(Uuid), using a v5 hash. You can see a description of the overall `NodeId`
     // uuid system of generating ids in `crates/ploke-core/src/lib.rs`
-    // I hope you were able to see all 50 lines of the immediately preceding description.
-    // Please tell me if it seems like it is cut-off or missing parts.
-    // You recently said that we were transferring ownership **to** the `CodeGraph`, but we are
-    // really cloning **from** `CodeGraph`. `CodeGraph` itself will need to have its elements
-    // mutated since we are processing all of the `NodeId::Synthetic` into `NodeId::Resolved`. The
-    // `CodeGraph` will be consumed by another process that will process the nodes into a database.
-    // However, we want to keep the `ModuleTree` so we can do incremental parsing later. I just
-    // want to confirm that you can see the entire logic of our overall goal here so your code
-    // suggestions are more helpful. Does that make sense? If so, please provide a summary of what
-    // we are working on so I can confirm your understanding.
     //
     // Clarifying Questions:
     //
