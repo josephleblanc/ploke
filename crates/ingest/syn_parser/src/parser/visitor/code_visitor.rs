@@ -314,20 +314,7 @@ impl<'a> CodeVisitor<'a> {
                 "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Contains relation not added.",
                 item_name, item_kind, self.state.current_module_path
             );
-
-            // Keep the debug hook, assuming debug_mod_stack_push is updated
-            // to handle the NodeId enum (e.g., using its Display impl).
-            #[cfg(feature = "verbose_debug")]
-            self.debug_mod_stack_push(item_name.to_owned(), node_id);
-        } else {
-            // This case should ideally not happen after the root module is created in analyze_file_phase2,
-            // but log a warning just in case.
-            log::warn!(
-                target: LOG_TARGET_TRACE,
-                "Attempted to add contains relation for item '{}', but no current module found in VisitorState matching path {:?}.",
-                item_name, self.state.current_module_path
-            );
-        }
+            // Removed the stray 'else' block below
 
         // 3. Return the newly generated NodeId enum
         node_id
