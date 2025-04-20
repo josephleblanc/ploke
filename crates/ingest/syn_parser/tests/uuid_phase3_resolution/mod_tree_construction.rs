@@ -1,5 +1,19 @@
 //! Tests focusing on the construction and initial state of the ModuleTree,
 //! before path resolution logic is implemented.
+//!
+//! # Current Coverage Summary:
+//! *   **Well Covered:**
+//!     *   Registration of all modules from the graph into the tree's map.
+//!     *   Indexing of canonical paths for definition modules (`path_index`).
+//!     *   Creation of `ResolvesToDefinition` relations (`tree_relations`, `decl_index`).
+//!     *   Segregation and detailed collection of private/inherited imports (`pending_imports`), including various syntax forms and flags (`is_glob`, `is_extern_crate`).
+//!     *   Segregation of public re-exports (`pending_exports`) - currently tested only for emptiness.
+//! *   **Not Covered (by *these* tests):**
+//!     *   **Error Handling:** Tests don't explicitly trigger or check for `ModuleTreeError` conditions.
+//!     *   **`#[path]` attribute:** The effect of `#[path]` on module paths and relations isn't specifically tested here.
+//!     *   **Actual Re-exports:** The content and correctness of `pending_exports` when `pub use` statements *are* present is not tested.
+//!     *   **Resolution Logic:** Methods intended for Phase 3 resolution (`is_accessible`, `shortest_public_path`, `resolve_path`, etc.) are not exercised by these construction tests.
+//!     *   **CFG Interaction:** How `#[cfg]` attributes on modules might influence tree structure or indexing isn't directly tested.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -27,6 +41,10 @@ fn build_tree_for_fixture(fixture_name: &str) -> (CodeGraph, ModuleTree) {
     (merged_graph, tree)
 }
 
+/// **Covers:** Basic sanity check. Ensures that the number of `ModuleNode`s stored
+/// in the `ModuleTree`'s internal map (`tree.modules()`) matches the total number
+/// of `ModuleNode`s present in the input `CodeGraph`. This confirms that
+/// `ModuleTree::add_module` was called for every module without losing any.
 #[test]
 fn test_module_tree_module_count() {
     let fixture_name = "file_dir_detection";
@@ -43,6 +61,11 @@ fn test_module_tree_module_count() {
     );
 }
 
+/// **Covers:** Correct population of the `path_index` field within the `ModuleTree`.
+/// It verifies that the canonical paths (e.g., `["crate"]`, `["crate", "top_pub_mod"]`,
+/// `["crate", "top_pub_mod", "nested_pub"]`, `["crate", "inline_pub_mod"]`) for
+/// *definition* modules (both file-based and inline) map to the correct `NodeId`s.
+/// This tests the logic within `ModuleTree::add_module` that inserts modules into the `path_index`.
 #[test]
 fn test_module_tree_path_index_correctness() {
     let fixture_name = "file_dir_detection";
@@ -135,6 +158,12 @@ fn test_module_tree_path_index_correctness() {
     );
 }
 
+/// **Covers:** Correct creation of `RelationKind::ResolvesToDefinition` relations
+/// within the `tree_relations` field. It finds specific module *declarations*
+/// (`mod foo;`) and their corresponding *definitions* (`foo.rs` or `mod foo {}`)
+/// in the graph and asserts that the expected relation linking them exists in the tree.
+/// This primarily tests the `ModuleTree::build_logical_paths()` method and implicitly
+/// the population of the `decl_index`.
 #[test]
 fn test_module_tree_resolves_to_definition_relation() {
     let fixture_name = "file_dir_detection";
@@ -227,6 +256,12 @@ fn test_module_tree_resolves_to_definition_relation() {
     );
 }
 
+/// **Covers:** Correct separation of `ImportNode`s into the `pending_imports` and
+/// `pending_exports` lists based on their visibility (`use` vs `pub use`). It checks
+/// that various forms of private/inherited `use` statements (simple, renamed, grouped,
+/// glob, relative, absolute, extern crate) end up in `pending_imports` and that
+/// (in this specific fixture) `pending_exports` is empty because there are no `pub use`
+/// statements. This tests the filtering logic within `ModuleTree::add_module`.
 #[test]
 fn test_module_tree_import_export_segregation() {
     // Use the fixture_nodes crate, specifically focusing on imports.rs
@@ -350,6 +385,12 @@ fn test_module_tree_import_export_segregation() {
 // NOTE: test_module_tree_duplicate_path_error requires a dedicated fixture
 // as described in the previous plan. Skipping implementation for now.
 
+/// **Covers:** Comprehensive and exact verification of the contents of the
+/// `pending_imports` list. It checks not just the paths but also the `is_glob`
+/// and `is_extern_crate` flags for *all* expected private/inherited imports
+/// gathered from the *entire* `fixture_nodes` crate. It ensures that the details
+/// extracted during `process_use_tree` and stored by `ModuleTree::add_module`
+/// are accurate for various import syntaxes.
 #[test]
 fn test_module_tree_imports_fixture_nodes() {
     let fixture_name = "fixture_nodes";
