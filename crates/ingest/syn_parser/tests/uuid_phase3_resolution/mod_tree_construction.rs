@@ -396,19 +396,23 @@ fn test_module_tree_imports_fixture_nodes() {
         ("std::fs::File".to_string(), false, false),                // Grouped (item)
         ("std::path::Path".to_string(), false, false),              // Grouped
         ("std::path::PathBuf".to_string(), false, false),           // Grouped
-        ("std::env".to_string(), true, false),                      // Glob import (path is to the module)
-        ("self::sub_imports::SubItem".to_string(), false, false),   // Relative self
+        ("std::env".to_string(), true, false), // Glob import (path is to the module)
+        ("self::sub_imports::SubItem".to_string(), false, false), // Relative self
         ("super::structs::AttributedStruct".to_string(), false, false), // Relative super
         ("crate::type_alias::SimpleId".to_string(), false, false), // Relative crate
-        ("::std::time::Duration".to_string(), false, false),       // Absolute path
-        ("serde".to_string(), false, true),                         // Extern crate
-                                                                    // Renamed extern crate 'serde as SerdeAlias' also has path "serde"
-                                                                    // --- From imports.rs -> sub_imports module ---
+        ("::std::time::Duration".to_string(), false, false), // Absolute path
+        ("serde".to_string(), false, true),    // Extern crate
+        // Renamed extern crate 'serde as SerdeAlias' also has path "serde"
+        // --- From imports.rs -> sub_imports module ---
         ("super::fmt".to_string(), false, false),
         ("crate::enums::DocumentedEnum".to_string(), false, false),
         ("std::sync::Arc".to_string(), false, false), // Duplicate path, but different context (ok)
         ("self::nested_sub::NestedItem".to_string(), false, false),
-        ("super::super::structs::TupleStruct".to_string(), false, false),
+        (
+            "super::super::structs::TupleStruct".to_string(),
+            false,
+            false,
+        ),
     ]
     .into_iter()
     .map(|(s, g, e)| (s.to_string(), g, e)) // Ensure owned Strings
@@ -416,9 +420,43 @@ fn test_module_tree_imports_fixture_nodes() {
 
     // Assert equality between the sets
     assert_eq!(
-        pending_imports_details, expected_imports,
-        "Mismatch in pending imports.\nActual: {:#?}\nExpected: {:#?}",
-        pending_imports_details, expected_imports
+        pending_imports_details,
+        expected_imports,
+        "Mismatch in pending imports.
+Actual: {:#?}\n
+Expected: {:#?}\n
+In Expected missing from Actual: {:#?}\n
+In Actual missing from Expected: {:#?}\n",
+        pending_imports_details
+            .iter()
+            .map(|(path, is_glob, is_extern)| format!(
+                "path: {: <35} is_glob: {: <5}, is_extern: {: <5}",
+                path, is_glob, is_extern
+            ))
+            .collect::<Vec<_>>(),
+        expected_imports
+            .iter()
+            .map(|(path, is_glob, is_extern)| format!(
+                "path: {: <35} is_glob: {: <5}, is_extern: {: <5}",
+                path, is_glob, is_extern
+            ))
+            .collect::<Vec<_>>(),
+        expected_imports
+            .iter()
+            .filter(|item| !pending_imports_details.contains(item))
+            .map(|(path, is_glob, is_extern)| format!(
+                "path: {: <35} is_glob: {: <5}, is_extern: {: <5}",
+                path, is_glob, is_extern
+            ))
+            .collect::<Vec<_>>(),
+        pending_imports_details
+            .iter()
+            .filter(|item| !expected_imports.contains(item))
+            .map(|(path, is_glob, is_extern)| format!(
+                "path: {: <35} is_glob: {: <5}, is_extern: {: <5}",
+                path, is_glob, is_extern
+            ))
+            .collect::<Vec<_>>(),
     );
 
     // Optional: Spot check specific nodes for more details if needed
@@ -436,11 +474,15 @@ fn test_module_tree_imports_fixture_nodes() {
         .iter()
         .find(|p| {
             let node = p.import_node();
-            node.path.join("::") == "crate::structs::SampleStruct" && node.visible_name == "MySimpleStruct"
+            node.path.join("::") == "crate::structs::SampleStruct"
+                && node.visible_name == "MySimpleStruct"
         })
         .map(|p| p.import_node())
         .expect("Renamed SampleStruct import not found");
-    assert_eq!(renamed_struct_import.original_name, Some("SampleStruct".to_string()));
+    assert_eq!(
+        renamed_struct_import.original_name,
+        Some("SampleStruct".to_string())
+    );
 
     let glob_import = tree
         .pending_imports()
