@@ -2,10 +2,7 @@ use std::path::Path;
 
 use colored::Colorize;
 // Removed unused: use ploke_core::NodeId;
-use syn_parser::{
-    parser::nodes::GraphNode, // Removed unused: ImportKind, ModuleDef, types::VisibilityKind
-    CodeGraph,
-};
+use syn_parser::CodeGraph;
 
 use crate::common::{debug_printers::print_module_tree, uuid_ids_utils::run_phases_and_collect};
 

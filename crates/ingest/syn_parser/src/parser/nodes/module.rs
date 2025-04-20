@@ -61,11 +61,6 @@ impl ModuleNode {
             ModuleDef::FileBased { items, .. } => Some(items),
             ModuleDef::Declaration { .. } => None,
         }
-        // if let ModuleDef::Inline { items, .. } = &self.module_def {
-        //     Some(items)
-        // } else {
-        //     None
-        // }
     }
 
     /// Returns the file path if this is a file-based module, None otherwise

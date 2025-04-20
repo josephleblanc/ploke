@@ -4,9 +4,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use ploke_core::NodeId;
 use syn_parser::parser::module_tree::ModuleTree;
-use syn_parser::parser::nodes::{GraphNode, ModuleDef, ModuleNodeId};
 use syn_parser::parser::relations::{GraphId, Relation, RelationKind};
 use syn_parser::CodeGraph;
 
@@ -184,9 +182,6 @@ fn test_module_tree_resolves_to_definition_relation() {
     let relation_found = tree
         .tree_relations()
         .iter()
-    let relation_found = tree
-        .tree_relations()
-        .iter()
         .any(|tree_rel| *tree_rel.relation() == expected_relation); // Use the getter
 
     assert!(
@@ -205,14 +200,13 @@ fn test_module_tree_resolves_to_definition_relation() {
     let nested_decl_id = nested_pub_decl_node.id;
 
     // 2. Find definition `nested_pub.rs`
-    let nested_pub_defn_node = graph.find_module_by_defn_path_checked(
-         &[
+    let nested_pub_defn_node = graph
+        .find_module_by_defn_path_checked(&[
             "crate".to_string(),
             "top_pub_mod".to_string(),
             "nested_pub".to_string(),
-        ],
-    )
-    .expect("Definition module 'crate::top_pub_mod::nested_pub' not found");
+        ])
+        .expect("Definition module 'crate::top_pub_mod::nested_pub' not found");
     let nested_defn_id = nested_pub_defn_node.id;
 
     // --- Assert Relation Exists ---
