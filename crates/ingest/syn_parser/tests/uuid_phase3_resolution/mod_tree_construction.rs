@@ -648,6 +648,90 @@ fn test_module_tree_is_accessible() {
             .id,
     ); // This one is pub(in crate::top_pub_mod)
 
+    // --- Debugging Step 1: Log relevant relations before assertion ---
+    use colored::*; // Ensure colored is in scope for formatting
+    use log::debug; // Ensure debug macro is in scope
+    use syn_parser::parser::nodes::GraphNode; // For GraphNode trait methods
+
+    // Find the declaration ID for nested_pub within top_pub_mod
+    let top_pub_mod_defn_node = graph
+        .get_module_checked(top_pub_mod_id.into_inner())
+        .expect("top_pub_mod definition node not found in graph");
+    let nested_pub_decl_node = graph
+        .get_child_modules_decl(top_pub_mod_defn_node.id) // Use graph method
+        .into_iter()
+        .find(|m| m.name == "nested_pub")
+        .expect("Declaration 'mod nested_pub;' not found in top_pub_mod.rs");
+    let nested_pub_decl_id = nested_pub_decl_node.id;
+
+    debug!(target: "mod_tree_vis", "{}", "--- Relation Check Start ---".dimmed().bold());
+    debug!(target: "mod_tree_vis", "Checking relations involving:");
+    debug!(target: "mod_tree_vis", "  - top_pub_mod (Defn): {}", top_pub_mod_id.to_string().magenta());
+    debug!(target: "mod_tree_vis", "  - nested_pub (Defn):  {}", nested_pub_in_pub_id.to_string().magenta());
+    debug!(target: "mod_tree_vis", "  - nested_pub (Decl):  {}", nested_pub_decl_id.to_string().magenta());
+
+    let relevant_ids = [
+        top_pub_mod_id.into_inner(),
+        nested_pub_in_pub_id.into_inner(),
+        nested_pub_decl_id,
+    ];
+
+    let mut found_direct_contains = false;
+    let mut found_resolves_to = false;
+    let mut found_decl_contains = false;
+
+    for tree_rel in tree.tree_relations() {
+        let rel = tree_rel.relation();
+        let source_id_opt = match rel.source { GraphId::Node(id) => Some(id), _ => None };
+        let target_id_opt = match rel.target { GraphId::Node(id) => Some(id), _ => None };
+
+        // Check if either source or target is one of our relevant IDs
+        if let (Some(source_id), Some(target_id)) = (source_id_opt, target_id_opt) {
+            if relevant_ids.contains(&source_id) || relevant_ids.contains(&target_id) {
+                // Format the relation for logging
+                // Use graph.find_node to get names, fallback to "?"
+                let source_name = graph.find_node(source_id).map(|n| n.name()).unwrap_or("?");
+                let target_name = graph.find_node(target_id).map(|n| n.name()).unwrap_or("?");
+                debug!(target: "mod_tree_vis", "  Found Relation: {} ({}) --{:?}--> {} ({})",
+                    source_name.yellow(),
+                    source_id.to_string().magenta(),
+                    rel.kind,
+                    target_name.blue(),
+                    target_id.to_string().magenta()
+                );
+
+                // Check for the specific relations needed by get_parent_module_id
+                // 1. Direct Contains (Parent -> Definition)
+                if source_id == top_pub_mod_id.into_inner()
+                    && target_id == nested_pub_in_pub_id.into_inner()
+                    && rel.kind == RelationKind::Contains {
+                    found_direct_contains = true;
+                }
+                // 2. ResolvesToDefinition (Declaration -> Definition)
+                if source_id == nested_pub_decl_id
+                    && target_id == nested_pub_in_pub_id.into_inner()
+                    && rel.kind == RelationKind::ResolvesToDefinition {
+                    found_resolves_to = true;
+                }
+                // 3. Declaration Contains (Parent -> Declaration)
+                if source_id == top_pub_mod_id.into_inner()
+                    && target_id == nested_pub_decl_id
+                    && rel.kind == RelationKind::Contains {
+                    found_decl_contains = true;
+                }
+            }
+        }
+    }
+
+    // Log summary of findings
+    debug!(target: "mod_tree_vis", "  Check Summary:");
+    debug!(target: "mod_tree_vis", "    - Direct Contains ({} -> {}): {}", top_pub_mod_id, nested_pub_in_pub_id, if found_direct_contains {"Found".green()} else {"Missing".red()});
+    debug!(target: "mod_tree_vis", "    - ResolvesToDefinition ({} -> {}): {}", nested_pub_decl_id, nested_pub_in_pub_id, if found_resolves_to {"Found".green()} else {"Missing".red()});
+    debug!(target: "mod_tree_vis", "    - Declaration Contains ({} -> {}): {}", top_pub_mod_id, nested_pub_decl_id, if found_decl_contains {"Found".green()} else {"Missing".red()});
+    debug!(target: "mod_tree_vis", "{}", "--- Relation Check End ---".dimmed().bold());
+    // --- End Debugging Step 1 ---
+
+
     // --- Assertions ---
 
     // 1. Public access: top_pub_mod should be accessible from anywhere (e.g., crate root)
