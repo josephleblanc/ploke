@@ -53,9 +53,9 @@
 //! 2.  Enhance `shortest_public_path` (or related visibility logic) to handle `pub(crate)`, `pub(super)`, and `pub(in path)`.
 //! 3.  Add tests specifically targeting the `fixture_path_resolution` crate for the scenarios listed above.
 
-use ploke_core::NodeId;
+// Removed unused ploke_core::NodeId import
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
-use syn_parser::{error::SynParserError, CodeGraph}; // Import SynParserError
+use syn_parser::CodeGraph; // Removed unused SynParserError import
 
 use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
 use crate::common::uuid_ids_utils::run_phases_and_collect;
@@ -284,8 +284,8 @@ fn test_spp_reexported_item_finds_original_path() {
 
 // Helper macro for SPP tests on fixture_path_resolution
 macro_rules! assert_spp {
-    // MODIFIED: Removed $current_expected, asserts against $final_expected directly
-    ($test_name:ident, $item_name:expr, $module_path:expr, $final_expected:expr) => {
+    // Variant 1: Expecting Ok result
+    ($test_name:ident, $item_name:expr, $module_path:expr, Ok($final_path:expr)) => {
         #[test]
         fn $test_name() {
             let fixture_name = "fixture_path_resolution";
@@ -305,21 +305,20 @@ macro_rules! assert_spp {
 
             let spp_result = tree.shortest_public_path(item_id, &graph);
 
-            // Explicitly type the FINAL expected result for comparison and printing
-            let final_expected_typed: Result<Vec<String>, ModuleTreeError> = $final_expected;
+            // Construct the expected Ok variant
+            let expected_ok: Result<Vec<String>, ModuleTreeError> = Ok($final_path);
 
             // Assert FINAL expected behavior
             assert_eq!(
                 spp_result,
-                final_expected_typed, // Compare against the FINAL expected result
-                "SPP for '{}' did not match expected shortest public path.", // Updated message
+                expected_ok, // Compare against the expected Ok result
+                "SPP for '{}' did not match expected Ok path.", // Updated message
                 $item_name
-                // No need to print expected again, assert_eq! does that.
             );
         }
     };
-    // Variant for expecting Err(ItemNotPubliclyAccessible)
-    ($test_name:ident, $item_name:expr, $module_path:expr, Err) => {
+    // Variant 2: Expecting Err(ItemNotPubliclyAccessible) - Triggered by ExpectErr token
+    ($test_name:ident, $item_name:expr, $module_path:expr, ExpectErr) => {
         #[test]
         fn $test_name() {
             let fixture_name = "fixture_path_resolution";
@@ -525,7 +524,7 @@ assert_spp!(
     test_spp_item_in_crate_mod,
     "crate_internal_func",
     &["crate", "crate_mod"],
-    Err // Expected Err(ItemNotPubliclyAccessible)
+    ExpectErr // Expected Err(ItemNotPubliclyAccessible)
 );
 
 // 14. `pub(crate)` Item within `#[path]` Module
@@ -533,7 +532,7 @@ assert_spp!(
     test_spp_crate_item_in_path_mod,
     "crate_visible_in_actual_file",
     &["crate", "logical_path_mod"],
-    Err // Expected Err(ItemNotPubliclyAccessible)
+    ExpectErr // Expected Err(ItemNotPubliclyAccessible)
 );
 
 // 15. Private Item
@@ -541,7 +540,7 @@ assert_spp!(
     test_spp_private_item,
     "private_local_func",
     &["crate", "local_mod"],
-    Err // Expected Err(ItemNotPubliclyAccessible)
+    ExpectErr // Expected Err(ItemNotPubliclyAccessible)
 );
 
 // 16. Public Item in Private Module
@@ -549,5 +548,5 @@ assert_spp!(
     test_spp_pub_item_in_private_mod,
     "pub_in_private_inline",
     &["crate", "private_inline_mod"],
-    Err // Expected Err(ItemNotPubliclyAccessible)
+    ExpectErr // Expected Err(ItemNotPubliclyAccessible)
 );
