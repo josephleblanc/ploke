@@ -600,6 +600,14 @@ impl ModuleTree {
                 // Check if the source module is a descendant of the restriction module
                 let mut current_ancestor = self.get_parent_module_id(source);
                 while let Some(ancestor_id) = current_ancestor {
+                    // Added logging inside the loop
+                    debug!(target: LOG_TARGET_VIS, "  {} Checking ancestor: {} ({}) against restriction: {} ({})",
+                        "->".dimmed(), // Indentation marker
+                        self.modules.get(&ancestor_id).map(|m| m.name.as_str()).unwrap_or("?").yellow(), // Ancestor name yellow
+                        ancestor_id.to_string().magenta(), // Ancestor ID magenta
+                        self.modules.get(&restriction_module_id).map(|m| m.name.as_str()).unwrap_or("?").blue(), // Restriction name blue
+                        restriction_module_id.to_string().magenta() // Restriction ID magenta
+                    );
                     if ancestor_id == restriction_module_id {
                          self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Ancestor Match)", true);
                         return true; // Found restriction module in ancestors
@@ -610,11 +618,12 @@ impl ModuleTree {
                     current_ancestor = self.get_parent_module_id(ancestor_id);
                 }
                 let accessible = false; // Not the module itself or a descendant
+                // Refined log message for clarity when no ancestor match is found
                 self.log_accessibility_check(
                     source,
                     target,
-                    Some(&effective_visibility), // Log with effective visibility
-                    "Restricted Visibility (Final)",
+                    Some(&effective_visibility),
+                    "Restricted Visibility (Final - No Ancestor Match)", // Updated step description
                     accessible,
                 );
                 accessible
