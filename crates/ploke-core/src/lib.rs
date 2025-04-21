@@ -78,7 +78,8 @@ mod ids {
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
-    use crate::PROJECT_NAMESPACE_UUID;
+    use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
+    use std::io; // Import io for error handling
 
     pub trait IdTrait {
         fn uuid(&self) -> Uuid;
@@ -425,6 +426,59 @@ mod ids {
         }
     }
 
+    impl ResolvedId for CanonId {
+        fn generate_resolved(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            logical_item_path: &[String], // Canonical path for CanonId
+            item_name: &str,
+            item_kind: ItemKind,
+        ) -> Result<Self, IdConversionError> {
+            // Canonicalize the file path
+            let canonical_file_path = file_path.canonicalize().map_err(|e| {
+                IdConversionError::IoError(file_path.display().to_string(), e.to_string())
+            })?;
+            let fp_bytes: &[u8] = canonical_file_path.as_os_str().as_encoded_bytes();
+
+            // Combine components for hashing
+            let resolved_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::CANON_FILE::")
+                .chain(fp_bytes)
+                .chain(b"::CANON_PATH::")
+                .chain(logical_item_path.join("::").as_bytes())
+                .chain(b"::NAME::")
+                .chain(item_name.as_bytes())
+                .copied()
+                .collect();
+
+            let resolved_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &resolved_data);
+
+            // Determine Node or Type variant based on ItemKind
+            // TODO: Refine ItemKind mapping if necessary (e.g., handle fields/variants differently?)
+            match item_kind {
+                ItemKind::Function
+                | ItemKind::Struct
+                | ItemKind::Enum
+                | ItemKind::Union
+                | ItemKind::Trait
+                | ItemKind::Impl
+                | ItemKind::Module
+                | ItemKind::Field // Treat fields as nodes for now
+                | ItemKind::Variant // Treat variants as nodes for now
+                | ItemKind::GenericParam // Treat generic params as nodes for now
+                | ItemKind::Const
+                | ItemKind::Static
+                | ItemKind::Macro
+                | ItemKind::Import
+                | ItemKind::ExternCrate => Ok(CanonId::Node(resolved_uuid)),
+                ItemKind::TypeAlias => Ok(CanonId::Type(resolved_uuid)), // Type aliases represent types
+            }
+        }
+    }
+
+
     /// Unique identifier derived from the shortest public path (considering re-exports),
     /// distinguishing between Node and Type items.
     /// Generated *after* name resolution (Phase 3).
@@ -462,6 +516,55 @@ mod ids {
             }
         }
     }
+
+    impl ResolvedId for PubPathId {
+        fn generate_resolved(
+            crate_namespace: Uuid,
+            file_path: &Path, // Use original file path for SPP
+            logical_item_path: &[String], // Shortest public path for PubPathId
+            item_name: &str,
+            item_kind: ItemKind,
+        ) -> Result<Self, IdConversionError> {
+            // Use the provided file_path directly, no canonicalization
+            let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
+
+            // Combine components for hashing
+            let resolved_data: Vec<u8> = crate_namespace
+                .as_bytes()
+                .iter()
+                .chain(b"::ORIG_FILE::") // Indicate original file path used
+                .chain(fp_bytes)
+                .chain(b"::SPP_PATH::") // Indicate shortest public path used
+                .chain(logical_item_path.join("::").as_bytes())
+                .chain(b"::NAME::")
+                .chain(item_name.as_bytes())
+                .copied()
+                .collect();
+
+            let resolved_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &resolved_data);
+
+            // Determine Node or Type variant based on ItemKind
+            match item_kind {
+                 ItemKind::Function
+                | ItemKind::Struct
+                | ItemKind::Enum
+                | ItemKind::Union
+                | ItemKind::Trait
+                | ItemKind::Impl
+                | ItemKind::Module
+                | ItemKind::Field
+                | ItemKind::Variant
+                | ItemKind::GenericParam
+                | ItemKind::Const
+                | ItemKind::Static
+                | ItemKind::Macro
+                | ItemKind::Import
+                | ItemKind::ExternCrate => Ok(PubPathId::Node(resolved_uuid)),
+                ItemKind::TypeAlias => Ok(PubPathId::Type(resolved_uuid)),
+            }
+        }
+    }
+
 
     // --- TryFrom Implementations for CanonId ---
 
@@ -521,7 +624,10 @@ pub enum IdConversionError {
     SyntheticNode(NodeId),
     #[error("Cannot convert Synthetic TypeId {0} to a path-based ID.")]
     SyntheticType(TypeId),
+    #[error("I/O error during ID generation for path {0}: {1}")]
+    IoError(String, String), // Path and error message
 }
+
 
 /// Represents the specific kind of a code item associated with a `NodeId`.
 /// Moved from `syn_parser::parser::nodes`.
