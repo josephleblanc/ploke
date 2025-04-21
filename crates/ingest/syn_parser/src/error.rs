@@ -132,16 +132,10 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // For now, let's assume DuplicateInModuleTree is sufficient.
                 // If ModuleTreeDuplicateModuleId is still needed elsewhere, it should remain.
             }
-            // Handle the boxed error
             ModuleTreeError::NodePathValidation(boxed_syn_err) => *boxed_syn_err,
             ModuleTreeError::ContainingModuleNotFound(node_id) => SynParserError::InternalState(
                 format!("Containing module not found for node ID: {}", node_id),
             ),
-            // FoundUnlinkedModules is handled within CodeGraph::build_module_tree
-            // and should not typically be converted directly to SynParserError unless
-            // a different error handling strategy is chosen later.
-            // If it *must* be converted, decide how (e.g., InternalState or a new variant).
-            // For now, we assume it's handled before conversion.
             ModuleTreeError::FoundUnlinkedModules(_) => {
                 // This conversion shouldn't usually happen if handled in the caller.
                 // If it does, it indicates an unexpected flow.
@@ -150,7 +144,6 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                         .to_string(),
                 )
             }
-            // Add handling for the new variant
             ModuleTreeError::ItemNotPubliclyAccessible(node_id) => {
                 SynParserError::InternalState(format!(
                     "Item {} is not publicly accessible.", // Keep error message simple
@@ -158,20 +151,21 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 ))
                 // Or define a new SynParserError variant if more specific handling is needed
             }
-            // Handle the new GraphIdConversion variant from ModuleTreeError
             ModuleTreeError::GraphIdConversion(graph_id_err) => {
                 SynParserError::from(NodeError::GraphIdConversion(graph_id_err))
             }
-            // Handle the new NodeError variant from ModuleTreeError
             ModuleTreeError::NodeError(node_err) => {
                 // Convert the inner NodeError into SynParserError using its existing From impl
                 SynParserError::from(node_err)
             }
-            // Handle the new SynParserError variant from ModuleTreeError
             ModuleTreeError::SynParserError(boxed_syn_err) => {
                 // Simply unbox the inner SynParserError
                 *boxed_syn_err
             }
+            // Fill out these missing implementation arms AI!
+            ModuleTreeError::FilePathMissingParent(path_buf) => todo!(),
+            // AI: this one too
+            ModuleTreeError::RootModuleNotFileBased(module_node_id) => todo!(),
         }
     }
 }

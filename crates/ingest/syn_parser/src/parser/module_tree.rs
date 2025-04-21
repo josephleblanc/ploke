@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque}; // Keep HashSet and VecDeque
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
+}; // Keep HashSet and VecDeque
 
 use colored::*; // Import colored for terminal colors
 use log::debug; // Import the debug macro
@@ -196,6 +199,11 @@ pub enum ModuleTreeError {
 
     #[error("Syn parser error: {0}")]
     SynParserError(Box<SynParserError>), // REMOVE #[from]
+    //
+    #[error("Could not determine parent directory for file path: {0}")]
+    FilePathMissingParent(PathBuf), // Store the problematic path
+    #[error("Root module {0} is not file-based, which is required for path resolution.")]
+    RootModuleNotFileBased(ModuleNodeId),
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -777,6 +785,43 @@ impl ModuleTree {
             }
         };
         result // Return the final calculated result
+    }
+
+    // Proposed new function signature and implementation
+    fn find_declaring_file_dir(&self, module_id: ModuleNodeId) -> Result<PathBuf, ModuleTreeError> {
+        let mut current_id = module_id;
+
+        while let Some(current_node) = self.modules.get(&current_id) {
+            // Get the current node, returning error if not found in the tree
+
+            // Check if the current node is file-based
+            if let Some(file_path) = current_node.file_path() {
+                // Found a file-based ancestor. Get its parent directory.
+                return file_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    // Return error if the file path has no parent (e.g., it's just "/")
+                    .ok_or_else(|| ModuleTreeError::FilePathMissingParent(file_path.clone()));
+            }
+
+            // Check if we have reached the root *without* finding a file-based node
+            if current_id == self.root {
+                // This indicates an invalid state - the root must be file-based.
+                return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
+            }
+
+            // If not file-based and not the root, move up to the parent.
+            // Return error if the parent link is missing (inconsistent tree).
+            current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
+                // Log this specific case for debugging?
+                log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id);
+                ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner())
+                // Re-use existing error
+            })?;
+        }
+        Err(ModuleTreeError::ContainingModuleNotFound(
+            *current_id.as_inner(),
+        ))
     }
 
     // Removed unused get_module_path_vec and get_root_path methods
