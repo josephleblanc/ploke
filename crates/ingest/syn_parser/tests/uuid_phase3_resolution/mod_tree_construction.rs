@@ -204,8 +204,8 @@ fn test_module_tree_resolves_to_definition_relation() {
 
     // --- Assert Relation Exists in Tree ---
     let expected_relation = Relation {
-        source: GraphId::Node(defn_id), // Source is the definition
-        target: GraphId::Node(decl_id), // Target is the declaration
+        source: GraphId::Node(decl_id), // Source is the declaration
+        target: GraphId::Node(defn_id), // Target is the definition
         kind: RelationKind::ResolvesToDefinition,
     };
 
@@ -241,8 +241,8 @@ fn test_module_tree_resolves_to_definition_relation() {
 
     // --- Assert Relation Exists ---
     let expected_nested_relation = Relation {
-        source: GraphId::Node(nested_defn_id),
-        target: GraphId::Node(nested_decl_id),
+        source: GraphId::Node(nested_decl_id),
+        target: GraphId::Node(nested_defn_id),
         kind: RelationKind::ResolvesToDefinition,
     };
 
@@ -651,7 +651,6 @@ fn test_module_tree_is_accessible() {
     // --- Debugging Step 1: Log relevant relations before assertion ---
     use colored::*; // Ensure colored is in scope for formatting
     use log::debug; // Ensure debug macro is in scope
-    use syn_parser::parser::nodes::GraphNode; // For GraphNode trait methods
 
     // Find the declaration ID for nested_pub within top_pub_mod
     let top_pub_mod_defn_node = graph
@@ -682,8 +681,14 @@ fn test_module_tree_is_accessible() {
 
     for tree_rel in tree.tree_relations() {
         let rel = tree_rel.relation();
-        let source_id_opt = match rel.source { GraphId::Node(id) => Some(id), _ => None };
-        let target_id_opt = match rel.target { GraphId::Node(id) => Some(id), _ => None };
+        let source_id_opt = match rel.source {
+            GraphId::Node(id) => Some(id),
+            _ => None,
+        };
+        let target_id_opt = match rel.target {
+            GraphId::Node(id) => Some(id),
+            _ => None,
+        };
 
         // Check if either source or target is one of our relevant IDs
         if let (Some(source_id), Some(target_id)) = (source_id_opt, target_id_opt) {
@@ -704,19 +709,22 @@ fn test_module_tree_is_accessible() {
                 // 1. Direct Contains (Parent -> Definition)
                 if source_id == top_pub_mod_id.into_inner()
                     && target_id == nested_pub_in_pub_id.into_inner()
-                    && rel.kind == RelationKind::Contains {
+                    && rel.kind == RelationKind::Contains
+                {
                     found_direct_contains = true;
                 }
                 // 2. ResolvesToDefinition (Declaration -> Definition)
                 if source_id == nested_pub_decl_id
                     && target_id == nested_pub_in_pub_id.into_inner()
-                    && rel.kind == RelationKind::ResolvesToDefinition {
+                    && rel.kind == RelationKind::ResolvesToDefinition
+                {
                     found_resolves_to = true;
                 }
                 // 3. Declaration Contains (Parent -> Declaration)
                 if source_id == top_pub_mod_id.into_inner()
                     && target_id == nested_pub_decl_id
-                    && rel.kind == RelationKind::Contains {
+                    && rel.kind == RelationKind::Contains
+                {
                     found_decl_contains = true;
                 }
             }
@@ -730,7 +738,6 @@ fn test_module_tree_is_accessible() {
     debug!(target: "mod_tree_vis", "    - Declaration Contains ({} -> {}): {}", top_pub_mod_id, nested_pub_decl_id, if found_decl_contains {"Found".green()} else {"Missing".red()});
     debug!(target: "mod_tree_vis", "{}", "--- Relation Check End ---".dimmed().bold());
     // --- End Debugging Step 1 ---
-
 
     // --- Assertions ---
 

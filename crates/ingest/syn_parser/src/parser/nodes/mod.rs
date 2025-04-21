@@ -43,7 +43,6 @@ pub trait GraphNode {
     fn cfgs(&self) -> &[String];
 }
 
-
 /// Represents either a Node or a Type in the graph context, used primarily in Relations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum GraphId {
@@ -103,18 +102,6 @@ pub enum GraphIdConversionError {
     ExpectedType(GraphId),
 }
 
-impl From<NodeId> for GraphId {
-    fn from(node_id: NodeId) -> Self {
-        GraphId::Node(node_id)
-    }
-}
-
-impl From<TypeId> for GraphId {
-    fn from(type_id: TypeId) -> Self {
-        GraphId::Type(type_id)
-    }
-}
-
 impl TryInto<NodeId> for GraphId {
     type Error = GraphIdConversionError;
 
@@ -137,7 +124,6 @@ impl TryInto<TypeId> for GraphId {
     }
 }
 
-
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
 pub enum NodeError {
@@ -149,7 +135,6 @@ pub enum NodeError {
     #[error("Graph ID conversion error: {0}")]
     GraphIdConversion(#[from] GraphIdConversionError), // Add From conversion
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ModuleNodeId(NodeId);

@@ -79,7 +79,7 @@ mod ids {
     use uuid::Uuid;
 
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
-    // Removed unused std::io import
+                                                   // Removed unused std::io import
 
     pub trait IdTrait {
         fn uuid(&self) -> Uuid;
@@ -392,7 +392,6 @@ mod ids {
     }
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
 
-
     /// Trait for generating resolved path-based IDs (CanonId, PubPathId).
     pub trait ResolvedId: Sized + IdTrait + Copy {
         /// Generates a resolved ID based on crate, path, and item details.
@@ -417,7 +416,6 @@ mod ids {
             item_kind: ItemKind,
         ) -> Result<Self, IdConversionError>;
     }
-
 
     /// Unique identifier derived from the canonical path within the defining crate,
     /// distinguishing between Node and Type items.
@@ -509,7 +507,6 @@ mod ids {
         }
     }
 
-
     /// Unique identifier derived from the shortest public path (considering re-exports),
     /// distinguishing between Node and Type items.
     /// Generated *after* name resolution (Phase 3).
@@ -551,7 +548,7 @@ mod ids {
     impl ResolvedId for PubPathId {
         fn generate_resolved(
             crate_namespace: Uuid,
-            file_path: &Path, // Use original file path for SPP
+            file_path: &Path,             // Use original file path for SPP
             logical_item_path: &[String], // Shortest public path for PubPathId
             item_name: &str,
             item_kind: ItemKind,
@@ -576,7 +573,7 @@ mod ids {
 
             // Determine Node or Type variant based on ItemKind
             match item_kind {
-                 ItemKind::Function
+                ItemKind::Function
                 | ItemKind::Struct
                 | ItemKind::Enum
                 | ItemKind::Union
@@ -595,7 +592,6 @@ mod ids {
             }
         }
     }
-
 
     // --- TryFrom Implementations for CanonId ---
 
@@ -658,7 +654,6 @@ pub enum IdConversionError {
     #[error("I/O error during ID generation for path {0}: {1}")]
     IoError(String, String), // Path and error message
 }
-
 
 /// Represents the specific kind of a code item associated with a `NodeId`.
 /// Moved from `syn_parser::parser::nodes`.

@@ -64,8 +64,7 @@ fn test_spp_public_item_in_public_mod() {
         .functions
         .iter()
         .find(|f| {
-            f.name == "top_pub_func"
-                && graph.get_item_module_path(f.id) == ["crate", "top_pub_mod"]
+            f.name == "top_pub_func" && graph.get_item_module_path(f.id) == ["crate", "top_pub_mod"]
         })
         .expect("Could not find top_pub_func in top_pub_mod")
         .id;
