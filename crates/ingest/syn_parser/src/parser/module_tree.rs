@@ -193,6 +193,9 @@ pub enum ModuleTreeError {
 
     #[error("Node error: {0}")]
     NodeError(#[from] super::nodes::NodeError), // Add #[from] for NodeError
+
+    #[error("Syn parser error: {0}")]
+    SynParserError(#[from] Box<SynParserError>), // Add #[from] for SynParserError (Boxed)
 }
 
 impl ModuleTree {

@@ -167,6 +167,11 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // Convert the inner NodeError into SynParserError using its existing From impl
                 SynParserError::from(node_err)
             }
+            // Handle the new SynParserError variant from ModuleTreeError
+            ModuleTreeError::SynParserError(boxed_syn_err) => {
+                // Simply unbox the inner SynParserError
+                *boxed_syn_err
+            }
         }
     }
 }
