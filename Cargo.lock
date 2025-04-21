@@ -690,6 +690,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture_path_resolution"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "ploke-core",
+ "regex",
+ "serde",
+ "thiserror 2.0.12",
+ "uuid",
+]
+
+[[package]]
 name = "fixture_test_crate"
 version = "0.1.0"
 

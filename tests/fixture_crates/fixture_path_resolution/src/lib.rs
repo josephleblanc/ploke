@@ -7,7 +7,7 @@ use ploke_core::{IdTrait, ItemKind, NodeId, TypeId}; // Import IdTrait and ItemK
 use regex::Regex; // External dep (non-workspace)
 use serde::Serialize; // External dep with feature
 use thiserror::Error; // External dep (workspace = true) // Workspace dep
-// Removed unused: use uuid::Uuid;
+use uuid::Uuid; // Import Uuid directly
 
 // === Modules ===
 
@@ -26,11 +26,9 @@ pub mod inline_mod {
 
 // 3. Private inline module
 mod private_inline_mod {
-    #[allow(dead_code)] // Allow dead code for fixture clarity
     fn private_inline_func() {}
 
     // 3a. Public item within private module (should not be accessible externally)
-    #[allow(dead_code)] // Allow dead code for fixture clarity
     pub fn pub_in_private_inline() {}
 }
 

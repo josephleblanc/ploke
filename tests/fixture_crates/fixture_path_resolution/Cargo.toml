@@ -10,13 +10,13 @@ feature_b = []
 
 [dependencies]
 # Workspace dependencies
-ploke-common = { workspace = true }
 ploke-core = { workspace = true }
 
 # External dependencies (some already in workspace)
 log = { workspace = true }
 serde = { workspace = true, features = ["derive"] } # Add a feature
 thiserror = { workspace = true }
+uuid = "1"
 
 # Non-workspace external dependency
 regex = "1.10"
