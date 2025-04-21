@@ -73,7 +73,7 @@ mod ids {
     use std::hash::{Hash, Hasher}; // Import Hash traits
     use std::path::Path;
     // Import TypeKind into the ids module scope
-    use crate::TypeKind;
+    use crate::{IdConversionError, TypeKind}; // Add IdConversionError
 
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
@@ -400,9 +400,76 @@ mod ids {
         }
     }
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
+
+    /// Unique identifier derived from a resolved path (Canonical or Shortest Public).
+    /// This ID is intended to be generated *after* name resolution (Phase 3),
+    /// using either the item's canonical path or its shortest public path.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+    pub enum PathId {
+        /// ID derived from the canonical path within the defining crate.
+        Canon(Uuid),
+        /// ID derived from the shortest public path (re-exports).
+        ShortPub(Uuid),
+    }
+
+    impl PathId {
+        /// Returns the inner Uuid regardless of the variant.
+        pub fn uuid(&self) -> Uuid {
+            match self {
+                PathId::Canon(uuid) => *uuid,
+                PathId::ShortPub(uuid) => *uuid,
+            }
+        }
+    }
+
+    impl std::fmt::Display for PathId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                PathId::Canon(uuid) => write!(f, "P:C:{}", short_uuid(*uuid)),
+                PathId::ShortPub(uuid) => write!(f, "P:S:{}", short_uuid(*uuid)),
+            }
+        }
+    }
+
+    // --- TryFrom Implementations ---
+
+    // Note: These implementations currently default to creating PathId::Canon.
+    // This might need adjustment based on how PathId generation is finalized.
+    // The primary purpose here is to enforce that only Resolved IDs can be converted.
+
+    impl TryFrom<NodeId> for PathId {
+        type Error = IdConversionError;
+
+        fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
+            match node_id {
+                NodeId::Resolved(uuid) => Ok(PathId::Canon(uuid)), // Defaulting to Canon
+                NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSynthetic),
+            }
+        }
+    }
+
+    impl TryFrom<TypeId> for PathId {
+        type Error = IdConversionError;
+
+        fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
+            match type_id {
+                TypeId::Resolved(uuid) => Ok(PathId::Canon(uuid)), // Defaulting to Canon
+                TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSynthetic),
+            }
+        }
+    }
+
 }
 
 pub use ids::*;
+
+/// Error type for ID conversions.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdConversionError {
+    #[error("Cannot convert a Synthetic ID variant to a PathId.")]
+    CannotConvertSynthetic,
+}
+
 
 /// Represents the specific kind of a code item associated with a `NodeId`.
 /// Moved from `syn_parser::parser::nodes`.
