@@ -456,7 +456,6 @@ impl ModuleTree {
             }
 
             // --- Neighbor (Public Child) Exploration ---
-            // Find direct children (both inline and file-based via declarations)
             let child_relations = self.tree_relations.iter().filter(|tr| {
                 let rel = tr.relation();
                 rel.source == GraphId::Node(current_mod_id.into_inner())
@@ -464,51 +463,43 @@ impl ModuleTree {
             });
 
             for child_rel in child_relations {
-                // Access the inner relation using .relation() before accessing .target
+                // Use if let for clarity, or map/filter if preferred
                 if let GraphId::Node(child_id) = child_rel.relation().target {
-                    // Check if this child is a module
+                    // Get the module node (declaration or definition) linked by Contains
                     if let Some(child_module_node) = self.modules.get(&ModuleNodeId::new(child_id))
                     {
-                        let child_mod_id_to_check = if child_module_node.is_declaration() {
-                            // If it's a declaration, find its definition for visibility check
-                            self.tree_relations
-                                .iter()
-                                .find_map(|tr_res| {
-                                    let rel_res = tr_res.relation();
-                                    if rel_res.source == GraphId::Node(child_id)
-                                        && rel_res.kind == RelationKind::ResolvesToDefinition
-                                    {
-                                        match rel_res.target {
-                                            GraphId::Node(defn_id) => {
-                                                Some(ModuleNodeId::new(defn_id))
-                                            }
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
+                        // Determine the ID of the actual module definition (handling declarations)
+                        let definition_id = if child_module_node.is_declaration() {
+                            self.find_definition_for_declaration(child_id)
+                                .unwrap_or_else(|| {
+                                    // Log fallback case
+                                    log::warn!(target: LOG_TARGET_BUILD, "SPP: Could not find definition for declaration {}, falling back to using declaration ID itself.", child_id);
+                                    ModuleNodeId::new(child_id)
                                 })
-                                .unwrap_or(ModuleNodeId::new(child_id)) // Fallback if no def found
                         } else {
-                            // It's an inline or file-based definition node already
-                            ModuleNodeId::new(child_id)
+                            ModuleNodeId::new(child_id) // It's already the definition
                         };
 
-                        // Check if the child module (definition) is effectively public
-                        // We need its effective visibility. Reuse logic from is_accessible's start.
-                        let effective_vis = self.get_effective_visibility(child_mod_id_to_check);
-
-                        if effective_vis.is_some_and(|vis| vis.is_pub()) {
-                            // If public and not visited, add to queue
-                            if visited.insert(child_mod_id_to_check) {
-                                // Use definition ID for visited set
+                        // Check visibility and enqueue if public and unvisited
+                        // Use Option::filter and and_then for conciseness
+                        self.get_effective_visibility(definition_id)
+                            .filter(|vis| vis.is_pub()) // Keep only if public
+                            .and_then(|_vis| {
+                                // If public...
+                                if visited.insert(definition_id) {
+                                    // ...and not visited...
+                                    Some(definition_id) // ...return the ID to enqueue.
+                                } else {
+                                    None // Already visited
+                                }
+                            })
+                            .map(|id_to_enqueue| {
+                                // If we should enqueue...
                                 let mut new_path = current_path.clone();
-                                // Use the name from the actual module node (could be decl or defn)
+                                // Use the name from the original child node (decl or defn)
                                 new_path.push(child_module_node.name.clone());
-                                queue.push_back((child_mod_id_to_check, new_path));
-                                // Enqueue definition ID
-                            }
-                        }
+                                queue.push_back((id_to_enqueue, new_path));
+                            });
                     }
                 }
             }
@@ -516,6 +507,23 @@ impl ModuleTree {
 
         // Item not found via any public path
         Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
+    }
+
+    /// Finds the NodeId of the definition module corresponding to a declaration module ID.
+    fn find_definition_for_declaration(&self, decl_id: NodeId) -> Option<ModuleNodeId> {
+        self.tree_relations.iter().find_map(|tr| {
+            let rel = tr.relation();
+            if rel.source == GraphId::Node(decl_id)
+                && rel.kind == RelationKind::ResolvesToDefinition
+            {
+                match rel.target {
+                    GraphId::Node(defn_id) => Some(ModuleNodeId::new(defn_id)),
+                    _ => None, // Should not happen for this relation kind
+                }
+            } else {
+                None
+            }
+        })
     }
 
     /// Helper to get parent module ID (using existing ModuleTree fields)
