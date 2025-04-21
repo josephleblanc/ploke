@@ -1,6 +1,4 @@
 use super::nodes::GraphId; // Import GraphId from its new location
-use ploke_core::NodeId;
-use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error; // Add thiserror import
 
@@ -10,7 +8,6 @@ pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
     NotApplicable(RelationKind),
 }
-
 
 // ANCHOR: Relation
 // Represents a relation between nodes

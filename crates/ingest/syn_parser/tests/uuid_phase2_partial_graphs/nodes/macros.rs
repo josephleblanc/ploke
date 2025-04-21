@@ -2,12 +2,13 @@ use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{NodeId, TrackingHash};
+use syn_parser::parser::nodes::GraphId;
 use syn_parser::parser::nodes::{MacroKind, ProcMacroKind}; // Import macro kinds
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{GraphNode, MacroNode}, // Import MacroNode
-    relations::{GraphId, RelationKind},
+    relations::RelationKind,
 };
 
 // Test Plan: docs/plans/uuid_refactor/testing/macros_testing.md

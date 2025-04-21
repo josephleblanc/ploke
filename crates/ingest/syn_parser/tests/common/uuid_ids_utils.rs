@@ -2,7 +2,7 @@ use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::{NodeId, TypeId};
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::CodeGraph;
-use syn_parser::parser::relations::{GraphId, RelationKind};
+use syn_parser::parser::relations::RelationKind;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 // Removed `use syn_parser::parser::visitor::ParsedCodeGraph;` - import directly in tests

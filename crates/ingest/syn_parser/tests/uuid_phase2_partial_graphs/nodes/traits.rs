@@ -1,13 +1,12 @@
 use crate::common::paranoid::find_trait_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::{NodeId, TypeKind};
+use syn_parser::parser::nodes::GraphId;
+// Import TypeKind from ploke_core
 // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{
-    nodes::GraphNode,
-    relations::{GraphId, RelationKind},
-};
+use syn_parser::parser::{nodes::GraphNode, relations::RelationKind};
 
 // --- Test Cases ---
 

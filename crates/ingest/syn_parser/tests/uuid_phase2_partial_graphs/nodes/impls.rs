@@ -1,11 +1,11 @@
 use crate::common::paranoid::find_impl_node_paranoid;
 use crate::common::uuid_ids_utils::*;
 use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
-use syn_parser::parser::nodes::ImplNode; // Import UnionNode specifically
+use syn_parser::parser::nodes::{GraphId, ImplNode}; // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     nodes::{FunctionNode, GraphNode},
-    relations::{GraphId, RelationKind},
+    relations::RelationKind,
     types::GenericParamKind,
 };
 

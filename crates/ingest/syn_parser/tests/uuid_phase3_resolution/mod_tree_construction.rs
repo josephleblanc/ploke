@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use syn_parser::parser::module_tree::ModuleTree;
-use syn_parser::parser::nodes::ModuleNodeId;
-use syn_parser::parser::relations::{GraphId, Relation, RelationKind};
+use syn_parser::parser::nodes::{GraphId, ModuleNodeId};
+use syn_parser::parser::relations::{Relation, RelationKind};
 use syn_parser::CodeGraph;
 
 // Removed unused imports for helpers moved to CodeGraph

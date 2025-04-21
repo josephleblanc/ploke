@@ -2,13 +2,14 @@ use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
+use syn_parser::parser::nodes::GraphId;
 use syn_parser::parser::nodes::ImportKind;
 use syn_parser::parser::types::VisibilityKind;
 // Import ImportKind
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{GraphNode, ImportNode}, // Import ImportNode
-    relations::{GraphId, RelationKind},
+    relations::RelationKind,
 };
 
 // Test Plan: docs/plans/uuid_refactor/testing/imports_testing.md

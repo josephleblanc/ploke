@@ -1,12 +1,10 @@
 use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::{NodeId, TypeId, TypeKind};
+use syn_parser::parser::nodes::GraphId;
+// Import TypeKind from ploke_core
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{
-    nodes::GraphNode,
-    relations::{GraphId, RelationKind},
-    types::GenericParamKind,
-};
+use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::GenericParamKind};
 
 // --- Test Cases ---
 

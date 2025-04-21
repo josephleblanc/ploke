@@ -1,14 +1,12 @@
 use crate::common::paranoid::find_union_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::{NodeId, TypeKind};
+use syn_parser::parser::nodes::GraphId;
+// Import TypeKind from ploke_core
 // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{
-    nodes::GraphNode,
-    relations::{GraphId, RelationKind},
-    types::GenericParamKind,
-};
+use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::GenericParamKind};
 
 // --- Test Cases ---
 
@@ -357,8 +355,14 @@ fn test_other_union_nodes() {
         .iter()
         .find(|f| f.name.as_deref() == Some("always_present"))
         .expect("Field 'always_present' not found");
-    assert!(field_always.attributes.is_empty(), "Field 'always_present' should have no non-cfg attributes");
-    assert!(field_always.cfgs.is_empty(), "Field 'always_present' should have no cfgs");
+    assert!(
+        field_always.attributes.is_empty(),
+        "Field 'always_present' should have no non-cfg attributes"
+    );
+    assert!(
+        field_always.cfgs.is_empty(),
+        "Field 'always_present' should have no cfgs"
+    );
 
     // Check that at least one of the other fields has a non-empty cfgs list
     let has_cfg_string = node

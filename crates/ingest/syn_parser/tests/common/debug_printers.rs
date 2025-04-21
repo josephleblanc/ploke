@@ -89,7 +89,7 @@ pub fn debug_print_static_info(
     related_ids: &[ploke_core::TypeId],
     expected_type_id: ploke_core::TypeId,
 ) {
-    use syn_parser::parser::relations::{GraphId, RelationKind};
+    use syn_parser::parser::{nodes::GraphId, relations::RelationKind};
 
     eprintln!(
         "DEBUGGING TYPENODE: type_node = find_type_node(graph, node.type_id):\n{:#?}

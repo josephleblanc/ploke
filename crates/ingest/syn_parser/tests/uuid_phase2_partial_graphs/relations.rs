@@ -7,7 +7,8 @@ mod phase2_relation_tests {
         discovery::{run_discovery_phase, DiscoveryOutput},
         parser::{
             analyze_files_parallel,
-            relations::{GraphId, Relation, RelationKind},
+            nodes::GraphId,
+            relations::{Relation, RelationKind},
             visitor::ParsedCodeGraph,
         },
     };

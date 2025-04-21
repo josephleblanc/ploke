@@ -4,8 +4,8 @@
 use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*};
 use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::{
-    nodes::GraphNode,
-    relations::{GraphId, RelationKind}, // Added for relation checks
+    nodes::{GraphId, GraphNode},
+    relations::RelationKind,                   // Added for relation checks
     types::{GenericParamKind, VisibilityKind}, // Remove TypeKind from here
 };
 

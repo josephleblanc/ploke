@@ -2,6 +2,7 @@ use super::attribute_processing::extract_attributes;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
+use crate::parser::nodes::GraphId;
 use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ValueKind;
 use crate::parser::nodes::ValueNode;
@@ -215,7 +216,7 @@ impl<'a> CodeVisitor<'a> {
     // Removed #[cfg(feature = "verbose_debug")]
     fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
-             trace!(target: LOG_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
+            trace!(target: LOG_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
                 current_mod.name.cyan(),
                 name.yellow(),
                 node_id.to_string().magenta()
@@ -233,7 +234,7 @@ impl<'a> CodeVisitor<'a> {
 
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_pop(&self, stack_name: &str, popped: Option<String>, stack: &[String]) {
-         trace!(target: LOG_TARGET_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
+        trace!(target: LOG_TARGET_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
             stack_name.blue(),
             popped.unwrap_or("<empty>".to_string()).red(),
             stack
@@ -314,7 +315,7 @@ impl<'a> CodeVisitor<'a> {
                 item_name, item_kind, self.state.current_module_path
             );
             // Removed the stray 'else' block below
-    } // <<< Add missing closing brace for the `if let Some(parent_id) = ...` block
+        } // <<< Add missing closing brace for the `if let Some(parent_id) = ...` block
 
         // 3. Return the newly generated NodeId enum
         node_id
@@ -323,7 +324,9 @@ impl<'a> CodeVisitor<'a> {
     // Helper to push scope and log (using trace!)
     fn push_scope(&mut self, name: &str, id: NodeId, cfgs: Vec<String>) {
         self.state.current_definition_scope.push(id);
-        self.state.cfg_stack.push(self.state.current_scope_cfgs.clone());
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone());
         self.state.current_scope_cfgs = cfgs;
         trace!(target: LOG_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
@@ -571,7 +574,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             );
 
             // Removed #[cfg] block
-            self.debug_new_id( // Now uses trace!
+            self.debug_new_id(
+                // Now uses trace!
                 &field
                     .ident
                     .as_ref()
@@ -663,7 +667,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Push the type alias's ID onto the scope stack BEFORE processing type/generics
         // Type aliases don't introduce a new CFG scope, so pass current scope cfgs
-        self.push_scope(&type_alias_name, type_alias_id, self.state.current_scope_cfgs.clone());
+        self.push_scope(
+            &type_alias_name,
+            type_alias_id,
+            self.state.current_scope_cfgs.clone(),
+        );
 
         // Process the aliased type
         let type_id = get_or_create_type(self.state, &item_type.ty);
@@ -755,7 +763,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
             // Removed #[cfg] block
-            self.debug_new_id( // Now uses trace!
+            self.debug_new_id(
+                // Now uses trace!
                 &field_name
                     .clone()
                     .unwrap_or_else(|| format!("Unnamed field of {}", union_name.clone())),
@@ -870,7 +879,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Push the variant's ID onto the scope stack BEFORE processing its fields
             // Variants don't introduce a new CFG scope, pass current (enum's) scope cfgs
-            self.push_scope(&variant_name, variant_id, self.state.current_scope_cfgs.clone());
+            self.push_scope(
+                &variant_name,
+                variant_id,
+                self.state.current_scope_cfgs.clone(),
+            );
 
             // Process fields of the variant
             let mut fields = Vec::new();
@@ -901,7 +914,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
                         // Removed #[cfg] block
-                        self.debug_new_id( // Now uses trace!
+                        self.debug_new_id(
+                            // Now uses trace!
                             &field_name
                                 .clone()
                                 .unwrap_or("unnamed_enum_field".to_string()),
@@ -1134,7 +1148,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Push the method's ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (impl's) scope cfgs
-                self.push_scope(&method_name, method_node_id, self.state.current_scope_cfgs.clone());
+                self.push_scope(
+                    &method_name,
+                    method_node_id,
+                    self.state.current_scope_cfgs.clone(),
+                );
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1299,7 +1317,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Push the method's ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
-                self.push_scope(&method_name, method_node_id, self.state.current_scope_cfgs.clone());
+                self.push_scope(
+                    &method_name,
+                    method_node_id,
+                    self.state.current_scope_cfgs.clone(),
+                );
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1543,7 +1565,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let popped_path = self.state.current_module_path.pop();
         // Removed #[cfg] block
-        self.log_pop( // Now uses trace!
+        self.log_pop(
+            // Now uses trace!
             "current_module_path",
             popped_path,
             &self.state.current_module_path,

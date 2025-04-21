@@ -4,7 +4,7 @@
 //! likely doesn't handle re-exports correctly yet. These tests focus on
 //! direct public visibility paths.
 
-use syn_parser::parser::module_tree::ModuleTree;
+use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
 // Removed unused import: use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::CodeGraph;
 

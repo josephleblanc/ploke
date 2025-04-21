@@ -10,7 +10,7 @@ use crate::parser::nodes::NodePath; // Ensure NodePath is imported
 
 use super::{
     nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
-    relations::{Relation, RelationKind}, // Remove GraphId
+    relations::{Relation, RelationKind},                               // Remove GraphId
     types::VisibilityKind,
     CodeGraph,
 };
@@ -418,7 +418,8 @@ impl ModuleTree {
         &self,
         item_id: NodeId,
         graph: &CodeGraph, // Need graph access for item visibility
-    ) -> Result<Vec<String>, ModuleTreeError> { // Changed return type to Result
+    ) -> Result<Vec<String>, ModuleTreeError> {
+        // Changed return type to Result
         // BFS queue: (module_id, current_path_segments)
         let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
         let mut visited: HashSet<ModuleNodeId> = HashSet::new();
@@ -478,7 +479,9 @@ impl ModuleTree {
                                         && rel_res.kind == RelationKind::ResolvesToDefinition
                                     {
                                         match rel_res.target {
-                                            GraphId::Node(defn_id) => Some(ModuleNodeId::new(defn_id)),
+                                            GraphId::Node(defn_id) => {
+                                                Some(ModuleNodeId::new(defn_id))
+                                            }
                                             _ => None,
                                         }
                                     } else {
@@ -495,13 +498,15 @@ impl ModuleTree {
                         // We need its effective visibility. Reuse logic from is_accessible's start.
                         let effective_vis = self.get_effective_visibility(child_mod_id_to_check);
 
-                        if effective_vis.map_or(false, |vis| vis.is_pub()) {
+                        if effective_vis.is_some_and(|vis| vis.is_pub()) {
                             // If public and not visited, add to queue
-                            if visited.insert(child_mod_id_to_check) { // Use definition ID for visited set
+                            if visited.insert(child_mod_id_to_check) {
+                                // Use definition ID for visited set
                                 let mut new_path = current_path.clone();
                                 // Use the name from the actual module node (could be decl or defn)
                                 new_path.push(child_module_node.name.clone());
-                                queue.push_back((child_mod_id_to_check, new_path)); // Enqueue definition ID
+                                queue.push_back((child_mod_id_to_check, new_path));
+                                // Enqueue definition ID
                             }
                         }
                     }
@@ -556,7 +561,8 @@ impl ModuleTree {
     /// Determines the effective visibility of a module definition.
     /// For inline modules or the root, it's the stored visibility.
     /// For file-based modules, it's the visibility of the corresponding declaration.
-    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> { // Return Option<&VisibilityKind>
+    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> {
+        // Return Option<&VisibilityKind>
         let module_node = self.modules.get(&module_def_id)?;
 
         if module_node.is_inline() || module_def_id == self.root {
@@ -581,7 +587,7 @@ impl ModuleTree {
             decl_id_opt
                 .and_then(|decl_id| self.modules.get(&ModuleNodeId::new(decl_id)))
                 .map(|decl_node| &decl_node.visibility) // Return reference from decl_node
-                .or_else(|| {
+                .or({
                     // If declaration not found (e.g., unlinked), use definition's visibility
                     Some(&module_node.visibility) // Return reference from module_node
                 })

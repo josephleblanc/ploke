@@ -1,10 +1,10 @@
 use crate::error::SynParserError;
-use crate::parser::relations::GraphId;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
 use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
 use super::nodes::{
-    EnumNode, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode, UnionNode,
+    EnumNode, GraphId, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode,
+    UnionNode,
 };
 use super::relations::RelationKind;
 use crate::parser::visibility::VisibilityResult;
@@ -573,27 +573,27 @@ impl CodeGraph {
     pub fn debug_print_all_visible(&self) {
         // Removed #[cfg(feature = "verbose_debug")]
         // { // Keep the block if needed for scope, or remove if unnecessary
-            // New implementation using NodeId enum
-            let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
-            all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.impls.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.traits.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.modules.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.values.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.macros.iter().map(|n| (n.name(), n.id())));
-            all_ids.extend(self.defined_types.iter().map(|def| match def {
-                TypeDefNode::Struct(s) => (s.name(), s.id()),
-                TypeDefNode::Enum(e) => (e.name(), e.id()),
-                TypeDefNode::TypeAlias(a) => (a.name(), a.id()),
-                TypeDefNode::Union(u) => (u.name(), u.id()),
-            }));
-            // Add other fields similarly...
+        // New implementation using NodeId enum
+        let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
+        all_ids.extend(self.functions.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.impls.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.traits.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.modules.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.values.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.macros.iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.defined_types.iter().map(|def| match def {
+            TypeDefNode::Struct(s) => (s.name(), s.id()),
+            TypeDefNode::Enum(e) => (e.name(), e.id()),
+            TypeDefNode::TypeAlias(a) => (a.name(), a.id()),
+            TypeDefNode::Union(u) => (u.name(), u.id()),
+        }));
+        // Add other fields similarly...
 
-            // NodeId enum derives Ord, so sorting should work
-            all_ids.sort_by_key(|&(_, id)| id);
-            for (name, id) in all_ids {
-                println!("id: {:?}, name: {}", id, name); // Use Debug print for NodeId enum
-            }
+        // NodeId enum derives Ord, so sorting should work
+        all_ids.sort_by_key(|&(_, id)| id);
+        for (name, id) in all_ids {
+            println!("id: {:?}, name: {}", id, name); // Use Debug print for NodeId enum
+        }
         // } // Removed corresponding closing brace if block was removed
     }
 

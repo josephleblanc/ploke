@@ -1,12 +1,13 @@
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
+use syn_parser::parser::nodes::GraphId;
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
 use syn_parser::parser::{
     nodes::{GraphNode, ImportNode},
-    relations::{GraphId, RelationKind},
+    relations::RelationKind,
 };
 // ----- paranoid helper functions ------
 use crate::common::paranoid::{

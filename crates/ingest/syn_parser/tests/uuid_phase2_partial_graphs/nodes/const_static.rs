@@ -3,12 +3,13 @@ use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::TypeKind;
 use ploke_core::{NodeId, TrackingHash, TypeId};
+use syn_parser::parser::nodes::GraphId;
 use syn_parser::parser::nodes::ValueKind;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
     graph::CodeGraph,
-    nodes::{ValueNode, GraphNode},
-    relations::{GraphId, RelationKind},
+    nodes::{GraphNode, ValueNode},
+    relations::RelationKind,
     visitor::ParsedCodeGraph,
 };
 
