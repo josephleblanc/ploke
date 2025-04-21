@@ -512,6 +512,7 @@ impl ModuleTree {
         );
     }
 
+
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         // 1. Get the target definition node from the map
@@ -571,6 +572,7 @@ impl ModuleTree {
         };
 
         // Log the *effective* visibility being used for the check
+        // Keep this specific log here as it's about the *input* to the check, not the check *result*
         debug!(target: LOG_TARGET_VIS, "{} {} ({}): {}",
             "Effective visibility for target".italic(), // Italic description
             target_defn_node.name.blue(), // Target name blue
@@ -651,7 +653,7 @@ impl ModuleTree {
                 // Check if the source module is a descendant of the restriction module
                 let mut current_ancestor = self.get_parent_module_id(source);
                 while let Some(ancestor_id) = current_ancestor {
-                    // Added logging inside the loop
+                    // Keep this specific debug log inside the loop for ancestor tracing
                     debug!(target: LOG_TARGET_VIS, "  {} Checking ancestor: {} ({}) against restriction: {} ({})",
                         "->".dimmed(), // Indentation marker
                         self.modules.get(&ancestor_id).map(|m| m.name.as_str()).unwrap_or("?").yellow(), // Ancestor name yellow
@@ -660,7 +662,7 @@ impl ModuleTree {
                         restriction_module_id.to_string().magenta() // Restriction ID magenta
                     );
                     if ancestor_id == restriction_module_id {
-                        self.log_accessibility_check(
+                         self.log_accessibility_check( // Use the helper function
                             source,
                             target,
                             Some(&effective_visibility),
