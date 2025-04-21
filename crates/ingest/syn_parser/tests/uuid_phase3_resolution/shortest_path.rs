@@ -5,7 +5,7 @@
 //! direct public visibility paths.
 
 use syn_parser::parser::module_tree::ModuleTree;
-use syn_parser::parser::nodes::ModuleNodeId;
+// Removed unused import: use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::CodeGraph;
 
 use crate::common::uuid_ids_utils::run_phases_and_collect;
@@ -38,12 +38,11 @@ fn test_spp_public_item_in_root() {
         .id;
 
     // Find the crate root module ID
-    let crate_root_id = tree.root();
-
     // Calculate shortest public path starting from the crate root
-    let spp = tree.shortest_public_path(main_pub_func_id, crate_root_id);
+    // Pass the graph as required by the new signature
+    let spp = tree.shortest_public_path(main_pub_func_id, &graph);
 
-    // Expected path: ["crate", "main_pub_func"] (assuming path includes item name)
+    // Expected path: ["crate"] (path to the containing module)
     // NOTE: The current shortest_public_path implementation might only return the module path.
     // Adjust assertion based on actual implementation behavior.
     // For now, let's assume it should return the module path containing the item.
@@ -72,10 +71,9 @@ fn test_spp_public_item_in_public_mod() {
         .id;
 
     // Find the crate root module ID
-    let crate_root_id = tree.root();
-
     // Calculate shortest public path starting from the crate root
-    let spp = tree.shortest_public_path(top_pub_func_id, crate_root_id);
+    // Pass the graph as required by the new signature
+    let spp = tree.shortest_public_path(top_pub_func_id, &graph);
 
     // Expected path: ["crate", "top_pub_mod"] (path to the containing public module)
     let expected_path = Some(vec!["crate".to_string(), "top_pub_mod".to_string()]);
@@ -103,10 +101,9 @@ fn test_spp_public_item_in_nested_public_mod() {
         .id;
 
     // Find the crate root module ID
-    let crate_root_id = tree.root();
-
     // Calculate shortest public path starting from the crate root
-    let spp = tree.shortest_public_path(nested_pub_func_id, crate_root_id);
+    // Pass the graph as required by the new signature
+    let spp = tree.shortest_public_path(nested_pub_func_id, &graph);
 
     // Expected path: ["crate", "top_pub_mod", "nested_pub"]
     let expected_path = Some(vec![
@@ -138,10 +135,9 @@ fn test_spp_private_item_in_public_mod() {
         .id;
 
     // Find the crate root module ID
-    let crate_root_id = tree.root();
-
     // Calculate shortest public path starting from the crate root
-    let spp = tree.shortest_public_path(top_pub_priv_func_id, crate_root_id);
+    // Pass the graph as required by the new signature
+    let spp = tree.shortest_public_path(top_pub_priv_func_id, &graph);
 
     // Expected path: None (item is private)
     let expected_path: Option<Vec<String>> = None;
@@ -171,10 +167,9 @@ fn test_spp_item_in_private_mod() {
         .id;
 
     // Find the crate root module ID
-    let crate_root_id = tree.root();
-
     // Calculate shortest public path starting from the crate root
-    let spp = tree.shortest_public_path(nested_pub_in_priv_func_id, crate_root_id);
+    // Pass the graph as required by the new signature
+    let spp = tree.shortest_public_path(nested_pub_in_priv_func_id, &graph);
 
     // Expected path: None (containing module is private)
     let expected_path: Option<Vec<String>> = None;

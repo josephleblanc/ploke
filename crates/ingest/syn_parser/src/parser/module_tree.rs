@@ -20,8 +20,8 @@ const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build 
 
 /// Helper struct to hold context for accessibility logging.
 struct AccLogCtx<'a> {
-    source_id: ModuleNodeId,
-    target_id: ModuleNodeId,
+    // source_id: ModuleNodeId, // Removed unused field
+    // target_id: ModuleNodeId, // Removed unused field
     source_name: &'a str,
     target_name: &'a str,
     effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
@@ -30,8 +30,8 @@ struct AccLogCtx<'a> {
 impl<'a> AccLogCtx<'a> {
     /// Creates a new context for logging accessibility checks.
     fn new(
-        source_id: ModuleNodeId,
-        target_id: ModuleNodeId,
+        source_id: ModuleNodeId, // Keep ID args for name lookup
+        target_id: ModuleNodeId, // Keep ID args for name lookup
         effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
         tree: &'a ModuleTree,                      // Need tree to look up names
     ) -> Self {
@@ -46,8 +46,8 @@ impl<'a> AccLogCtx<'a> {
             .map(|m| m.name.as_str())
             .unwrap_or("?");
         Self {
-            source_id,
-            target_id,
+            // source_id, // Removed unused field
+            // target_id, // Removed unused field
             source_name,
             target_name,
             effective_vis,
@@ -528,6 +528,41 @@ impl ModuleTree {
             })
     }
 
+    /// Determines the effective visibility of a module definition.
+    /// For inline modules or the root, it's the stored visibility.
+    /// For file-based modules, it's the visibility of the corresponding declaration.
+    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> {
+        let module_node = self.modules.get(&module_def_id)?;
+
+        if module_node.is_inline() || module_def_id == self.root {
+            Some(module_node.visibility())
+        } else {
+            // File-based module (not root), find declaration visibility
+            let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
+                let rel = tr.relation();
+                if rel.target == GraphId::Node(module_def_id.into_inner())
+                    && rel.kind == RelationKind::ResolvesToDefinition
+                {
+                    match rel.source {
+                        GraphId::Node(id) => Some(id),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            });
+
+            decl_id_opt
+                .and_then(|decl_id| self.modules.get(&ModuleNodeId::new(decl_id)))
+                .map(|decl_node| decl_node.visibility())
+                .or_else(|| {
+                    // If declaration not found (e.g., unlinked), use definition's visibility
+                    Some(module_node.visibility())
+                })
+        }
+    }
+
+
     /// Logs the details of an accessibility check using the provided context.
     fn log_access(
         &self,               // Keep &self if needed for other lookups, otherwise remove
@@ -683,30 +718,7 @@ impl ModuleTree {
         result // Return the final calculated result
     }
 
-    /// Gets the full module path Vec<String> for a given module ID.
-    fn get_module_path_vec(&self, module_id: ModuleNodeId) -> Vec<String> {
-        self.modules
-            .get(&module_id)
-            .map(|m| m.path.clone())
-            .unwrap_or_default() // Return empty path if module not found
-    }
-
-    /// Gets root path using existing ModuleTree data
-    fn get_root_path(&self, module_id: ModuleNodeId) -> Vec<String> {
-        let mut path = Vec::new();
-        let mut current = module_id;
-
-        while let Some(parent_id) = self.get_parent_module_id(current) {
-            if let Some(module) = self.modules.get(&current) {
-                path.push(module.name.clone());
-            }
-            current = parent_id;
-        }
-
-        path.push("crate".to_string());
-        path.reverse();
-        path
-    }
+    // Removed unused get_module_path_vec and get_root_path methods
 }
 
 // #[allow(unused_variables)]
