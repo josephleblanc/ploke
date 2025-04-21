@@ -58,5 +58,8 @@ thiserror = "2"
 # Debugging
 log = "0.4"
 
+# Ploke Core Types
+ploke-core = { path = "crates/ploke-core", version = "0.1.0" }
+
 [workspace.metadata]
 fixtures_dir = "tests/fixtures"
