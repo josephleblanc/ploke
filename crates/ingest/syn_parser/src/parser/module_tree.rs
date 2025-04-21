@@ -460,7 +460,8 @@ impl ModuleTree {
             });
 
             for child_rel in child_relations {
-                if let GraphId::Node(child_id) = child_rel.target {
+                // Access the inner relation using .relation() before accessing .target
+                if let GraphId::Node(child_id) = child_rel.relation().target {
                     // Check if this child is a module
                     if let Some(child_module_node) = self.modules.get(&ModuleNodeId::new(child_id))
                     {
@@ -557,7 +558,8 @@ impl ModuleTree {
         let module_node = self.modules.get(&module_def_id)?;
 
         if module_node.is_inline() || module_def_id == self.root {
-            Some(module_node.visibility())
+            // Return a reference directly
+            Some(&module_node.visibility)
         } else {
             // File-based module (not root), find declaration visibility
             let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
@@ -576,10 +578,10 @@ impl ModuleTree {
 
             decl_id_opt
                 .and_then(|decl_id| self.modules.get(&ModuleNodeId::new(decl_id)))
-                .map(|decl_node| decl_node.visibility()) // This returns &VisibilityKind
+                .map(|decl_node| &decl_node.visibility) // Return reference from decl_node
                 .or_else(|| {
                     // If declaration not found (e.g., unlinked), use definition's visibility
-                    Some(module_node.visibility()) // This also returns &VisibilityKind
+                    Some(&module_node.visibility) // Return reference from module_node
                 })
         }
     }
