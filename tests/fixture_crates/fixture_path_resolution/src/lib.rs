@@ -6,6 +6,8 @@ use log::{debug, info}; // External dep (workspace = true)
 use ploke_core::{IdTrait, ItemKind, NodeId, TypeId}; // Import IdTrait and ItemKind
 use regex::Regex; // External dep (non-workspace)
 use serde::Serialize; // External dep with feature
+use std::fmt::Debug; // For generic bounds
+
 use thiserror::Error; // External dep (workspace = true) // Workspace dep
 use uuid::Uuid; // Import Uuid directly
 
