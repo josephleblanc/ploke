@@ -54,6 +54,8 @@
 //! 3.  Add tests specifically targeting the `fixture_path_resolution` crate for the scenarios listed above.
 
 // Removed unused ploke_core::NodeId import
+use ploke_core::NodeId;
+use syn_parser::error::SynParserError;
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph; // Removed unused SynParserError import
 
@@ -362,7 +364,7 @@ macro_rules! assert_spp {
 // 1. Re-export of Direct Child Item
 assert_spp!(
     test_spp_reexport_direct_child,
-    "local_func",           // Item name
+    "local_func",            // Item name
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
     Ok(vec!["crate".to_string()]) // Final Expected SPP
@@ -439,7 +441,7 @@ assert_spp!(
 // 9. Re-export within Nested Module
 assert_spp!(
     test_spp_reexport_within_nested_mod,
-    "local_func",           // Original item name
+    "local_func",            // Original item name
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
     Ok(vec![
@@ -454,7 +456,7 @@ assert_spp!(
 // If it were active, the current SPP would be Ok(["crate", "local_mod"]), expected Ok(["crate"]).
 // Since it's likely inactive, the re-export doesn't exist, and SPP for the original item is correct.
 #[test]
-#[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
+// #[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
 fn test_spp_reexport_cfg_gated_inactive() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_fixture(fixture_name);
@@ -478,7 +480,7 @@ fn test_spp_reexport_cfg_gated_inactive() {
 
 // 11. Re-export of External Dependency Item
 #[test]
-#[ignore = "Requires dependency resolution for SPP"]
+// #[ignore = "Requires dependency resolution for SPP"]
 fn test_spp_reexport_external_dep() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_fixture(fixture_name);
