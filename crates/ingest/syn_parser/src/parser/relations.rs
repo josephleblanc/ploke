@@ -1,3 +1,4 @@
+use super::nodes::GraphId; // Import GraphId from its new location
 use ploke_core::NodeId;
 use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
@@ -10,20 +11,6 @@ pub enum RelationConversionError {
     NotApplicable(RelationKind),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum GraphId {
-    Node(NodeId),
-    Type(TypeId),
-}
-
-impl std::fmt::Display for GraphId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GraphId::Node(node_id) => write!(f, "GraphID: {}", node_id),
-            GraphId::Type(type_id) => write!(f, "GraphID: {}", type_id),
-        }
-    }
-}
 
 // ANCHOR: Relation
 // Represents a relation between nodes

@@ -15,9 +15,11 @@ use std::fmt::Display;
 
 use crate::error::SynParserError;
 
-use super::{relations::GraphId, types::VisibilityKind};
+// Removed GraphId import from relations
+use super::types::VisibilityKind;
 use ploke_core::{NodeId, TypeId};
 use serde::{Deserialize, Serialize};
+use thiserror::Error; // Add thiserror
 
 // Re-export all node types from submodules
 pub use enums::{EnumNode, VariantNode};
@@ -41,16 +43,101 @@ pub trait GraphNode {
     fn cfgs(&self) -> &[String];
 }
 
+
+/// Represents either a Node or a Type in the graph context, used primarily in Relations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum GraphId {
+    Node(NodeId),
+    Type(TypeId),
+}
+
+impl GraphId {
+    /// Returns a reference to the inner `NodeId` if this is a `Node` variant.
+    pub fn as_node_ref(&self) -> Option<&NodeId> {
+        match self {
+            GraphId::Node(id) => Some(id),
+            GraphId::Type(_) => None,
+        }
+    }
+
+    /// Returns a reference to the inner `TypeId` if this is a `Type` variant.
+    pub fn as_type_ref(&self) -> Option<&TypeId> {
+        match self {
+            GraphId::Node(_) => None,
+            GraphId::Type(id) => Some(id),
+        }
+    }
+
+    /// Consumes the `GraphId` and returns the inner `NodeId` if it's a `Node` variant.
+    pub fn into_node(self) -> Option<NodeId> {
+        match self {
+            GraphId::Node(id) => Some(id),
+            GraphId::Type(_) => None,
+        }
+    }
+
+    /// Consumes the `GraphId` and returns the inner `TypeId` if it's a `Type` variant.
+    pub fn into_type(self) -> Option<TypeId> {
+        match self {
+            GraphId::Node(_) => None,
+            GraphId::Type(id) => Some(id),
+        }
+    }
+}
+
+impl std::fmt::Display for GraphId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GraphId::Node(node_id) => write!(f, "GraphID: {}", node_id),
+            GraphId::Type(type_id) => write!(f, "GraphID: {}", type_id),
+        }
+    }
+}
+
+/// Error during GraphId conversion.
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)] // GraphId is Copy, Eq
+pub enum GraphIdConversionError {
+    #[error("Expected GraphId::Node variant, but found Type variant: {0}")]
+    ExpectedNode(GraphId),
+    #[error("Expected GraphId::Type variant, but found Node variant: {0}")]
+    ExpectedType(GraphId),
+}
+
+impl TryInto<NodeId> for GraphId {
+    type Error = GraphIdConversionError;
+
+    fn try_into(self) -> Result<NodeId, Self::Error> {
+        match self {
+            GraphId::Node(id) => Ok(id),
+            GraphId::Type(_) => Err(GraphIdConversionError::ExpectedNode(self)),
+        }
+    }
+}
+
+impl TryInto<TypeId> for GraphId {
+    type Error = GraphIdConversionError;
+
+    fn try_into(self) -> Result<TypeId, Self::Error> {
+        match self {
+            GraphId::Node(_) => Err(GraphIdConversionError::ExpectedType(self)),
+            GraphId::Type(id) => Ok(id),
+        }
+    }
+}
+
+
 // Shared error types
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
 pub enum NodeError {
     #[error("Invalid node configuration: {0}")]
     Validation(String),
 
     #[error("Invalid node converstion from GraphId::Type, must be GraphId::Node: {0}")]
     Conversion(TypeId),
-    // ... others
+    #[error("Graph ID conversion error: {0}")]
+    GraphIdConversion(#[from] GraphIdConversionError), // Add From conversion
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct ModuleNodeId(NodeId);

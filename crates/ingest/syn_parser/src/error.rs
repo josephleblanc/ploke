@@ -83,7 +83,9 @@ pub enum SynParserError {
     ModuleTreeError(ModuleTreeError),
 
     #[error("Relation conversion error: {0}")]
-    TypeIdConversionError(TypeId),
+    TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
+    #[error("Graph ID conversion error: {0}")]
+    GraphIdConversionError(String), // Store string representation
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -157,8 +159,11 @@ impl From<NodeError> for SynParserError {
     fn from(err: crate::parser::nodes::NodeError) -> Self {
         match err {
             NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
-            NodeError::Conversion(msg) => SynParserError::TypeIdConversionError(msg),
-            // Add other NodeError variants here if they exist in the future
+            NodeError::Conversion(type_id) => SynParserError::TypeIdConversionError(type_id), // Keep existing
+            NodeError::GraphIdConversion(graph_id_err) => {
+                // Convert the GraphIdConversionError into a String for SynParserError
+                SynParserError::GraphIdConversionError(graph_id_err.to_string())
+            }
         }
     }
 }

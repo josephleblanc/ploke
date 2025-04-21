@@ -9,8 +9,8 @@ use crate::error::SynParserError;
 use crate::parser::nodes::NodePath; // Ensure NodePath is imported
 
 use super::{
-    nodes::{GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Removed NodePath from here
-    relations::{GraphId, Relation, RelationKind},
+    nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
+    relations::{Relation, RelationKind}, // Remove GraphId
     types::VisibilityKind,
     CodeGraph,
 };
