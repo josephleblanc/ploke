@@ -21,6 +21,12 @@ impl GraphNode for TypeAliasNode {
         &self.cfgs
     }
 }
+
+impl HasAttributes for TypeAliasNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeAliasNode {
     pub id: NodeId,

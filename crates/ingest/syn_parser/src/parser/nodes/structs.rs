@@ -29,6 +29,12 @@ pub struct FieldNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
+impl HasAttributes for FieldNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
+
 impl GraphNode for StructNode {
     fn id(&self) -> NodeId {
         self.id
@@ -42,5 +48,11 @@ impl GraphNode for StructNode {
     }
     fn cfgs(&self) -> &[String] {
         &self.cfgs
+    }
+}
+
+impl HasAttributes for StructNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
     }
 }

@@ -18,6 +18,12 @@ impl GraphNode for ValueNode {
         &self.cfgs
     }
 }
+
+impl HasAttributes for ValueNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ValueNode {
     pub id: NodeId,

@@ -22,6 +22,12 @@ pub struct EnumNode {
 
 impl EnumNode {}
 
+impl HasAttributes for EnumNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
+
 // Represents a variant in an enum
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct VariantNode {
@@ -31,6 +37,12 @@ pub struct VariantNode {
     pub discriminant: Option<String>,
     pub attributes: Vec<Attribute>,
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+}
+
+impl HasAttributes for VariantNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
 }
 
 impl GraphNode for EnumNode {

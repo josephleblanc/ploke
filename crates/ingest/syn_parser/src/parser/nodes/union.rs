@@ -20,6 +20,12 @@ impl GraphNode for UnionNode {
         &self.cfgs
     }
 }
+
+impl HasAttributes for UnionNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UnionNode {
     pub id: NodeId,

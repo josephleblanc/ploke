@@ -35,6 +35,12 @@ impl GraphNode for FunctionNode {
     }
 }
 
+impl HasAttributes for FunctionNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
+
 impl FunctionNode {
     /// Validates the function node structure
     pub fn validate(&self) -> Result<(), super::NodeError> {

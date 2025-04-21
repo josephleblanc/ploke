@@ -178,3 +178,11 @@ impl GraphNode for ModuleNode {
         &self.cfgs
     }
 }
+
+impl HasAttributes for ModuleNode {
+    fn attributes(&self) -> &[Attribute] {
+        // Return the attributes associated with the `mod` item itself,
+        // not the inner file attributes (`#![...]`).
+        &self.attributes
+    }
+}

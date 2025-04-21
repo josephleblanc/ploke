@@ -37,3 +37,9 @@ impl GraphNode for TraitNode {
         &self.cfgs
     }
 }
+
+impl HasAttributes for TraitNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}

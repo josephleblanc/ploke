@@ -19,6 +19,12 @@ impl GraphNode for MacroNode {
         &self.cfgs // Simply return a slice reference to the stored cfgs
     }
 }
+
+impl HasAttributes for MacroNode {
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroNode {
     pub id: NodeId,
