@@ -1,8 +1,57 @@
 //! Tests focusing on the `shortest_public_path` logic in `ModuleTree`.
 //!
-//! Note: The current implementation of `shortest_public_path` is basic and
-//! likely doesn't handle re-exports correctly yet. These tests focus on
-//! direct public visibility paths.
+//! # Current Implementation Status (as of 2025-04-21):
+//! The `shortest_public_path` function currently performs a BFS from the crate root,
+//! considering only direct module containment (`Contains` relations) and basic
+//! public visibility (`VisibilityKind::Public`). It finds the path to the module
+//! containing the item's *original definition*.
+//!
+//! # `fixture_path_resolution` Coverage & Expected Behavior:
+//!
+//! ## Scenarios Handled Correctly (Expected Path = Path to Definition Module):
+//! *   Direct public items in root (`root_func`, `RootStruct`, `RootError`).
+//! *   Direct public items in public file modules (`local_mod::local_func`).
+//! *   Direct public items in nested public file modules (`local_mod::nested::deep_func`).
+//! *   Direct public items in public inline modules (`inline_mod::inline_func`).
+//! *   Items in modules defined via `#[path]` (`logical_path_mod::item_in_actual_file`).
+//! *   Items in modules defined via `#[path]` outside `src/` (`common_import_mod::function_in_common_file`).
+//! *   Generic items (`generics::GenStruct`, `generics::GenTrait`, `generics::gen_func`).
+//! *   Macros defined at root (`simple_macro!`).
+//! *   Items under `#[cfg]` attributes (assuming the feature flags are set such that the item exists in the graph).
+//!
+//! ## Scenarios NOT Handled Correctly (Re-exports):
+//! The current implementation will return the path to the *original definition module*,
+//! not the shorter path created by the re-export.
+//! *   `pub use local_mod::local_func;` at root (Current: `crate::local_mod`, Expected: `crate`)
+//! *   `pub use local_mod::nested::deep_func;` at root (Current: `crate::local_mod::nested`, Expected: `crate`)
+//! *   `pub use log::debug as log_debug_reexport;` at root (Current: Needs external resolution, Expected: `crate`)
+//! *   `pub use local_mod::nested::deep_func as renamed_deep_func;` at root (Current: `crate::local_mod::nested`, Expected: `crate`)
+//! *   `pub use local_mod::nested as reexported_nested_mod;` at root (Current: `crate::local_mod::nested`, Expected: `crate`)
+//! *   `pub use logical_path_mod::item_in_actual_file;` at root (Current: `crate::logical_path_mod`, Expected: `crate`)
+//! *   `pub use self::generics::GenStruct as PublicGenStruct;` at root (Current: `crate::generics`, Expected: `crate`)
+//! *   `pub use self::generics::GenTrait as PublicGenTrait;` at root (Current: `crate::generics`, Expected: `crate`)
+//! *   `pub use super::local_mod::nested::deep_func as deep_reexport_inline;` in `inline_mod` (Current: `crate::local_mod::nested`, Expected: `crate::inline_mod`)
+//! *   `pub use super::local_func as parent_local_func_reexport;` in `local_mod::nested` (Current: `crate::local_mod`, Expected: `crate::local_mod::nested`)
+//! *   `#[cfg(feature = "feature_b")] pub use crate::local_mod::local_func as pub_aliased_func_b;` at root (Current: `crate::local_mod`, Expected: `crate`, depends on cfg)
+//!
+//! ## Scenarios NOT Handled Correctly (Visibility & Access):
+//! The current implementation only checks for `VisibilityKind::Public`. It needs enhancement
+//! to correctly determine accessibility based on the *source* module and handle other visibilities.
+//! It will likely return `Err(ItemNotPubliclyAccessible)` incorrectly for items that *should* be accessible
+//! via non-public paths (e.g., crate-visible items accessed from within the crate).
+//! *   Items in `pub(crate)` modules (`crate_mod::crate_internal_func`).
+//! *   Items in `pub(super)` modules (`local_mod::super_visible_func_in_local`).
+//! *   Items in `pub(in path)` modules (`restricted_vis_mod::restricted_func`).
+//! *   `pub(crate)` items within `#[path]` targets (`logical_path_mod::crate_visible_in_actual_file`).
+//!
+//! ## Scenarios Returning `Err(ItemNotPubliclyAccessible)` (Correctly):
+//! *   Items explicitly marked private (`local_mod::private_local_func`, `local_mod::nested::private_deep_func`).
+//! *   Items inside private modules (`private_inline_mod::private_inline_func`, `private_inline_mod::pub_in_private_inline`).
+//!
+//! # TODO:
+//! 1.  Enhance `shortest_public_path` to correctly handle `pub use` re-exports, finding the truly shortest path.
+//! 2.  Enhance `shortest_public_path` (or related visibility logic) to handle `pub(crate)`, `pub(super)`, and `pub(in path)`.
+//! 3.  Add tests specifically targeting the `fixture_path_resolution` crate for the scenarios listed above.
 
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
 // Removed unused import: use syn_parser::parser::nodes::ModuleNodeId;
