@@ -707,6 +707,55 @@ impl CodeGraph {
             .ok_or(SynParserError::NotFound(item_id))
     }
 
+    /// Finds a node by its ID across all collections, returning an error if not found or if duplicates exist.
+    ///
+    /// Iterates through all node collections (`functions`, `defined_types`, `traits`, `modules`, etc.),
+    /// collects all matching nodes, and returns:
+    /// - `Ok(&dyn GraphNode)` if exactly one match is found.
+    /// - `Err(SynParserError::NotFound)` if no matches are found.
+    /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
+    pub fn find_node_unique(&self, item_id: NodeId) -> Result<&dyn GraphNode, SynParserError> {
+        let mut matches: Vec<&dyn GraphNode> = Vec::new();
+
+        // Collect matches from all relevant fields
+        if let Some(node) = self.functions.iter().find(|n| n.id == item_id) {
+            matches.push(node as &dyn GraphNode);
+        }
+        matches.extend(self.defined_types.iter().filter_map(|n| match n {
+            TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
+            TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
+            TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
+            TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
+            _ => None,
+        }));
+        if let Some(node) = self.traits.iter().find(|n| n.id == item_id) {
+            matches.push(node as &dyn GraphNode);
+        }
+        if let Some(node) = self.modules.iter().find(|n| n.id == item_id) {
+            matches.push(node as &dyn GraphNode);
+        }
+        if let Some(node) = self.values.iter().find(|n| n.id == item_id) {
+            matches.push(node as &dyn GraphNode);
+        }
+        if let Some(node) = self.macros.iter().find(|n| n.id == item_id) {
+            matches.push(node as &dyn GraphNode);
+        }
+        // Check methods within impls
+        matches.extend(self.impls.iter().flat_map(|i| {
+            i.methods
+                .iter()
+                .filter(|n| n.id == item_id)
+                .map(|n| n as &dyn GraphNode)
+        }));
+
+        // Check the number of matches
+        match matches.len() {
+            0 => Err(SynParserError::NotFound(item_id)),
+            1 => Ok(matches[0]),
+            _ => Err(SynParserError::DuplicateNode(item_id)),
+        }
+    }
+
     pub fn get_nodes_by_ids(&self, ids: &[NodeId]) -> Vec<&dyn GraphNode> {
         ids.iter().filter_map(|id| self.find_node(*id)).collect()
     }
