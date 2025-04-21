@@ -3,11 +3,11 @@
 
 // === Dependencies ===
 use log::{debug, info}; // External dep (workspace = true)
+use ploke_common::workspace_root; // Workspace dep
+use ploke_core::{NodeId, TypeId};
 use regex::Regex; // External dep (non-workspace)
 use serde::Serialize; // External dep with feature
-use thiserror::Error; // External dep (workspace = true)
-use ploke_common::workspace_root; // Workspace dep
-use ploke_core::{NodeId, TypeId}; // Workspace dep
+use thiserror::Error; // External dep (workspace = true) // Workspace dep
 
 // === Modules ===
 
@@ -16,7 +16,9 @@ pub mod local_mod;
 
 // 2. Inline public module
 pub mod inline_mod {
-    pub fn inline_func() -> u8 { 1 }
+    pub fn inline_func() -> u8 {
+        1
+    }
 
     // 2a. Re-export within inline module
     pub use super::local_mod::nested::deep_func as deep_reexport_inline;
@@ -37,13 +39,17 @@ pub mod logical_path_mod;
 // 5. Module gated by cfg attribute
 #[cfg(feature = "feature_a")]
 pub mod cfg_mod_a {
-    pub fn func_a() -> String { "feature_a active".to_string() }
+    pub fn func_a() -> String {
+        "feature_a active".to_string()
+    }
 }
 
 // 6. Another module gated by cfg attribute
 #[cfg(feature = "feature_b")]
 pub mod cfg_mod_b {
-    pub fn func_b() -> String { "feature_b active".to_string() }
+    pub fn func_b() -> String {
+        "feature_b active".to_string()
+    }
 }
 
 // === Re-exports at Crate Root ===
@@ -84,7 +90,20 @@ pub fn root_func() {
     info!("Calling root_func"); // Use external dep
     let _root = workspace_root(); // Use workspace dep
     let _regex = Regex::new(r"^\d{4}$").unwrap(); // Use non-workspace dep
-    let _s = RootStruct { field: TypeId::Synthetic(NodeId::generate_synthetic(uuid::Uuid::nil(), std::path::Path::new(""), &[], "dummy", ItemKind::Struct, None, None).uuid()) }; // Use workspace dep TypeId/NodeId
+    let _s = RootStruct {
+        field: TypeId::Synthetic(
+            NodeId::generate_synthetic(
+                uuid::Uuid::nil(),
+                std::path::Path::new(""),
+                &[],
+                "dummy",
+                ItemKind::Struct,
+                None,
+                None,
+            )
+            .uuid(),
+        ),
+    }; // Use workspace dep TypeId/NodeId
     debug!("Root func finished");
 }
 
