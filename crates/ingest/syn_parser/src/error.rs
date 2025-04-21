@@ -162,10 +162,22 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 // Simply unbox the inner SynParserError
                 *boxed_syn_err
             }
-            // Fill out these missing implementation arms AI!
-            ModuleTreeError::FilePathMissingParent(path_buf) => todo!(),
-            // AI: this one too
-            ModuleTreeError::RootModuleNotFileBased(module_node_id) => todo!(),
+            ModuleTreeError::FilePathMissingParent(path_buf) => {
+                // Convert to a general InternalState error, as this indicates an unexpected
+                // file system structure or inconsistent path handling within the tree.
+                SynParserError::InternalState(format!(
+                    "Could not determine parent directory for file path: {}",
+                    path_buf.display()
+                ))
+            }
+            ModuleTreeError::RootModuleNotFileBased(module_node_id) => {
+                // This is a critical internal error indicating the ModuleTree was
+                // constructed incorrectly (root must be file-based).
+                SynParserError::InternalState(format!(
+                    "Root module {} is not file-based, which is required.",
+                    module_node_id
+                ))
+            }
         }
     }
 }

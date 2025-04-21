@@ -199,11 +199,13 @@ pub enum ModuleTreeError {
 
     #[error("Syn parser error: {0}")]
     SynParserError(Box<SynParserError>), // REMOVE #[from]
-    //
-    #[error("Could not determine parent directory for file path: {0}")]
-    FilePathMissingParent(PathBuf), // Store the problematic path
+
+    // --- NEW VARIANTS ---
     #[error("Root module {0} is not file-based, which is required for path resolution.")]
     RootModuleNotFileBased(ModuleNodeId),
+
+    #[error("Could not determine parent directory for file path: {0}")]
+    FilePathMissingParent(PathBuf), // Store the problematic path
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -787,18 +789,16 @@ impl ModuleTree {
         result // Return the final calculated result
     }
 
-    // Proposed new function signature and implementation
+    // Proposed new function signature and implementation using while let
     fn find_declaring_file_dir(&self, module_id: ModuleNodeId) -> Result<PathBuf, ModuleTreeError> {
         let mut current_id = module_id;
 
+        // Use `while let Some(...)` pattern to iterate as long as the node exists in the map
         while let Some(current_node) = self.modules.get(&current_id) {
-            // Get the current node, returning error if not found in the tree
-
             // Check if the current node is file-based
             if let Some(file_path) = current_node.file_path() {
                 // Found a file-based ancestor. Get its parent directory.
-                return file_path
-                    .parent()
+                return file_path.parent()
                     .map(|p| p.to_path_buf())
                     // Return error if the file path has no parent (e.g., it's just "/")
                     .ok_or_else(|| ModuleTreeError::FilePathMissingParent(file_path.clone()));
@@ -810,18 +810,28 @@ impl ModuleTree {
                 return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
             }
 
-            // If not file-based and not the root, move up to the parent.
-            // Return error if the parent link is missing (inconsistent tree).
-            current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
-                // Log this specific case for debugging?
-                log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id);
-                ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner())
-                // Re-use existing error
-            })?;
+            // If not file-based and not the root, try to get the parent for the next iteration.
+            match self.get_parent_module_id(current_id) {
+                Some(parent_id) => {
+                    // Move to the parent for the next loop iteration
+                    current_id = parent_id;
+                }
+                None => {
+                    // No parent found, and we already established it wasn't the root.
+                    // This indicates an inconsistent tree structure.
+                    log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for non-root module {} during file dir search.", current_id);
+                    // Return error indicating the missing link.
+                    return Err(ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner()));
+                }
+            }
         }
-        Err(ModuleTreeError::ContainingModuleNotFound(
-            *current_id.as_inner(),
-        ))
+
+        // If the loop terminates, it means `self.modules.get(&current_id)` returned `None`
+        // at the beginning of an iteration. This implies the `current_id` (which was
+        // either the initial `module_id` or a `parent_id` from the previous iteration)
+        // is not present in the `modules` map, indicating an inconsistent state.
+        log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Module ID {} not found in modules map during file dir search.", current_id);
+        Err(ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner()))
     }
 
     // Removed unused get_module_path_vec and get_root_path methods
