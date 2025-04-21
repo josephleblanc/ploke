@@ -305,12 +305,13 @@ macro_rules! assert_spp {
             let spp_result = tree.shortest_public_path(item_id, &graph);
 
             // Assert current behavior
+            // Add type annotation to $final_expected when comparing
             assert_eq!(
                 spp_result,
                 $current_expected,
                 "SPP for '{}' currently resolves to definition path. Expected final path: {:?}",
                 $item_name,
-                $final_expected
+                $final_expected as &Result<Vec<String>, ModuleTreeError> // Add type hint here
             );
         }
     };
