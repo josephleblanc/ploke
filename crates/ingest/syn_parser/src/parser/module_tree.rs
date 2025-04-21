@@ -30,8 +30,8 @@ struct AccLogCtx<'a> {
 impl<'a> AccLogCtx<'a> {
     /// Creates a new context for logging accessibility checks.
     fn new(
-        source_id: ModuleNodeId, // Keep ID args for name lookup
-        target_id: ModuleNodeId, // Keep ID args for name lookup
+        source_id: ModuleNodeId,                   // Keep ID args for name lookup
+        target_id: ModuleNodeId,                   // Keep ID args for name lookup
         effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
         tree: &'a ModuleTree,                      // Need tree to look up names
     ) -> Self {
@@ -439,7 +439,7 @@ impl ModuleTree {
     /// Determines the effective visibility of a module definition.
     /// For inline modules or the root, it's the stored visibility.
     /// For file-based modules, it's the visibility of the corresponding declaration.
-    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> {
+    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<VisibilityKind> {
         let module_node = self.modules.get(&module_def_id)?;
 
         if module_node.is_inline() || module_def_id == self.root {
@@ -469,7 +469,6 @@ impl ModuleTree {
                 })
         }
     }
-
 
     /// Logs the details of an accessibility check using the provided context.
     fn log_access(
@@ -516,7 +515,8 @@ impl ModuleTree {
                 if rel.target == GraphId::Node(target_defn_id) // Expects Decl -> Defn
                     && rel.kind == RelationKind::ResolvesToDefinition
                 {
-                    match rel.source { // Source should be Decl ID
+                    match rel.source {
+                        // Source should be Decl ID
                         GraphId::Node(id) => Some(id),
                         _ => None, // Should not happen for this relation kind
                     }
