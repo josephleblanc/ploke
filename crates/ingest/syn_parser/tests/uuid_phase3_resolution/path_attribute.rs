@@ -28,14 +28,13 @@ fn test_path_attribute_handling() {
         })
         .expect("Could not find declaration for logical_path_mod");
 
-    // Assert the declaration itself doesn't store the #[path] attribute directly
-    // (it's consumed during parsing to find the definition file)
+    // Assert the declaration node *does* store the #[path] attribute
     assert!(
-        !logical_mod_decl
+        logical_mod_decl
             .attributes
             .iter()
-            .any(|a| a.name == "path"),
-        "Declaration node for logical_path_mod should not store the #[path] attribute itself."
+            .any(|a| a.name == "path"), // Expect 'path' attribute to be present
+        "Declaration node for logical_path_mod should store the #[path] attribute."
     );
 
     // Find the module node *defined* by the file specified in #[path]
