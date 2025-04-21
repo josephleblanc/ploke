@@ -671,9 +671,11 @@ impl ModuleTree {
                 accessible
             }
             VisibilityKind::Inherited => {
-                let source_parent = self.get_parent_module_id(source);
+                // Inherited means private to the defining module.
+                // Access is allowed if the source *is* the target's parent,
+                // or if the source *is* the target itself.
                 let target_parent = self.get_parent_module_id(target);
-                let accessible = source_parent.is_some() && source_parent == target_parent;
+                let accessible = source == target || Some(source) == target_parent;
                 self.log_access(&log_ctx, "Inherited Visibility", accessible);
                 accessible
             }
