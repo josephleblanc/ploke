@@ -55,7 +55,7 @@
 
 use ploke_core::NodeId;
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
-use syn_parser::CodeGraph;
+use syn_parser::{error::SynParserError, CodeGraph}; // Import SynParserError
 
 use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
 use crate::common::uuid_ids_utils::run_phases_and_collect;
@@ -290,7 +290,11 @@ macro_rules! assert_spp {
             let fixture_name = "fixture_path_resolution";
             let (graph, tree) = build_tree_for_fixture(fixture_name);
 
-            let item_id = find_item_id_in_module_by_name(&graph, $module_path, $item_name)
+            // Convert module path slice to Vec<String>
+            let module_path_vec: Vec<String> =
+                $module_path.iter().map(|s| s.to_string()).collect();
+
+            let item_id = find_item_id_in_module_by_name(&graph, &module_path_vec, $item_name)
                 .unwrap_or_else(|e| {
                     panic!(
                         "Failed to find item '{}' in module {:?}: {:?}",
@@ -317,7 +321,12 @@ macro_rules! assert_spp {
             let fixture_name = "fixture_path_resolution";
             let (graph, tree) = build_tree_for_fixture(fixture_name);
 
-            let item_id_result = find_item_id_in_module_by_name(&graph, $module_path, $item_name);
+            // Convert module path slice to Vec<String>
+            let module_path_vec: Vec<String> =
+                $module_path.iter().map(|s| s.to_string()).collect();
+
+            let item_id_result =
+                find_item_id_in_module_by_name(&graph, &module_path_vec, $item_name);
 
             // Handle case where item itself might not be found (e.g., private item)
             let item_id = match item_id_result {
@@ -464,9 +473,9 @@ fn test_spp_reexport_cfg_gated_inactive() {
     let (graph, tree) = build_tree_for_fixture(fixture_name);
 
     // Find the original item
-    let item_id =
-        find_item_id_in_module_by_name(&graph, &["crate".to_owned(), "local_mod"], "local_func")
-            .expect("Failed to find original local_func");
+    let module_path_vec = vec!["crate".to_string(), "local_mod".to_string()]; // Create Vec<String>
+    let item_id = find_item_id_in_module_by_name(&graph, &module_path_vec, "local_func")
+        .expect("Failed to find original local_func");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
 

@@ -5,7 +5,7 @@ use syn_parser::{
     error::SynParserError,
     parser::{
         graph::CodeGraph,
-        nodes::{GraphNode, TypeDefNode},
+        nodes::GraphNode, // Removed TypeDefNode
     },
 };
 
