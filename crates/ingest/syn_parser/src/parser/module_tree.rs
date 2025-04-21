@@ -449,13 +449,12 @@ impl ModuleTree {
 
             if contains_relation_exists {
                 // Found the containing module. Now check if the *item itself* is public.
-                if let Some(item_node) = graph.find_node(item_id) {
-                    if item_node.visibility().is_pub() {
-                        // Item is directly contained and public, return Ok with the path.
-                        // TODO: The path should arguably include the item name itself.
-                        // For now, return path to containing module to match test expectations.
-                        return Ok(current_path); // Return Ok(path)
-                    }
+                let item_node = graph.find_node_unique(item_id)?;
+                if item_node.visibility().is_pub() {
+                    // Item is directly contained and public, return Ok with the path.
+                    // TODO: The path should arguably include the item name itself.
+                    // For now, return path to containing module to match test expectations.
+                    return Ok(current_path); // Return Ok(path)
                 }
                 // If item not found in graph or not public, continue search (maybe re-exported?)
                 // For now, since re-exports aren't handled, we stop here if contained but not pub.
