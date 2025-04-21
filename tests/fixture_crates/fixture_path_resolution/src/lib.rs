@@ -3,7 +3,7 @@
 
 // === Dependencies ===
 use log::{debug, info}; // External dep (workspace = true)
-use ploke_common::workspace_root; // Workspace dep
+// Removed: use ploke_common::workspace_root;
 use ploke_core::{NodeId, TypeId};
 use regex::Regex; // External dep (non-workspace)
 use serde::Serialize; // External dep with feature
