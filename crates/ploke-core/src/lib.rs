@@ -230,20 +230,6 @@ mod ids {
         )
     }
 
-    // impl std::fmt::Display for NodeId {
-    //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    //         match self {
-    //             NodeId::Resolved(uuid) => write!(f, "R:{}", short_uuid(*uuid)),
-    //             NodeId::Synthetic(uuid) => write!(f, "S:{}", short_uuid(*uuid)),
-    //         }
-    //     }
-    // }
-    //
-    // fn short_uuid(uuid: Uuid) -> String {
-    //     let bytes = uuid.as_fields().0;
-    //     format!("{:x}..{:x}", bytes[0], bytes[3])
-    // }
-
     /// Unique identifier for a specific type structure *within a specific crate version*.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum TypeId {
@@ -410,13 +396,23 @@ mod ids {
         Type(Uuid),
     }
 
-    impl CanonId {
+    impl IdTrait for CanonId {
         /// Returns the inner Uuid regardless of the variant.
-        pub fn uuid(&self) -> Uuid {
+        fn uuid(&self) -> Uuid {
             match self {
                 CanonId::Node(uuid) => *uuid,
                 CanonId::Type(uuid) => *uuid,
             }
+        }
+
+        fn is_resolved(&self) -> bool {
+            // hardcoded, should always be resolved
+            true
+        }
+
+        fn is_synthetic(&self) -> bool {
+            // hardcoded, should never be synthetic
+            false
         }
     }
 
@@ -438,13 +434,23 @@ mod ids {
         Type(Uuid),
     }
 
-    impl PubPathId {
+    impl IdTrait for PubPathId {
         /// Returns the inner Uuid regardless of the variant.
-        pub fn uuid(&self) -> Uuid {
+        fn uuid(&self) -> Uuid {
             match self {
                 PubPathId::Node(uuid) => *uuid,
                 PubPathId::Type(uuid) => *uuid,
             }
+        }
+
+        fn is_resolved(&self) -> bool {
+            // hardcoded, should always be resolved
+            true
+        }
+
+        fn is_synthetic(&self) -> bool {
+            // hardcoded, should never be synthetic
+            false
         }
     }
 
@@ -465,7 +471,7 @@ mod ids {
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
                 NodeId::Resolved(uuid) => Ok(CanonId::Node(uuid)), // Create Node variant
-                NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
+                NodeId::Synthetic(_) => Err(IdConversionError::SyntheticNode(node_id)),
             }
         }
     }
@@ -476,7 +482,7 @@ mod ids {
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
                 TypeId::Resolved(uuid) => Ok(CanonId::Type(uuid)), // Create Type variant
-                TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
+                TypeId::Synthetic(_) => Err(IdConversionError::SyntheticType(type_id)),
             }
         }
     }
@@ -489,7 +495,7 @@ mod ids {
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
                 NodeId::Resolved(uuid) => Ok(PubPathId::Node(uuid)), // Create Node variant
-                NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
+                NodeId::Synthetic(_) => Err(IdConversionError::SyntheticNode(node_id)),
             }
         }
     }
@@ -500,7 +506,7 @@ mod ids {
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
                 TypeId::Resolved(uuid) => Ok(PubPathId::Type(uuid)), // Create Type variant
-                TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
+                TypeId::Synthetic(_) => Err(IdConversionError::SyntheticType(type_id)),
             }
         }
     }
@@ -512,9 +518,9 @@ pub use ids::*;
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdConversionError {
     #[error("Cannot convert Synthetic NodeId {0} to a path-based ID.")]
-    CannotConvertSyntheticNode(NodeId),
+    SyntheticNode(NodeId),
     #[error("Cannot convert Synthetic TypeId {0} to a path-based ID.")]
-    CannotConvertSyntheticType(TypeId),
+    SyntheticType(TypeId),
 }
 
 /// Represents the specific kind of a code item associated with a `NodeId`.
