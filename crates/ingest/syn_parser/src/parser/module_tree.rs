@@ -19,21 +19,21 @@ const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility
 const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 
 /// Helper struct to hold context for accessibility logging.
-struct AccessibilityLogContext<'a> {
+struct AccLogCtx<'a> {
     source_id: ModuleNodeId,
     target_id: ModuleNodeId,
     source_name: &'a str,
     target_name: &'a str,
-    effective_visibility: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
+    effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
 }
 
-impl<'a> AccessibilityLogContext<'a> {
+impl<'a> AccLogCtx<'a> {
     /// Creates a new context for logging accessibility checks.
     fn new(
         source_id: ModuleNodeId,
         target_id: ModuleNodeId,
-        effective_visibility: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
-        tree: &'a ModuleTree, // Need tree to look up names
+        effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
+        tree: &'a ModuleTree,                      // Need tree to look up names
     ) -> Self {
         let source_name = tree
             .modules
@@ -50,11 +50,10 @@ impl<'a> AccessibilityLogContext<'a> {
             target_id,
             source_name,
             target_name,
-            effective_visibility,
+            effective_vis,
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
@@ -530,10 +529,10 @@ impl ModuleTree {
     }
 
     /// Logs the details of an accessibility check using the provided context.
-    fn log_accessibility_check(
-        &self, // Keep &self if needed for other lookups, otherwise remove
-        context: &AccessibilityLogContext, // Pass context by reference
-        step: &str,                        // Description of the check step
+    fn log_access(
+        &self,               // Keep &self if needed for other lookups, otherwise remove
+        context: &AccLogCtx, // Pass context by reference
+        step: &str,          // Description of the check step
         result: bool,
     ) {
         // Use debug! macro with the specific target
@@ -542,28 +541,27 @@ impl ModuleTree {
             "Accessibility Check:".bold(),
             context.source_name.yellow(), // Get name from context
             context.target_name.blue(),   // Get name from context
-            context.effective_visibility.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red().bold()), // Get visibility from context
+            context.effective_vis.map(|v| format!("{:?}", v).magenta()).unwrap_or_else(|| "NotFound".red().bold()), // Get visibility from context
             step.white().italic(),
             if result { "Accessible".green().bold() } else { "Inaccessible".red().bold() }
         );
     }
 
-
     /// Visibility check using existing types
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         // 1. Get the target definition node from the map
         // --- Early Exit if Target Not Found ---
-        if self.modules.get(&target).is_none() {
+        if !self.modules.contains_key(&target) {
             // Create a temporary context just for this log message
-            let log_ctx = AccessibilityLogContext::new(source, target, None, self);
-            self.log_accessibility_check(&log_ctx, "Target Module Not Found", false);
+            let log_ctx = AccLogCtx::new(source, target, None, self);
+            self.log_access(&log_ctx, "Target Module Not Found", false);
             return false;
         }
         // We know target exists now, safe to unwrap later if needed, but prefer get
         let target_defn_node = self.modules.get(&target).unwrap(); // Safe unwrap
 
         // --- Determine Effective Visibility ---
-        let effective_visibility = if target_defn_node.is_inline() || target == self.root {
+        let effective_vis = if target_defn_node.is_inline() || target == self.root {
             // For inline modules or the crate root, the stored visibility is the effective one
             target_defn_node.visibility()
         } else {
@@ -603,39 +601,43 @@ impl ModuleTree {
         };
 
         // --- Create Log Context ---
-        // Pass Some(&effective_visibility) which is Option<&VisibilityKind>
-        let log_ctx = AccessibilityLogContext::new(source, target, Some(&effective_visibility), self);
+        // Pass Some(&effective_vis) which is Option<&VisibilityKind>
+        let log_ctx = AccLogCtx::new(source, target, Some(&effective_vis), self);
 
         // --- Perform Accessibility Check ---
-        let result = match effective_visibility {
+        let result = match effective_vis {
             VisibilityKind::Public => {
-                self.log_accessibility_check(&log_ctx, "Public Visibility", true);
+                self.log_access(&log_ctx, "Public Visibility", true);
                 true
             }
             VisibilityKind::Crate => {
                 let accessible = true; // Always true within the same tree/crate
-                self.log_accessibility_check(&log_ctx, "Crate Visibility", accessible);
+                self.log_access(&log_ctx, "Crate Visibility", accessible);
                 accessible
             }
             VisibilityKind::Restricted(ref restricted_path_vec) => {
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
                     Err(_) => {
-                        self.log_accessibility_check(&log_ctx, "Restricted Visibility (Invalid Path)", false);
+                        self.log_access(&log_ctx, "Restricted Visibility (Invalid Path)", false);
                         return false; // Invalid restriction path
                     }
                 };
                 let restriction_module_id = match self.path_index.get(&restriction_path) {
                     Some(id) => ModuleNodeId::new(*id),
                     None => {
-                        self.log_accessibility_check(&log_ctx, "Restricted Visibility (Path Not Found)", false);
+                        self.log_access(&log_ctx, "Restricted Visibility (Path Not Found)", false);
                         return false; // Restriction path doesn't exist in the index
                     }
                 };
 
                 // Check if the source module *is* the restriction module
                 if source == restriction_module_id {
-                    self.log_accessibility_check(&log_ctx, "Restricted Visibility (Source is Restriction)", true);
+                    self.log_access(
+                        &log_ctx,
+                        "Restricted Visibility (Source is Restriction)",
+                        true,
+                    );
                     return true;
                 }
 
@@ -651,7 +653,7 @@ impl ModuleTree {
                         restriction_module_id.to_string().magenta() // Restriction ID magenta
                     );
                     if ancestor_id == restriction_module_id {
-                        self.log_accessibility_check(&log_ctx, "Restricted Visibility (Ancestor Match)", true);
+                        self.log_access(&log_ctx, "Restricted Visibility (Ancestor Match)", true);
                         return true; // Found restriction module in ancestors
                     }
                     if ancestor_id == self.root {
@@ -660,14 +662,18 @@ impl ModuleTree {
                     current_ancestor = self.get_parent_module_id(ancestor_id);
                 }
                 let accessible = false; // Not the module itself or a descendant
-                self.log_accessibility_check(&log_ctx, "Restricted Visibility (Final - No Ancestor Match)", accessible);
+                self.log_access(
+                    &log_ctx,
+                    "Restricted Visibility (Final - No Ancestor Match)",
+                    accessible,
+                );
                 accessible
             }
             VisibilityKind::Inherited => {
                 let source_parent = self.get_parent_module_id(source);
                 let target_parent = self.get_parent_module_id(target);
                 let accessible = source_parent.is_some() && source_parent == target_parent;
-                self.log_accessibility_check(&log_ctx, "Inherited Visibility", accessible);
+                self.log_access(&log_ctx, "Inherited Visibility", accessible);
                 accessible
             }
         };
