@@ -44,8 +44,8 @@
     *   It creates a root `ModuleNode` for the file being parsed, using the provisional logical path derived above.
     *   `CodeVisitor` traverses the AST of *only the current file*.
         *   It creates `ModuleNode`s for inline definitions (`mod foo {}`) and declarations (`mod foo;`) found *within this file*.
-        *   It does **not** have access to `#[path]` attributes defined in *other* files. The `#[path]` attribute string itself is not stored on the `ModuleNode` after parsing (it's filtered out by `attribute_processing::extract_attributes`).
-*   **`#[path]` Resolution:** The connection between a declaration (`mod foo; #[path="bar.rs"]`) parsed in one file and the definition parsed from the target file (`bar.rs`) is established **later**, during Phase 3 (`ModuleTree::build_logical_paths`), by matching the logical paths and creating a `ResolvesToDefinition` relation. Phase 2 parses the files independently.
+        *   It does **not** have access to `#[path]` attributes defined in *other* files. The `#[path]` attribute string itself is currently filtered out by `attribute_processing::extract_attributes` and **not stored** on the `ModuleNode`.
+*   **`#[path]` Resolution:** The connection between a declaration (`mod foo; #[path="bar.rs"]`) parsed in one file and the definition parsed from the target file (`bar.rs`) is established **later**, during Phase 3 (`ModuleTree::build_logical_paths`). This function currently works by finding module definitions (FileBased or Inline) and looking for corresponding declarations in the `decl_index` using the *same logical path*. It does **not** re-interpret the `#[path = "..."]` attribute string value (which was discarded in Phase 2). If a match is found based on the path, it creates a `ResolvesToDefinition` relation. If no declaration is found for a file-based module's path, it's currently treated as an "unlinked module".
 
 ---
 
