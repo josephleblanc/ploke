@@ -27,8 +27,25 @@
 
 *   `NodeId::Synthetic` generation incorporates file path, relative module path, item name, item kind, parent scope ID, and a hash of effective `cfg` strings.
 *   `shortest_public_path` currently finds the path to the *defining* module, not accounting for re-exports.
-*   Handling of `#[path]` attributes during module resolution needs careful review.
+*   Handling of `#[path]` attributes during module resolution needs careful review. See "Phase 1 & 2 Summary" below.
 *   Full `cfg` evaluation is deferred, but CFG strings are captured for ID generation.
+
+## Phase 1 & 2 Summary (File Discovery & Parsing)
+
+*   **Phase 1 (Discovery - `discovery.rs`):**
+    *   Uses `WalkDir` to find *all* `.rs` files within each target crate's `src/` directory.
+    *   Parses `Cargo.toml` for crate name and version to generate a `crate_namespace` UUID.
+    *   Does **not** interpret `#[path]` attributes during file collection.
+    *   Output: `DiscoveryOutput` containing a list of all found `.rs` files per crate.
+*   **Phase 2 (Parallel Parsing - `visitor/mod.rs`, `code_visitor.rs`):**
+    *   `analyze_files_parallel` iterates over the files found in Phase 1.
+    *   For each file, `derive_logical_path` calculates a *provisional* module path based solely on the file's path relative to `src/` (e.g., `src/foo/bar.rs` -> `["crate", "foo", "bar"]`). This **ignores** `#[path]`.
+    *   `analyze_file_phase2` parses the content of the single file using `syn::parse_file`.
+    *   It creates a root `ModuleNode` for the file being parsed, using the provisional logical path derived above.
+    *   `CodeVisitor` traverses the AST of *only the current file*.
+        *   It creates `ModuleNode`s for inline definitions (`mod foo {}`) and declarations (`mod foo;`) found *within this file*.
+        *   It does **not** have access to `#[path]` attributes defined in *other* files. The `#[path]` attribute string itself is not stored on the `ModuleNode` after parsing (it's filtered out by `attribute_processing::extract_attributes`).
+*   **`#[path]` Resolution:** The connection between a declaration (`mod foo; #[path="bar.rs"]`) parsed in one file and the definition parsed from the target file (`bar.rs`) is established **later**, during Phase 3 (`ModuleTree::build_logical_paths`), by matching the logical paths and creating a `ResolvesToDefinition` relation. Phase 2 parses the files independently.
 
 ---
 
