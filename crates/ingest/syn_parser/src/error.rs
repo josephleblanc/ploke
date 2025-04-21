@@ -150,6 +150,14 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                         .to_string(),
                 )
             }
+            // Add handling for the new variant
+            ModuleTreeError::ItemNotPubliclyAccessible(node_id) => {
+                SynParserError::InternalState(format!(
+                    "Item {} is not publicly accessible.", // Keep error message simple
+                    node_id
+                ))
+                // Or define a new SynParserError variant if more specific handling is needed
+            }
         }
     }
 }

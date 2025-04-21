@@ -42,15 +42,12 @@ fn test_spp_public_item_in_root() {
     // Pass the graph as required by the new signature
     let spp = tree.shortest_public_path(main_pub_func_id, &graph);
 
-    // Expected path: ["crate"] (path to the containing module)
-    // NOTE: The current shortest_public_path implementation might only return the module path.
-    // Adjust assertion based on actual implementation behavior.
-    // For now, let's assume it should return the module path containing the item.
-    let expected_path = Some(vec!["crate".to_string()]); // Path to the containing module
+    // Expected path: Ok(["crate"]) (path to the containing module)
+    let expected_path = Ok(vec!["crate".to_string()]); // Path to the containing module
 
     assert_eq!(
         spp, expected_path,
-        "Shortest public path for root public function"
+        "Shortest public path for root public function should be Ok([\"crate\"])"
     );
 }
 
@@ -74,12 +71,12 @@ fn test_spp_public_item_in_public_mod() {
     // Pass the graph as required by the new signature
     let spp = tree.shortest_public_path(top_pub_func_id, &graph);
 
-    // Expected path: ["crate", "top_pub_mod"] (path to the containing public module)
-    let expected_path = Some(vec!["crate".to_string(), "top_pub_mod".to_string()]);
+    // Expected path: Ok(["crate", "top_pub_mod"])
+    let expected_path = Ok(vec!["crate".to_string(), "top_pub_mod".to_string()]);
 
     assert_eq!(
         spp, expected_path,
-        "Shortest public path for public function in public module"
+        "Shortest public path for public function in public module should be Ok([\"crate\", \"top_pub_mod\"])"
     );
 }
 
@@ -104,8 +101,8 @@ fn test_spp_public_item_in_nested_public_mod() {
     // Pass the graph as required by the new signature
     let spp = tree.shortest_public_path(nested_pub_func_id, &graph);
 
-    // Expected path: ["crate", "top_pub_mod", "nested_pub"]
-    let expected_path = Some(vec![
+    // Expected path: Ok(["crate", "top_pub_mod", "nested_pub"])
+    let expected_path = Ok(vec![
         "crate".to_string(),
         "top_pub_mod".to_string(),
         "nested_pub".to_string(),
@@ -113,7 +110,7 @@ fn test_spp_public_item_in_nested_public_mod() {
 
     assert_eq!(
         spp, expected_path,
-        "Shortest public path for public function in nested public module"
+        "Shortest public path for public function in nested public module should be Ok([\"crate\", \"top_pub_mod\", \"nested_pub\"])"
     );
 }
 
@@ -136,14 +133,12 @@ fn test_spp_private_item_in_public_mod() {
     // Find the crate root module ID
     // Calculate shortest public path starting from the crate root
     // Pass the graph as required by the new signature
-    let spp = tree.shortest_public_path(top_pub_priv_func_id, &graph);
+    let spp_result = tree.shortest_public_path(top_pub_priv_func_id, &graph);
 
-    // Expected path: None (item is private)
-    let expected_path: Option<Vec<String>> = None;
-
-    assert_eq!(
-        spp, expected_path,
-        "Shortest public path for private function should be None"
+    // Expected: Err(ItemNotPubliclyAccessible)
+    assert!(
+        matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(id)) if id == top_pub_priv_func_id),
+        "Shortest public path for private function should be Err(ItemNotPubliclyAccessible), but was {:?}", spp_result
     );
 }
 
@@ -168,14 +163,12 @@ fn test_spp_item_in_private_mod() {
     // Find the crate root module ID
     // Calculate shortest public path starting from the crate root
     // Pass the graph as required by the new signature
-    let spp = tree.shortest_public_path(nested_pub_in_priv_func_id, &graph);
+    let spp_result = tree.shortest_public_path(nested_pub_in_priv_func_id, &graph);
 
-    // Expected path: None (containing module is private)
-    let expected_path: Option<Vec<String>> = None;
-
-    assert_eq!(
-        spp, expected_path,
-        "Shortest public path for item in private module should be None"
+    // Expected: Err(ItemNotPubliclyAccessible)
+    assert!(
+        matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(id)) if id == nested_pub_in_priv_func_id),
+        "Shortest public path for item in private module should be Err(ItemNotPubliclyAccessible), but was {:?}", spp_result
     );
 }
 

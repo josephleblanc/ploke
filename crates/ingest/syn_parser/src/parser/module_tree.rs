@@ -184,6 +184,9 @@ pub enum ModuleTreeError {
     // Corrected format string - the caller logs the count/details
     #[error("Found unlinked module file(s) (no corresponding 'mod' declaration).")]
     FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
+
+    #[error("Item with ID {0} is not publicly accessible from the crate root.")]
+    ItemNotPubliclyAccessible(NodeId), // New error variant for SPP
 }
 
 impl ModuleTree {
@@ -415,7 +418,7 @@ impl ModuleTree {
         &self,
         item_id: NodeId,
         graph: &CodeGraph, // Need graph access for item visibility
-    ) -> Option<Vec<String>> {
+    ) -> Result<Vec<String>, ModuleTreeError> { // Changed return type to Result
         // BFS queue: (module_id, current_path_segments)
         let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
         let mut visited: HashSet<ModuleNodeId> = HashSet::new();
@@ -441,10 +444,10 @@ impl ModuleTree {
                 // Found the containing module. Now check if the *item itself* is public.
                 if let Some(item_node) = graph.find_node(item_id) {
                     if item_node.visibility().is_pub() {
-                        // Item is directly contained and public, return the path to this module.
+                        // Item is directly contained and public, return Ok with the path.
                         // TODO: The path should arguably include the item name itself.
                         // For now, return path to containing module to match test expectations.
-                        return Some(current_path);
+                        return Ok(current_path); // Return Ok(path)
                     }
                 }
                 // If item not found in graph or not public, continue search (maybe re-exported?)
@@ -507,9 +510,8 @@ impl ModuleTree {
         }
 
         // Item not found via any public path
-        None
+        Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
     }
-
 
     /// Helper to get parent module ID (using existing ModuleTree fields)
     fn get_parent_module_id(&self, module_id: ModuleNodeId) -> Option<ModuleNodeId> {
