@@ -79,7 +79,7 @@ mod ids {
     use uuid::Uuid;
 
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
-    use std::io; // Import io for error handling
+    // Removed unused std::io import
 
     pub trait IdTrait {
         fn uuid(&self) -> Uuid;
@@ -649,7 +649,7 @@ mod ids {
 pub use ids::*;
 
 /// Error type for ID conversions.
-#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)] // Removed Copy
 pub enum IdConversionError {
     #[error("Cannot convert Synthetic NodeId {0} to a path-based ID.")]
     SyntheticNode(NodeId),
