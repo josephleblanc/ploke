@@ -52,6 +52,46 @@ pub mod cfg_mod_b {
     }
 }
 
+// 6a. Crate-visible module
+pub(crate) mod crate_mod {
+    pub fn crate_internal_func() {}
+}
+
+// 6b. Module with restricted visibility
+pub mod restricted_vis_mod {
+    // Visible only within restricted_vis_mod and its descendants
+    pub(in crate::restricted_vis_mod) fn restricted_func() {}
+
+    pub mod inner {
+        // Can access restricted_func because it's a descendant
+        pub fn call_restricted() {
+            super::restricted_func();
+        }
+    }
+}
+
+// 6c. Module using #[path] to point outside src/
+#[path = "../common_file.rs"]
+pub mod common_import_mod;
+
+// === Imports (Private) ===
+// Adding some private imports for completeness
+#[allow(unused_imports)]
+use crate::local_mod::nested as PrivateNestedAlias;
+#[allow(unused_imports)]
+use regex::Regex as PrivateRegexAlias;
+
+// === Imports/Re-exports with CFG ===
+
+#[cfg(feature = "feature_a")]
+use crate::local_mod::func_using_dep as aliased_func_a;
+
+#[cfg(not(feature = "feature_a"))]
+use crate::inline_mod::inline_func as aliased_func_not_a;
+
+#[cfg(feature = "feature_b")]
+pub use crate::local_mod::local_func as pub_aliased_func_b;
+
 // === Re-exports at Crate Root ===
 
 // 7. Re-export a local item
@@ -73,6 +113,12 @@ pub use local_mod::nested as reexported_nested_mod; // Shortest path: crate::ree
 
 // 13. Re-export an item from the #[path] module
 pub use logical_path_mod::item_in_actual_file; // Shortest path: crate::item_in_actual_file
+
+// 14. Re-export a generic struct
+pub use self::generics::GenStruct as PublicGenStruct;
+
+// 15. Re-export a generic trait
+pub use self::generics::GenTrait as PublicGenTrait;
 
 // === Items at Crate Root ===
 pub struct RootStruct {
@@ -106,6 +152,78 @@ pub fn root_func() {
     debug!("Root func finished");
 }
 
+// === Generics / Self / Traits ===
+pub mod generics {
+    use super::{IdTrait, NodeId, TypeId}; // Import necessary core types
+    use std::fmt::Debug;
+
+    // Generic Struct
+    #[derive(Debug, Clone)]
+    pub struct GenStruct<T: Debug + Clone> {
+        pub data: T,
+        id: NodeId, // Example usage
+    }
+
+    impl<T: Debug + Clone> GenStruct<T> {
+        pub fn new(data: T) -> Self {
+            Self {
+                data,
+                // Example ID generation - replace with actual logic if needed for tests
+                id: NodeId::Synthetic(uuid::Uuid::new_v4()),
+            }
+        }
+
+        // Method using Self
+        pub fn get_id(&self) -> NodeId {
+            self.id
+        }
+
+        // Method using generic type T
+        pub fn process(&self) -> String {
+            format!("Processed: {:?}", self.data)
+        }
+    }
+
+    // Generic Trait with Associated Type
+    pub trait GenTrait<Input> {
+        type Output: Debug; // Associated Type
+
+        fn transform(&self, input: Input) -> Self::Output;
+
+        // Generic method within trait
+        fn describe<D: Debug>(&self, detail: D) -> String;
+    }
+
+    // Implement trait for generic struct
+    impl<T: Debug + Clone + Default + 'static> GenTrait<T> for GenStruct<T> {
+        type Output = (T, T); // Example associated type implementation
+
+        fn transform(&self, input: T) -> Self::Output {
+            (self.data.clone(), input)
+        }
+
+        fn describe<D: Debug>(&self, detail: D) -> String {
+            format!("GenStruct describing {:?} with detail {:?}", self.data, detail)
+        }
+    }
+
+    // Generic Function
+    pub fn gen_func<T: Debug>(param: T) {
+        debug!("Generic function called with {:?}", param);
+    }
+}
+
+// === Macro Definition ===
+#[macro_export] // Export macro to make it usable externally if needed
+macro_rules! simple_macro {
+    () => {
+        println!("Simple macro invoked!");
+    };
+    ($e:expr) => {
+        println!("Simple macro invoked with: {}", $e);
+    };
+}
+
 // === Items using CFG ===
 #[cfg(feature = "feature_a")]
 pub fn func_using_feature_a() -> String {
@@ -137,6 +255,12 @@ mod tests {
         renamed_deep_func();
         reexported_nested_mod::deep_func();
         item_in_actual_file();
+        let _gs: PublicGenStruct<i32> = PublicGenStruct::new(42); // Use re-exported generic
+        let _ = common_import_mod::function_in_common_file(); // Use item from external #[path]
+
+        // Call macro
+        simple_macro!();
+        simple_macro!("test");
 
         // Cfg checks (only one might compile depending on test features)
         #[cfg(feature = "feature_a")]
