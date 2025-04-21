@@ -569,10 +569,11 @@ impl ModuleTree {
             let target_defn_id = target_defn_node.id();
             let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
                 let rel = tr.relation();
-                if rel.source == GraphId::Node(target_defn_id)
+                // CORRECTED LOOKUP LOGIC: Checks if target is Definition and source is Declaration
+                if rel.target == GraphId::Node(target_defn_id) // Expects Decl -> Defn
                     && rel.kind == RelationKind::ResolvesToDefinition
                 {
-                    match rel.target {
+                    match rel.source { // Source should be Decl ID
                         GraphId::Node(id) => Some(id),
                         _ => None, // Should not happen for this relation kind
                     }
