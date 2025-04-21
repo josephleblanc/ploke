@@ -195,7 +195,14 @@ pub enum ModuleTreeError {
     NodeError(#[from] super::nodes::NodeError), // Add #[from] for NodeError
 
     #[error("Syn parser error: {0}")]
-    SynParserError(#[from] Box<SynParserError>), // Add #[from] for SynParserError (Boxed)
+    SynParserError(Box<SynParserError>), // REMOVE #[from]
+}
+
+// Manual implementation to satisfy the `?` operator
+impl From<SynParserError> for ModuleTreeError {
+    fn from(err: SynParserError) -> Self {
+        ModuleTreeError::SynParserError(Box::new(err))
+    }
 }
 
 impl ModuleTree {
