@@ -453,18 +453,42 @@ impl ModuleTree {
 
     /// Helper to get parent module ID (using existing ModuleTree fields)
     fn get_parent_module_id(&self, module_id: ModuleNodeId) -> Option<ModuleNodeId> {
-        self.tree_relations.iter().find_map(|r| {
-            if r.relation().target == GraphId::Node(module_id.into_inner())
-                && r.relation().kind == RelationKind::Contains
-            {
-                match r.relation().source {
-                    GraphId::Node(id) => Some(ModuleNodeId::new(id)),
-                    _ => None,
+        self.tree_relations
+            .iter()
+            .find_map(|r| {
+                if r.relation().target == GraphId::Node(module_id.into_inner())
+                    && r.relation().kind == RelationKind::Contains
+                {
+                    match r.relation().source {
+                        GraphId::Node(id) => Some(ModuleNodeId::new(id)),
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
-            } else {
-                None
-            }
-        })
+            })
+            .or_else(|| {
+                self.tree_relations.iter().find_map(|r_decl| {
+                    if r_decl.relation().target == GraphId::Node(module_id.into_inner())
+                        && r_decl.relation().kind == RelationKind::ResolvesToDefinition
+                    {
+                        self.tree_relations.iter().find_map(|r_cont| {
+                            if r_decl.relation().source == r_cont.relation().target
+                                && r_cont.relation().kind == RelationKind::Contains
+                            {
+                                match r_cont.relation().source {
+                                    GraphId::Node(id) => Some(ModuleNodeId::new(id)),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                })
+            })
     }
 
     /// Logs the details of an accessibility check.
@@ -495,7 +519,13 @@ impl ModuleTree {
             Some(node) => node,
             None => {
                 // Target module doesn't even exist in the tree
-                self.log_accessibility_check(source, target, None, "Target Module Not Found", false);
+                self.log_accessibility_check(
+                    source,
+                    target,
+                    None,
+                    "Target Module Not Found",
+                    false,
+                );
                 return false;
             }
         };
@@ -509,7 +539,9 @@ impl ModuleTree {
             let target_defn_id = target_defn_node.id();
             let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
                 let rel = tr.relation();
-                if rel.source == GraphId::Node(target_defn_id) && rel.kind == RelationKind::ResolvesToDefinition {
+                if rel.source == GraphId::Node(target_defn_id)
+                    && rel.kind == RelationKind::ResolvesToDefinition
+                {
                     match rel.target {
                         GraphId::Node(id) => Some(id),
                         _ => None, // Should not happen for this relation kind
@@ -546,9 +578,9 @@ impl ModuleTree {
             format!("{:?}", effective_visibility).cyan() // Effective visibility cyan
         );
 
-
         // 3. Perform the accessibility check using the effective_visibility
-        let result = match effective_visibility { // Use effective_visibility here
+        let result = match effective_visibility {
+            // Use effective_visibility here
             VisibilityKind::Public => {
                 self.log_accessibility_check(
                     source,
@@ -571,29 +603,48 @@ impl ModuleTree {
                 );
                 accessible
             }
-            VisibilityKind::Restricted(ref restricted_path_vec) => { // Borrow here
-                 // Remove unused variable warning by prefixing with underscore
+            VisibilityKind::Restricted(ref restricted_path_vec) => {
+                // Borrow here
+                // Remove unused variable warning by prefixing with underscore
                 // let _source_root = self.get_root_path(source); // Keep commented out or remove if truly unused
                 // Convert the restriction path Vec<String> to NodePath for lookup
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
                     Err(_) => {
-                         self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Invalid Path)", false);
-                         return false; // Invalid restriction path
+                        self.log_accessibility_check(
+                            source,
+                            target,
+                            Some(&effective_visibility),
+                            "Restricted Visibility (Invalid Path)",
+                            false,
+                        );
+                        return false; // Invalid restriction path
                     }
                 };
                 // Find the NodeId of the module defining the restriction scope
                 let restriction_module_id = match self.path_index.get(&restriction_path) {
                     Some(id) => ModuleNodeId::new(*id),
                     None => {
-                        self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Path Not Found)", false);
+                        self.log_accessibility_check(
+                            source,
+                            target,
+                            Some(&effective_visibility),
+                            "Restricted Visibility (Path Not Found)",
+                            false,
+                        );
                         return false; // Restriction path doesn't exist in the index
                     }
                 };
 
                 // Check if the source module *is* the restriction module
                 if source == restriction_module_id {
-                     self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Source is Restriction)", true);
+                    self.log_accessibility_check(
+                        source,
+                        target,
+                        Some(&effective_visibility),
+                        "Restricted Visibility (Source is Restriction)",
+                        true,
+                    );
                     return true;
                 }
 
@@ -609,7 +660,13 @@ impl ModuleTree {
                         restriction_module_id.to_string().magenta() // Restriction ID magenta
                     );
                     if ancestor_id == restriction_module_id {
-                         self.log_accessibility_check(source, target, Some(&effective_visibility), "Restricted Visibility (Ancestor Match)", true);
+                        self.log_accessibility_check(
+                            source,
+                            target,
+                            Some(&effective_visibility),
+                            "Restricted Visibility (Ancestor Match)",
+                            true,
+                        );
                         return true; // Found restriction module in ancestors
                     }
                     if ancestor_id == self.root {
@@ -618,7 +675,7 @@ impl ModuleTree {
                     current_ancestor = self.get_parent_module_id(ancestor_id);
                 }
                 let accessible = false; // Not the module itself or a descendant
-                // Refined log message for clarity when no ancestor match is found
+                                        // Refined log message for clarity when no ancestor match is found
                 self.log_accessibility_check(
                     source,
                     target,
@@ -643,8 +700,7 @@ impl ModuleTree {
                     accessible,
                 );
                 accessible
-            }
-            // Note: The None case for target_visibility was handled at the start by checking target_defn_node.
+            } // Note: The None case for target_visibility was handled at the start by checking target_defn_node.
         };
         result // Return the final calculated result
     }
