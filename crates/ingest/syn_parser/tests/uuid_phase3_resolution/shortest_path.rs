@@ -207,9 +207,12 @@ fn test_spp_reexported_item_finds_original_path() {
     // item's definition, it does not yet account for shorter paths via re-exports.
     let expected_path = Ok(vec!["crate".to_string(), "top_pub_mod".to_string()]);
 
+    // NOTE: This assertion checks the *current* behavior.
+    // Once shortest_public_path handles re-exports correctly, this test *should fail*,
+    // and the expected_path should become Ok(vec!["crate".to_string()]).
     assert_eq!(
         spp, expected_path,
-        "Shortest public path for a re-exported item should currently resolve to the original definition's module path"
+        "EXPECTED BEHAVIOR (PRE-REEXPORT): SPP for re-exported item resolves to original module path. This test WILL FAIL once re-exports are handled."
     );
 
     // We can also verify that the re-export itself exists as an ImportNode

@@ -3,4 +3,20 @@ name = "fixture_path_resolution"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+feature_a = []
+feature_b = []
+
 [dependencies]
+# Workspace dependencies
+ploke-common = { workspace = true }
+ploke-core = { workspace = true }
+
+# External dependencies (some already in workspace)
+log = { workspace = true }
+serde = { workspace = true, features = ["derive"] } # Add a feature
+thiserror = { workspace = true }
+
+# Non-workspace external dependency
+regex = "1.10"
