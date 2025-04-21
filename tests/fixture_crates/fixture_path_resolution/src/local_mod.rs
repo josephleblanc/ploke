@@ -5,6 +5,7 @@ pub mod nested;
 
 pub fn local_func() -> u8 { 0 }
 
+#[allow(dead_code)] // Allow dead code for fixture clarity
 fn private_local_func() {}
 
 // Use item from dependency within this module

@@ -5,5 +5,6 @@ pub fn item_in_actual_file() -> bool {
 }
 
 mod inner_mod_in_actual_file {
+    #[allow(dead_code)] // Allow dead code for fixture clarity
     pub fn inner_func() {}
 }
