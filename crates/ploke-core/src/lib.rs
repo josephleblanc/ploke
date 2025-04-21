@@ -404,16 +404,16 @@ mod ids {
     /// Unique identifier derived from the canonical path within the defining crate.
     /// Generated *after* name resolution (Phase 3).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-    pub struct CanonPathId(pub Uuid);
+    pub struct CanonId(pub Uuid);
 
-    impl CanonPathId {
+    impl CanonId {
         /// Returns the inner Uuid.
         pub fn uuid(&self) -> Uuid {
             self.0
         }
     }
 
-    impl std::fmt::Display for CanonPathId {
+    impl std::fmt::Display for CanonId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "P:C:{}", short_uuid(self.0))
         }
@@ -422,64 +422,64 @@ mod ids {
     /// Unique identifier derived from the shortest public path (considering re-exports).
     /// Generated *after* name resolution (Phase 3).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-    pub struct ShortPubPathId(pub Uuid);
+    pub struct PubPathId(pub Uuid);
 
-    impl ShortPubPathId {
+    impl PubPathId {
         /// Returns the inner Uuid.
         pub fn uuid(&self) -> Uuid {
             self.0
         }
     }
 
-    impl std::fmt::Display for ShortPubPathId {
+    impl std::fmt::Display for PubPathId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "P:S:{}", short_uuid(self.0))
         }
     }
 
-    // --- TryFrom Implementations for CanonPathId ---
+    // --- TryFrom Implementations for CanonId ---
 
-    impl TryFrom<NodeId> for CanonPathId {
+    impl TryFrom<NodeId> for CanonId {
         type Error = IdConversionError;
 
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
-                NodeId::Resolved(uuid) => Ok(CanonPathId(uuid)),
+                NodeId::Resolved(uuid) => Ok(CanonId(uuid)),
                 NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
             }
         }
     }
 
-    impl TryFrom<TypeId> for CanonPathId {
+    impl TryFrom<TypeId> for CanonId {
         type Error = IdConversionError;
 
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
-                TypeId::Resolved(uuid) => Ok(CanonPathId(uuid)),
+                TypeId::Resolved(uuid) => Ok(CanonId(uuid)),
                 TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
             }
         }
     }
 
-    // --- TryFrom Implementations for ShortPubPathId ---
+    // --- TryFrom Implementations for PubPathId ---
 
-    impl TryFrom<NodeId> for ShortPubPathId {
+    impl TryFrom<NodeId> for PubPathId {
         type Error = IdConversionError;
 
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
-                NodeId::Resolved(uuid) => Ok(ShortPubPathId(uuid)),
+                NodeId::Resolved(uuid) => Ok(PubPathId(uuid)),
                 NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
             }
         }
     }
 
-    impl TryFrom<TypeId> for ShortPubPathId {
+    impl TryFrom<TypeId> for PubPathId {
         type Error = IdConversionError;
 
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
-                TypeId::Resolved(uuid) => Ok(ShortPubPathId(uuid)),
+                TypeId::Resolved(uuid) => Ok(PubPathId(uuid)),
                 TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
             }
         }
@@ -496,7 +496,6 @@ pub enum IdConversionError {
     #[error("Cannot convert Synthetic TypeId {0} to a path-based ID.")]
     CannotConvertSyntheticType(TypeId),
 }
-
 
 /// Represents the specific kind of a code item associated with a `NodeId`.
 /// Moved from `syn_parser::parser::nodes`.
