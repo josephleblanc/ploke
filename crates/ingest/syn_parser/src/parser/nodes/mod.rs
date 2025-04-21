@@ -103,6 +103,18 @@ pub enum GraphIdConversionError {
     ExpectedType(GraphId),
 }
 
+impl From<NodeId> for GraphId {
+    fn from(node_id: NodeId) -> Self {
+        GraphId::Node(node_id)
+    }
+}
+
+impl From<TypeId> for GraphId {
+    fn from(type_id: TypeId) -> Self {
+        GraphId::Type(type_id)
+    }
+}
+
 impl TryInto<NodeId> for GraphId {
     type Error = GraphIdConversionError;
 
