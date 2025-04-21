@@ -114,6 +114,10 @@ mod ids {
         // Good for items that won't have the same name in the same module
         //  - e.g. not good for function parameters, enum variant, struct field (not nodes)
         //  - good for funciton, struct, enum, etc (nodes)
+        #[deprecated(
+            since = "0.1.0",
+            note = "Use CanonId::generate_resolved or PubPathId::generate_resolved instead"
+        )]
         pub fn generate_resolved(
             crate_namespace: uuid::Uuid,
             file_path: &std::path::Path,
@@ -387,6 +391,33 @@ mod ids {
         }
     }
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
+
+
+    /// Trait for generating resolved path-based IDs (CanonId, PubPathId).
+    pub trait ResolvedId: Sized + IdTrait + Copy {
+        /// Generates a resolved ID based on crate, path, and item details.
+        ///
+        /// # Arguments
+        /// * `crate_namespace` - UUID namespace of the defining crate.
+        /// * `file_path` - Absolute path to the source file containing the definition.
+        ///                 For `CanonId`, this will be canonicalized.
+        /// * `logical_item_path` - The specific path used for this ID type
+        ///                         (e.g., canonical path for `CanonId`, shortest public path for `PubPathId`).
+        /// * `item_name` - The simple name of the item (e.g., function name, struct name).
+        /// * `item_kind` - The kind of item, used to determine Node vs. Type variant.
+        ///
+        /// # Returns
+        /// `Ok(Self)` with the generated ID, or `Err(IdConversionError)` if generation fails
+        /// (e.g., I/O error during canonicalization).
+        fn generate_resolved(
+            crate_namespace: Uuid,
+            file_path: &Path,
+            logical_item_path: &[String],
+            item_name: &str,
+            item_kind: ItemKind,
+        ) -> Result<Self, IdConversionError>;
+    }
+
 
     /// Unique identifier derived from the canonical path within the defining crate,
     /// distinguishing between Node and Type items.
