@@ -401,39 +401,59 @@ mod ids {
     }
     // Consider adding helper methods like `is_synthetic()` to NodeId if needed.
 
-    /// Unique identifier derived from the canonical path within the defining crate.
+    /// Unique identifier derived from the canonical path within the defining crate,
+    /// distinguishing between Node and Type items.
     /// Generated *after* name resolution (Phase 3).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-    pub struct CanonId(pub Uuid);
+    pub enum CanonId {
+        Node(Uuid),
+        Type(Uuid),
+    }
 
     impl CanonId {
-        /// Returns the inner Uuid.
+        /// Returns the inner Uuid regardless of the variant.
         pub fn uuid(&self) -> Uuid {
-            self.0
+            match self {
+                CanonId::Node(uuid) => *uuid,
+                CanonId::Type(uuid) => *uuid,
+            }
         }
     }
 
     impl std::fmt::Display for CanonId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "P:C:{}", short_uuid(self.0))
+            match self {
+                CanonId::Node(uuid) => write!(f, "P:C:N:{}", short_uuid(*uuid)),
+                CanonId::Type(uuid) => write!(f, "P:C:T:{}", short_uuid(*uuid)),
+            }
         }
     }
 
-    /// Unique identifier derived from the shortest public path (considering re-exports).
+    /// Unique identifier derived from the shortest public path (considering re-exports),
+    /// distinguishing between Node and Type items.
     /// Generated *after* name resolution (Phase 3).
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-    pub struct PubPathId(pub Uuid);
+    pub enum PubPathId {
+        Node(Uuid),
+        Type(Uuid),
+    }
 
     impl PubPathId {
-        /// Returns the inner Uuid.
+        /// Returns the inner Uuid regardless of the variant.
         pub fn uuid(&self) -> Uuid {
-            self.0
+            match self {
+                PubPathId::Node(uuid) => *uuid,
+                PubPathId::Type(uuid) => *uuid,
+            }
         }
     }
 
     impl std::fmt::Display for PubPathId {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "P:S:{}", short_uuid(self.0))
+            match self {
+                PubPathId::Node(uuid) => write!(f, "P:S:N:{}", short_uuid(*uuid)),
+                PubPathId::Type(uuid) => write!(f, "P:S:T:{}", short_uuid(*uuid)),
+            }
         }
     }
 
@@ -444,7 +464,7 @@ mod ids {
 
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
-                NodeId::Resolved(uuid) => Ok(CanonId(uuid)),
+                NodeId::Resolved(uuid) => Ok(CanonId::Node(uuid)), // Create Node variant
                 NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
             }
         }
@@ -455,7 +475,7 @@ mod ids {
 
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
-                TypeId::Resolved(uuid) => Ok(CanonId(uuid)),
+                TypeId::Resolved(uuid) => Ok(CanonId::Type(uuid)), // Create Type variant
                 TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
             }
         }
@@ -468,7 +488,7 @@ mod ids {
 
         fn try_from(node_id: NodeId) -> Result<Self, Self::Error> {
             match node_id {
-                NodeId::Resolved(uuid) => Ok(PubPathId(uuid)),
+                NodeId::Resolved(uuid) => Ok(PubPathId::Node(uuid)), // Create Node variant
                 NodeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticNode(node_id)),
             }
         }
@@ -479,7 +499,7 @@ mod ids {
 
         fn try_from(type_id: TypeId) -> Result<Self, Self::Error> {
             match type_id {
-                TypeId::Resolved(uuid) => Ok(PubPathId(uuid)),
+                TypeId::Resolved(uuid) => Ok(PubPathId::Type(uuid)), // Create Type variant
                 TypeId::Synthetic(_) => Err(IdConversionError::CannotConvertSyntheticType(type_id)),
             }
         }
