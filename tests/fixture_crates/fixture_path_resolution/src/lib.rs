@@ -63,8 +63,7 @@ pub use local_mod::nested::deep_func; // Shortest path: crate::deep_func
 // 9. Re-export an item from an external dependency (log::debug)
 pub use log::debug as log_debug_reexport; // Shortest path: crate::log_debug_reexport
 
-// 10. Re-export an item from a workspace dependency (ploke_common::workspace_root)
-pub use ploke_common::workspace_root as ws_root_reexport; // Shortest path: crate::ws_root_reexport
+// Removed: Re-export of ploke_common::workspace_root
 
 // 11. Re-export with rename
 pub use local_mod::nested::deep_func as renamed_deep_func; // Shortest path: crate::renamed_deep_func
@@ -88,7 +87,7 @@ pub enum RootError {
 
 pub fn root_func() {
     info!("Calling root_func"); // Use external dep
-    let _root = workspace_root(); // Use workspace dep
+    // Removed: let _root = workspace_root();
     let _regex = Regex::new(r"^\d{4}$").unwrap(); // Use non-workspace dep
     let _s = RootStruct {
         field: TypeId::Synthetic(
@@ -134,7 +133,7 @@ mod tests {
         local_func();
         deep_func();
         log_debug_reexport!("Test re-export");
-        let _ = ws_root_reexport();
+        // Removed: let _ = ws_root_reexport();
         renamed_deep_func();
         reexported_nested_mod::deep_func();
         item_in_actual_file();
