@@ -153,6 +153,11 @@ impl ModuleNodeId {
     pub fn as_inner(&self) -> &NodeId {
         &self.0
     }
+
+    /// Converts this ModuleNodeId into a GraphId::Node.
+    pub fn to_graph_id(self) -> GraphId {
+        GraphId::Node(self.0)
+    }
 }
 
 impl std::fmt::Display for ModuleNodeId {
