@@ -190,6 +190,9 @@ pub enum ModuleTreeError {
 
     #[error("Graph ID conversion error: {0}")]
     GraphIdConversion(#[from] super::nodes::GraphIdConversionError), // Add #[from] for automatic conversion
+
+    #[error("Node error: {0}")]
+    NodeError(#[from] super::nodes::NodeError), // Add #[from] for NodeError
 }
 
 impl ModuleTree {

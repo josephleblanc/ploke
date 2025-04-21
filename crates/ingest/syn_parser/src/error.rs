@@ -162,6 +162,11 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
             ModuleTreeError::GraphIdConversion(graph_id_err) => {
                 SynParserError::from(NodeError::GraphIdConversion(graph_id_err))
             }
+            // Handle the new NodeError variant from ModuleTreeError
+            ModuleTreeError::NodeError(node_err) => {
+                // Convert the inner NodeError into SynParserError using its existing From impl
+                SynParserError::from(node_err)
+            }
         }
     }
 }
