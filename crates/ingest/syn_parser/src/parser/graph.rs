@@ -715,44 +715,58 @@ impl CodeGraph {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     pub fn find_node_unique(&self, item_id: NodeId) -> Result<&dyn GraphNode, SynParserError> {
-        let mut matches: Vec<&dyn GraphNode> = Vec::new();
+        // Chain iterators over all node collections, filter by ID, and map to &dyn GraphNode
+        let mut matches_iter = self
+            .functions
+            .iter()
+            .filter(move |n| n.id == item_id)
+            .map(|n| n as &dyn GraphNode)
+            .chain(self.defined_types.iter().filter_map(move |n| match n {
+                TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
+                TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
+                TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
+                TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
+                _ => None,
+            }))
+            .chain(
+                self.traits
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            )
+            .chain(
+                self.modules
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            )
+            .chain(
+                self.values
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            )
+            .chain(
+                self.macros
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            )
+            .chain(self.impls.iter().flat_map(move |i| {
+                i.methods
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode)
+            }));
 
-        // Collect matches from all relevant fields
-        if let Some(node) = self.functions.iter().find(|n| n.id == item_id) {
-            matches.push(node as &dyn GraphNode);
-        }
-        matches.extend(self.defined_types.iter().filter_map(|n| match n {
-            TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
-            TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
-            TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
-            TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
-            _ => None,
-        }));
-        if let Some(node) = self.traits.iter().find(|n| n.id == item_id) {
-            matches.push(node as &dyn GraphNode);
-        }
-        if let Some(node) = self.modules.iter().find(|n| n.id == item_id) {
-            matches.push(node as &dyn GraphNode);
-        }
-        if let Some(node) = self.values.iter().find(|n| n.id == item_id) {
-            matches.push(node as &dyn GraphNode);
-        }
-        if let Some(node) = self.macros.iter().find(|n| n.id == item_id) {
-            matches.push(node as &dyn GraphNode);
-        }
-        // Check methods within impls
-        matches.extend(self.impls.iter().flat_map(|i| {
-            i.methods
-                .iter()
-                .filter(|n| n.id == item_id)
-                .map(|n| n as &dyn GraphNode)
-        }));
+        // Check for uniqueness using the iterator
+        let first = matches_iter.next();
+        let second = matches_iter.next();
 
-        // Check the number of matches
-        match matches.len() {
-            0 => Err(SynParserError::NotFound(item_id)),
-            1 => Ok(matches[0]),
-            _ => Err(SynParserError::DuplicateNode(item_id)),
+        match (first, second) {
+            (Some(node), None) => Ok(node), // Exactly one match found
+            (None, _) => Err(SynParserError::NotFound(item_id)), // No matches found
+            (Some(_), Some(_)) => Err(SynParserError::DuplicateNode(item_id)), // More than one match found
         }
     }
 
