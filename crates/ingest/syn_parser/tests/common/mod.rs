@@ -9,7 +9,7 @@ use thiserror::Error;
 
 pub mod debug_printers;
 pub mod paranoid;
-pub mod resolution;
+pub mod resolution; // Add resolution module
 
 use {
     std::path::PathBuf, syn_parser::discovery::run_discovery_phase,

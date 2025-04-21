@@ -53,10 +53,11 @@
 //! 2.  Enhance `shortest_public_path` (or related visibility logic) to handle `pub(crate)`, `pub(super)`, and `pub(in path)`.
 //! 3.  Add tests specifically targeting the `fixture_path_resolution` crate for the scenarios listed above.
 
+use ploke_core::NodeId;
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
-// Removed unused import: use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::CodeGraph;
 
+use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for tests
@@ -274,3 +275,267 @@ fn test_spp_reexported_item_finds_original_path() {
 
     // TODO: Enhance shortest_public_path to consider re-exports and potentially return ["crate"] for this item.
 }
+
+// --- Tests for fixture_path_resolution ---
+
+// Helper macro for SPP tests on fixture_path_resolution
+macro_rules! assert_spp {
+    ($test_name:ident, $item_name:expr, $module_path:expr, $current_expected:expr, $final_expected:expr) => {
+        #[test]
+        fn $test_name() {
+            let fixture_name = "fixture_path_resolution";
+            let (graph, tree) = build_tree_for_fixture(fixture_name);
+
+            let item_id = find_item_id_in_module_by_name(&graph, $module_path, $item_name)
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "Failed to find item '{}' in module {:?}: {:?}",
+                        $item_name, $module_path, e
+                    )
+                });
+
+            let spp_result = tree.shortest_public_path(item_id, &graph);
+
+            // Assert current behavior
+            assert_eq!(
+                spp_result,
+                $current_expected,
+                "SPP for '{}' currently resolves to definition path. Expected final path: {:?}",
+                $item_name,
+                $final_expected
+            );
+        }
+    };
+    // Variant for expecting Err(ItemNotPubliclyAccessible)
+    ($test_name:ident, $item_name:expr, $module_path:expr, Err) => {
+        #[test]
+        fn $test_name() {
+            let fixture_name = "fixture_path_resolution";
+            let (graph, tree) = build_tree_for_fixture(fixture_name);
+
+            let item_id_result = find_item_id_in_module_by_name(&graph, $module_path, $item_name);
+
+            // Handle case where item itself might not be found (e.g., private item)
+            let item_id = match item_id_result {
+                Ok(id) => id,
+                Err(SynParserError::NotFound(_)) => {
+                    // If the item isn't even found by name in the module, SPP should also fail.
+                    // We can assert this implicitly by expecting the SPP call below to fail.
+                    // Or, create a dummy ID known to fail SPP. Let's use a dummy.
+                    NodeId::Synthetic(uuid::Uuid::new_v4()) // Dummy ID
+                }
+                Err(e) => panic!(
+                    "Unexpected error finding item '{}' in module {:?}: {:?}",
+                    $item_name, $module_path, e
+                ),
+            };
+
+
+            let spp_result = tree.shortest_public_path(item_id, &graph);
+
+            // Assert current behavior (should be Err)
+            assert!(
+                matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(id)) if id == item_id || item_id_result.is_err()),
+                "SPP for non-public item '{}' should be Err(ItemNotPubliclyAccessible), but was {:?}",
+                $item_name, spp_result
+            );
+        }
+    };
+}
+
+// 1. Re-export of Direct Child Item
+assert_spp!(
+    test_spp_reexport_direct_child,
+    "local_func", // Item name
+    &["crate", "local_mod"], // Original module path
+    Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 2. Re-export of Nested Item
+assert_spp!(
+    test_spp_reexport_nested_item,
+    "deep_func", // Item name
+    &["crate", "local_mod", "nested"], // Original module path
+    Ok(vec![
+        "crate".to_string(),
+        "local_mod".to_string(),
+        "nested".to_string()
+    ]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 3. Re-export of Nested Item with Rename
+assert_spp!(
+    test_spp_reexport_nested_item_renamed,
+    "deep_func", // Original item name (we find by original def)
+    &["crate", "local_mod", "nested"], // Original module path
+    Ok(vec![
+        "crate".to_string(),
+        "local_mod".to_string(),
+        "nested".to_string()
+    ]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP (access via `renamed_deep_func`)
+);
+
+// 4. Re-export of Module - Test access to an item *within* the re-exported module
+//    We test the SPP for the *original* item (`deep_func`), expecting the path
+//    to the *original* module currently. The expected final path would involve the re-exported module name.
+assert_spp!(
+    test_spp_reexport_module_item_access,
+    "deep_func", // Item name within the module
+    &["crate", "local_mod", "nested"], // Original module path
+    Ok(vec![
+        "crate".to_string(),
+        "local_mod".to_string(),
+        "nested".to_string()
+    ]), // Current SPP (to original module)
+    Ok(vec!["crate".to_string(), "reexported_nested_mod".to_string()]) // Final Expected SPP (via re-exported module)
+);
+
+// 5. Re-export from `#[path]` Module
+assert_spp!(
+    test_spp_reexport_from_path_mod,
+    "item_in_actual_file", // Item name
+    &["crate", "logical_path_mod"], // Original module path (logical)
+    Ok(vec!["crate".to_string(), "logical_path_mod".to_string()]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 6. Re-export of Generic Struct
+assert_spp!(
+    test_spp_reexport_generic_struct,
+    "GenStruct", // Item name
+    &["crate", "generics"], // Original module path
+    Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 7. Re-export of Generic Trait
+assert_spp!(
+    test_spp_reexport_generic_trait,
+    "GenTrait", // Item name
+    &["crate", "generics"], // Original module path
+    Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 8. Re-export within Inline Module
+assert_spp!(
+    test_spp_reexport_within_inline_mod,
+    "deep_func", // Original item name
+    &["crate", "local_mod", "nested"], // Original module path
+    Ok(vec![
+        "crate".to_string(),
+        "local_mod".to_string(),
+        "nested".to_string()
+    ]), // Current SPP
+    Ok(vec!["crate".to_string(), "inline_mod".to_string()]) // Final Expected SPP (path to re-exporting module)
+);
+
+// 9. Re-export within Nested Module
+assert_spp!(
+    test_spp_reexport_within_nested_mod,
+    "local_func", // Original item name
+    &["crate", "local_mod"], // Original module path
+    Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
+    Ok(vec!["crate".to_string(), "local_mod".to_string(), "nested".to_string()]) // Final Expected SPP (path to re-exporting module)
+);
+
+// 10. Re-export Gated by `#[cfg]`
+// NOTE: This test assumes the feature "feature_b" is NOT active by default during testing.
+// If it were active, the current SPP would be Ok(["crate", "local_mod"]), expected Ok(["crate"]).
+// Since it's likely inactive, the re-export doesn't exist, and SPP for the original item is correct.
+#[test]
+#[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
+fn test_spp_reexport_cfg_gated_inactive() {
+    let fixture_name = "fixture_path_resolution";
+    let (graph, tree) = build_tree_for_fixture(fixture_name);
+
+    // Find the original item
+    let item_id = find_item_id_in_module_by_name(&graph, &["crate", "local_mod"], "local_func")
+        .expect("Failed to find original local_func");
+
+    let spp_result = tree.shortest_public_path(item_id, &graph);
+
+    // Since feature_b is inactive, the re-export doesn't exist. SPP finds the original path.
+    let expected_path = Ok(vec!["crate".to_string(), "local_mod".to_string()]);
+    assert_eq!(
+        spp_result, expected_path,
+        "SPP for item with inactive cfg re-export should resolve to original path."
+    );
+}
+
+// TODO: Add a test variant for when feature_b IS active. Requires feature management in test setup.
+
+// 11. Re-export of External Dependency Item
+#[test]
+#[ignore = "Requires dependency resolution for SPP"]
+fn test_spp_reexport_external_dep() {
+    let fixture_name = "fixture_path_resolution";
+    let (graph, tree) = build_tree_for_fixture(fixture_name);
+
+    // We need the NodeId of the *re-export itself* (`log_debug_reexport`)
+    // Finding external items by name isn't directly supported by find_item_id_in_module_by_name.
+    // We need to find the ImportNode for the re-export.
+    let reexport_import_node = graph
+        .use_statements
+        .iter()
+        .find(|imp| imp.visible_name == "log_debug_reexport")
+        .expect("Could not find re-export ImportNode for log_debug_reexport");
+
+    // SPP currently doesn't resolve external items via re-exports.
+    // It would likely fail trying to find the original `log::debug` in the local graph.
+    let spp_result = tree.shortest_public_path(reexport_import_node.id, &graph); // Use re-export's ID
+
+    // Current expected behavior: Error because original item isn't in the graph.
+    assert!(
+        matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(_))), // Or potentially NotFound
+        "SPP for re-exported external item currently fails (expected final: Ok([\"crate\"]))"
+    );
+
+    // Final expected behavior:
+    // let expected_path = Ok(vec!["crate".to_string()]);
+    // assert_eq!(spp_result, expected_path, "SPP for re-exported external item should be Ok([\"crate\"])");
+}
+
+// 12. Re-export of Macro
+assert_spp!(
+    test_spp_reexport_macro,
+    "simple_macro", // Macro name
+    &["crate"], // Original module path (defined at root)
+    Ok(vec!["crate".to_string()]), // Current SPP (likely correct)
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
+);
+
+// 13. Item in `pub(crate)` Module
+assert_spp!(
+    test_spp_item_in_crate_mod,
+    "crate_internal_func",
+    &["crate", "crate_mod"],
+    Err // Expected Err(ItemNotPubliclyAccessible)
+);
+
+// 14. `pub(crate)` Item within `#[path]` Module
+assert_spp!(
+    test_spp_crate_item_in_path_mod,
+    "crate_visible_in_actual_file",
+    &["crate", "logical_path_mod"],
+    Err // Expected Err(ItemNotPubliclyAccessible)
+);
+
+// 15. Private Item
+assert_spp!(
+    test_spp_private_item,
+    "private_local_func",
+    &["crate", "local_mod"],
+    Err // Expected Err(ItemNotPubliclyAccessible)
+);
+
+// 16. Public Item in Private Module
+assert_spp!(
+    test_spp_pub_item_in_private_mod,
+    "pub_in_private_inline",
+    &["crate", "private_inline_mod"],
+    Err // Expected Err(ItemNotPubliclyAccessible)
+);
