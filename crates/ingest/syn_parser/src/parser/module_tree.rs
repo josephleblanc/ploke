@@ -187,6 +187,9 @@ pub enum ModuleTreeError {
 
     #[error("Item with ID {0} is not publicly accessible from the crate root.")]
     ItemNotPubliclyAccessible(NodeId), // New error variant for SPP
+
+    #[error("Graph ID conversion error: {0}")]
+    GraphIdConversion(#[from] super::nodes::GraphIdConversionError), // Add #[from] for automatic conversion
 }
 
 impl ModuleTree {
@@ -464,42 +467,41 @@ impl ModuleTree {
 
             for child_rel in child_relations {
                 // Use if let for clarity, or map/filter if preferred
-                let child_id = child_rel.relation().target.try_into()?;
+                let child_id: ModuleNodeId = child_rel.relation().target.try_into()?;
                 // Get the module node (declaration or definition) linked by Contains
-                if let Some(child_module_node) = self.modules.get(&ModuleNodeId::new(child_id)) {
-                    // Determine the ID of the actual module definition (handling declarations)
-                    let definition_id = if child_module_node.is_declaration() {
-                        self.find_definition_for_declaration(child_id)
+                let child_module_node = self.get_contained_mod(child_id)?;
+                // Determine the ID of the actual module definition (handling declarations)
+                let definition_id = if child_module_node.is_declaration() {
+                    self.find_definition_for_declaration(child_id)
                                 .unwrap_or_else(|| {
                                     // Log fallback case
                                     log::warn!(target: LOG_TARGET_BUILD, "SPP: Could not find definition for declaration {}, falling back to using declaration ID itself.", child_id);
-                                    ModuleNodeId::new(child_id)
+                                    child_id
                                 })
-                    } else {
-                        ModuleNodeId::new(child_id) // It's already the definition
-                    };
+                } else {
+                    child_id // It's already the definition
+                };
 
-                    // Check visibility and enqueue if public and unvisited
-                    // Use Option::filter and and_then for conciseness
-                    self.get_effective_visibility(definition_id)
-                        .filter(|vis| vis.is_pub()) // Keep only if public
-                        .and_then(|_vis| {
-                            // If public...
-                            if visited.insert(definition_id) {
-                                // ...and not visited...
-                                Some(definition_id) // ...return the ID to enqueue.
-                            } else {
-                                None // Already visited
-                            }
-                        })
-                        .map(|id_to_enqueue| {
-                            // If we should enqueue...
-                            let mut new_path = current_path.clone();
-                            // Use the name from the original child node (decl or defn)
-                            new_path.push(child_module_node.name.clone());
-                            queue.push_back((id_to_enqueue, new_path));
-                        });
-                }
+                // Check visibility and enqueue if public and unvisited
+                // Use Option::filter and and_then for conciseness
+                self.get_effective_visibility(definition_id)
+                    .filter(|vis| vis.is_pub()) // Keep only if public
+                    .and_then(|_vis| {
+                        // If public...
+                        if visited.insert(definition_id) {
+                            // ...and not visited...
+                            Some(definition_id) // ...return the ID to enqueue.
+                        } else {
+                            None // Already visited
+                        }
+                    })
+                    .map(|id_to_enqueue| {
+                        // If we should enqueue...
+                        let mut new_path = current_path.clone();
+                        // Use the name from the original child node (decl or defn)
+                        new_path.push(child_module_node.name.clone());
+                        queue.push_back((id_to_enqueue, new_path));
+                    });
             }
         }
 
@@ -507,12 +509,21 @@ impl ModuleTree {
         Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
     }
 
+    fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {
+        let child_module_node =
+            self.modules
+                .get(&child_id)
+                .ok_or(ModuleTreeError::ContainingModuleNotFound(
+                    *child_id.as_inner(),
+                ))?;
+        Ok(child_module_node)
+    }
+
     /// Finds the NodeId of the definition module corresponding to a declaration module ID.
-    fn find_definition_for_declaration(&self, decl_id: NodeId) -> Option<ModuleNodeId> {
+    fn find_definition_for_declaration(&self, decl_id: ModuleNodeId) -> Option<ModuleNodeId> {
         self.tree_relations.iter().find_map(|tr| {
             let rel = tr.relation();
-            if rel.source == GraphId::Node(decl_id)
-                && rel.kind == RelationKind::ResolvesToDefinition
+            if rel.source == decl_id.to_graph_id() && rel.kind == RelationKind::ResolvesToDefinition
             {
                 match rel.target {
                     GraphId::Node(defn_id) => Some(ModuleNodeId::new(defn_id)),
