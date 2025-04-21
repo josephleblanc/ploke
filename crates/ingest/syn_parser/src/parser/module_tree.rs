@@ -293,8 +293,8 @@ impl ModuleTree {
                 Some(decl_id) => {
                     // Found declaration, create relation
                     let logical_relation = Relation {
-                        source: GraphId::Node(module.id()),
-                        target: GraphId::Node(*decl_id),
+                        source: GraphId::Node(*decl_id),
+                        target: GraphId::Node(module.id()),
                         kind: RelationKind::ResolvesToDefinition,
                     };
                     new_relations.push(logical_relation.into());
