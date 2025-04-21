@@ -266,10 +266,14 @@ fn test_spp_reexported_item_finds_original_path() {
     );
 
     // We can also verify that the re-export itself exists as an ImportNode
-    let reexport_node = graph.use_statements.iter().find(|imp| imp.visible_name == "reexported_func").expect("Could not find reexport ImportNode");
+    let reexport_node = graph
+        .use_statements
+        .iter()
+        .find(|imp| imp.visible_name == "reexported_func")
+        .expect("Could not find reexport ImportNode");
     assert!(reexport_node.is_reexport());
     assert_eq!(reexport_node.path, ["crate", "top_pub_mod", "top_pub_func"]); // Path points to original item
-    // Check that the re-export is contained in the crate root module
+                                                                              // Check that the re-export is contained in the crate root module
     let crate_root_id = tree.root().into_inner();
     assert!(graph.module_contains_node(crate_root_id, reexport_node.id));
 
@@ -346,36 +350,36 @@ macro_rules! assert_spp {
 // 1. Re-export of Direct Child Item
 assert_spp!(
     test_spp_reexport_direct_child,
-    "local_func", // Item name
-    &["crate", "local_mod"], // Original module path
+    "local_func",                                           // Item name
+    &["crate", "local_mod"],                                // Original module path
     Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])                           // Final Expected SPP
 );
 
 // 2. Re-export of Nested Item
 assert_spp!(
     test_spp_reexport_nested_item,
-    "deep_func", // Item name
+    "deep_func",                       // Item name
     &["crate", "local_mod", "nested"], // Original module path
     Ok(vec![
         "crate".to_string(),
         "local_mod".to_string(),
         "nested".to_string()
     ]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])      // Final Expected SPP
 );
 
 // 3. Re-export of Nested Item with Rename
 assert_spp!(
     test_spp_reexport_nested_item_renamed,
-    "deep_func", // Original item name (we find by original def)
+    "deep_func",                       // Original item name (we find by original def)
     &["crate", "local_mod", "nested"], // Original module path
     Ok(vec![
         "crate".to_string(),
         "local_mod".to_string(),
         "nested".to_string()
     ]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP (access via `renamed_deep_func`)
+    Ok(vec!["crate".to_string()])      // Final Expected SPP (access via `renamed_deep_func`)
 );
 
 // 4. Re-export of Module - Test access to an item *within* the re-exported module
@@ -383,47 +387,50 @@ assert_spp!(
 //    to the *original* module currently. The expected final path would involve the re-exported module name.
 assert_spp!(
     test_spp_reexport_module_item_access,
-    "deep_func", // Item name within the module
+    "deep_func",                       // Item name within the module
     &["crate", "local_mod", "nested"], // Original module path
     Ok(vec![
         "crate".to_string(),
         "local_mod".to_string(),
         "nested".to_string()
     ]), // Current SPP (to original module)
-    Ok(vec!["crate".to_string(), "reexported_nested_mod".to_string()]) // Final Expected SPP (via re-exported module)
+    Ok(vec![
+        "crate".to_string(),
+        "reexported_nested_mod".to_string()
+    ])  // Final Expected SPP (via re-exported module)
 );
 
 // 5. Re-export from `#[path]` Module
 assert_spp!(
     test_spp_reexport_from_path_mod,
-    "item_in_actual_file", // Item name
-    &["crate", "logical_path_mod"], // Original module path (logical)
+    "item_in_actual_file",                                         // Item name
+    &["crate", "logical_path_mod"],                                // Original module path (logical)
     Ok(vec!["crate".to_string(), "logical_path_mod".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])                                  // Final Expected SPP
 );
 
 // 6. Re-export of Generic Struct
 assert_spp!(
     test_spp_reexport_generic_struct,
-    "GenStruct", // Item name
-    &["crate", "generics"], // Original module path
+    "GenStruct",                                           // Item name
+    &["crate", "generics"],                                // Original module path
     Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])                          // Final Expected SPP
 );
 
 // 7. Re-export of Generic Trait
 assert_spp!(
     test_spp_reexport_generic_trait,
-    "GenTrait", // Item name
-    &["crate", "generics"], // Original module path
+    "GenTrait",                                            // Item name
+    &["crate", "generics"],                                // Original module path
     Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])                          // Final Expected SPP
 );
 
 // 8. Re-export within Inline Module
 assert_spp!(
     test_spp_reexport_within_inline_mod,
-    "deep_func", // Original item name
+    "deep_func",                       // Original item name
     &["crate", "local_mod", "nested"], // Original module path
     Ok(vec![
         "crate".to_string(),
@@ -436,10 +443,14 @@ assert_spp!(
 // 9. Re-export within Nested Module
 assert_spp!(
     test_spp_reexport_within_nested_mod,
-    "local_func", // Original item name
-    &["crate", "local_mod"], // Original module path
+    "local_func",                                           // Original item name
+    &["crate", "local_mod"],                                // Original module path
     Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string(), "local_mod".to_string(), "nested".to_string()]) // Final Expected SPP (path to re-exporting module)
+    Ok(vec![
+        "crate".to_string(),
+        "local_mod".to_string(),
+        "nested".to_string()
+    ])  // Final Expected SPP (path to re-exporting module)
 );
 
 // 10. Re-export Gated by `#[cfg]`
@@ -453,8 +464,9 @@ fn test_spp_reexport_cfg_gated_inactive() {
     let (graph, tree) = build_tree_for_fixture(fixture_name);
 
     // Find the original item
-    let item_id = find_item_id_in_module_by_name(&graph, &["crate", "local_mod"], "local_func")
-        .expect("Failed to find original local_func");
+    let item_id =
+        find_item_id_in_module_by_name(&graph, &["crate".to_owned(), "local_mod"], "local_func")
+            .expect("Failed to find original local_func");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
 
@@ -490,7 +502,10 @@ fn test_spp_reexport_external_dep() {
 
     // Current expected behavior: Error because original item isn't in the graph.
     assert!(
-        matches!(spp_result, Err(ModuleTreeError::ItemNotPubliclyAccessible(_))), // Or potentially NotFound
+        matches!(
+            spp_result,
+            Err(ModuleTreeError::ItemNotPubliclyAccessible(_))
+        ), // Or potentially NotFound
         "SPP for re-exported external item currently fails (expected final: Ok([\"crate\"]))"
     );
 
@@ -502,10 +517,10 @@ fn test_spp_reexport_external_dep() {
 // 12. Re-export of Macro
 assert_spp!(
     test_spp_reexport_macro,
-    "simple_macro", // Macro name
-    &["crate"], // Original module path (defined at root)
+    "simple_macro",                // Macro name
+    &["crate"],                    // Original module path (defined at root)
     Ok(vec!["crate".to_string()]), // Current SPP (likely correct)
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    Ok(vec!["crate".to_string()])  // Final Expected SPP
 );
 
 // 13. Item in `pub(crate)` Module
