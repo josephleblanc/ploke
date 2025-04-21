@@ -284,7 +284,8 @@ fn test_spp_reexported_item_finds_original_path() {
 
 // Helper macro for SPP tests on fixture_path_resolution
 macro_rules! assert_spp {
-    ($test_name:ident, $item_name:expr, $module_path:expr, $current_expected:expr, $final_expected:expr) => {
+    // MODIFIED: Removed $current_expected, asserts against $final_expected directly
+    ($test_name:ident, $item_name:expr, $module_path:expr, $final_expected:expr) => {
         #[test]
         fn $test_name() {
             let fixture_name = "fixture_path_resolution";
@@ -304,18 +305,16 @@ macro_rules! assert_spp {
 
             let spp_result = tree.shortest_public_path(item_id, &graph);
 
-            // Explicitly type the expected result before comparison
-            let expected: Result<Vec<String>, ModuleTreeError> = $current_expected;
-            // Explicitly type the final expected result for the format string
+            // Explicitly type the FINAL expected result for comparison and printing
             let final_expected_typed: Result<Vec<String>, ModuleTreeError> = $final_expected;
 
-            // Assert current behavior using the explicitly typed variable
+            // Assert FINAL expected behavior
             assert_eq!(
                 spp_result,
-                expected, // Compare against the fully typed 'expected' variable
-                "SPP for '{}' currently resolves to definition path. Expected final path: {:?}",
-                $item_name,
-                final_expected_typed // Use the explicitly typed variable for debug printing
+                final_expected_typed, // Compare against the FINAL expected result
+                "SPP for '{}' did not match expected shortest public path.", // Updated message
+                $item_name
+                // No need to print expected again, assert_eq! does that.
             );
         }
     };
@@ -364,10 +363,10 @@ macro_rules! assert_spp {
 // 1. Re-export of Direct Child Item
 assert_spp!(
     test_spp_reexport_direct_child,
-    "local_func",                                           // Item name
-    &["crate", "local_mod"],                                // Original module path
-    Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()])                           // Final Expected SPP
+    "local_func",           // Item name
+    &["crate", "local_mod"], // Original module path
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 2. Re-export of Nested Item
@@ -375,12 +374,8 @@ assert_spp!(
     test_spp_reexport_nested_item,
     "deep_func",                       // Item name
     &["crate", "local_mod", "nested"], // Original module path
-    Ok(vec![
-        "crate".to_string(),
-        "local_mod".to_string(),
-        "nested".to_string()
-    ]), // Current SPP
-    Ok(vec!["crate".to_string()])      // Final Expected SPP
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 3. Re-export of Nested Item with Rename
@@ -388,12 +383,8 @@ assert_spp!(
     test_spp_reexport_nested_item_renamed,
     "deep_func",                       // Original item name (we find by original def)
     &["crate", "local_mod", "nested"], // Original module path
-    Ok(vec![
-        "crate".to_string(),
-        "local_mod".to_string(),
-        "nested".to_string()
-    ]), // Current SPP
-    Ok(vec!["crate".to_string()])      // Final Expected SPP (access via `renamed_deep_func`)
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP (access via `renamed_deep_func`)
 );
 
 // 4. Re-export of Module - Test access to an item *within* the re-exported module
@@ -403,42 +394,38 @@ assert_spp!(
     test_spp_reexport_module_item_access,
     "deep_func",                       // Item name within the module
     &["crate", "local_mod", "nested"], // Original module path
-    Ok(vec![
-        "crate".to_string(),
-        "local_mod".to_string(),
-        "nested".to_string()
-    ]), // Current SPP (to original module)
+    // REMOVED Current SPP
     Ok(vec![
         "crate".to_string(),
         "reexported_nested_mod".to_string()
-    ])  // Final Expected SPP (via re-exported module)
+    ]) // Final Expected SPP (via re-exported module)
 );
 
 // 5. Re-export from `#[path]` Module
 assert_spp!(
     test_spp_reexport_from_path_mod,
-    "item_in_actual_file",                                         // Item name
-    &["crate", "logical_path_mod"],                                // Original module path (logical)
-    Ok(vec!["crate".to_string(), "logical_path_mod".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()])                                  // Final Expected SPP
+    "item_in_actual_file",          // Item name
+    &["crate", "logical_path_mod"], // Original module path (logical)
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 6. Re-export of Generic Struct
 assert_spp!(
     test_spp_reexport_generic_struct,
-    "GenStruct",                                           // Item name
-    &["crate", "generics"],                                // Original module path
-    Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()])                          // Final Expected SPP
+    "GenStruct",            // Item name
+    &["crate", "generics"], // Original module path
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 7. Re-export of Generic Trait
 assert_spp!(
     test_spp_reexport_generic_trait,
-    "GenTrait",                                            // Item name
-    &["crate", "generics"],                                // Original module path
-    Ok(vec!["crate".to_string(), "generics".to_string()]), // Current SPP
-    Ok(vec!["crate".to_string()])                          // Final Expected SPP
+    "GenTrait",             // Item name
+    &["crate", "generics"], // Original module path
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 8. Re-export within Inline Module
@@ -446,25 +433,21 @@ assert_spp!(
     test_spp_reexport_within_inline_mod,
     "deep_func",                       // Original item name
     &["crate", "local_mod", "nested"], // Original module path
-    Ok(vec![
-        "crate".to_string(),
-        "local_mod".to_string(),
-        "nested".to_string()
-    ]), // Current SPP
+    // REMOVED Current SPP
     Ok(vec!["crate".to_string(), "inline_mod".to_string()]) // Final Expected SPP (path to re-exporting module)
 );
 
 // 9. Re-export within Nested Module
 assert_spp!(
     test_spp_reexport_within_nested_mod,
-    "local_func",                                           // Original item name
-    &["crate", "local_mod"],                                // Original module path
-    Ok(vec!["crate".to_string(), "local_mod".to_string()]), // Current SPP
+    "local_func",           // Original item name
+    &["crate", "local_mod"], // Original module path
+    // REMOVED Current SPP
     Ok(vec![
         "crate".to_string(),
         "local_mod".to_string(),
         "nested".to_string()
-    ])  // Final Expected SPP (path to re-exporting module)
+    ]) // Final Expected SPP (path to re-exporting module)
 );
 
 // 10. Re-export Gated by `#[cfg]`
@@ -531,10 +514,10 @@ fn test_spp_reexport_external_dep() {
 // 12. Re-export of Macro
 assert_spp!(
     test_spp_reexport_macro,
-    "simple_macro",                // Macro name
-    &["crate"],                    // Original module path (defined at root)
-    Ok(vec!["crate".to_string()]), // Current SPP (likely correct)
-    Ok(vec!["crate".to_string()])  // Final Expected SPP
+    "simple_macro", // Macro name
+    &["crate"],     // Original module path (defined at root)
+    // REMOVED Current SPP
+    Ok(vec!["crate".to_string()]) // Final Expected SPP
 );
 
 // 13. Item in `pub(crate)` Module
