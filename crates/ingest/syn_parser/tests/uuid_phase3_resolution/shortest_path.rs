@@ -298,7 +298,7 @@ macro_rules! assert_spp {
                 .unwrap_or_else(|e| {
                     panic!(
                         "Failed to find item '{}' in module {:?}: {:?}",
-                        $item_name, $module_path, e
+                        $item_name, module_path_vec, e // Use converted vec in panic message
                     )
                 });
 
