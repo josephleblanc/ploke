@@ -306,6 +306,8 @@ macro_rules! assert_spp {
 
             // Explicitly type the expected result before comparison
             let expected: Result<Vec<String>, ModuleTreeError> = $current_expected;
+            // Explicitly type the final expected result for the format string
+            let final_expected_typed: Result<Vec<String>, ModuleTreeError> = $final_expected;
 
             // Assert current behavior using the explicitly typed variable
             assert_eq!(
@@ -313,7 +315,7 @@ macro_rules! assert_spp {
                 expected, // Compare against the fully typed 'expected' variable
                 "SPP for '{}' currently resolves to definition path. Expected final path: {:?}",
                 $item_name,
-                $final_expected // Use $final_expected directly for debug printing
+                final_expected_typed // Use the explicitly typed variable for debug printing
             );
         }
     };
