@@ -3,7 +3,6 @@
 
 // === Dependencies ===
 use log::{debug, info}; // External dep (workspace = true)
-// Removed: use ploke_common::workspace_root;
 use ploke_core::{NodeId, TypeId};
 use regex::Regex; // External dep (non-workspace)
 use serde::Serialize; // External dep with feature
@@ -87,7 +86,7 @@ pub enum RootError {
 
 pub fn root_func() {
     info!("Calling root_func"); // Use external dep
-    // Removed: let _root = workspace_root();
+                                // Removed: let _root = workspace_root();
     let _regex = Regex::new(r"^\d{4}$").unwrap(); // Use non-workspace dep
     let _s = RootStruct {
         field: TypeId::Synthetic(
