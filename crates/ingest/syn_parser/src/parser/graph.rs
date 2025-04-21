@@ -700,6 +700,13 @@ impl CodeGraph {
             })
     }
 
+    /// Finds a node by its ID, returning a `Result` with a reference to the node
+    /// as a `dyn GraphNode`, or a `SynParserError::NotFound` if the node is not found.
+    pub fn find_node_checked(&self, item_id: NodeId) -> Result<&dyn GraphNode, SynParserError> {
+        self.find_node(item_id)
+            .ok_or(SynParserError::NotFound(item_id))
+    }
+
     pub fn get_nodes_by_ids(&self, ids: &[NodeId]) -> Vec<&dyn GraphNode> {
         ids.iter().filter_map(|id| self.find_node(*id)).collect()
     }
