@@ -182,3 +182,43 @@ fn test_spp_item_in_private_mod() {
 //     let spp = tree.shortest_public_path(original_item_id, crate_root_id);
 //     // Assert spp matches the shorter, re-exported path
 // }
+
+#[test]
+fn test_spp_reexported_item_finds_original_path() {
+    let fixture_name = "file_dir_detection";
+    let (graph, tree) = build_tree_for_fixture(fixture_name);
+
+    // Find the *original* public function `top_pub_func` in `top_pub_mod`.
+    // This function is re-exported as `reexported_func` in the crate root.
+    let original_func_id = graph
+        .functions
+        .iter()
+        .find(|f| {
+            f.name == "top_pub_func" && graph.get_item_module_path(f.id) == ["crate", "top_pub_mod"]
+        })
+        .expect("Could not find original top_pub_func in top_pub_mod")
+        .id;
+
+    // Calculate the shortest public path for the *original* function's ID.
+    let spp = tree.shortest_public_path(original_func_id, &graph);
+
+    // Expected path: Ok(["crate", "top_pub_mod"])
+    // The current implementation finds the path to the module containing the
+    // item's definition, it does not yet account for shorter paths via re-exports.
+    let expected_path = Ok(vec!["crate".to_string(), "top_pub_mod".to_string()]);
+
+    assert_eq!(
+        spp, expected_path,
+        "Shortest public path for a re-exported item should currently resolve to the original definition's module path"
+    );
+
+    // We can also verify that the re-export itself exists as an ImportNode
+    let reexport_node = graph.use_statements.iter().find(|imp| imp.visible_name == "reexported_func").expect("Could not find reexport ImportNode");
+    assert!(reexport_node.is_reexport());
+    assert_eq!(reexport_node.path, ["crate", "top_pub_mod", "top_pub_func"]); // Path points to original item
+    // Check that the re-export is contained in the crate root module
+    let crate_root_id = tree.root().into_inner();
+    assert!(graph.module_contains_node(crate_root_id, reexport_node.id));
+
+    // TODO: Enhance shortest_public_path to consider re-exports and potentially return ["crate"] for this item.
+}
