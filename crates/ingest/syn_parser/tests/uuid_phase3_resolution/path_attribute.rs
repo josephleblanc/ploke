@@ -11,8 +11,11 @@ const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this 
 
 #[test]
 fn test_path_attribute_handling() {
-    // Initialize logger (ignore errors if already initialized)
-    let _ = env_logger::builder().is_test(true).try_init();
+    // Initialize logger without timestamps (ignore errors if already initialized)
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "Starting test_path_attribute_handling".green());
     let fixture_name = "fixture_path_resolution";
     let results = run_phases_and_collect(fixture_name);
