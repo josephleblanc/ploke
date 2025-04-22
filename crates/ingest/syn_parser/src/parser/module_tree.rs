@@ -1149,10 +1149,13 @@ impl ModuleTree {
             };
             self.log_path_processing(&ctx, "Processing", None);
 
+            // --- CORRECTED LOGIC ---
+            // 1. Search self.modules for FileBased nodes matching the resolved_path
+            //    Use filter + collect to find all potential matches first.
             let mut targets_iter = self.modules.values().filter(|m| {
                 m.is_file_based() && m.file_path().is_some_and(|fp| fp == resolved_path)
             });
-            let target_defn = targets_iter.next();
+            let target_defn = targets_iter.next(); // Get the first match
 
             match target_defn {
                 Some(target_defn_node) => {
@@ -1174,33 +1177,33 @@ impl ModuleTree {
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
                         "Duplicate module definition for path attribute target '{}'  {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
                             decl_module_node.id,
-                        resolved_path.display(),
-                            &decl_module_node,
-                        &decl_module_id,
-                        &target_defn_node,
-                    )));
+                        )),
+                    );
+                    // Check if there was more than one match
+                    if let Some(dup_target_node) = targets_iter.next() {
+                        // Found a duplicate definition for the same path attribute target
+                        let error_message = format!(
+                            "Duplicate module definitions found for path attribute target '{}' declared by {}. Found: {} and {}",
+                            resolved_path.display(),
+                            decl_module_id,
+                            target_defn_node.id(), // ID of the first match
+                            dup_target_node.id() // ID of the second match
+                        );
+                        self.log_module_error(*decl_module_id, &error_message);
+                        return Err(ModuleTreeError::DuplicateDefinition(error_message));
                     }
+                    // Only one match found, push the relation
                     self.tree_relations.push(relation.into());
                 }
                 None => {
                     // 3. Handle case where the target file node wasn't found.
-                    // This indicates an inconsistency - the path resolved, but thecorresponding
-                    // module node isn't in the map.
-                    self.log_module_error(
-                        *decl_module_id,
-                        &format!(
-                            "Path attribute target file not found in modules map:  {}",
-                            resolved_path.display(),
-                        ),
-                    );
-                    // Return an error because the tree is inconsistent
-                    // TODO: Consider a more specific error variant if needed.
-                    return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
-                        "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
+                    let error_message = format!(
+                        "Module definition for path attribute target '{}' not found for declaration {}",
                         resolved_path.display(),
-                        decl_module_node.id,
-                            &decl_module_node,
-                    )));
+                        decl_module_id
+                    );
+                    self.log_module_error(*decl_module_id, &error_message);
+                    return Err(ModuleTreeError::ModuleDefinitionNotFound(error_message));
                 }
             }
         }
