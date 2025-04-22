@@ -140,6 +140,16 @@ impl ModuleNode {
             None
         }
     }
+
+    /// Checks module to see if it has a #[path = "..."] attribute.
+    /// Only checks module declarations, e.g.
+    /// ```rust
+    /// #[path = "path/to/file.rs"]
+    /// mod my_mod;
+    /// ```
+    pub fn has_path_attr(&self) -> bool {
+        self.is_inline() && self.attributes.iter().any(|attr| attr.name == "path")
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

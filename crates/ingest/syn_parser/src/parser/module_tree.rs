@@ -1,15 +1,17 @@
+pub use colored::Colorize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{self, PathBuf},
 }; // Keep HashSet and VecDeque
 
-use colored::*; // Import colored for terminal colors
+use crate::utils::LogStyle;
+use crate::utils::LogStyleDebug;
 use log::debug; // Import the debug macro
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node};
-use crate::{parser::nodes::NodePath, utils::LogStyle}; // Ensure NodePath is imported
+use crate::parser::nodes::NodePath;
+use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
 
 use super::{
     nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
@@ -40,76 +42,6 @@ const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility
 const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
 
-/// Helper struct to hold context for accessibility logging.
-struct AccLogCtx<'a> {
-    // source_id: ModuleNodeId, // Removed unused field
-    // target_id: ModuleNodeId, // Removed unused field
-    source_name: &'a str,
-    target_name: &'a str,
-    effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
-}
-
-impl<'a> AccLogCtx<'a> {
-    /// Creates a new context for logging accessibility checks.
-    fn new(
-        source_id: ModuleNodeId,                   // Keep ID args for name lookup
-        target_id: ModuleNodeId,                   // Keep ID args for name lookup
-        effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
-        tree: &'a ModuleTree,                      // Need tree to look up names
-    ) -> Self {
-        let source_name = tree
-            .modules
-            .get(&source_id)
-            .map(|m| m.name.as_str())
-            .unwrap_or("?");
-        let target_name = tree
-            .modules
-            .get(&target_id)
-            .map(|m| m.name.as_str())
-            .unwrap_or("?");
-        Self {
-            // source_id, // Removed unused field
-            // target_id, // Removed unused field
-            source_name,
-            target_name,
-            effective_vis,
-        }
-    }
-}
-
-/// Helper struct to hold context for path attribute logging.
-struct PathLogCtx<'a> {
-    module_id: ModuleNodeId,
-    module_name: &'a str,
-    module_path: &'a [String], // Use slice for efficiency
-    attr_value: Option<&'a str>,
-    resolved_path: Option<&'a PathBuf>,
-}
-
-struct PathProcessingContext<'a> {
-    module_id: ModuleNodeId,
-    module_name: &'a str,
-    attr_value: Option<&'a str>,
-    resolved_path: Option<&'a PathBuf>,
-}
-
-impl<'a> PathLogCtx<'a> {
-    /// Creates a new context for logging path attribute processing.
-    fn new(
-        module_node: &'a ModuleNode,
-        attr_value: Option<&'a str>,
-        resolved_path: Option<&'a PathBuf>,
-    ) -> Self {
-        Self {
-            module_id: ModuleNodeId::new(module_node.id()),
-            module_name: &module_node.name,
-            module_path: &module_node.path,
-            attr_value,
-            resolved_path,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
     // ModuleNodeId of the root file-level module, e.g. `main.rs`, `lib.rs`, used to initialize the
@@ -135,7 +67,9 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
-    path_attributes: HashMap<ModuleNodeId, PathBuf>,
+    found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
+    // Option for `take`
+    pending_path_attrs: Option<Vec<ModuleNodeId>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -228,6 +162,12 @@ pub enum ModuleTreeError {
         existing_id: NodeId,
         conflicting_id: NodeId,
     },
+    #[error("Duplicate definition module_id '{module_id}' found in module tree. Existing path attribute: {existing_path}, Conflicting path attribute: {conflicting_path}")]
+    DuplicatePathAttribute {
+        module_id: ModuleNodeId,
+        existing_path: PathBuf,
+        conflicting_path: PathBuf,
+    },
 
     #[error("Duplicate module ID found in module tree for ModuleNode: {0:?}")]
     DuplicateModuleId(Box<ModuleNode>), // Box the large ModuleNode
@@ -272,6 +212,12 @@ pub enum ModuleTreeError {
     // --- NEW VARIANT ---
     #[error("Re-export chain starting from {start_node_id} exceeded maximum depth (32). Potential cycle or excessively deep re-export.")]
     ReExportChainTooLong { start_node_id: NodeId },
+
+    #[error("Implement me!")]
+    UnresolvedPathAttr(Box<ModuleTreeError>), // Placeholder, fill in with contextual information
+
+    #[error("ModuleId not found in ModuleTree.modules: {0}")]
+    ModuleNotFound(ModuleNodeId),
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -325,7 +271,8 @@ impl ModuleTree {
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
-            path_attributes: HashMap::new(),
+            found_path_attrs: HashMap::new(),
+            pending_path_attrs: Some(Vec::new()),
         })
         // Should never happen, but might want to handle this sometime
         // // Initialize path attributes from root if present
@@ -408,20 +355,12 @@ impl ModuleTree {
         self.log_module_insert(&module, module_id);
 
         // Store path attribute if present
-        if let Some(path_val) = extract_path_attr_from_node(&module) {
-            if let Ok(base_dir) = self.find_declaring_file_dir(module_id) {
-                let resolved = base_dir.join(path_val).normalize();
-                self.log_path_attr(&module, path_val, &resolved);
-                self.path_attributes.insert(module_id, resolved);
-            } else {
-                // Log failure to find base dir (should be rare if tree is consistent)
-                let log_ctx = PathLogCtx::new(&module, Some(path_val), None);
-                self.log_path(
-                    &log_ctx,
-                    "Storing path attribute",
-                    Some("Failed: Base dir not found".red().to_string()),
-                );
-            }
+
+        if module.has_path_attr() {
+            self.pending_path_attrs
+                .as_mut()
+                .expect("Invariant") // Safe unwrap, but should still add error for
+                .push(module_id); // clarity. This should be invariant, however.
         }
 
         let dup_node = self.modules.insert(module_id, module); // module is moved here
@@ -431,6 +370,58 @@ impl ModuleTree {
         }
 
         Ok(())
+    }
+
+    pub fn resolve_pending_path_attrs(&mut self) -> Result<(), ModuleTreeError> {
+        let module_ids = match self.pending_path_attrs.take() {
+            Some(pending_ids) => pending_ids,
+            // Return early if there are no `#path` attributes
+            // Info logging should go here
+            None => return Ok(()),
+        };
+        for module_id in module_ids {
+            let base_dir = match self.find_declaring_file_dir(module_id) {
+                Ok(dir) => dir,
+                Err(e) => {
+                    log_path_attr_not_found(module_id);
+                    return Err(ModuleTreeError::UnresolvedPathAttr(Box::new(e)));
+                    // implement new error type with more context (placeholder)
+                }
+            };
+            let module = self.get_module_checked(&module_id)?; // Should abort on ModuleNotFound
+            let path_val = extract_path_attr_from_node(module).take().unwrap();
+
+            let resolved = base_dir.join(path_val).normalize();
+            self.log_path_attr(&module, path_val, &resolved);
+            match self.found_path_attrs.entry(module_id) {
+                // Clone node_path for the error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Path already exists
+                    let existing_path = entry.get().clone();
+                    return Err(ModuleTreeError::DuplicatePathAttribute {
+                        module_id,
+                        existing_path,
+                        conflicting_path: resolved,
+                        // path: resolved, // Use the cloned path
+                        // existing_id,
+                        // conflicting_id: module_id.into_inner(),
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Id is free, insert it
+                    entry.insert(resolved);
+                }
+            };
+        }
+        Ok(())
+    }
+    pub fn get_module_checked(
+        &self,
+        module_id: &ModuleNodeId,
+    ) -> Result<&ModuleNode, ModuleTreeError> {
+        self.modules
+            .get(&module_id)
+            .ok_or(ModuleTreeError::ModuleNotFound(*module_id))
     }
 
     /// Builds 'ResolvesToDefinition' relations between module declarations and their file-based definitions.
@@ -638,7 +629,7 @@ impl ModuleTree {
 
                                 // For chains, recursively build path to original
                                 if target_id != item_id {
-                                    if let Ok(mut original_path) =
+                                    if let Ok(/* mut */ original_path) =
                                         self.shortest_public_path(target_id, graph)
                                     {
                                         reexport_path.extend(original_path);
@@ -796,7 +787,7 @@ impl ModuleTree {
     }
 
     pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
-        self.path_attributes.get(&module_id)
+        self.found_path_attrs.get(&module_id)
     }
 
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
@@ -1132,7 +1123,7 @@ impl ModuleTree {
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
     pub fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        for (decl_module_id, resolved_path) in self.path_attributes.iter() {
+        for (decl_module_id, resolved_path) in self.found_path_attrs.iter() {
             let ctx = PathProcessingContext {
                 module_id: *decl_module_id,
                 module_name: "?", // Temporary placeholder
@@ -1152,25 +1143,19 @@ impl ModuleTree {
             };
             self.log_path_processing(&ctx, "Processing", None);
 
-            // --- CURRENT INCORRECT LOGIC ---
-            // Find the module node *using the declaration ID* again.
             if let Some(module_node) = self.modules.get(decl_module_id) {
-                // Still using decl_module_id
                 let relation = Relation {
                     source: GraphId::Node(decl_module_id.into_inner()), // Source is Declaration ID
-                    target: GraphId::Node(module_node.id()), // Target is ALSO Declaration ID
+                    target: GraphId::Node(module_node.id),              // Target is Definition ID
                     kind: RelationKind::CustomPath,
                 };
                 self.log_relation(relation, Some("Should target file node"));
                 self.tree_relations.push(relation.into());
             } else {
-                // Log if the declaration module itself is somehow missing (shouldn't happen)
                 self.log_module_error(*decl_module_id, "Declaration module not found");
                 // TODO: Add proper error handling here for module not found.
                 // Consider returning Err(ModuleTreeError::ContainingModuleNotFound(*decl_module_id.as_inner()))
             }
-            // --- END OF CURRENT INCORRECT LOGIC ---
-
             // --- TODO: Correct Logic would involve: ---
             // 1. Searching self.modules for a FileBased node whose file_path matches `resolved_path`.
             // 2. If found, create Relation { source: DeclId, target: FileDefId, kind: ResolvesToDefinition or CustomPath }
@@ -1202,7 +1187,7 @@ impl ModuleTree {
             "Insert".log_header(),
             module.name.log_name(),
             format!("({})", id).log_id(),
-            module.visibility.log_vis()
+            module.visibility.log_vis_debug()
         );
     }
 
@@ -1284,6 +1269,10 @@ impl ModuleTree {
     // Removed unused get_module_path_vec and get_root_path methods
 }
 
+fn log_path_attr_not_found(module_id: ModuleNodeId) {
+    log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} processed with path attribute during file dir search.", module_id);
+}
+
 // Extension trait for Path normalization
 trait PathNormalize {
     fn normalize(&self) -> PathBuf;
@@ -1325,5 +1314,75 @@ impl ModuleTree {
         // 2. Check re-exports in parent modules
         // 3. Try relative paths (self/super/crate)
         todo!()
+    }
+}
+
+/// Helper struct to hold context for accessibility logging.
+struct AccLogCtx<'a> {
+    // source_id: ModuleNodeId, // Removed unused field
+    // target_id: ModuleNodeId, // Removed unused field
+    source_name: &'a str,
+    target_name: &'a str,
+    effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
+}
+
+impl<'a> AccLogCtx<'a> {
+    /// Creates a new context for logging accessibility checks.
+    fn new(
+        source_id: ModuleNodeId,                   // Keep ID args for name lookup
+        target_id: ModuleNodeId,                   // Keep ID args for name lookup
+        effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
+        tree: &'a ModuleTree,                      // Need tree to look up names
+    ) -> Self {
+        let source_name = tree
+            .modules
+            .get(&source_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        let target_name = tree
+            .modules
+            .get(&target_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        Self {
+            // source_id, // Removed unused field
+            // target_id, // Removed unused field
+            source_name,
+            target_name,
+            effective_vis,
+        }
+    }
+}
+
+/// Helper struct to hold context for path attribute logging.
+struct PathLogCtx<'a> {
+    module_id: ModuleNodeId,
+    module_name: &'a str,
+    module_path: &'a [String], // Use slice for efficiency
+    attr_value: Option<&'a str>,
+    resolved_path: Option<&'a PathBuf>,
+}
+
+struct PathProcessingContext<'a> {
+    module_id: ModuleNodeId,
+    module_name: &'a str,
+    attr_value: Option<&'a str>,
+    resolved_path: Option<&'a PathBuf>,
+}
+
+impl<'a> PathLogCtx<'a> {
+    /// Creates a new context for logging path attribute processing.
+    fn new(
+        module_node: &'a ModuleNode,
+        attr_value: Option<&'a str>,
+        resolved_path: Option<&'a PathBuf>,
+    ) -> Self {
+        Self {
+            module_id: ModuleNodeId::new(module_node.id()),
+            module_name: &module_node.name,
+            module_path: &module_node.path,
+            attr_value,
+            resolved_path,
+        }
     }
 }

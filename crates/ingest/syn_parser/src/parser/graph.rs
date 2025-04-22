@@ -1,5 +1,4 @@
 use crate::error::SynParserError;
-use crate::utils::LogStyle;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
 use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
@@ -74,12 +73,13 @@ impl CodeGraph {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
         tree.process_export_rels(self)?; // abort parsing for invalid re-export nodes.
-        tree.process_path_attributes()?; // abort parsing for target `#[path = "..."` not found.
                                          // 1: Register all modules with their containment info
         for module in &self.modules {
             log_tree_build(module);
             tree.add_module(module.clone())?;
         }
+        tree.resolve_pending_path_attrs()?;
+        tree.process_path_attributes()?; // abort parsing for target `#[path = "..."` not found.
 
         // 2: Process direct contains relationships between files
         tree.register_containment_batch(&self.relations)?;
@@ -276,16 +276,9 @@ impl CodeGraph {
         let first = matches.next();
         if let Some(_second) = matches.next() {
             // If duplicates found, return DuplicateNode error using the ID of the first match
-            // as an example representative ID involved in the duplication.
-            // We can safely unwrap `first` here because we know `matches.next()` returned Some.
             return Err(SynParserError::DuplicateNode(first.unwrap().id()));
         }
         // If only one or zero found, proceed.
-        // Use ok_or_else to provide a more specific error if needed, but NotFound is general.
-        // We need *an* ID for NotFound, so if `first` is None, we can't provide one easily.
-        // Let's return a more generic error or adjust NotFound if needed.
-        // For now, let's use InternalState if no matches, as it indicates a test setup issue
-        // if the expected file isn't found.
         first.ok_or_else(|| {
             SynParserError::InternalState(format!(
                 "ModuleNode with file path ending in '{}' not found.",
