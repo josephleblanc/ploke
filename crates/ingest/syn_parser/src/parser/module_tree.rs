@@ -1143,23 +1143,60 @@ impl ModuleTree {
             };
             self.log_path_processing(&ctx, "Processing", None);
 
-            if let Some(module_node) = self.modules.get(decl_module_id) {
-                let relation = Relation {
-                    source: GraphId::Node(decl_module_id.into_inner()), // Source is Declaration ID
-                    target: GraphId::Node(module_node.id),              // Target is Definition ID
-                    kind: RelationKind::CustomPath,
-                };
-                self.log_relation(relation, Some("Should target file node"));
-                self.tree_relations.push(relation.into());
-            } else {
-                self.log_module_error(*decl_module_id, "Declaration module not found");
-                // TODO: Add proper error handling here for module not found.
-                // Consider returning Err(ModuleTreeError::ContainingModuleNotFound(*decl_module_id.as_inner()))
+            let mut targets_iter = self.modules.values().filter(|m| {
+                m.is_file_based() && m.file_path().is_some_and(|fp| fp == resolved_path)
+            });
+            let target_defn = targets_iter.next();
+
+            match target_defn {
+                Some(target_defn_node) => {
+                    // 2. Found the target file definition node. Create the relation.
+                    let target_defn_id = target_defn_node.id();
+                    let relation = Relation {
+                        source: GraphId::Node(decl_module_id.into_inner()),
+                        target: GraphId::Node(target_defn_id),
+                        kind: RelationKind::ResolvesToDefinition,
+                    };
+                    self.log_relation(
+                        relation,
+                        Some(&format!(
+                            "Linking decl {} to file defn {}",
+                            decl_module_id, target_defn_id
+                        )),
+                    );
+                    if let Some(dup) = targets_iter.next() {
+                        return Err(ModuleTreeError::DuplicateDefinition(format!(
+                        "Duplicate module definition for path attribute target '{}'  {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
+                            decl_module_node.id,
+                        resolved_path.display(),
+                            &decl_module_node,
+                        &decl_module_id,
+                        &target_defn_node,
+                    )));
+                    }
+                    self.tree_relations.push(relation.into());
+                }
+                None => {
+                    // 3. Handle case where the target file node wasn't found.
+                    // This indicates an inconsistency - the path resolved, but thecorresponding
+                    // module node isn't in the map.
+                    self.log_module_error(
+                        *decl_module_id,
+                        &format!(
+                            "Path attribute target file not found in modules map:  {}",
+                            resolved_path.display(),
+                        ),
+                    );
+                    // Return an error because the tree is inconsistent
+                    // TODO: Consider a more specific error variant if needed.
+                    return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
+                        "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
+                        resolved_path.display(),
+                        decl_module_node.id,
+                            &decl_module_node,
+                    )));
+                }
             }
-            // --- TODO: Correct Logic would involve: ---
-            // 1. Searching self.modules for a FileBased node whose file_path matches `resolved_path`.
-            // 2. If found, create Relation { source: DeclId, target: FileDefId, kind: ResolvesToDefinition or CustomPath }
-            // 3. Handle cases where the target file node isn't found.
         }
         Ok(())
     }
