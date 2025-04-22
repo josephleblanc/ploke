@@ -18,6 +18,10 @@ impl GraphNode for MacroNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs // Simply return a slice reference to the stored cfgs
     }
+
+    fn as_macro(&self) -> Option<&MacroNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for MacroNode {

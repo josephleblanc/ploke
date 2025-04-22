@@ -59,4 +59,8 @@ impl GraphNode for EnumNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_enum(&self) -> Option<&EnumNode> {
+        Some(self)
+    }
 }

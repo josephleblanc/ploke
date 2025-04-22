@@ -41,6 +41,19 @@ pub trait GraphNode {
     fn visibility(&self) -> VisibilityKind;
     fn name(&self) -> &str;
     fn cfgs(&self) -> &[String];
+
+    // --- Default implementations for downcasting ---
+    fn as_function(&self) -> Option<&FunctionNode> { None }
+    fn as_struct(&self) -> Option<&StructNode> { None }
+    fn as_enum(&self) -> Option<&EnumNode> { None }
+    fn as_union(&self) -> Option<&UnionNode> { None }
+    fn as_type_alias(&self) -> Option<&TypeAliasNode> { None }
+    fn as_trait(&self) -> Option<&TraitNode> { None }
+    fn as_impl(&self) -> Option<&ImplNode> { None }
+    fn as_module(&self) -> Option<&ModuleNode> { None }
+    fn as_value(&self) -> Option<&ValueNode> { None }
+    fn as_macro(&self) -> Option<&MacroNode> { None }
+    // Add others like VariantNode, FieldNode if they implement GraphNode directly
 }
 
 /// Represents either a Node or a Type in the graph context, used primarily in Relations.
@@ -325,6 +338,35 @@ impl GraphNode for TypeDefNode {
             TypeDefNode::Enum(n) => n.cfgs(),
             TypeDefNode::TypeAlias(n) => n.cfgs(),
             TypeDefNode::Union(n) => n.cfgs(),
+        }
+    }
+
+    // Delegate downcasting methods
+    fn as_struct(&self) -> Option<&StructNode> {
+        match self {
+            TypeDefNode::Struct(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    fn as_enum(&self) -> Option<&EnumNode> {
+        match self {
+            TypeDefNode::Enum(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    fn as_type_alias(&self) -> Option<&TypeAliasNode> {
+        match self {
+            TypeDefNode::TypeAlias(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    fn as_union(&self) -> Option<&UnionNode> {
+        match self {
+            TypeDefNode::Union(u) => Some(u),
+            _ => None,
         }
     }
 }

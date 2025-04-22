@@ -177,6 +177,10 @@ impl GraphNode for ModuleNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_module(&self) -> Option<&ModuleNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for ModuleNode {

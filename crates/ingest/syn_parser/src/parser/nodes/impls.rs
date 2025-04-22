@@ -33,4 +33,8 @@ impl GraphNode for ImplNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_impl(&self) -> Option<&ImplNode> {
+        Some(self)
+    }
 }

@@ -49,6 +49,10 @@ impl GraphNode for StructNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_struct(&self) -> Option<&StructNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for StructNode {

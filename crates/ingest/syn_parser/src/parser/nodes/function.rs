@@ -33,6 +33,10 @@ impl GraphNode for FunctionNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_function(&self) -> Option<&FunctionNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for FunctionNode {

@@ -36,6 +36,10 @@ impl GraphNode for TraitNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_trait(&self) -> Option<&TraitNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for TraitNode {

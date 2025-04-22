@@ -20,6 +20,10 @@ impl GraphNode for TypeAliasNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_type_alias(&self) -> Option<&TypeAliasNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for TypeAliasNode {

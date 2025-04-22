@@ -19,6 +19,10 @@ impl GraphNode for UnionNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_union(&self) -> Option<&UnionNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for UnionNode {

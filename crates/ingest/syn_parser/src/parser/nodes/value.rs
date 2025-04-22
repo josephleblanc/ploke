@@ -17,6 +17,10 @@ impl GraphNode for ValueNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
+
+    fn as_value(&self) -> Option<&ValueNode> {
+        Some(self)
+    }
 }
 
 impl HasAttributes for ValueNode {
