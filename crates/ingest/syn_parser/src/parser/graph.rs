@@ -1,4 +1,5 @@
 use crate::error::SynParserError;
+use crate::utils::LogStyle;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
 use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError

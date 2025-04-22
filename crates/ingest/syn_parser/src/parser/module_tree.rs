@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::PathBuf,
+    path::{self, PathBuf},
 }; // Keep HashSet and VecDeque
 
 use colored::*; // Import colored for terminal colors
@@ -8,8 +8,8 @@ use log::debug; // Import the debug macro
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::parser::nodes::NodePath;
-use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
+use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node};
+use crate::{parser::nodes::NodePath, utils::LogStyle}; // Ensure NodePath is imported
 
 use super::{
     nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
@@ -86,6 +86,13 @@ struct PathLogCtx<'a> {
     resolved_path: Option<&'a PathBuf>,
 }
 
+struct PathProcessingContext<'a> {
+    module_id: ModuleNodeId,
+    module_name: &'a str,
+    attr_value: Option<&'a str>,
+    resolved_path: Option<&'a PathBuf>,
+}
+
 impl<'a> PathLogCtx<'a> {
     /// Creates a new context for logging path attribute processing.
     fn new(
@@ -102,7 +109,6 @@ impl<'a> PathLogCtx<'a> {
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
@@ -399,57 +405,28 @@ impl ModuleTree {
 
         // insert module to tree
         let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
-        debug!(target: LOG_TARGET_BUILD, "{} {} ({}) | Visibility: {}",
-            "Inserting into tree.modules:".green(),
-            module.name.yellow(),
-            module_id.to_string().magenta(),
-            format!("{:?}", module.visibility).cyan()
-        );
-
-        // Store path attribute if present
-        if let Some(path_val) = extract_path_attr_from_node(&module) {
-            if let Ok(base_dir) = self.find_declaring_file_dir(module_id) {
-                self.path_attributes
-                    .insert(module_id, base_dir.join(path_val).normalize());
-            }
-        }
-
-        let dup_node = self.modules.insert(module_id, module); // module is moved here
-        if let Some(dup) = dup_node {
-            // Box the duplicate node when creating the error variant
-            // Log the duplicate insertion before returning error
-            debug!(target: LOG_TARGET_BUILD, "{} {} ({})",
-                "Duplicate module ID insertion detected:".red().bold(),
-                dup.name.yellow(),
-                dup.id.to_string().magenta()
-            );
-            return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
-        }
+        self.log_module_insert(&module, module_id);
 
         // Store path attribute if present
         if let Some(path_val) = extract_path_attr_from_node(&module) {
             if let Ok(base_dir) = self.find_declaring_file_dir(module_id) {
                 let resolved = base_dir.join(path_val).normalize();
-                // Log the storage action
-                let log_ctx = PathLogCtx::new(&module, Some(path_val), Some(&resolved));
-                self.log_path(&log_ctx, "Storing path attribute", Some("Stored".into()));
+                self.log_path_attr(&module, path_val, &resolved);
                 self.path_attributes.insert(module_id, resolved);
             } else {
                 // Log failure to find base dir (should be rare if tree is consistent)
-                 let log_ctx = PathLogCtx::new(&module, Some(path_val), None);
-                 self.log_path(&log_ctx, "Storing path attribute", Some("Failed: Base dir not found".red().to_string()));
+                let log_ctx = PathLogCtx::new(&module, Some(path_val), None);
+                self.log_path(
+                    &log_ctx,
+                    "Storing path attribute",
+                    Some("Failed: Base dir not found".red().to_string()),
+                );
             }
         }
 
         let dup_node = self.modules.insert(module_id, module); // module is moved here
         if let Some(dup) = dup_node {
-            // Box the duplicate node when creating the error variant
-            // Log the duplicate insertion before returning error
-            debug!(target: LOG_TARGET_BUILD, "{} {} ({})",
-                "Duplicate module ID insertion detected:".red().bold(),
-                dup.name.yellow(),
-                dup.id.to_string().magenta()
-            );
+            self.log_duplicate(&dup);
             return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
         }
 
@@ -474,32 +451,22 @@ impl ModuleTree {
             .iter()
             .filter(|m| m.is_file_based() && m.id() != *root_id.as_inner())
         {
-            let defn_path_vec = module.defn_path(); // This is ["crate", "renamed_path", "actual_file"] for the file node
-            let defn_path_slice = defn_path_vec.as_slice();
+            let defn_path = module.defn_path(); // This is ["crate", "renamed_path", "actual_file"] for the file node
 
             // Log the attempt to find a declaration matching the *file's* definition path
-            debug!(target: LOG_TARGET_PATH_ATTR,
-                   "{} File-based module {} ({}) with defn_path: {}",
-                   "BuildPaths:".truecolor(153, 117, 255), // Purple
-                   module.name.yellow(),
-                   module.id.to_string().magenta(),
-                   format!("{:?}", defn_path_slice).blue()
-            );
-            debug!(target: LOG_TARGET_PATH_ATTR,
-                   "  -> {} decl_index for this path...",
-                   "Checking".green()
-            );
+            self.log_path_resolution(module, defn_path, "Checking", Some("decl_index..."));
 
-            match self.decl_index.get(defn_path_slice) {
+            match self.decl_index.get(defn_path.as_slice()) {
                 Some(decl_id) => {
                     // Found declaration, create relation
-                    debug!(target: LOG_TARGET_PATH_ATTR,
-                           "    {} Found declaration ID: {}",
-                           "Success:".truecolor(255, 159, 64), // Orange
-                           decl_id.to_string().magenta()
+                    self.log_path_resolution(
+                        module,
+                        defn_path,
+                        "Linked",
+                        Some(&format!("to decl {}", decl_id)),
                     );
                     let logical_relation = Relation {
-                        source: GraphId::Node(*decl_id), // Declaration Node
+                        source: GraphId::Node(*decl_id),    // Declaration Node
                         target: GraphId::Node(module.id()), // Definition Node (the file-based one)
                         kind: RelationKind::ResolvesToDefinition,
                     };
@@ -507,14 +474,8 @@ impl ModuleTree {
                 }
                 None => {
                     // No declaration found matching the file's definition path.
-                    debug!(target: LOG_TARGET_PATH_ATTR,
-                           "    {} No declaration found for path {:?}. Marking as potentially unlinked.",
-                           "Failure:".red(),
-                           defn_path_slice.blue()
-                    );
-                    // Try to create UnlinkedModuleInfo.
-                    // Use map_err for explicit conversion from SynParserError to ModuleTreeError
-                    let node_path = NodePath::try_from(defn_path_vec.clone()) // Use the file's defn_path
+                    self.log_unlinked_module(module, defn_path);
+                    let node_path = NodePath::try_from(defn_path.clone()) // Use the file's defn_path
                         .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
                     // If path conversion succeeded, collect the unlinked info.
@@ -1171,49 +1132,40 @@ impl ModuleTree {
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
     pub fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        // Create a temporary copy of path_attributes to iterate over,
-        // as we might need mutable access to self.modules inside the loop.
-        let path_attrs_copy = self.path_attributes.clone();
-
-        for (decl_module_id, resolved_path) in &path_attrs_copy { // Iterate over the copy
-            // Log the processing attempt
+        for (decl_module_id, resolved_path) in self.path_attributes.iter() {
+            let ctx = PathProcessingContext {
+                module_id: *decl_module_id,
+                module_name: "?", // Temporary placeholder
+                attr_value: None,
+                resolved_path: Some(resolved_path),
+            };
             let decl_module_node = self.modules.get(decl_module_id).ok_or_else(|| {
-                // This should ideally not happen if the tree is consistent
-                log::error!(target: LOG_TARGET_PATH_ATTR, "Declaration module {} not found during path attribute processing.", decl_module_id);
+                self.log_path_processing(&ctx, "Error", Some("Module not found"));
                 ModuleTreeError::ContainingModuleNotFound(*decl_module_id.as_inner())
             })?;
 
-            let log_ctx = PathLogCtx::new(
-                decl_module_node,
-                extract_path_attr_from_node(decl_module_node), // Get original attr value
-                Some(resolved_path),
-            );
-            self.log_path(&log_ctx, "Processing stored attribute", None);
-
+            // Update context with module info
+            let ctx = PathProcessingContext {
+                module_name: &decl_module_node.name,
+                attr_value: extract_path_attr_from_node(decl_module_node),
+                ..ctx
+            };
+            self.log_path_processing(&ctx, "Processing", None);
 
             // --- CURRENT INCORRECT LOGIC ---
             // Find the module node *using the declaration ID* again.
-            if let Some(module_node) = self.modules.get(decl_module_id) { // Still using decl_module_id
+            if let Some(module_node) = self.modules.get(decl_module_id) {
+                // Still using decl_module_id
                 let relation = Relation {
                     source: GraphId::Node(decl_module_id.into_inner()), // Source is Declaration ID
                     target: GraphId::Node(module_node.id()), // Target is ALSO Declaration ID
                     kind: RelationKind::CustomPath,
                 };
-                // Log the incorrect relation being created
-                debug!(target: LOG_TARGET_PATH_ATTR,
-                       "  -> {} CustomPath relation: {} -> {} (Should target actual file node!)",
-                       "Creating".green(),
-                       relation.source.to_string().magenta(),
-                       relation.target.to_string().magenta()
-                );
+                self.log_relation(relation, Some("Should target file node"));
                 self.tree_relations.push(relation.into());
             } else {
-                 // Log if the declaration module itself is somehow missing (shouldn't happen)
-                 debug!(target: LOG_TARGET_PATH_ATTR,
-                        "  -> {} Declaration module {} not found in self.modules during processing.",
-                        "Error:".red(),
-                        decl_module_id.to_string().magenta()
-                 );
+                // Log if the declaration module itself is somehow missing (shouldn't happen)
+                self.log_module_error(*decl_module_id, "Declaration module not found");
                 // TODO: Add proper error handling here for module not found.
                 // Consider returning Err(ModuleTreeError::ContainingModuleNotFound(*decl_module_id.as_inner()))
             }
@@ -1228,25 +1180,106 @@ impl ModuleTree {
     }
 
     /// Logs the details of path attribute processing using the provided context.
-    fn log_path(
-        &self,
-        context: &PathLogCtx,
-        step: &str,
-        result: Option<String>, // Use String to allow colored output
-    ) {
+    fn log_path(&self, context: &PathLogCtx, step: &str, result: Option<String>) {
         debug!(target: LOG_TARGET_PATH_ATTR,
-            "{} {} ({}) | Path: {} | Attr: {} | Resolved: {} | Step: {} | Result: {}",
-            "Path Attr Check:".bold().truecolor(153, 117, 255), // Purple
-            context.module_name.yellow(),
-            context.module_id.to_string().magenta(),
-            format!("{:?}", context.module_path).blue(),
-            context.attr_value.map(|v| v.cyan().to_string()).unwrap_or_else(|| "-".dimmed().to_string()),
-            context.resolved_path.map(|p| p.display().to_string().blue()).unwrap_or_else(|| "-".dimmed().to_string()),
-            step.green(),
-            result.unwrap_or_else(|| "N/A".dimmed().to_string()) // Use dimmed N/A if no specific result
+            "{} {} {} | Path: {} | Attr: {} | Resolved: {} | {} | {}",
+            "PathAttr".log_header(),
+            context.module_name.log_name(),
+            format!("({})", context.module_id).log_id(),
+            format!("{:?}", context.module_path).log_path(),
+            context.attr_value.unwrap_or("-").log_path(),
+            context.resolved_path
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "-".to_string())
+                .log_path(),
+            step.log_name(),  // Using name color for step for visual distinction
+            result.unwrap_or_else(|| "✓".to_string()).log_vis()  // Using vis color for result
         );
     }
 
+    fn log_module_insert(&self, module: &ModuleNode, id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_BUILD, "{} {} {} | {}",
+            "Insert".log_header(),
+            module.name.log_name(),
+            format!("({})", id).log_id(),
+            module.visibility.log_vis()
+        );
+    }
+
+    fn log_duplicate(&self, module: &ModuleNode) {
+        debug!(target: LOG_TARGET_BUILD, "{} {} {}",
+            "Duplicate ID".log_error(),
+            module.name.log_name(),
+            format!("({})", module.id).log_id()
+        );
+    }
+
+    fn log_path_attr(&self, module: &ModuleNode, raw_path: &str, resolved: &path::Path) {
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} → {}",
+            "PathAttr".log_header(),
+            module.name.log_name(),
+            raw_path.log_path(),
+            resolved.display().to_string().log_path()
+        );
+    }
+
+    fn log_path_resolution(
+        &self,
+        module: &ModuleNode,
+        path: &[String],
+        status: &str,
+        details: Option<&str>,
+    ) {
+        debug!(target: LOG_TARGET_PATH_ATTR,
+            "{} {} {} | Path: {} | {} {}",
+            "PathResolve".log_header(),
+            module.name.log_name(),
+            format!("({})", module.id).log_id(),
+            format!("{:?}", path).log_path(),
+            status.log_vis(),
+            details.unwrap_or("").log_name()
+        );
+    }
+
+    fn log_unlinked_module(&self, module: &ModuleNode, path: &[String]) {
+        self.log_path_resolution(module, path, "Unlinked", Some("No declaration found"));
+    }
+
+    fn log_path_processing(&self, ctx: &PathProcessingContext, step: &str, result: Option<&str>) {
+        debug!(target: LOG_TARGET_PATH_ATTR,
+            "{} {} {} | Attr: {} | Resolved: {} | {} | {}",
+            "PathAttr".log_header(),
+            ctx.module_name.log_name(),
+            format!("({})", ctx.module_id).log_id(),
+            ctx.attr_value.unwrap_or("-").log_path(),
+            ctx.resolved_path
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "-".to_string())
+                .log_path(),
+            step.log_name(),
+            result.unwrap_or("✓").log_vis()
+        );
+    }
+    fn log_relation(&self, relation: Relation, note: Option<&str>) {
+        debug!(target: LOG_TARGET_PATH_ATTR,
+            "{} {}: {} → {} {}",
+            "Relation".log_header(),
+            format!("{:?}", relation.kind).log_name(),
+            relation.source.to_string().log_id(),
+            relation.target.to_string().log_id(),
+            note.map(|n| format!("({})", n)).unwrap_or_default().log_vis()
+        );
+    }
+
+    fn log_module_error(&self, module_id: ModuleNodeId, message: &str) {
+        debug!(target: LOG_TARGET_PATH_ATTR,
+            "{} {} {} | {}",
+            "Error".log_error(),
+            "module".log_name(),
+            format!("({})", module_id).log_id(),
+            message.log_vis()
+        );
+    }
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
