@@ -634,9 +634,9 @@ impl ModuleTree {
                 // Check for duplicate re-exports
                 if let Some(existing_id) = self.reexport_index.get(&node_path) {
                     if *existing_id != export_node.id {
-                        //  Add a new error type for this case. A duplicate re-export is a case of
+                        // AI: Add a new error type for this case. A duplicate re-export is a case of
                         // a malformed target and should be signal an abort in the process of
-                        // resolving the `CodeGraph`
+                        // resolving the `CodeGraph` AI!
                         log::warn!(
                             "Conflicting re-export path {} for IDs {} and {}",
                             node_path,
