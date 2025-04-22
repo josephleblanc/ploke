@@ -37,6 +37,7 @@ pub enum RelationKind {
     ValueType,
     MacroUse,
     ModuleImports,
+    ReExport, // e.g. `pub use some_dep::a::b::ReExportedStruct` --ReExport->ReExportedStruct defn
     /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
     /// `mod foo { ... }`).
     /// Direction: `Declaration ModuleNode` -> `Definition ModuleNode`.
@@ -84,6 +85,11 @@ impl TryInto<ScopeKind> for RelationKind {
 
     fn try_into(self) -> Result<ScopeKind, Self::Error> {
         match self {
+            Self::Contains => Ok(ScopeKind::CanUse),
+            Self::Uses => Ok(ScopeKind::CanUse),
+            Self::ValueType => Ok(ScopeKind::CanUse),
+            Self::ModuleImports => Ok(ScopeKind::CanUse),
+            Self::ReExport => Ok(ScopeKind::CanUse),
             Self::FunctionParameter => Ok(ScopeKind::RequiresParent),
             Self::FunctionReturn => Ok(ScopeKind::RequiresParent),
             Self::StructField => Ok(ScopeKind::RequiresParent),
@@ -94,11 +100,7 @@ impl TryInto<ScopeKind> for RelationKind {
             Self::ImplementsTrait => Err(RelationConversionError::NotApplicable(self)),
             Self::Inherits => Err(RelationConversionError::NotApplicable(self)),
             Self::References => Err(RelationConversionError::NotApplicable(self)),
-            Self::Contains => Ok(ScopeKind::CanUse),
-            Self::Uses => Ok(ScopeKind::CanUse),
-            Self::ValueType => Ok(ScopeKind::CanUse),
             Self::MacroUse => Err(RelationConversionError::NotApplicable(self)),
-            Self::ModuleImports => Ok(ScopeKind::CanUse),
             Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
             Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
         }

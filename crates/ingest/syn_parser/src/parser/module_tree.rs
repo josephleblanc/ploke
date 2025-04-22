@@ -99,6 +99,8 @@ pub struct ModuleTree {
     /// same path.
     decl_index: HashMap<NodePath, NodeId>,
     tree_relations: Vec<TreeRelation>,
+    /// re-export index for faster lookup during visibility resolution.
+    reexport_index: HashMap<NodePath, NodeId>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -275,6 +277,7 @@ impl ModuleTree {
             path_index: HashMap::new(),
             decl_index: HashMap::new(),
             tree_relations: vec![],
+            reexport_index: HashMap::new(),
         })
     }
 
@@ -489,6 +492,46 @@ impl ModuleTree {
         visited.insert(start_module_id);
 
         while let Some((current_mod_id, current_path)) = queue.pop_front() {
+            for rel in self
+                .tree_relations
+                .iter()
+                .filter(|tr| tr.relation().source == GraphId::Node(current_mod_id.into_inner()))
+            {
+                match rel.relation().kind {
+                    RelationKind::Contains if rel.relation().target == GraphId::Node(item_id) => {
+                        // Direct containment case (existing logic)
+                        let item_node = graph.find_node_unique(item_id)?;
+                        if item_node.visibility().is_pub() {
+                            return Ok(current_path);
+                        }
+                    }
+                    RelationKind::ReExport if rel.relation().target == GraphId::Node(item_id) => {
+                        if let Some(reexport_name) = self.get_reexport_name(current_mod_id, item_id)
+                        {
+                            let mut reexport_path = current_path.clone();
+                            reexport_path.push(reexport_name);
+                            // Recursively find path to original definition
+                            if let Ok(mut original_path) =
+                                self.shortest_public_path(rel.relation().target.try_into()?, graph)
+                            {
+                                reexport_path.extend(original_path);
+                                return Ok(reexport_path);
+                            }
+                        }
+                    }
+
+                    // RelationKind::ReExport if rel.relation().target == GraphId::Node(item_id) => {
+                    //     // Re-export case - follow chain to original while building path
+                    //     let mut reexport_path = current_path.clone();
+                    //     if let Some(reexport_name) = self.get_reexport_name(current_mod_id, item_id)
+                    //     {
+                    //         reexport_path.push(reexport_name);
+                    //         return Ok(reexport_path);
+                    //     }
+                    // }
+                    _ => {}
+                }
+            }
             // --- Target Check ---
             // Check if the current module *contains* the item_id directly.
             let contains_relation_exists = self.tree_relations.iter().any(|tr| {
@@ -560,6 +603,60 @@ impl ModuleTree {
 
         // Item not found via any public path
         Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
+    }
+
+    // TODO: Make a parallellized version with rayon
+    // fn process_export_rels(&self, graph: &CodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
+    //     todo!()
+    // }
+    // or
+    fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+        for export in &self.pending_exports {
+            let source_mod_id = export.module_node_id();
+            let export_node = export.export_node();
+
+            // Create relation
+            let relation = Relation {
+                source: GraphId::Node(*source_mod_id.as_inner()),
+                target: GraphId::Node(export_node.id),
+                kind: RelationKind::ReExport,
+            };
+            self.tree_relations.push(relation.into());
+
+            // Add to reexport_index
+            if let Some(reexport_name) = export_node.path.last() {
+                let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
+                reexport_path.push(reexport_name.clone());
+
+                let node_path = NodePath::try_from(reexport_path)
+                    .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+
+                // Check for duplicate re-exports
+                if let Some(existing_id) = self.reexport_index.get(&node_path) {
+                    if *existing_id != export_node.id {
+                        //  Add a new error type for this case. A duplicate re-export is a case of
+                        // a malformed target and should be signal an abort in the process of
+                        // resolving the `CodeGraph`
+                        log::warn!(
+                            "Conflicting re-export path {} for IDs {} and {}",
+                            node_path,
+                            existing_id,
+                            export_node.id
+                        );
+                    }
+                }
+
+                self.reexport_index.insert(node_path, export_node.id);
+            }
+        }
+        Ok(())
+    }
+
+    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
+        self.pending_exports
+            .iter()
+            .find(|exp| exp.module_node_id() == module_id && exp.export_node().id == item_id)
+            .and_then(|exp| exp.export_node().path.last().cloned())
     }
 
     fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {
