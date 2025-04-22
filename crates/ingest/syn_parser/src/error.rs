@@ -200,6 +200,30 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                     start_node_id
                 ))
             }
+            // --- NEW ARMS ---
+            ModuleTreeError::DuplicatePathAttribute {
+                module_id,
+                existing_path,
+                conflicting_path,
+            } => SynParserError::InternalState(format!(
+                "Duplicate path attribute found for module {}. Existing: '{}', Conflicting: '{}'",
+                module_id,
+                existing_path.display(),
+                conflicting_path.display()
+            )),
+            ModuleTreeError::UnresolvedPathAttr(inner_err) => {
+                // Recursively convert the inner error, then wrap in InternalState
+                let syn_err: SynParserError = (*inner_err).into(); // Convert Box<ModuleTreeError>
+                SynParserError::InternalState(format!(
+                    "Failed to resolve path attribute: {}",
+                    syn_err // Display the converted inner error
+                ))
+            }
+            ModuleTreeError::ModuleNotFound(module_id) => SynParserError::InternalState(format!(
+                "Module with ID {} not found in ModuleTree.modules map.",
+                module_id
+            )),
+            // --- END NEW ARMS ---
         }
     }
 }
