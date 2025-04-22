@@ -218,6 +218,12 @@ pub enum ModuleTreeError {
 
     #[error("ModuleId not found in ModuleTree.modules: {0}")]
     ModuleNotFound(ModuleNodeId),
+
+    // --- NEW VARIANTS for process_path_attributes ---
+    #[error("Duplicate module definitions found for path attribute target: {0}")]
+    DuplicateDefinition(String), // Store detailed message
+    #[error("Module definition not found for path attribute target: {0}")]
+    ModuleDefinitionNotFound(String), // Store detailed message
 }
 
 // Manual implementation to satisfy the `?` operator
