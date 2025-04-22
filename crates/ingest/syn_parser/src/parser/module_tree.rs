@@ -18,6 +18,24 @@ use super::{
     CodeGraph,
 };
 
+#[cfg(test)]
+pub mod test_interface {
+    use ploke_core::NodeId;
+
+    use super::{ModuleTree, ModuleTreeError};
+    use crate::CodeGraph;
+
+    impl ModuleTree {
+        pub fn test_shortest_public_path(
+            &self,
+            item_id: NodeId,
+            graph: &CodeGraph,
+        ) -> Result<Vec<String>, ModuleTreeError> {
+            self.shortest_public_path(item_id, graph)
+        }
+    }
+}
+
 const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
 const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 
@@ -63,6 +81,7 @@ pub struct ModuleTree {
     // ModuleNodeId of the root file-level module, e.g. `main.rs`, `lib.rs`, used to initialize the
     // ModuleTree.
     root: ModuleNodeId,
+    root_file: PathBuf,
     /// Index of all modules in the merged `CodeGraph`, in a HashMap for efficient lookup
     modules: HashMap<ModuleNodeId, ModuleNode>,
     /// Temporary storage for unresolved imports (e.g. `use` statements)
@@ -199,13 +218,11 @@ pub enum ModuleTreeError {
 
     #[error("Syn parser error: {0}")]
     SynParserError(Box<SynParserError>), // REMOVE #[from]
-
-    // --- NEW VARIANTS ---
-    #[error("Root module {0} is not file-based, which is required for path resolution.")]
-    RootModuleNotFileBased(ModuleNodeId),
-
+    //
     #[error("Could not determine parent directory for file path: {0}")]
     FilePathMissingParent(PathBuf), // Store the problematic path
+    #[error("Root module {0} is not file-based, which is required for path resolution.")]
+    RootModuleNotFileBased(ModuleNodeId),
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -244,16 +261,27 @@ impl ModuleTree {
         &self.pending_exports
     }
 
-    pub fn new_from_root(root: ModuleNodeId) -> Self {
-        Self {
-            root,
+    pub fn new_from_root(root: &ModuleNode) -> Result<Self, ModuleTreeError> {
+        let root_id = ModuleNodeId::new(root.id());
+        let root_file = root
+            .file_path()
+            .ok_or(ModuleTreeError::RootModuleNotFileBased(root_id))?;
+        Ok(Self {
+            root: root_id,
+            root_file: root_file.to_path_buf(),
             modules: HashMap::new(),
             pending_imports: vec![],
             pending_exports: vec![],
             path_index: HashMap::new(),
             decl_index: HashMap::new(),
             tree_relations: vec![],
-        }
+        })
+    }
+
+    pub fn get_root_module(&self) -> Result<&ModuleNode, ModuleTreeError> {
+        self.modules
+            .get(&self.root)
+            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
     }
 
     pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
@@ -342,7 +370,10 @@ impl ModuleTree {
     /// Returns `Ok(())` on complete success.
     /// Returns `Err(ModuleTreeError::FoundUnlinkedModules)` if only unlinked modules are found.
     /// Returns other `Err(ModuleTreeError)` variants on fatal errors (e.g., path validation).
-    pub fn build_logical_paths(&mut self, modules: &[ModuleNode]) -> Result<(), ModuleTreeError> {
+    pub(crate) fn build_logical_paths(
+        &mut self,
+        modules: &[ModuleNode],
+    ) -> Result<(), ModuleTreeError> {
         // Return Ok(()) or Err(ModuleTreeError)
         let mut new_relations: Vec<TreeRelation> = Vec::new();
         let mut collected_unlinked: Vec<UnlinkedModuleInfo> = Vec::new(); // Store only unlinked info
@@ -789,16 +820,18 @@ impl ModuleTree {
         result // Return the final calculated result
     }
 
-    // Proposed new function signature and implementation using while let
+    // Proposed new function signature and implementation
     fn find_declaring_file_dir(&self, module_id: ModuleNodeId) -> Result<PathBuf, ModuleTreeError> {
         let mut current_id = module_id;
 
-        // Use `while let Some(...)` pattern to iterate as long as the node exists in the map
         while let Some(current_node) = self.modules.get(&current_id) {
+            // Get the current node, returning error if not found in the tree
+
             // Check if the current node is file-based
             if let Some(file_path) = current_node.file_path() {
                 // Found a file-based ancestor. Get its parent directory.
-                return file_path.parent()
+                return file_path
+                    .parent()
                     .map(|p| p.to_path_buf())
                     // Return error if the file path has no parent (e.g., it's just "/")
                     .ok_or_else(|| ModuleTreeError::FilePathMissingParent(file_path.clone()));
@@ -810,31 +843,81 @@ impl ModuleTree {
                 return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
             }
 
-            // If not file-based and not the root, try to get the parent for the next iteration.
-            match self.get_parent_module_id(current_id) {
-                Some(parent_id) => {
-                    // Move to the parent for the next loop iteration
-                    current_id = parent_id;
-                }
-                None => {
-                    // No parent found, and we already established it wasn't the root.
-                    // This indicates an inconsistent tree structure.
-                    log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for non-root module {} during file dir search.", current_id);
-                    // Return error indicating the missing link.
-                    return Err(ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner()));
-                }
-            }
+            // If not file-based and not the root, move up to the parent.
+            // Return error if the parent link is missing (inconsistent tree).
+            current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
+                // Log this specific case for debugging?
+                log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id);
+                ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner())
+                // Re-use existing error
+            })?;
         }
+        Err(ModuleTreeError::ContainingModuleNotFound(
+            *current_id.as_inner(),
+        ))
+    }
+    /// Resolves a path string (either relative or absolute) relative to a base directory.
+    ///
+    /// # Arguments
+    /// * `base_dir` - The base directory to resolve relative paths from
+    /// * `relative_or_absolute` - The path string to resolve (can be relative like "../foo" or absolute "/bar")
+    ///
+    /// # Returns
+    /// The resolved absolute PathBuf
+    pub fn resolve_relative_path(
+        base_dir: &std::path::Path,
+        relative_or_absolute: &str,
+    ) -> PathBuf {
+        let path = PathBuf::from(relative_or_absolute);
 
-        // If the loop terminates, it means `self.modules.get(&current_id)` returned `None`
-        // at the beginning of an iteration. This implies the `current_id` (which was
-        // either the initial `module_id` or a `parent_id` from the previous iteration)
-        // is not present in the `modules` map, indicating an inconsistent state.
-        log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Module ID {} not found in modules map during file dir search.", current_id);
-        Err(ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner()))
+        if path.is_absolute() {
+            // If absolute, return as-is (normalized)
+            path
+        } else {
+            // If relative, join with base_dir and normalize
+            base_dir.join(path).normalize()
+        }
+    }
+
+    pub fn resolve_path_for_module(
+        &self,
+        module_id: ModuleNodeId,
+        path: &str,
+    ) -> Result<PathBuf, ModuleTreeError> {
+        let base_dir = self.find_declaring_file_dir(module_id)?;
+        Ok(Self::resolve_relative_path(&base_dir, path))
     }
 
     // Removed unused get_module_path_vec and get_root_path methods
+}
+
+// Extension trait for Path normalization
+trait PathNormalize {
+    fn normalize(&self) -> PathBuf;
+}
+
+impl PathNormalize for std::path::Path {
+    fn normalize(&self) -> PathBuf {
+        let mut components = Vec::new();
+
+        for component in self.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    if components
+                        .last()
+                        .map(|c| c != &std::path::Component::RootDir)
+                        .unwrap_or(false)
+                    {
+                        components.pop();
+                    }
+                }
+                std::path::Component::CurDir => continue,
+                _ => components.push(component),
+            }
+        }
+
+        components.iter().collect()
+    }
 }
 
 // #[allow(unused_variables)]

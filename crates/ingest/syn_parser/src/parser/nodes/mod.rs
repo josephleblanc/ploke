@@ -268,6 +268,21 @@ pub struct Attribute {
     pub value: Option<String>, // Optional value (e.g., for `#[attr = "value"]`)
 }
 
+pub fn extract_attribute_value(attrs: &[Attribute]) -> Option<&str> {
+    attrs
+        .iter()
+        .find(|attr| attr.name == "path" && attr.value.is_some())
+        .and_then(|attr| attr.value.as_deref())
+}
+
+pub trait HasAttributes {
+    fn attributes(&self) -> &[Attribute];
+}
+
+pub fn extract_path_attr_from_node<T: HasAttributes>(node: &T) -> Option<&str> {
+    extract_attribute_value(node.attributes())
+}
+
 // Represents a type definition (struct, enum, type alias, or union)
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum TypeDefNode {

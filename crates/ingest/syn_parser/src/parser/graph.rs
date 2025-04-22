@@ -3,8 +3,7 @@ use ploke_core::{NodeId, TypeId, TypeKind};
 
 use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
 use super::nodes::{
-    EnumNode, GraphId, GraphNode, ImportNode, ModuleDef, ModuleNodeId, StructNode, TypeAliasNode,
-    UnionNode,
+    EnumNode, GraphId, GraphNode, ImportNode, ModuleDef, StructNode, TypeAliasNode, UnionNode,
 };
 use super::relations::RelationKind;
 use crate::parser::visibility::VisibilityResult;
@@ -56,7 +55,7 @@ impl CodeGraph {
         Ok(new_graph)
     }
 
-    pub(crate) fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
+    fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
         self.functions.append(&mut other.functions);
         self.defined_types.append(&mut other.defined_types);
         self.type_graph.append(&mut other.type_graph);
@@ -72,65 +71,51 @@ impl CodeGraph {
 
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
-        let mut tree = ModuleTree::new_from_root(ModuleNodeId::new(root_module.id));
-
+        let mut tree = ModuleTree::new_from_root(root_module)?;
         // 1: Register all modules with their containment info
         for module in &self.modules {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({}) | Visibility: {}",
-                "Processing module for tree:".blue(),
-                module.name.yellow(),
-                module.id.to_string().magenta(),
-                format!("{:?}", module.visibility).cyan()
-            );
+            log_tree_build(module);
             tree.add_module(module.clone())?;
         }
 
         // 2: Process direct contains relationships between files
-        tree.register_containment_batch(&self.relations)?; // Assuming this returns Result
+        tree.register_containment_batch(&self.relations)?;
 
-        // 3: Construct 'ResolvesToDefinition' relations.
-        match tree.build_logical_paths(&self.modules) {
-            Ok(()) => {
-                // Complete success, proceed.
+        // 3: Build logical paths
+        if let Err(module_tree_error) = tree.build_logical_paths(&self.modules) {
+            match module_tree_error {
+                ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
+                    self.handle_unlinked_modules(unlinked_infos);
+                }
+                // fatal error
+                _ => return Err(SynParserError::from(module_tree_error)),
             }
-            Err(module_tree_error) => {
-                // An error occurred, check its type.
-                match module_tree_error {
-                    ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
-                        // This is the non-fatal case. Log warnings.
-                        if !unlinked_infos.is_empty() {
-                            eprintln!(
-                                "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
-                                unlinked_infos.len()
-                            );
-                            for info in unlinked_infos.iter() {
-                                // Iterate over the Boxed Vec
-                                eprintln!(
-                                    "  - Path: {}, ID: {}",
-                                    info.definition_path, info.module_id
-                                );
-                                // Optionally include the absolute file path
-                                if let Some(module_node) = self.get_module(info.module_id) {
-                                    if let Some(file_path) = module_node.file_path() {
-                                        eprintln!("    File: {}", file_path.display());
-                                    }
-                                }
-                            }
-                        }
-                        // Proceed with returning Ok(tree) after logging.
-                    }
-                    // Any other error variant is considered fatal.
-                    fatal_error => {
-                        // Convert the fatal ModuleTreeError to SynParserError and return.
-                        return Err(SynParserError::from(fatal_error));
+        }
+
+        Ok(tree)
+    }
+
+    #[allow(clippy::boxed_local, clippy::box_collection)]
+    fn handle_unlinked_modules(
+        &self,
+        unlinked_infos: Box<Vec<super::module_tree::UnlinkedModuleInfo>>,
+    ) {
+        if !unlinked_infos.is_empty() {
+            eprintln!(
+                "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
+                unlinked_infos.len()
+            );
+            for info in unlinked_infos.iter() {
+                // Iterate over the Boxed Vec
+                eprintln!("  - Path: {}, ID: {}", info.definition_path, info.module_id);
+                // Optionally include the absolute file path
+                if let Some(module_node) = self.get_module(info.module_id) {
+                    if let Some(file_path) = module_node.file_path() {
+                        eprintln!("    File: {}", file_path.display());
                     }
                 }
             }
         }
-
-        // If we reached here, build_logical_paths either succeeded completely (Ok)
-        // or returned FoundUnlinkedModules (Err), which was handled by logging.
-        Ok(tree)
     }
 
     /// Filters and allocates a new Vec for direct children of module id.
@@ -844,5 +829,26 @@ impl CodeGraph {
             return Err(SynParserError::DuplicateNode(id));
         }
         first.ok_or(SynParserError::NotFound(id))
+    }
+}
+
+fn log_tree_build(module: &ModuleNode) {
+    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({}) | Visibility: {}",
+        "Processing module for tree:".blue(),
+        module.name.yellow(),
+        module.id.to_string().magenta(),
+        format!("{:?}", module.visibility).cyan()
+    );
+}
+
+#[cfg(test)]
+pub mod test_interface {
+    use super::CodeGraph;
+    use crate::{error::SynParserError, parser::module_tree::ModuleTree};
+
+    impl CodeGraph {
+        pub fn test_build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
+            self.build_module_tree()
+        }
     }
 }

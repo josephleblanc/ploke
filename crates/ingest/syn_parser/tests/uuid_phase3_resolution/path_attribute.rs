@@ -14,6 +14,7 @@ fn test_path_attribute_handling() {
         graphs.push(parsed_graph.graph);
     }
     let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
+    let module_tree = merged_graph.build_module_tree();
 
     // --- Test `logical_path_mod` (#[path = "renamed_path/actual_file.rs"]) ---
 
@@ -30,10 +31,7 @@ fn test_path_attribute_handling() {
 
     // Assert the declaration node *does* store the #[path] attribute
     assert!(
-        logical_mod_decl
-            .attributes
-            .iter()
-            .any(|a| a.name == "path"), // Expect 'path' attribute to be present
+        logical_mod_decl.attributes.iter().any(|a| a.name == "path"), // Expect 'path' attribute to be present
         "Declaration node for logical_path_mod should store the #[path] attribute."
     );
 
@@ -78,10 +76,7 @@ fn test_path_attribute_handling() {
         .expect("Could not find declaration for common_import_mod");
 
     assert!(
-        !common_mod_decl
-            .attributes
-            .iter()
-            .any(|a| a.name == "path"),
+        !common_mod_decl.attributes.iter().any(|a| a.name == "path"),
         "Declaration node for common_import_mod should not store the #[path] attribute itself."
     );
 
@@ -100,7 +95,8 @@ fn test_path_attribute_handling() {
             // Construct the expected absolute path relative to the workspace
             let expected_path = fixtures_crates_dir().join("common_file.rs");
             assert_eq!(
-                file_path, &expected_path,
+                file_path,
+                &expected_path,
                 "File path for common_import_mod definition should be '{}', but was '{}'",
                 expected_path.display(),
                 file_path.display()
