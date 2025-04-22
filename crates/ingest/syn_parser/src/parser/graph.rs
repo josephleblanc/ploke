@@ -72,6 +72,7 @@ impl CodeGraph {
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
+        tree.process_export_rels(self)?;
         // 1: Register all modules with their containment info
         for module in &self.modules {
             log_tree_build(module);

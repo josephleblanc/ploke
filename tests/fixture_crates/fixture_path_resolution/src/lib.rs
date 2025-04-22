@@ -74,7 +74,7 @@ pub mod restricted_vis_mod {
 
 // 6c. Module using #[path] to point outside src/
 #[path = "../common_file.rs"]
-pub mod common_import_mod;
+pub mod common_import_mod; // rustc showing it can't read
 
 // === Imports (Private) ===
 // Adding some private imports for completeness
@@ -205,13 +205,16 @@ pub mod generics {
         }
 
         fn describe<D: Debug>(&self, detail: D) -> String {
-            format!("GenStruct describing {:?} with detail {:?}", self.data, detail)
+            format!(
+                "GenStruct describing {:?} with detail {:?}",
+                self.data, detail
+            )
         }
     }
 
     // Generic Function
     pub fn gen_func<T: Debug>(param: T) {
-        debug!("Generic function called with {:?}", param);
+        log::debug!("Generic function called with {:?}", param);
     }
 }
 

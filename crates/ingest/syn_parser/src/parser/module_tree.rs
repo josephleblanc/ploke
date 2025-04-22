@@ -8,8 +8,8 @@ use log::debug; // Import the debug macro
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 
-use crate::error::SynParserError;
-use crate::parser::nodes::NodePath; // Ensure NodePath is imported
+use crate::parser::nodes::NodePath;
+use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
 
 use super::{
     nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
@@ -101,6 +101,7 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
+    path_attributes: HashMap<ModuleNodeId, PathBuf>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -290,7 +291,18 @@ impl ModuleTree {
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
+            path_attributes: HashMap::new(),
         })
+        // Should never happen, but might want to handle this sometime
+        // // Initialize path attributes from root if present
+        // if let Some(path_val) = extract_attribute_value(&root.attributes, "path") {
+        //     if let Some(root_file) = root.file_path() {
+        //         tree.path_attributes.insert(
+        //             root_id,
+        //             root_file.parent().unwrap().join(path_val).normalize(),
+        //         );
+        //     }
+        // }
     }
 
     pub fn get_root_module(&self) -> Result<&ModuleNode, ModuleTreeError> {
@@ -365,6 +377,15 @@ impl ModuleTree {
             module_id.to_string().magenta(),
             format!("{:?}", module.visibility).cyan()
         );
+
+        // Store path attribute if present
+        if let Some(path_val) = extract_path_attr_from_node(&module) {
+            if let Ok(base_dir) = self.find_declaring_file_dir(module_id) {
+                self.path_attributes
+                    .insert(module_id, base_dir.join(path_val).normalize());
+            }
+        }
+
         let dup_node = self.modules.insert(module_id, module); // module is moved here
         if let Some(dup) = dup_node {
             // Box the duplicate node when creating the error variant
@@ -504,6 +525,22 @@ impl ModuleTree {
         visited.insert(start_module_id);
 
         while let Some((current_mod_id, current_path)) = queue.pop_front() {
+            // Handle path attribute if present
+            let effective_path =
+                if let Some(_custom_path) = self.resolve_custom_path(current_mod_id) {
+                    // For modules with #[path], we need to check if the item exists at that location
+                    if let Some(module_node) = self.modules.get(&current_mod_id) {
+                        if let Some(items) = module_node.items() {
+                            if items.contains(&item_id) {
+                                return Ok(current_path);
+                            }
+                        }
+                    }
+                    continue; // Skip further processing for #[path] modules
+                } else {
+                    current_path
+                };
+
             // Check both direct definitions and re-exports
             for rel in self
                 .tree_relations
@@ -515,7 +552,7 @@ impl ModuleTree {
                         // Direct containment case
                         let item_node = graph.find_node_unique(item_id)?;
                         if item_node.visibility().is_pub() {
-                            return Ok(current_path);
+                            return Ok(effective_path);
                         }
                     }
                     // And in shortest_public_path's ReExport case:
@@ -556,7 +593,7 @@ impl ModuleTree {
                             if let Some(reexport_name) =
                                 self.get_reexport_name(current_mod_id, target_id)
                             {
-                                let mut reexport_path = current_path.clone();
+                                let mut reexport_path = effective_path.clone();
                                 reexport_path.push(reexport_name);
 
                                 // For chains, recursively build path to original
@@ -614,7 +651,7 @@ impl ModuleTree {
                         })
                     {
                         // If we should enqueue...
-                        let mut new_path = current_path.clone();
+                        let mut new_path = effective_path.clone();
                         // Use the name from the original child node (decl or defn)
                         new_path.push(child_module_node.name.clone());
                         queue.push_back((id_to_enqueue, new_path));
@@ -707,6 +744,10 @@ impl ModuleTree {
             }
         }
         Ok(())
+    }
+
+    pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
+        self.path_attributes.get(&module_id)
     }
 
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
@@ -1040,6 +1081,19 @@ impl ModuleTree {
     ) -> Result<PathBuf, ModuleTreeError> {
         let base_dir = self.find_declaring_file_dir(module_id)?;
         Ok(Self::resolve_relative_path(&base_dir, path))
+    }
+    pub fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
+        for (module_id, path) in &self.path_attributes {
+            if let Some(module_node) = self.modules.get(module_id) {
+                let relation = Relation {
+                    source: GraphId::Node(module_id.into_inner()),
+                    target: GraphId::Node(module_node.id()),
+                    kind: RelationKind::CustomPath,
+                };
+                self.tree_relations.push(relation.into());
+            }
+        }
+        Ok(())
     }
 
     // Removed unused get_module_path_vec and get_root_path methods

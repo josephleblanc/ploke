@@ -38,6 +38,7 @@ pub enum RelationKind {
     MacroUse,
     ModuleImports,
     ReExport, // e.g. `pub use some_dep::a::b::ReExportedStruct` --ReExport->ReExportedStruct defn
+    CustomPath, // module decl -> module defn for `#[path]` attribute
     /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
     /// `mod foo { ... }`).
     /// Direction: `Declaration ModuleNode` -> `Definition ModuleNode`.
@@ -103,6 +104,7 @@ impl TryInto<ScopeKind> for RelationKind {
             Self::MacroUse => Err(RelationConversionError::NotApplicable(self)),
             Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
             Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
+            Self::CustomPath => Ok(ScopeKind::CanUse), // TODO: Revisit this one, not sure.
         }
     }
 }

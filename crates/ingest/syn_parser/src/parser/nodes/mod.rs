@@ -43,16 +43,37 @@ pub trait GraphNode {
     fn cfgs(&self) -> &[String];
 
     // --- Default implementations for downcasting ---
-    fn as_function(&self) -> Option<&FunctionNode> { None }
-    fn as_struct(&self) -> Option<&StructNode> { None }
-    fn as_enum(&self) -> Option<&EnumNode> { None }
-    fn as_union(&self) -> Option<&UnionNode> { None }
-    fn as_type_alias(&self) -> Option<&TypeAliasNode> { None }
-    fn as_trait(&self) -> Option<&TraitNode> { None }
-    fn as_impl(&self) -> Option<&ImplNode> { None }
-    fn as_module(&self) -> Option<&ModuleNode> { None }
-    fn as_value(&self) -> Option<&ValueNode> { None }
-    fn as_macro(&self) -> Option<&MacroNode> { None }
+    fn as_function(&self) -> Option<&FunctionNode> {
+        None
+    }
+    fn as_struct(&self) -> Option<&StructNode> {
+        None
+    }
+    fn as_enum(&self) -> Option<&EnumNode> {
+        None
+    }
+    fn as_union(&self) -> Option<&UnionNode> {
+        None
+    }
+    fn as_type_alias(&self) -> Option<&TypeAliasNode> {
+        None
+    }
+    fn as_trait(&self) -> Option<&TraitNode> {
+        None
+    }
+    fn as_impl(&self) -> Option<&ImplNode> {
+        None
+    }
+    fn as_module(&self) -> Option<&ModuleNode> {
+        None
+    }
+    fn as_value(&self) -> Option<&ValueNode> {
+        None
+    }
+    fn as_macro(&self) -> Option<&MacroNode> {
+        None
+    }
+
     // Add others like VariantNode, FieldNode if they implement GraphNode directly
 }
 
@@ -281,7 +302,7 @@ pub struct Attribute {
     pub value: Option<String>, // Optional value (e.g., for `#[attr = "value"]`)
 }
 
-pub fn extract_attribute_value(attrs: &[Attribute]) -> Option<&str> {
+pub fn extract_attr_path_value(attrs: &[Attribute]) -> Option<&str> {
     attrs
         .iter()
         .find(|attr| attr.name == "path" && attr.value.is_some())
@@ -293,7 +314,7 @@ pub trait HasAttributes {
 }
 
 pub fn extract_path_attr_from_node<T: HasAttributes>(node: &T) -> Option<&str> {
-    extract_attribute_value(node.attributes())
+    extract_attr_path_value(node.attributes())
 }
 
 // Represents a type definition (struct, enum, type alias, or union)
