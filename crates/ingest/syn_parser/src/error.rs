@@ -192,6 +192,14 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                     conflicting_id
                 ))
             }
+            ModuleTreeError::ReExportChainTooLong { start_node_id } => {
+                // Treat excessively long re-export chains as an internal state error,
+                // indicating a potential cycle or problematic structure.
+                SynParserError::InternalState(format!(
+                    "Re-export chain starting from {} exceeded maximum depth (32).",
+                    start_node_id
+                ))
+            }
         }
     }
 }

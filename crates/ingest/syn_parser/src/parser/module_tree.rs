@@ -233,6 +233,10 @@ pub enum ModuleTreeError {
         existing_id: NodeId,
         conflicting_id: NodeId,
     },
+
+    // --- NEW VARIANT ---
+    #[error("Re-export chain starting from {start_node_id} exceeded maximum depth (32). Potential cycle or excessively deep re-export.")]
+    ReExportChainTooLong { start_node_id: NodeId },
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -541,11 +545,10 @@ impl ModuleTree {
 
                             // Prevent infinite loops from extremely long chains
                             if chain_visited.len() > 32 {
-                                // AI:
-                                // Reasonable upper limit
-                                // Add an error type here that should be fatal and indicate that we
-                                // want to abort the parsing but not exit the program AI!
-                                break;
+                                // Return the new error variant
+                                return Err(ModuleTreeError::ReExportChainTooLong {
+                                    start_node_id: target_id, // The ID where the chain started
+                                });
                             }
                         }
 
