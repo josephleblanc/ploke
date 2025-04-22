@@ -135,7 +135,10 @@ impl ImportNode {
 
     /// Checks if this import is a restricted `pub(in path) use` statement.
     pub fn is_restricted_use(&self) -> bool {
-        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Restricted(_)))
+        matches!(
+            self.kind,
+            ImportKind::UseStatement(VisibilityKind::Restricted(_))
+        )
     }
 
     /// Checks if this import is effectively private to the current scope,
@@ -150,12 +153,30 @@ impl ImportNode {
 
     /// Checks specifically if this import is a `use` statement with inherited (private) visibility.
     pub fn is_inherited_visibility(&self) -> bool {
-        matches!(self.kind, ImportKind::UseStatement(VisibilityKind::Inherited))
+        matches!(
+            self.kind,
+            ImportKind::UseStatement(VisibilityKind::Inherited)
+        )
     }
 
     /// Checks specifically if this import is an `extern crate` statement.
     pub fn is_extern_crate(&self) -> bool {
         matches!(self.kind, ImportKind::ExternCrate)
+    }
+
+    pub fn as_renamed_path(&self) -> Option<Vec<String>> {
+        if self.original_name.is_some() {
+            let mut path = self.path.clone();
+            path.pop();
+            path.push(self.visible_name.clone());
+            Some(path)
+        } else {
+            None
+        }
+    }
+
+    pub fn is_renamed(&self) -> bool {
+        self.original_name.is_some()
     }
 }
 

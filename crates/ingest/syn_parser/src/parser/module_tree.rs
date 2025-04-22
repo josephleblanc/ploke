@@ -717,7 +717,16 @@ impl ModuleTree {
             // Add to reexport_index
             if let Some(reexport_name) = export_node.path.last() {
                 let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
-                reexport_path.push(reexport_name.clone());
+                // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
+                if export_node.is_renamed() {
+                    // if renamed, use visible_name for path extension
+                    // WARNING: Be careful when generating resolved ID not to use this `path` for
+                    // NodeId of defining module.
+                    reexport_path.push(export_node.visible_name.clone());
+                } else {
+                    // otherwise, use standard name
+                    reexport_path.push(reexport_name.clone());
+                }
 
                 let node_path = NodePath::try_from(reexport_path)
                     .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
@@ -1091,6 +1100,8 @@ impl ModuleTree {
                     kind: RelationKind::CustomPath,
                 };
                 self.tree_relations.push(relation.into());
+            } else {
+                // TODO: Add error handling here for module not found.
             }
         }
         Ok(())

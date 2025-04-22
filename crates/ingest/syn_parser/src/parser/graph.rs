@@ -72,8 +72,9 @@ impl CodeGraph {
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
-        tree.process_export_rels(self)?;
-        // 1: Register all modules with their containment info
+        tree.process_export_rels(self)?; // abort parsing for invalid re-export nodes.
+        tree.process_path_attributes()?; // abort parsing for target `#[path = "..."` not found.
+                                         // 1: Register all modules with their containment info
         for module in &self.modules {
             log_tree_build(module);
             tree.add_module(module.clone())?;
@@ -81,7 +82,6 @@ impl CodeGraph {
 
         // 2: Process direct contains relationships between files
         tree.register_containment_batch(&self.relations)?;
-
         // 3: Build logical paths
         if let Err(module_tree_error) = tree.build_logical_paths(&self.modules) {
             match module_tree_error {
@@ -92,6 +92,13 @@ impl CodeGraph {
                 _ => return Err(SynParserError::from(module_tree_error)),
             }
         }
+
+        // 4: Process re-export relationships beween `pub use` statements and the **modules** they
+        //    are re-exporting (does not cover other items like structs, functions, etc)
+        //    All errors here indicate we should abort, handle these in caller:
+        //      ModuleTreeError::NodePathValidation(Box::new(e))
+        //      ModuleTreeError::ConflictingReExportPath
+        tree.process_export_rels(self)?;
 
         Ok(tree)
     }
