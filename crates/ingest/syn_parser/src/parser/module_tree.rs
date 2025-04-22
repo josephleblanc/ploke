@@ -500,6 +500,7 @@ impl ModuleTree {
         visited.insert(start_module_id);
 
         while let Some((current_mod_id, current_path)) = queue.pop_front() {
+            // Check both direct definitions and re-exports
             for rel in self
                 .tree_relations
                 .iter()
@@ -507,59 +508,69 @@ impl ModuleTree {
             {
                 match rel.relation().kind {
                     RelationKind::Contains if rel.relation().target == GraphId::Node(item_id) => {
-                        // Direct containment case (existing logic)
+                        // Direct containment case
                         let item_node = graph.find_node_unique(item_id)?;
                         if item_node.visibility().is_pub() {
                             return Ok(current_path);
                         }
                     }
-                    RelationKind::ReExport if rel.relation().target == GraphId::Node(item_id) => {
-                        if let Some(reexport_name) = self.get_reexport_name(current_mod_id, item_id)
-                        {
-                            let mut reexport_path = current_path.clone();
-                            reexport_path.push(reexport_name);
-                            // Recursively find path to original definition
-                            if let Ok(mut original_path) =
-                                self.shortest_public_path(rel.relation().target.try_into()?, graph)
+                    // And in shortest_public_path's ReExport case:
+                    RelationKind::ReExport => {
+                        let target_id: NodeId = rel.relation().target.try_into()?;
+
+                        // Check for cycles by limiting chain length
+                        let mut chain_visited = HashSet::new();
+                        let mut current_chain_id = target_id;
+                        let mut is_reexport_chain = false;
+
+                        // Check chain with cycle detection
+                        while chain_visited.insert(current_chain_id) {
+                            if current_chain_id == item_id {
+                                is_reexport_chain = true;
+                                break;
+                            }
+
+                            if let Some(next_rel) = self.tree_relations.iter().find(|tr| {
+                                tr.relation().kind == RelationKind::ReExport
+                                    && tr.relation().source == GraphId::Node(current_chain_id)
+                            }) {
+                                current_chain_id = next_rel.relation().target.try_into()?;
+                            } else {
+                                break;
+                            }
+
+                            // Prevent infinite loops from extremely long chains
+                            if chain_visited.len() > 32 {
+                                // AI:
+                                // Reasonable upper limit
+                                // Add an error type here that should be fatal and indicate that we
+                                // want to abort the parsing but not exit the program AI!
+                                break;
+                            }
+                        }
+
+                        if is_reexport_chain {
+                            if let Some(reexport_name) =
+                                self.get_reexport_name(current_mod_id, target_id)
                             {
-                                reexport_path.extend(original_path);
+                                let mut reexport_path = current_path.clone();
+                                reexport_path.push(reexport_name);
+
+                                // For chains, recursively build path to original
+                                if target_id != item_id {
+                                    if let Ok(mut original_path) =
+                                        self.shortest_public_path(target_id, graph)
+                                    {
+                                        reexport_path.extend(original_path);
+                                    }
+                                }
+
                                 return Ok(reexport_path);
                             }
                         }
                     }
-
-                    // RelationKind::ReExport if rel.relation().target == GraphId::Node(item_id) => {
-                    //     // Re-export case - follow chain to original while building path
-                    //     let mut reexport_path = current_path.clone();
-                    //     if let Some(reexport_name) = self.get_reexport_name(current_mod_id, item_id)
-                    //     {
-                    //         reexport_path.push(reexport_name);
-                    //         return Ok(reexport_path);
-                    //     }
-                    // }
                     _ => {}
                 }
-            }
-            // --- Target Check ---
-            // Check if the current module *contains* the item_id directly.
-            let contains_relation_exists = self.tree_relations.iter().any(|tr| {
-                let rel = tr.relation();
-                rel.source == GraphId::Node(current_mod_id.into_inner())
-                    && rel.target == GraphId::Node(item_id)
-                    && rel.kind == RelationKind::Contains
-            });
-
-            if contains_relation_exists {
-                // Found the containing module. Now check if the *item itself* is public.
-                let item_node = graph.find_node_unique(item_id)?;
-                if item_node.visibility().is_pub() {
-                    // Item is directly contained and public, return Ok with the path.
-                    // TODO: The path should arguably include the item name itself.
-                    // For now, return path to containing module to match test expectations.
-                    return Ok(current_path); // Return Ok(path)
-                }
-                // If item not found in graph or not public, continue search (maybe re-exported?)
-                // For now, since re-exports aren't handled, we stop here if contained but not pub.
             }
 
             // --- Neighbor (Public Child) Exploration ---
@@ -612,13 +623,45 @@ impl ModuleTree {
         // Item not found via any public path
         Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
     }
+    // Helper to check if an item is part of a re-export chain leading to our target
+    fn is_part_of_reexport_chain(
+        &self,
+        start_id: NodeId,
+        target_id: NodeId,
+    ) -> Result<bool, ModuleTreeError> {
+        let mut current_id = start_id;
+        let mut visited = HashSet::new();
+
+        while visited.insert(current_id) {
+            // Check if current_id re-exports our target
+            if let Some(reexport_rel) = self.tree_relations.iter().find(|tr| {
+                tr.relation().kind == RelationKind::ReExport
+                    && tr.relation().source == GraphId::Node(current_id)
+                    && tr.relation().target == GraphId::Node(target_id)
+            }) {
+                return Ok(true);
+            }
+
+            // Move to next re-export in chain
+            if let Some(next_rel) = self.tree_relations.iter().find(|tr| {
+                tr.relation().kind == RelationKind::ReExport
+                    && tr.relation().target == GraphId::Node(current_id)
+            }) {
+                current_id = next_rel.relation().source.try_into()?;
+            } else {
+                break;
+            }
+        }
+
+        Ok(false)
+    }
 
     // TODO: Make a parallellized version with rayon
     // fn process_export_rels(&self, graph: &CodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
     //     todo!()
     // }
     // or
-    fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+    pub fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
         for export in &self.pending_exports {
             let source_mod_id = export.module_node_id();
             let export_node = export.export_node();
