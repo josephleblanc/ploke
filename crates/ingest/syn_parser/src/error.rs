@@ -178,6 +178,20 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                     module_node_id
                 ))
             }
+            ModuleTreeError::ConflictingReExportPath {
+                path,
+                existing_id,
+                conflicting_id,
+            } => {
+                // Treat conflicting re-exports as an internal state error,
+                // as it indicates an inconsistency discovered during processing.
+                SynParserError::InternalState(format!(
+                    "Conflicting re-export path '{}' detected. Existing ID: {}, Conflicting ID: {}",
+                    path, // NodePath implements Display
+                    existing_id,
+                    conflicting_id
+                ))
+            }
         }
     }
 }

@@ -225,6 +225,14 @@ pub enum ModuleTreeError {
     FilePathMissingParent(PathBuf), // Store the problematic path
     #[error("Root module {0} is not file-based, which is required for path resolution.")]
     RootModuleNotFileBased(ModuleNodeId),
+
+    // --- NEW VARIANT ---
+    #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
+    ConflictingReExportPath {
+        path: NodePath,
+        existing_id: NodeId,
+        conflicting_id: NodeId,
+    },
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -631,22 +639,25 @@ impl ModuleTree {
                 let node_path = NodePath::try_from(reexport_path)
                     .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
-                // Check for duplicate re-exports
-                if let Some(existing_id) = self.reexport_index.get(&node_path) {
-                    if *existing_id != export_node.id {
-                        // AI: Add a new error type for this case. A duplicate re-export is a case of
-                        // a malformed target and should be signal an abort in the process of
-                        // resolving the `CodeGraph` AI!
-                        log::warn!(
-                            "Conflicting re-export path {} for IDs {} and {}",
-                            node_path,
-                            existing_id,
-                            export_node.id
-                        );
+                // Check for duplicate re-exports at the same path
+                match self.reexport_index.entry(node_path.clone()) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        let existing_id = *entry.get();
+                        if existing_id != export_node.id {
+                            // Found a different NodeId already registered for this exact path.
+                            return Err(ModuleTreeError::ConflictingReExportPath {
+                                path: node_path, // Use the cloned path
+                                existing_id,
+                                conflicting_id: export_node.id,
+                            });
+                        }
+                        // If it's the same ID, do nothing (idempotent)
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        // Path is free, insert the new re-export ID.
+                        entry.insert(export_node.id);
                     }
                 }
-
-                self.reexport_index.insert(node_path, export_node.id);
             }
         }
         Ok(())
