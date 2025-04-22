@@ -223,6 +223,13 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 "Module with ID {} not found in ModuleTree.modules map.",
                 module_id
             )),
+            ModuleTreeError::DuplicateDefinition(msg) => SynParserError::InternalState(format!(
+                "ModuleTree processing error: {}",
+                msg
+            )),
+            ModuleTreeError::ModuleDefinitionNotFound(msg) => SynParserError::InternalState(
+                format!("ModuleTree processing error: {}", msg),
+            ),
             // --- END NEW ARMS ---
         }
     }
