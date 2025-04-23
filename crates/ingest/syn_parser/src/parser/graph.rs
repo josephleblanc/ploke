@@ -549,6 +549,13 @@ impl CodeGraph {
                         .map(|n| n as &dyn GraphNode)
                 })
             })
+            // --- Add ImportNode search ---
+            .or_else(|| {
+                self.use_statements
+                    .iter()
+                    .find(|n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode)
+            })
     }
 
     /// Finds a node by its ID, returning a `Result` with a reference to the node
