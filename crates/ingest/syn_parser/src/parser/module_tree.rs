@@ -1324,10 +1324,13 @@ impl ModuleTree {
     }
 
     fn log_module_insert(&self, module: &ModuleNode, id: ModuleNodeId) {
-        debug!(target: LOG_TARGET_BUILD, "{} {} {} | {}",
+        // Get the string representation of the module definition kind
+        let def_kind_str = get_module_def_kind_str(module);
+        debug!(target: LOG_TARGET_BUILD, "{} {} {} | {} | {}", // Added one more {} placeholder
             "Insert".log_header(),
             module.name.log_name(),
             format!("({})", id).log_id(),
+            def_kind_str.log_name(), // Log the kind using name style
             module.visibility.log_vis_debug()
         );
     }
@@ -1486,6 +1489,16 @@ impl ModuleTree {
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
+
+/// Helper function to get a string representation of the ModuleDef kind.
+fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
+    match module.module_def {
+        ModuleDef::FileBased { .. } => "File",
+        ModuleDef::Inline { .. } => "Inline",
+        ModuleDef::Declaration { .. } => "Decl",
+    }
+}
+
 
 fn log_path_attr_not_found(module_id: ModuleNodeId) {
     log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} processed with path attribute during file dir search.", module_id);
