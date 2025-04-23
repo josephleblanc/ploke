@@ -1422,16 +1422,19 @@ impl ModuleTree {
 
     /// Logs the status of pending path attributes found.
     fn log_resolve_pending_status(&self, count: Option<usize>) {
+        let header = "Pending".log_header();
         match count {
             Some(n) => {
-                debug!(target: LOG_TARGET_PATH_ATTR, "{} Found {} pending path attribute IDs.",
-                    "Pending".log_header(),
-                    n.to_string().log_id() // Use log_id style for count
+                // Use padding for alignment.
+                debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | Found {} pending path attribute IDs.",
+                    header,
+                    n.to_string().log_id()
                 );
             }
             None => {
-                debug!(target: LOG_TARGET_PATH_ATTR, "{} No pending path attributes found (list was None or empty).",
-                    "Pending".log_header(),
+                 // Use padding for alignment.
+                 debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | No pending path attributes found (list was None or empty).",
+                    header
                 );
             }
         }
