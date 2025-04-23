@@ -14,8 +14,8 @@ use crate::parser::nodes::NodePath;
 use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
 
 use super::{
-    nodes::{GraphId, GraphNode, ImportNode, ModuleNode, ModuleNodeId}, // Add GraphId
-    relations::{Relation, RelationKind},                               // Remove GraphId
+    nodes::{GraphId, GraphNode, ImportNode, ModuleDef, ModuleNode, ModuleNodeId}, // Add GraphId
+    relations::{Relation, RelationKind},                                          // Remove GraphId
     types::VisibilityKind,
     CodeGraph,
 };
@@ -1498,7 +1498,6 @@ fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
         ModuleDef::Declaration { .. } => "Decl",
     }
 }
-
 
 fn log_path_attr_not_found(module_id: ModuleNodeId) {
     log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} processed with path attribute during file dir search.", module_id);
