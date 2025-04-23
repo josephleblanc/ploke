@@ -74,9 +74,6 @@ mod chain_a {
     pub(crate) fn crate_item_a() -> u8 {
         11
     }
-    pub(crate) fn crate_item_a() -> u8 {
-        11
-    }
 }
 mod chain_b {
     pub use crate::chain_a::item_a as item_b; // 2-step pub
