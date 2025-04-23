@@ -1,7 +1,8 @@
-use ploke_core::TypeKind; // Import directly from ploke_core
+use ploke_core::{NodeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
+use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
 use syn_parser::parser::{nodes::*, ExtractSpan};
@@ -96,8 +97,8 @@ pub fn find_reexport_import_node_by_name(
         .map(|imp| imp.id) // Get the NodeId if found
         .ok_or_else(|| {
             SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil())) // Placeholder error
-            // TODO: Improve error type? Maybe a specific "ReExportNotFound"?
-            // For now, using NotFound with a dummy ID.
+                                                                           // TODO: Improve error type? Maybe a specific "ReExportNotFound"?
+                                                                           // For now, using NotFound with a dummy ID.
         })
 }
 

@@ -65,9 +65,7 @@ use syn_parser::error::SynParserError;
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph;
 
-use crate::common::resolution::{
-    find_item_id_in_module_by_name, find_reexport_import_node_by_name,
-};
+use crate::common::resolution::*;
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for edge case tests

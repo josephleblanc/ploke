@@ -1,11 +1,12 @@
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
-use ploke_core::NodeId;
+use ploke_core::{ItemKind, NodeId};
 use syn_parser::{
     error::SynParserError,
     parser::{
         graph::CodeGraph,
-        nodes::GraphNode, // Removed TypeDefNode
+        nodes::{GraphId, GraphNode},
+        relations::RelationKind, // Removed TypeDefNode
     },
 };
 
@@ -99,17 +100,16 @@ pub fn find_item_id_in_module_by_name(
 
     // 4. Check for uniqueness
     match contained_candidates.len() {
-        0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Placeholder ID for NotFound
+        0 => Err(SynParserError::NotFound(NodeId::Synthetic(
+            uuid::Uuid::nil(),
+        ))), // Placeholder ID for NotFound
         1 => Ok(contained_candidates[0].id()),
         _ => {
             // If duplicates found, report the ID of the first one found
-            Err(SynParserError::DuplicateNode(
-                contained_candidates[0].id(),
-            ))
+            Err(SynParserError::DuplicateNode(contained_candidates[0].id()))
         }
     }
 }
-
 
 /// Finds the NodeId of an item by its path, name, and kind, ensuring uniqueness.
 ///
@@ -141,9 +141,7 @@ pub fn find_item_id_by_path_name_kind_checked(
     let contained_ids: Vec<NodeId> = graph
         .relations
         .iter()
-        .filter(|rel| {
-            rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains
-        })
+        .filter(|rel| rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains)
         .filter_map(|rel| match rel.target {
             GraphId::Node(id) => Some(id),
             _ => None,
@@ -186,12 +184,18 @@ pub fn find_item_id_by_path_name_kind_checked(
             }
             Err(e @ SynParserError::DuplicateNode(_)) => {
                 // If find_node_checked finds a duplicate ID, this is a critical graph error.
-                log::error!("Graph inconsistency: Duplicate NodeId {} found during lookup.", contained_id);
+                log::error!(
+                    "Graph inconsistency: Duplicate NodeId {} found during lookup.",
+                    contained_id
+                );
                 return Err(e); // Propagate critical error immediately
             }
             Err(e @ SynParserError::NotFound(_)) => {
-                 // Should not happen if ID came from relations, but log if it does.
-                log::warn!("Graph inconsistency: Contained NodeId {} not found.", contained_id);
+                // Should not happen if ID came from relations, but log if it does.
+                log::warn!(
+                    "Graph inconsistency: Contained NodeId {} not found.",
+                    contained_id
+                );
                 errors.push(e); // Collect non-critical error
             }
             Err(e) => {
@@ -205,24 +209,37 @@ pub fn find_item_id_by_path_name_kind_checked(
     if !errors.is_empty() {
         // Log collected non-critical errors if any matches were also found or if no matches found
         if !matches.is_empty() || matches.is_empty() {
-             log::warn!("Encountered errors while searching for item '{}' ({:?}) in module {:?}: {:?}", item_name, item_kind, module_defn_path, errors);
+            log::warn!(
+                "Encountered errors while searching for item '{}' ({:?}) in module {:?}: {:?}",
+                item_name,
+                item_kind,
+                module_defn_path,
+                errors
+            );
         }
         // If only errors occurred and no matches, return the first error encountered
         if matches.is_empty() {
-             return Err(errors.remove(0));
+            return Err(errors.remove(0));
         }
     }
 
     match matches.len() {
-        0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Use placeholder for specific error
+        0 => Err(SynParserError::NotFound(NodeId::Synthetic(
+            uuid::Uuid::nil(),
+        ))), // Use placeholder for specific error
         1 => Ok(matches[0]),
         _ => {
-            log::error!("Duplicate items found for name '{}' ({:?}) in module {:?}: {:?}", item_name, item_kind, module_defn_path, matches);
+            log::error!(
+                "Duplicate items found for name '{}' ({:?}) in module {:?}: {:?}",
+                item_name,
+                item_kind,
+                module_defn_path,
+                matches
+            );
             Err(SynParserError::DuplicateNode(matches[0])) // Report first duplicate ID
         }
     }
 }
-
 
 /// Finds the NodeId of an ImportNode representing a re-export based on its visible name
 /// within a specific module, ensuring uniqueness.
@@ -251,9 +268,7 @@ pub fn find_reexport_import_node_by_name_checked(
     let contained_ids: Vec<NodeId> = graph
         .relations
         .iter()
-        .filter(|rel| {
-            rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains
-        })
+        .filter(|rel| rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains)
         .filter_map(|rel| match rel.target {
             GraphId::Node(id) => Some(id),
             _ => None,
@@ -279,31 +294,46 @@ pub fn find_reexport_import_node_by_name_checked(
             }
             Err(e @ SynParserError::DuplicateNode(_)) => {
                 // Critical graph error: Duplicate ID found for an ImportNode
-                 log::error!("Graph inconsistency: Duplicate NodeId {} found for ImportNode.", contained_id);
+                log::error!(
+                    "Graph inconsistency: Duplicate NodeId {} found for ImportNode.",
+                    contained_id
+                );
                 return Err(e); // Propagate critical error
             }
-             Err(e) => {
+            Err(e) => {
                 // Collect other potential errors from get_import_checked
                 errors.push(e);
             }
         }
     }
 
-     // 4. Check results after iterating
+    // 4. Check results after iterating
     if !errors.is_empty() {
         if !matches.is_empty() || matches.is_empty() {
-             log::warn!("Encountered errors while searching for re-export '{}' in module {:?}: {:?}", visible_name, module_path, errors);
+            log::warn!(
+                "Encountered errors while searching for re-export '{}' in module {:?}: {:?}",
+                visible_name,
+                module_path,
+                errors
+            );
         }
         if matches.is_empty() {
-             return Err(errors.remove(0));
+            return Err(errors.remove(0));
         }
     }
 
     match matches.len() {
-        0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Placeholder ID
+        0 => Err(SynParserError::NotFound(NodeId::Synthetic(
+            uuid::Uuid::nil(),
+        ))), // Placeholder ID
         1 => Ok(matches[0]),
         _ => {
-            log::error!("Duplicate re-exports found for visible name '{}' in module {:?}: {:?}", visible_name, module_path, matches);
+            log::error!(
+                "Duplicate re-exports found for visible name '{}' in module {:?}: {:?}",
+                visible_name,
+                module_path,
+                matches
+            );
             Err(SynParserError::DuplicateNode(matches[0])) // Report first duplicate ID
         }
     }
