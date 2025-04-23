@@ -86,6 +86,10 @@ pub enum SynParserError {
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
     #[error("Graph ID conversion error: {0}")]
     GraphIdConversionError(String), // Store string representation
+
+    /// Indicates that shortest public path resolution failed for an external item.
+    #[error("Shortest public path resolution failed for external item: {0}")]
+    ExternalItemNotResolved(NodeId),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -230,6 +234,10 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
             ModuleTreeError::ModuleDefinitionNotFound(msg) => SynParserError::InternalState(
                 format!("ModuleTree processing error: {}", msg),
             ),
+            // --- Add new match arm ---
+            ModuleTreeError::ExternalItemNotResolved(id) => {
+                SynParserError::ExternalItemNotResolved(id)
+            }
             // --- END NEW ARMS ---
         }
     }
