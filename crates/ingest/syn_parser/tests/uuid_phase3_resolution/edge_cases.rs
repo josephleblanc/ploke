@@ -39,6 +39,13 @@
 //! 25. **Nested Mutually Exclusive `cfg` (Branch NotA C):** Test SPP for `cfg_mod::nested_cfg::item_in_cfg_nac`.
 //! 26. **Conflicting Parent/Child `cfg`:** Test SPP for `conflict_parent::conflict_child::impossible_item`.
 //!
+//! # Helper Functions Used:
+//!
+//! *   `build_tree_for_edge_cases()`: Local helper to parse the fixture and build the `ModuleTree`.
+//! *   `find_item_id_by_path_name_kind_checked()`: Robust helper from `common::resolution` to find item `NodeId`s.
+//! *   `find_reexport_import_node_by_name_checked()`: Robust helper from `common::resolution` to find re-export `ImportNode` `NodeId`s.
+//! *   `ModuleTree::shortest_public_path()`: The function under test.
+//!
 //! ---
 //!
 //! ## Testing Philosophy & Handling Failures (Restated from Strategy)
