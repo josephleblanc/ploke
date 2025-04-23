@@ -1413,9 +1413,10 @@ impl ModuleTree {
     /// Logs the entry or exit point of the path attribute resolution process.
     fn log_resolve_entry_exit(&self, is_entry: bool) {
         let action = if is_entry { "Entering" } else { "Finished" };
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} path attribute resolution.",
+        // Use padding for alignment. Widths are estimates.
+        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {}",
             action.log_header(),
-            "resolve_pending_path_attrs".log_name()
+            "resolve_pending_path_attrs path attribute resolution.".log_name() // Combine description
         );
     }
 
@@ -1438,52 +1439,65 @@ impl ModuleTree {
 
     /// Logs a specific step during the resolution of a single module's path attribute.
     fn log_resolve_step(&self, module_id: ModuleNodeId, step: &str, outcome: &str, is_error: bool) {
-        let status_indicator = if is_error {
-            "Error".log_error()
-        } else {
-            "Step".log_header()
-        };
-        let outcome_styled = if is_error {
-            outcome.log_error()
-        } else {
-            outcome.log_vis()
-        }; // Use vis color for success details
+        let status_indicator = if is_error { "Error".log_error() } else { "Step".log_header() };
+        let outcome_styled = if is_error { outcome.log_error() } else { outcome.log_vis() };
+        let id_str = format!("({})", module_id).log_id();
+        let step_str = step.log_name();
 
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} -> {}", // Simplified format slightly
+        // Use padding for alignment. Widths are estimates.
+        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {:<20} | {}",
             status_indicator,
-            format!("({})", module_id).log_id(),
-            step.log_name(), // Use name color for step description
+            id_str,
+            step_str,
             outcome_styled
         );
     }
 
     /// Logs the successful insertion of a resolved path attribute.
     fn log_resolve_insert(module_id: ModuleNodeId, resolved_path: &Path) {
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} -> {}",
-            "Insert".log_header(),
-            format!("({})", module_id).log_id(),
-            "Resolved Path".log_name(),
-            resolved_path.display().to_string().log_path()
+        let header = "Insert".log_header();
+        let id_str = format!("({})", module_id).log_id();
+        let action_str = "Resolved Path".log_name();
+        let path_str = resolved_path.display().to_string().log_path();
+
+        // Use padding for alignment.
+        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {:<20} | {}",
+            header,
+            id_str,
+            action_str,
+            path_str
         );
     }
 
     /// Logs the detection of a duplicate path attribute entry.
     fn log_resolve_duplicate(&self, module_id: ModuleNodeId, existing: &Path, conflicting: &Path) {
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | Existing: {} | Conflicting: {}",
-            "Duplicate".log_error(),
-            format!("({})", module_id).log_id(),
-            existing.display().to_string().log_path(),
-            conflicting.display().to_string().log_path()
+        let header = "Duplicate".log_error();
+        let id_str = format!("({})", module_id).log_id();
+        let existing_str = existing.display().to_string().log_path();
+        let conflicting_str = conflicting.display().to_string().log_path();
+
+        // Use padding for alignment.
+        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | Existing: {} | Conflicting: {}",
+            header,
+            id_str,
+            existing_str,
+            conflicting_str
         );
     }
 
     /// Logs when a module with a path attribute is identified and added to the pending list.
     fn log_add_pending_path(&self, module_id: ModuleNodeId, module_name: &str) {
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} {} | {}",
-            "Pending Path".log_header(),
-            module_name.log_name(),
-            format!("({})", module_id).log_id(),
-            "Added to pending list".log_vis()
+        let header = "Pending Path".log_header();
+        let name_str = module_name.log_name();
+        let id_str = format!("({})", module_id).log_id();
+        let detail_str = "Added to pending list".log_vis();
+
+        // Use padding for alignment.
+        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {} | {}",
+            header,
+            id_str, // Put ID second for consistency with other logs
+            name_str,
+            detail_str
         );
     }
 
