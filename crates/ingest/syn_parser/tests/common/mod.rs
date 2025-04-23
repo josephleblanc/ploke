@@ -71,6 +71,36 @@ pub fn assert_fixture<T>(condition: bool, message: &str, ok_value: T) -> Result<
     }
 }
 
+/// Finds the NodeId of an ImportNode representing a re-export based on its visible name
+/// within a specific module.
+pub fn find_reexport_import_node_by_name(
+    graph: &CodeGraph,
+    module_path: &[String],
+    visible_name: &str,
+) -> Result<NodeId, SynParserError> {
+    // Find the module where the re-export is defined
+    let module_node = graph.find_module_by_path_checked(module_path)?;
+
+    // Search through all use statements in the graph
+    graph
+        .use_statements
+        .iter()
+        .find(|imp| {
+            // Check if the import has the correct visible name
+            imp.visible_name == visible_name &&
+            // Check if this import is contained within the target module
+            graph.module_contains_node(module_node.id, imp.id) &&
+            // Ensure it's actually a re-export (pub use, pub(crate) use, etc.)
+            imp.is_reexport()
+        })
+        .map(|imp| imp.id) // Get the NodeId if found
+        .ok_or_else(|| {
+            SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil())) // Placeholder error
+            // TODO: Improve error type? Maybe a specific "ReExportNotFound"?
+            // For now, using NotFound with a dummy ID.
+        })
+}
+
 /// Find a struct by name in the code graph
 pub fn find_struct_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a StructNode> {
     graph.defined_types.iter().find_map(|def| {
