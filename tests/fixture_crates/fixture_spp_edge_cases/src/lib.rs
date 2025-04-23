@@ -21,6 +21,10 @@
 //! 4.  **Glob Re-exports (`pub use ...::*;`):**
 //!     - Re-exporting all public items from another module using `*`.
 //!     - Testing SPP for an item brought into scope via the glob re-export. The expected path should be relative to the re-exporting module.
+//!     - **Complex Targets:** Includes testing glob re-exports where the target module contains:
+//!         - Items defined under mutually exclusive `cfg` attributes.
+//!         - Items defined within a submodule accessed via `#[path]`.
+//!         - Items with restricted visibility (`pub(crate)`, `pub(super)`, etc.) to ensure the glob doesn't incorrectly elevate their visibility for SPP.
 //!
 //! 5.  **Re-exporting Items with Restricted Visibility:**
 //!     - `pub use` of an item originally defined as `pub(crate)`, `pub(super)`, or `pub(in path)`.
