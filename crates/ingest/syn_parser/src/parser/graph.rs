@@ -615,7 +615,14 @@ impl CodeGraph {
                     .iter()
                     .filter(move |n| n.id == item_id)
                     .map(|n| n as &dyn GraphNode)
-            }));
+            }))
+            // --- Add ImportNode search ---
+            .chain(
+                self.use_statements
+                    .iter()
+                    .filter(move |n| n.id == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            );
 
         // Check for uniqueness using the iterator
         let first = matches_iter.next();
