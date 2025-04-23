@@ -706,6 +706,10 @@ name = "fixture_spp_edge_cases"
 version = "0.1.0"
 
 [[package]]
+name = "fixture_spp_edge_cases_no_cfg"
+version = "0.1.0"
+
+[[package]]
 name = "fixture_test_crate"
 version = "0.1.0"
 

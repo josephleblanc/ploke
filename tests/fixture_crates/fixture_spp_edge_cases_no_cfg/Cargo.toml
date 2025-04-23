@@ -1,0 +1,7 @@
+[package]
+name = "fixture_spp_edge_cases_no_cfg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# No dependencies needed for this fixture

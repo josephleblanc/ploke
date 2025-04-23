@@ -26,7 +26,10 @@ members = [
     "tests/fixture_crates/fixture_types",
     "tests/fixture_crates/simple_crate",
     "tests/fixture_crates/fixture_nodes",
-    "tests/fixture_crates/fixture_conflation", "tests/fixture_crates/fixture_path_resolution", "tests/fixture_crates/fixture_spp_edge_cases",
+    "tests/fixture_crates/fixture_conflation",
+    "tests/fixture_crates/fixture_path_resolution",
+    "tests/fixture_crates/fixture_spp_edge_cases",
+    "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
     # Add more modules as needed
 ]
 

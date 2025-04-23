@@ -60,8 +60,7 @@
 //!
 //! ---
 
-use ploke_core::{ItemKind, NodeId}; // Added ItemKind
-use syn_parser::error::SynParserError;
+use ploke_core::ItemKind; // Added ItemKind
 use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph;
 
@@ -70,7 +69,10 @@ use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for edge case tests
 fn build_tree_for_edge_cases() -> (CodeGraph, ModuleTree) {
-    let fixture_name = "fixture_spp_edge_cases"; // Use the dedicated fixture
+    // NOTE: cfg features being enabled currently remove all possibility of testing remaining items
+    // due to presence of duplicates in test fixture `fixture_spp_edge_cases_no_cfg`. Development
+    // on cfg-capable mod tree happening on git branch feature/mod_tree_cfg
+    let fixture_name = "fixture_spp_edge_cases_no_cfg";
     let results = run_phases_and_collect(fixture_name);
     let mut graphs: Vec<CodeGraph> = Vec::new();
     for parsed_graph in results {
@@ -164,11 +166,16 @@ fn test_spp_inline_path_shadowing() {
 }
 
 #[test]
-fn test_spp_inline_path_item_access() {
+fn test_spp_inline_path_item_access() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     // 4. Inline Module `#[path]` Item Access
     //    Target: `item_only_in_inline_target` (defined in target file)
     //    Expected: Ok(["crate", "inline_path_mod"])
-    //    Anticipated Status: PASS (SPP should find items in their direct containing module, which is the inline mod here)
+    //    Anticipated Status: PASS (SPP should find items in their direct containing module, which
+    //    is the inline mod here)
     let (graph, tree) = build_tree_for_edge_cases();
     // Find the item in the *file* module node where it's defined syntactically
     let item_id = find_item_id_by_path_name_kind_checked(
@@ -186,6 +193,7 @@ fn test_spp_inline_path_item_access() {
         spp_result, expected_result,
         "SPP for item defined in #[path] target file accessed via inline module failed"
     );
+    Ok(())
 }
 
 #[test]
@@ -612,6 +620,7 @@ fn test_spp_nested_path_level2() {
 }
 
 #[test]
+#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
 fn test_spp_cfg_exclusive_a() {
     // 22. Mutually Exclusive `cfg` (Branch A)
     //     Target: `item_in_cfg_a` (defined in `#[cfg(feature = "cfg_a")] cfg_mod`)
@@ -636,6 +645,7 @@ fn test_spp_cfg_exclusive_a() {
 }
 
 #[test]
+#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
 fn test_spp_cfg_exclusive_not_a() {
     // 23. Mutually Exclusive `cfg` (Branch Not A)
     //     Target: `item_in_cfg_not_a` (defined in `#[cfg(not(feature = "cfg_a"))] cfg_mod`)
@@ -660,6 +670,7 @@ fn test_spp_cfg_exclusive_not_a() {
 }
 
 #[test]
+#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
 fn test_spp_cfg_nested_exclusive_ab() {
     // 24. Nested Mutually Exclusive `cfg` (Branch AB)
     //     Target: `item_in_cfg_ab` (defined in `#[cfg(a)] cfg_mod { #[cfg(b)] nested_cfg }`)
@@ -688,6 +699,7 @@ fn test_spp_cfg_nested_exclusive_ab() {
 }
 
 #[test]
+#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
 fn test_spp_cfg_nested_exclusive_nac() {
     // 25. Nested Mutually Exclusive `cfg` (Branch NotA C)
     //     Target: `item_in_cfg_nac` (defined in `#[cfg(not a)] cfg_mod { #[cfg(c)] nested_cfg }`)
@@ -716,6 +728,7 @@ fn test_spp_cfg_nested_exclusive_nac() {
 }
 
 #[test]
+#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
 fn test_spp_cfg_conflicting() {
     // 26. Conflicting Parent/Child `cfg`
     //     Target: `impossible_item` (defined in `#[cfg(conflict)] parent { #[cfg(not conflict)] child }`)
