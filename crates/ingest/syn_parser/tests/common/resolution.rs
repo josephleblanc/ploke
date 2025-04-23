@@ -126,7 +126,7 @@ pub fn find_item_id_in_module_by_name(
 /// * `Ok(NodeId)` if exactly one matching item is found.
 /// * `Err(SynParserError::ModulePathNotFound)` if the module path is not found.
 /// * `Err(SynParserError::NotFound)` if no item matching all criteria is found.
-/// * `Err(SynParserError::DuplicateNode)` if multiple items matching all criteria are found (should be rare).
+/// * `Err(SynParserError::DuplicateNode)` if multiple items matching the criteria are found.
 pub fn find_item_id_by_path_name_kind_checked(
     graph: &CodeGraph,
     module_defn_path: &[String],
@@ -137,52 +137,89 @@ pub fn find_item_id_by_path_name_kind_checked(
     let module_node = graph.find_module_by_defn_path_checked(module_defn_path)?;
     let module_id = module_node.id();
 
-    // 2. Collect all potential candidates contained within the module
-    let contained_nodes: Vec<&dyn GraphNode> = graph
+    // 2. Get IDs of all nodes contained within the module
+    let contained_ids: Vec<NodeId> = graph
         .relations
         .iter()
         .filter(|rel| {
             rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains
         })
         .filter_map(|rel| match rel.target {
-            GraphId::Node(id) => graph.find_node(id), // Use find_node which is cheaper than checked here
+            GraphId::Node(id) => Some(id),
             _ => None,
         })
         .collect();
 
-    // 3. Filter candidates by name and kind
+    // 3. Iterate through contained IDs, check name and kind, collect matches
     let mut matches: Vec<NodeId> = Vec::new();
-    for node in contained_nodes {
-        if node.name() == item_name {
-            // Check kind (requires mapping GraphNode back to specific type or having kind() on trait)
-            // For now, let's assume we can get the kind. We might need to enhance GraphNode trait later.
-            // Placeholder: Assume a way to get ItemKind from &dyn GraphNode
-            let current_kind = match node.id() { // Infer kind based on which collection it's in (less robust)
-                 _ if graph.get_function(node.id()).is_some() => ItemKind::Function,
-                 _ if graph.get_struct(node.id()).is_some() => ItemKind::Struct,
-                 _ if graph.get_enum(node.id()).is_some() => ItemKind::Enum,
-                 _ if graph.get_union(node.id()).is_some() => ItemKind::Union,
-                 _ if graph.get_type_alias(node.id()).is_some() => ItemKind::TypeAlias,
-                 _ if graph.get_trait(node.id()).is_some() => ItemKind::Trait,
-                 _ if graph.get_impl(node.id()).is_some() => ItemKind::Impl,
-                 _ if graph.get_module(node.id()).is_some() => ItemKind::Module,
-                 _ if graph.get_value(node.id()).is_some() => ItemKind::Const, // Or Static
-                 _ if graph.get_macro(node.id()).is_some() => ItemKind::Macro,
-                 _ if graph.get_import(node.id()).is_some() => ItemKind::Import,
-                 _ => continue, // Skip if kind cannot be determined this way
-            };
+    let mut errors: Vec<SynParserError> = Vec::new(); // Collect errors encountered
 
-            if current_kind == item_kind {
-                matches.push(node.id());
+    for contained_id in contained_ids {
+        // Use find_node_checked to ensure the contained node itself exists uniquely
+        match graph.find_node_checked(contained_id) {
+            Ok(node) => {
+                if node.name() == item_name {
+                    // Name matches, now check if the kind matches the *target* kind
+                    let kind_matches = match item_kind {
+                        ItemKind::Function => node.as_function().is_some(),
+                        ItemKind::Struct => node.as_struct().is_some(),
+                        ItemKind::Enum => node.as_enum().is_some(),
+                        ItemKind::Union => node.as_union().is_some(),
+                        ItemKind::TypeAlias => node.as_type_alias().is_some(),
+                        ItemKind::Trait => node.as_trait().is_some(),
+                        ItemKind::Impl => node.as_impl().is_some(),
+                        ItemKind::Module => node.as_module().is_some(),
+                        ItemKind::Const | ItemKind::Static => node.as_value().is_some(), // Combine Const/Static check
+                        ItemKind::Macro => node.as_macro().is_some(),
+                        ItemKind::Import => node.as_import().is_some(),
+                        // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
+                        // are not directly represented as top-level GraphNode types searchable this way.
+                        // This helper is for finding top-level items within a module.
+                        _ => false,
+                    };
+
+                    if kind_matches {
+                        matches.push(contained_id);
+                    }
+                    // If name matches but kind doesn't, we just ignore it for this specific search.
+                }
+            }
+            Err(e @ SynParserError::DuplicateNode(_)) => {
+                // If find_node_checked finds a duplicate ID, this is a critical graph error.
+                log::error!("Graph inconsistency: Duplicate NodeId {} found during lookup.", contained_id);
+                return Err(e); // Propagate critical error immediately
+            }
+            Err(e @ SynParserError::NotFound(_)) => {
+                 // Should not happen if ID came from relations, but log if it does.
+                log::warn!("Graph inconsistency: Contained NodeId {} not found.", contained_id);
+                errors.push(e); // Collect non-critical error
+            }
+            Err(e) => {
+                // Collect other potential errors from find_node_checked
+                errors.push(e);
             }
         }
     }
 
-    // 4. Check for uniqueness
+    // 4. Check results after iterating through all contained items
+    if !errors.is_empty() {
+        // Log collected non-critical errors if any matches were also found or if no matches found
+        if !matches.is_empty() || matches.is_empty() {
+             log::warn!("Encountered errors while searching for item '{}' ({:?}) in module {:?}: {:?}", item_name, item_kind, module_defn_path, errors);
+        }
+        // If only errors occurred and no matches, return the first error encountered
+        if matches.is_empty() {
+             return Err(errors.remove(0));
+        }
+    }
+
     match matches.len() {
-        0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Placeholder ID
+        0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Use placeholder for specific error
         1 => Ok(matches[0]),
-        _ => Err(SynParserError::DuplicateNode(matches[0])), // Report first duplicate ID
+        _ => {
+            log::error!("Duplicate items found for name '{}' ({:?}) in module {:?}: {:?}", item_name, item_kind, module_defn_path, matches);
+            Err(SynParserError::DuplicateNode(matches[0])) // Report first duplicate ID
+        }
     }
 }
 
@@ -202,36 +239,72 @@ pub fn find_item_id_by_path_name_kind_checked(
 /// * `Err(SynParserError::DuplicateNode)` if multiple re-exports with the same visible name exist in the module.
 pub fn find_reexport_import_node_by_name_checked(
     graph: &CodeGraph,
-    module_path: &[String],
+    module_path: &[String], // Logical path of the module containing the re-export
     visible_name: &str,
 ) -> Result<NodeId, SynParserError> {
-    // Find the module where the re-export is declared (use checked version)
+    // 1. Find the containing module node rigorously using the logical path
+    //    We use find_module_by_path_checked because re-exports are associated with the logical module structure.
     let module_node = graph.find_module_by_path_checked(module_path)?;
     let module_id = module_node.id();
 
-    // Find all ImportNodes contained within this module
-    let contained_imports: Vec<&ImportNode> = graph
+    // 2. Get IDs of all nodes contained within the module
+    let contained_ids: Vec<NodeId> = graph
         .relations
         .iter()
         .filter(|rel| {
             rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains
         })
         .filter_map(|rel| match rel.target {
-            GraphId::Node(id) => graph.get_import(id), // Find ImportNode specifically
+            GraphId::Node(id) => Some(id),
             _ => None,
         })
         .collect();
 
-    // Filter these imports for re-exports matching the visible name
-    let mut matches: Vec<&ImportNode> = contained_imports
-        .into_iter()
-        .filter(|imp| imp.visible_name == visible_name && imp.is_reexport())
-        .collect();
+    // 3. Iterate through contained IDs, check if it's a matching re-export ImportNode
+    let mut matches: Vec<NodeId> = Vec::new();
+    let mut errors: Vec<SynParserError> = Vec::new(); // Collect errors
 
-    // Check for uniqueness
+    for contained_id in contained_ids {
+        // Use get_import_checked to ensure it's a unique ImportNode
+        match graph.get_import_checked(contained_id) {
+            Ok(import_node) => {
+                // Check if it's a re-export and the visible name matches
+                if import_node.is_reexport() && import_node.visible_name == visible_name {
+                    matches.push(contained_id);
+                }
+                // Ignore if it's not a re-export or name doesn't match
+            }
+            Err(e @ SynParserError::NotFound(_)) => {
+                // This contained ID is not an ImportNode, ignore it for this search.
+            }
+            Err(e @ SynParserError::DuplicateNode(_)) => {
+                // Critical graph error: Duplicate ID found for an ImportNode
+                 log::error!("Graph inconsistency: Duplicate NodeId {} found for ImportNode.", contained_id);
+                return Err(e); // Propagate critical error
+            }
+             Err(e) => {
+                // Collect other potential errors from get_import_checked
+                errors.push(e);
+            }
+        }
+    }
+
+     // 4. Check results after iterating
+    if !errors.is_empty() {
+        if !matches.is_empty() || matches.is_empty() {
+             log::warn!("Encountered errors while searching for re-export '{}' in module {:?}: {:?}", visible_name, module_path, errors);
+        }
+        if matches.is_empty() {
+             return Err(errors.remove(0));
+        }
+    }
+
     match matches.len() {
         0 => Err(SynParserError::NotFound(NodeId::Synthetic(uuid::Uuid::nil()))), // Placeholder ID
-        1 => Ok(matches[0].id),
-        _ => Err(SynParserError::DuplicateNode(matches[0].id)), // Report first duplicate ID
+        1 => Ok(matches[0]),
+        _ => {
+            log::error!("Duplicate re-exports found for visible name '{}' in module {:?}: {:?}", visible_name, module_path, matches);
+            Err(SynParserError::DuplicateNode(matches[0])) // Report first duplicate ID
+        }
     }
 }
