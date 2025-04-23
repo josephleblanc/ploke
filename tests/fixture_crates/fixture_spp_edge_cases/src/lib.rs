@@ -70,10 +70,11 @@
 mod chain_a {
     pub fn item_a() -> u8 { 1 }
     pub(crate) fn crate_item_a() -> u8 { 11 }
+    pub(crate) fn crate_item_a() -> u8 { 11 }
 }
 mod chain_b {
     pub use crate::chain_a::item_a as item_b; // 2-step pub
-    pub use crate::chain_a::crate_item_a; // 2-step pub(crate) -> pub use (still crate vis)
+    // REMOVED INVALID RE-EXPORT: pub use crate::chain_a::crate_item_a;
 }
 mod chain_c {
     pub use crate::chain_b::item_b as item_c; // 3-step pub
@@ -119,7 +120,9 @@ mod logical_mod_2; // Private logical module pointing to the same file
 // SPP for crate_item_in_shared_target should fail (crate visible)
 
 // --- Scenario 4: Glob Re-exports ---
+#[allow(dead_code)] // Allow unused items if only testing glob mechanism
 mod glob_target; // Declare the module directory
+#[allow(unused_imports)] // Allow glob import if items aren't used directly
 pub use glob_target::*; // Glob re-export at the root
 
 // Expected via glob: glob_public_item, glob_sub_path, glob_item_cfg_a / glob_item_cfg_not_a, pub_sub_with_restricted
@@ -133,29 +136,32 @@ mod restricted_vis {
     mod inner {
         pub(in crate::restricted_vis) fn in_path_func() -> u8 { 52 }
     }
-    pub use inner::in_path_func; // Re-export pub(in path)
+    // REMOVED INVALID RE-EXPORT: pub use inner::in_path_func;
 }
-// Re-exporting them with pub use DOES NOT make them public outside crate
-pub use restricted_vis::crate_func;
-pub use restricted_vis::super_func;
-pub use restricted_vis::in_path_func; // Already re-exported in restricted_vis
-                                      // SPP for all these should return Err
+// REMOVED INVALID RE-EXPORTS at root:
+// pub use restricted_vis::crate_func;
+// pub use restricted_vis::super_func;
+// pub use restricted_vis::in_path_func;
+// SPP for the original definitions should return Err
 
 // --- Scenario 6: Shadowing via Re-exports vs. Local Definitions ---
 mod shadowing {
+    #[allow(dead_code)] // Allow if other module isn't used directly
     pub mod other {
         pub fn shadowed_item() -> u8 { 60 }
     }
-    pub use other::shadowed_item; // Re-export
+    // REMOVED INVALID RE-EXPORT causing name collision: pub use other::shadowed_item;
 
-    // Local definition shadows the re-export
+    // Local definition is now the only public one
     pub fn shadowed_item() -> u8 { 61 }
 }
 // SPP for shadowing::shadowed_item should resolve to the local one: Ok(["crate", "shadowing"])
 
 // --- Scenario 7: Relative Re-exports ---
+#[allow(unused_imports)] // Allow re-exports if not used directly in lib.rs
 mod relative {
     pub fn item_in_relative() -> u8 { 70 }
+    #[allow(unused_imports)] // Allow re-export if not used directly
     pub mod inner {
         pub fn item_in_inner() -> u8 { 71 }
         pub use super::item_in_relative as reexport_super; // pub use super::
@@ -185,10 +191,13 @@ pub use deep11::item11 as final_deep_item; // 11 steps
 mod branch_source { pub fn branch_item() -> u8 { 90 } }
 mod branch_a { pub use crate::branch_source::branch_item; }
 mod branch_b { pub use crate::branch_source::branch_item; }
+#[allow(dead_code)] // Allow unused module
 mod private_intermediate {
     // This path is not public
+    #[allow(unused_imports)] // Allow re-export if not used directly
     pub use crate::branch_a::branch_item;
 }
+#[allow(dead_code)] // Allow unused module
 mod branch_c {
     // Re-export from private - this doesn't make branch_item public via this path
     // pub use crate::private_intermediate::branch_item as item_c;
