@@ -91,6 +91,11 @@ fn test_spp_multi_step_3() {
     //    Target: `item_c` (re-export of `chain_a::item_a`)
     //    Expected: Ok(["crate"])
     //    Anticipated Status: FAIL (SPP doesn't handle re-exports yet)
+
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let (graph, tree) = build_tree_for_edge_cases();
     let item_id = find_item_id_by_path_name_kind_checked(
         &graph,

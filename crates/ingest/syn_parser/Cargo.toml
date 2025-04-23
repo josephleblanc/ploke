@@ -50,9 +50,10 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-default = []
-feature_a = [] # Add feature_a used by fixture
-feature_b = [] # Add feature_b used by test
+default = ["mod_tree_cfg"]
+feature_a = []             # Add feature_a used by fixture
+feature_b = []             # Add feature_b used by test
 verbose_debug = []
+mod_tree_cfg = []
 # Post-MVP feature
 workspace_vis = []

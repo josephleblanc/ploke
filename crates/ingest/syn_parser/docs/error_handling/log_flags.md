@@ -28,9 +28,16 @@ The format is generally `target=level`, or `crate::module=level`. You can specif
     ```bash
     RUST_LOG=syn_parser=debug cargo test -q -p syn_parser
     ```
+*   Enable `debug` level logs for the `log_cfgs` target:
+    ```bash
+    RUST_LOG=mod_tree_cfgs=trace=debug cargo test -q -p syn_parser
+    ```
+*   Enable `debug` level logs for the `log_cfgs,mod_tree_path,mod_tree_build,mod_tree_vis` target:
+    ```bash
+    RUST_LOG=node_id=mod_tree_cfgs,mod_tree_path,mod_tree_build,mod_tree_vis=debug cargo test -q -p syn_parser
+    ```
 *   Enable `trace` level logs for the `node_id` target and `debug` for `graph_find`:
     ```bash
     RUST_LOG=node_id=trace,graph_find=debug cargo test -q -p syn_parser
     ```
-
 **Note:** You need a logging implementation initialized in your application or test setup (like `env_logger` or `tracing-subscriber`) for the logs to appear. If logs aren't showing up, ensure a logger is initialized somewhere (often in `main.rs` or test setup functions).

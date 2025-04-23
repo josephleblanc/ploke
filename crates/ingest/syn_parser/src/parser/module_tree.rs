@@ -14,8 +14,11 @@ use crate::parser::nodes::NodePath;
 use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
 
 use super::{
-    nodes::{GraphId, GraphNode, ImportNode, ModuleDef, ModuleNode, ModuleNodeId}, // Add GraphId
-    relations::{Relation, RelationKind},                                          // Remove GraphId
+    nodes::{
+        Attribute, GraphId, GraphNode, HasAttributes, ImportNode, ModuleDef, ModuleNode,
+        ModuleNodeId,
+    }, // Add GraphId
+    relations::{Relation, RelationKind}, // Remove GraphId
     types::VisibilityKind,
     CodeGraph,
 };
@@ -41,6 +44,7 @@ pub mod test_interface {
 const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
 const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
+const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
 
 #[derive(Debug, Clone)]
 pub struct ModuleTree {
@@ -689,10 +693,8 @@ impl ModuleTree {
                                 // This is a `pub use`, `pub(crate) use`, etc.
                                 // Check if it points to an external crate.
                                 // Heuristic: path doesn't start with "crate", "self", or "super".
-                                let is_external = import_node
-                                    .path()
-                                    .first()
-                                    .map_or(false, |first_seg| {
+                                let is_external =
+                                    import_node.path().first().map_or(false, |first_seg| {
                                         !matches!(first_seg.as_str(), "crate" | "self" | "super")
                                     });
 
@@ -1407,6 +1409,19 @@ impl ModuleTree {
             result.unwrap_or_else(|| "✓".to_string()).log_vis()  // Using vis color for result
         );
     }
+    /// Logs the details of path cfg processing using the provided context.
+    fn log_cfgs(&self, context: &CfgLogCtx, step: &str, result: Option<String>) {
+        debug!(target: LOG_TARGET_PATH_CFGS,
+            "{: <12} {: <20} {} | cfgs : {} | Attr: {} | Resolved: {} | {}",
+            "Cfgs".log_header(),
+            context.module_name.log_name(),
+            format!("({})", context.module_id).log_id(),
+            context.module_cfgs.join(",").log_path(),
+            format!("{:?}", context.module_path).log_path(),
+            step.log_name(),  // Using name color for step for visual distinction
+            result.unwrap_or_else(|| "✓".to_string()).log_vis()  // Using vis color for result
+        );
+    }
 
     fn log_module_insert(&self, module: &ModuleNode, id: ModuleNodeId) {
         // Get the string representation of the module definition kind
@@ -1723,6 +1738,28 @@ impl<'a> PathLogCtx<'a> {
             module_path: &module_node.path,
             attr_value,
             resolved_path,
+        }
+    }
+}
+
+/// Helper struct to hold context for path attribute logging.
+struct CfgLogCtx<'a> {
+    module_id: ModuleNodeId,
+    module_name: &'a str,
+    module_path: &'a [String], // Use slice for efficiency
+    module_cfgs: &'a [String],
+    // module_attrs: &'a [Attribute],
+}
+
+impl<'a> CfgLogCtx<'a> {
+    /// Creates a new context for logging path attribute processing.
+    fn new(module_node: &'a ModuleNode) -> Self {
+        Self {
+            module_id: ModuleNodeId::new(module_node.id()),
+            module_name: &module_node.name,
+            module_path: &module_node.path,
+            module_cfgs: module_node.cfgs(),
+            // module_attrs: &module_node.attributes(),
         }
     }
 }

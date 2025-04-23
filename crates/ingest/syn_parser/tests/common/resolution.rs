@@ -129,12 +129,16 @@ pub fn find_item_id_in_module_by_name(
 /// * `Err(SynParserError::DuplicateNode)` if multiple items matching the criteria are found.
 pub fn find_item_id_by_path_name_kind_checked(
     graph: &CodeGraph,
-    module_defn_path: &[String],
+    module_defn_path: &[&str],
     item_name: &str,
     item_kind: ploke_core::ItemKind,
 ) -> Result<NodeId, SynParserError> {
     // 1. Find the containing module definition node rigorously
-    let module_node = graph.find_module_by_defn_path_checked(module_defn_path)?;
+    let m_path_string = module_defn_path
+        .iter()
+        .map(|seg| seg.to_string())
+        .collect::<Vec<_>>();
+    let module_node = graph.find_module_by_defn_path_checked(&m_path_string)?;
     let module_id = module_node.id();
 
     // 2. Get IDs of all nodes contained within the module
