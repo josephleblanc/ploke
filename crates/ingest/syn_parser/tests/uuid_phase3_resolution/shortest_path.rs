@@ -519,15 +519,10 @@ fn test_spp_reexport_external_dep() {
     //     "SPP for re-exported external item currently fails (expected final: Ok([\"crate\"]))"
     // );
 
-    // Intermediate expected behavior (after find_node fix, before external handling):
-    // The path should include the name of the re-export itself.
-    let expected_path = Ok(vec![
-        "crate".to_string(),
-        "log_debug_reexport".to_string(),
-    ]);
-    assert_eq!(
-        spp_result, expected_path,
-        "INTERMEDIATE CHECK: SPP for re-exported external item should be Ok([\"crate\", \"log_debug_reexport\"])"
+    // Final expected behavior: Error because SPP cannot resolve external items.
+    assert!(
+        matches!(spp_result, Err(ModuleTreeError::ExternalItemNotResolved(id)) if id == reexport_import_node.id),
+        "SPP for re-exported external item should be Err(ExternalItemNotResolved), but was {:?}", spp_result
     );
 }
 

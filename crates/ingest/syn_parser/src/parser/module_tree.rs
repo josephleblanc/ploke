@@ -243,6 +243,10 @@ pub enum ModuleTreeError {
     DuplicateDefinition(String), // Store detailed message
     #[error("Module definition not found for path attribute target: {0}")]
     ModuleDefinitionNotFound(String), // Store detailed message
+
+    // --- NEW VARIANT ---
+    #[error("Shortest public path resolution failed for external item re-export: {0}")]
+    ExternalItemNotResolved(NodeId),
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -675,10 +679,52 @@ impl ModuleTree {
             {
                 match rel.relation().kind {
                     RelationKind::Contains if rel.relation().target == GraphId::Node(item_id) => {
-                        // Direct containment case
+                        // Direct containment case. The item_id is directly contained in current_mod_id.
                         let item_node = graph.find_node_unique(item_id)?;
-                        if item_node.visibility().is_pub() {
-                            return Ok(effective_path);
+
+                        // Check if the contained item is itself an ImportNode (a use/re-export statement)
+                        if let Some(import_node) = item_node.as_import() {
+                            // It's an import/re-export statement.
+                            if import_node.is_reexport() {
+                                // This is a `pub use`, `pub(crate) use`, etc.
+                                // Check if it points to an external crate.
+                                // Heuristic: path doesn't start with "crate", "self", or "super".
+                                let is_external = import_node
+                                    .path()
+                                    .first()
+                                    .map_or(false, |first_seg| {
+                                        !matches!(first_seg.as_str(), "crate" | "self" | "super")
+                                    });
+
+                                if is_external {
+                                    // We found the re-export statement, but it points externally.
+                                    // SPP cannot resolve paths for external items directly.
+                                    return Err(ModuleTreeError::ExternalItemNotResolved(item_id));
+                                } else {
+                                    // It's an internal re-export.
+                                    // TODO: Implement proper re-export following logic here.
+                                    // For now, we don't return the path to the re-export statement itself.
+                                    // We need to follow the re-export to its target.
+                                    // Let the BFS continue to explore other paths or find the target directly.
+                                    // This branch intentionally does nothing for now.
+                                    log::trace!(target: LOG_TARGET_VIS, "SPP: Found internal re-export ImportNode {} in {}, continuing BFS.", item_id, current_mod_id);
+                                }
+                            } else {
+                                // It's a private `use` statement (is_inherited_use).
+                                // These are not part of the public path. Continue BFS.
+                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found private ImportNode {} in {}, continuing BFS.", item_id, current_mod_id);
+                            }
+                        } else {
+                            // It's a regular item (Function, Struct, etc.), not an ImportNode.
+                            // Check its visibility directly.
+                            if item_node.visibility().is_pub() {
+                                // Found the target item directly via a public path.
+                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found target item {} directly in public module {}, returning path.", item_id, current_mod_id);
+                                return Ok(effective_path);
+                            } else {
+                                // Item is contained but not public. Continue BFS.
+                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found target item {} directly in non-public module {}, continuing BFS.", item_id, current_mod_id);
+                            }
                         }
                     }
                     // And in shortest_public_path's ReExport case:
