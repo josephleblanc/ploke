@@ -1413,10 +1413,10 @@ impl ModuleTree {
     /// Logs the entry or exit point of the path attribute resolution process.
     fn log_resolve_entry_exit(&self, is_entry: bool) {
         let action = if is_entry { "Entering" } else { "Finished" };
-        // Use padding for alignment. Widths are estimates.
-        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {}",
+        // Simplified format
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {}",
             action.log_header(),
-            "resolve_pending_path_attrs path attribute resolution.".log_name() // Combine description
+            "resolve_pending_path_attrs path attribute resolution.".log_name()
         );
     }
 
@@ -1425,15 +1425,15 @@ impl ModuleTree {
         let header = "Pending".log_header();
         match count {
             Some(n) => {
-                // Use padding for alignment.
-                debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | Found {} pending path attribute IDs.",
+                // Simplified format
+                debug!(target: LOG_TARGET_PATH_ATTR, "{} | Found {} pending path attribute IDs.",
                     header,
                     n.to_string().log_id()
                 );
             }
             None => {
-                 // Use padding for alignment.
-                 debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | No pending path attributes found (list was None or empty).",
+                 // Simplified format
+                 debug!(target: LOG_TARGET_PATH_ATTR, "{} | No pending path attributes found (list was None or empty).",
                     header
                 );
             }
@@ -1447,8 +1447,8 @@ impl ModuleTree {
         let id_str = format!("({})", module_id).log_id();
         let step_str = step.log_name();
 
-        // Use padding for alignment. Widths are estimates.
-        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {:<20} | {}",
+        // Reordered format, removed padding
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {}: {}",
             status_indicator,
             id_str,
             step_str,
@@ -1463,8 +1463,8 @@ impl ModuleTree {
         let action_str = "Resolved Path".log_name();
         let path_str = resolved_path.display().to_string().log_path();
 
-        // Use padding for alignment.
-        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {:<20} | {}",
+        // Reordered format, removed padding
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {}: {}",
             header,
             id_str,
             action_str,
@@ -1479,8 +1479,8 @@ impl ModuleTree {
         let existing_str = existing.display().to_string().log_path();
         let conflicting_str = conflicting.display().to_string().log_path();
 
-        // Use padding for alignment.
-        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | Existing: {} | Conflicting: {}",
+        // Reordered format, removed padding
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | Existing: {} | Conflicting: {}",
             header,
             id_str,
             existing_str,
@@ -1495,11 +1495,11 @@ impl ModuleTree {
         let id_str = format!("({})", module_id).log_id();
         let detail_str = "Added to pending list".log_vis();
 
-        // Use padding for alignment.
-        debug!(target: LOG_TARGET_PATH_ATTR, "{:<15} | {:<25} | {} | {}",
+        // Reordered format, removed padding, similar to log_path_resolution
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} {} | {}",
             header,
-            id_str, // Put ID second for consistency with other logs
             name_str,
+            id_str,
             detail_str
         );
     }
