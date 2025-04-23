@@ -143,7 +143,7 @@ impl ModuleNode {
 
     /// Checks module to see if it has a #[path = "..."] attribute.
     /// Only checks module declarations, e.g.
-    /// ```rust
+    /// ```rust,ignore
     /// #[path = "path/to/file.rs"]
     /// mod my_mod;
     /// ```

@@ -74,7 +74,7 @@ pub struct ModuleTree {
 
 /// Indicates a file-level module whose path has been resolved from a declaration that has the
 /// `#[path]` attribute, e.g.
-/// ```rust
+/// ```rust,ignore
 /// // somewhere in project, e.g. project/src/my_module.rs
 /// #[path = "path/to/file.rs"]
 /// pub mod path_attr_mod;
