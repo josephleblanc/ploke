@@ -68,13 +68,19 @@
 
 // --- Scenario 1: Multi-Step Re-export Chains ---
 mod chain_a {
-    pub fn item_a() -> u8 { 1 }
-    pub(crate) fn crate_item_a() -> u8 { 11 }
-    pub(crate) fn crate_item_a() -> u8 { 11 }
+    pub fn item_a() -> u8 {
+        1
+    }
+    pub(crate) fn crate_item_a() -> u8 {
+        11
+    }
+    pub(crate) fn crate_item_a() -> u8 {
+        11
+    }
 }
 mod chain_b {
     pub use crate::chain_a::item_a as item_b; // 2-step pub
-    // REMOVED INVALID RE-EXPORT: pub use crate::chain_a::crate_item_a;
+                                              // REMOVED INVALID RE-EXPORT: pub use crate::chain_a::crate_item_a;
 }
 mod chain_c {
     pub use crate::chain_b::item_b as item_c; // 3-step pub
@@ -100,10 +106,14 @@ pub use chain_alt_d::item_alt_d; // SPP should prefer item_c path
 #[path = "inline_path_target.rs"]
 pub mod inline_path_mod {
     // This shadows the function in inline_path_target.rs
-    pub fn shadow_me() -> u8 { 2 }
+    pub fn shadow_me() -> u8 {
+        2
+    }
 
     // This item only exists here
-    pub fn item_only_in_inline() -> u8 { 21 }
+    pub fn item_only_in_inline() -> u8 {
+        21
+    }
 
     // We could try re-exporting from the target file, but SPP needs to handle it
     // pub use super::item_only_in_inline_target; // Needs SPP enhancement
@@ -131,10 +141,16 @@ pub use glob_target::*; // Glob re-export at the root
 
 // --- Scenario 5: Re-exporting Items with Restricted Visibility ---
 mod restricted_vis {
-    pub(crate) fn crate_func() -> u8 { 50 }
-    pub(super) fn super_func() -> u8 { 51 } // super is crate here
+    pub(crate) fn crate_func() -> u8 {
+        50
+    }
+    pub(super) fn super_func() -> u8 {
+        51
+    } // super is crate here
     mod inner {
-        pub(in crate::restricted_vis) fn in_path_func() -> u8 { 52 }
+        pub(in crate::restricted_vis) fn in_path_func() -> u8 {
+            52
+        }
     }
     // REMOVED INVALID RE-EXPORT: pub use inner::in_path_func;
 }
@@ -148,22 +164,30 @@ mod restricted_vis {
 mod shadowing {
     #[allow(dead_code)] // Allow if other module isn't used directly
     pub mod other {
-        pub fn shadowed_item() -> u8 { 60 }
+        pub fn shadowed_item() -> u8 {
+            60
+        }
     }
     // REMOVED INVALID RE-EXPORT causing name collision: pub use other::shadowed_item;
 
     // Local definition is now the only public one
-    pub fn shadowed_item() -> u8 { 61 }
+    pub fn shadowed_item() -> u8 {
+        61
+    }
 }
 // SPP for shadowing::shadowed_item should resolve to the local one: Ok(["crate", "shadowing"])
 
 // --- Scenario 7: Relative Re-exports ---
 #[allow(unused_imports)] // Allow re-exports if not used directly in lib.rs
 mod relative {
-    pub fn item_in_relative() -> u8 { 70 }
+    pub fn item_in_relative() -> u8 {
+        70
+    }
     #[allow(unused_imports)] // Allow re-export if not used directly
     pub mod inner {
-        pub fn item_in_inner() -> u8 { 71 }
+        pub fn item_in_inner() -> u8 {
+            71
+        }
         pub use super::item_in_relative as reexport_super; // pub use super::
     }
     pub use self::inner::item_in_inner as reexport_self; // pub use self::
@@ -173,24 +197,56 @@ mod relative {
 
 // --- Scenario 8: Deep Re-export Chains ---
 // (Illustrative - actual implementation might be tedious)
-mod deep1 { pub fn deep_item() -> u8 { 80 } }
-mod deep2 { pub use crate::deep1::deep_item as item2; }
-mod deep3 { pub use crate::deep2::item2 as item3; }
-mod deep4 { pub use crate::deep3::item3 as item4; }
-mod deep5 { pub use crate::deep4::item4 as item5; }
-mod deep6 { pub use crate::deep5::item5 as item6; }
-mod deep7 { pub use crate::deep6::item6 as item7; }
-mod deep8 { pub use crate::deep7::item7 as item8; }
-mod deep9 { pub use crate::deep8::item8 as item9; }
-mod deep10 { pub use crate::deep9::item9 as item10; }
-mod deep11 { pub use crate::deep10::item10 as item11; }
+mod deep1 {
+    pub fn deep_item() -> u8 {
+        80
+    }
+}
+mod deep2 {
+    pub use crate::deep1::deep_item as item2;
+}
+mod deep3 {
+    pub use crate::deep2::item2 as item3;
+}
+mod deep4 {
+    pub use crate::deep3::item3 as item4;
+}
+mod deep5 {
+    pub use crate::deep4::item4 as item5;
+}
+mod deep6 {
+    pub use crate::deep5::item5 as item6;
+}
+mod deep7 {
+    pub use crate::deep6::item6 as item7;
+}
+mod deep8 {
+    pub use crate::deep7::item7 as item8;
+}
+mod deep9 {
+    pub use crate::deep8::item8 as item9;
+}
+mod deep10 {
+    pub use crate::deep9::item9 as item10;
+}
+mod deep11 {
+    pub use crate::deep10::item10 as item11;
+}
 pub use deep11::item11 as final_deep_item; // 11 steps
                                            // SPP should find Ok(["crate"])
 
 // --- Scenario 9: Branching/Converging Re-exports ---
-mod branch_source { pub fn branch_item() -> u8 { 90 } }
-mod branch_a { pub use crate::branch_source::branch_item; }
-mod branch_b { pub use crate::branch_source::branch_item; }
+mod branch_source {
+    pub fn branch_item() -> u8 {
+        90
+    }
+}
+mod branch_a {
+    pub use crate::branch_source::branch_item;
+}
+mod branch_b {
+    pub use crate::branch_source::branch_item;
+}
 #[allow(dead_code)] // Allow unused module
 mod private_intermediate {
     // This path is not public
@@ -208,9 +264,17 @@ pub use branch_b::branch_item as item_via_b; // Path length 2
                                              // SPP should find Ok(["crate"]) via either item_via_a or item_via_b
 
 // --- Scenario 10: Multiple Renames in Chain ---
-mod rename_source { pub fn multi_rename_item() -> u8 { 100 } }
-mod rename_step1 { pub use crate::rename_source::multi_rename_item as renamed1; }
-mod rename_step2 { pub use crate::rename_step1::renamed1 as renamed2; }
+mod rename_source {
+    pub fn multi_rename_item() -> u8 {
+        100
+    }
+}
+mod rename_step1 {
+    pub use crate::rename_source::multi_rename_item as renamed1;
+}
+mod rename_step2 {
+    pub use crate::rename_step1::renamed1 as renamed2;
+}
 pub use rename_step2::renamed2 as final_renamed_item;
 // SPP should find Ok(["crate"])
 
@@ -223,19 +287,29 @@ pub mod nested_path_1;
 // --- Scenario 12 & 13: Mutually Exclusive `cfg` Attributes ---
 #[cfg(feature = "cfg_a")]
 pub mod cfg_mod {
-    pub fn item_in_cfg_a() -> u8 { 120 }
+    pub fn item_in_cfg_a() -> u8 {
+        120
+    }
     #[cfg(feature = "cfg_b")]
     pub mod nested_cfg {
-        pub fn item_in_cfg_ab() -> u8 { 130 }
+        pub fn item_in_cfg_ab() -> u8 {
+            130
+        }
     }
 }
 
 #[cfg(not(feature = "cfg_a"))]
-pub mod cfg_mod { // Same name, different NodeId due to cfg
-    pub fn item_in_cfg_not_a() -> u8 { 121 }
+pub mod cfg_mod {
+    // Same name, different NodeId due to cfg
+    pub fn item_in_cfg_not_a() -> u8 {
+        121
+    }
     #[cfg(feature = "cfg_c")]
-    pub mod nested_cfg { // Same name, different NodeId
-        pub fn item_in_cfg_nac() -> u8 { 131 }
+    pub mod nested_cfg {
+        // Same name, different NodeId
+        pub fn item_in_cfg_nac() -> u8 {
+            131
+        }
     }
 }
 // SPP for item_in_cfg_a should be Ok(["crate", "cfg_mod"]) (if cfg_a active)
@@ -249,7 +323,9 @@ pub mod conflict_parent {
     #[cfg(not(feature = "cfg_conflict"))]
     pub mod conflict_child {
         // This item can never be compiled
-        pub fn impossible_item() -> u8 { 140 }
+        pub fn impossible_item() -> u8 {
+            140
+        }
     }
 }
 // SPP for impossible_item should find Ok(["crate", "conflict_parent", "conflict_child"])
