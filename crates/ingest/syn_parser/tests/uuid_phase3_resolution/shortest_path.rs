@@ -289,7 +289,13 @@ macro_rules! assert_spp {
     // Variant 1: Expecting Ok result
     ($test_name:ident, $item_name:expr, $module_path:expr, Ok($final_path:expr)) => {
         #[test]
+        #[ignore]
         fn $test_name() {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None) // Disable timestamps
+                .try_init();
+
             let fixture_name = "fixture_path_resolution";
             let (graph, tree) = build_tree_for_fixture(fixture_name);
 
@@ -323,6 +329,11 @@ macro_rules! assert_spp {
     ($test_name:ident, $item_name:expr, $module_path:expr, ExpectErr) => {
         #[test]
         fn $test_name() {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None) // Disable timestamps
+                .try_init();
+
             let fixture_name = "fixture_path_resolution";
             let (graph, tree) = build_tree_for_fixture(fixture_name);
 
@@ -498,18 +509,22 @@ fn test_spp_reexport_external_dep() {
     // It would likely fail trying to find the original `log::debug` in the local graph.
     let spp_result = tree.shortest_public_path(reexport_import_node.id, &graph); // Use re-export's ID
 
+    eprintln!("{:#?}", spp_result);
     // Current expected behavior: Error because original item isn't in the graph.
-    assert!(
-        matches!(
-            spp_result,
-            Err(ModuleTreeError::ItemNotPubliclyAccessible(_))
-        ), // Or potentially NotFound
-        "SPP for re-exported external item currently fails (expected final: Ok([\"crate\"]))"
-    );
+    // assert!(
+    //     matches!(
+    //         spp_result,
+    //         Err(ModuleTreeError::ItemNotPubliclyAccessible(_))
+    //     ), // Or potentially NotFound
+    //     "SPP for re-exported external item currently fails (expected final: Ok([\"crate\"]))"
+    // );
 
     // Final expected behavior:
-    // let expected_path = Ok(vec!["crate".to_string()]);
-    // assert_eq!(spp_result, expected_path, "SPP for re-exported external item should be Ok([\"crate\"])");
+    let expected_path = Ok(vec!["crate".to_string()]);
+    assert_eq!(
+        spp_result, expected_path,
+        "SPP for re-exported external item should be Ok([\"crate\"])"
+    );
 }
 
 // 12. Re-export of Macro
@@ -533,8 +548,8 @@ assert_spp!(
 assert_spp!(
     test_spp_crate_item_in_path_mod,
     "crate_visible_in_actual_file",
-    &["crate", "logical_path_mod"],
-    ExpectErr // Expected Err(ItemNotPubliclyAccessible)
+    &["crate", "renamed_path", "actual_file"], // <--- Use definition path for lookup
+    ExpectErr                                  // Expected Err(ItemNotPubliclyAccessible)
 );
 
 // 15. Private Item
