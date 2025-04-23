@@ -1,7 +1,7 @@
 pub use colored::Colorize;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
-    path::{self, PathBuf},
+    path::{self, Path, PathBuf},
 }; // Keep HashSet and VecDeque
 
 use crate::utils::LogStyle;
@@ -406,40 +406,37 @@ impl ModuleTree {
         let module_ids = match self.pending_path_attrs.take() {
             Some(pending_ids) => {
                 if pending_ids.is_empty() {
-                     // *** NEW LOGGING CALL ***
                     self.log_resolve_pending_status(None);
                     self.log_resolve_entry_exit(false); // Log exit
                     return Ok(());
                 }
-                 // *** NEW LOGGING CALL ***
                 self.log_resolve_pending_status(Some(pending_ids.len()));
                 pending_ids
-            },
+            }
             None => {
-                 // *** NEW LOGGING CALL ***
                 self.log_resolve_pending_status(None);
                 self.log_resolve_entry_exit(false); // Log exit
                 return Ok(()); // Should not happen if take() is only called once, but handle defensively
             }
         };
-
-        // Removed redundant is_empty check here
-
         for module_id in module_ids {
-            // *** NEW LOGGING CALL ***
             // Log which ID we are starting to process
             self.log_resolve_step(module_id, "Processing ID", &module_id.to_string(), false);
 
             let base_dir = match self.find_declaring_file_dir(module_id) {
                 Ok(dir) => {
-                    // *** NEW LOGGING CALL ***
-                    self.log_resolve_step(module_id, "Find Base Dir", &dir.display().to_string(), false);
+                    self.log_resolve_step(
+                        module_id,
+                        "Find Base Dir",
+                        &dir.display().to_string(),
+                        false,
+                    );
                     dir
-                },
+                }
                 Err(e) => {
                     // *** NEW LOGGING CALL ***
                     self.log_resolve_step(module_id, "Find Base Dir", &format!("{:?}", e), true);
-                    log_path_attr_not_found(module_id); // Keep specific error log
+                    log_path_attr_not_found(module_id);
                     // Continue processing other IDs, maybe collect errors later?
                     // For now, let's return the first error encountered to halt processing.
                     return Err(ModuleTreeError::UnresolvedPathAttr(Box::new(e)));
@@ -447,40 +444,48 @@ impl ModuleTree {
             };
 
             let module = match self.get_module_checked(&module_id) {
-                 Ok(m) => m,
-                 Err(e) => {
-                     // *** NEW LOGGING CALL ***
-                     self.log_resolve_step(module_id, "Get Module Node", &format!("{:?}", e), true);
-                     continue; // Skip this ID if module node not found
-                 }
+                Ok(m) => m,
+                Err(e) => {
+                    self.log_resolve_step(module_id, "Get Module Node", &format!("{:?}", e), true);
+                    continue; // Skip this ID if module node not found
+                }
             };
 
             let path_val = match extract_path_attr_from_node(module) {
                 Some(val) => {
-                     // *** NEW LOGGING CALL ***
-                     self.log_resolve_step(module_id, "Extract Attr Value", val, false);
+                    // *** NEW LOGGING CALL ***
+                    self.log_resolve_step(module_id, "Extract Attr Value", val, false);
                     val
-                },
+                }
                 None => {
-                     // *** NEW LOGGING CALL ***
-                     self.log_resolve_step(module_id, "Extract Attr Value", "Attribute value not found", true);
+                    // *** NEW LOGGING CALL ***
+                    self.log_resolve_step(
+                        module_id,
+                        "Extract Attr Value",
+                        "Attribute value not found",
+                        true,
+                    );
                     continue; // Skip if attribute value missing
                 }
             };
 
             // Consider adding error handling for normalization if needed
             let resolved = base_dir.join(path_val).normalize();
-             // *** NEW LOGGING CALL ***
-             self.log_resolve_step(module_id, "Normalize Path", &resolved.display().to_string(), false);
-
+            // *** NEW LOGGING CALL ***
+            self.log_resolve_step(
+                module_id,
+                "Normalize Path",
+                &resolved.display().to_string(),
+                false,
+            );
 
             // Remove the old PathLogCtx logging block as it's replaced by the step-by-step logs
 
             match self.found_path_attrs.entry(module_id) {
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     let existing_path = entry.get().clone();
-                     // *** NEW LOGGING CALL ***
-                     self.log_resolve_duplicate(module_id, &existing_path, &resolved);
+                    // *** NEW LOGGING CALL ***
+                    self.log_resolve_duplicate(module_id, &existing_path, &resolved);
                     return Err(ModuleTreeError::DuplicatePathAttribute {
                         module_id,
                         existing_path,
@@ -488,8 +493,7 @@ impl ModuleTree {
                     });
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                     // *** NEW LOGGING CALL ***
-                     self.log_resolve_insert(module_id, &resolved);
+                    Self::log_resolve_insert(module_id, &resolved);
                     entry.insert(resolved);
                 }
             };
@@ -1422,7 +1426,7 @@ impl ModuleTree {
                 );
             }
             None => {
-                 debug!(target: LOG_TARGET_PATH_ATTR, "{} No pending path attributes found (list was None or empty).",
+                debug!(target: LOG_TARGET_PATH_ATTR, "{} No pending path attributes found (list was None or empty).",
                     "Pending".log_header(),
                 );
             }
@@ -1431,8 +1435,16 @@ impl ModuleTree {
 
     /// Logs a specific step during the resolution of a single module's path attribute.
     fn log_resolve_step(&self, module_id: ModuleNodeId, step: &str, outcome: &str, is_error: bool) {
-        let status_indicator = if is_error { "Error".log_error() } else { "Step".log_header() };
-        let outcome_styled = if is_error { outcome.log_error() } else { outcome.log_vis() }; // Use vis color for success details
+        let status_indicator = if is_error {
+            "Error".log_error()
+        } else {
+            "Step".log_header()
+        };
+        let outcome_styled = if is_error {
+            outcome.log_error()
+        } else {
+            outcome.log_vis()
+        }; // Use vis color for success details
 
         debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} -> {}", // Simplified format slightly
             status_indicator,
@@ -1442,10 +1454,9 @@ impl ModuleTree {
         );
     }
 
-
     /// Logs the successful insertion of a resolved path attribute.
-    fn log_resolve_insert(&self, module_id: ModuleNodeId, resolved_path: &Path) {
-         debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} -> {}",
+    fn log_resolve_insert(module_id: ModuleNodeId, resolved_path: &Path) {
+        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} -> {}",
             "Insert".log_header(),
             format!("({})", module_id).log_id(),
             "Resolved Path".log_name(),
@@ -1472,7 +1483,6 @@ impl ModuleTree {
             "Added to pending list".log_vis()
         );
     }
-
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
