@@ -801,7 +801,7 @@ impl ModuleTree {
 
         while visited.insert(current_id) {
             // Check if current_id re-exports our target
-            if let Some(reexport_rel) = self.tree_relations.iter().find(|tr| {
+            if let Some(_reexport_rel) = self.tree_relations.iter().find(|tr| {
                 tr.relation().kind == RelationKind::ReExport
                     && tr.relation().source == GraphId::Node(current_id)
                     && tr.relation().target == GraphId::Node(target_id)
@@ -1274,8 +1274,9 @@ impl ModuleTree {
                             decl_module_node.id,
                         resolved_path.display(),
                             &decl_module_node,
-                        &decl_module_id,
-                        &target_defn_node,
+                            &target_defn,
+                            &dup
+
                     )));
                     }
                     self.tree_relations.push(relation.into());
@@ -1284,21 +1285,59 @@ impl ModuleTree {
                     // 3. Handle case where the target file node wasn't found.
                     // This indicates an inconsistency - the path resolved, but thecorresponding
                     // module node isn't in the map.
-                    self.log_module_error(
-                        *decl_module_id,
-                        &format!(
-                            "Path attribute target file not found in modules map:  {}",
+                    // Either the file is outside the target directory, and we return a warning,
+                    // since we don't want to do a second parse, or if the path is inside the
+                    // directory, we abort the process of resolving the tree because the parsed
+                    // files are inconsistent.
+
+                    // Determine the crate's src directory
+                    let src_dir = match self.root_file.parent() {
+                        Some(dir) => dir,
+                        None => {
+                            // Should be rare, but handle if root file has no parent
+                            self.log_module_error(
+                                *decl_module_id,
+                                &format!(
+                                    "Could not determine src directory from root file: {}",
+                                    self.root_file.display()
+                                ),
+                            );
+                            return Err(ModuleTreeError::FilePathMissingParent(
+                                self.root_file.clone(),
+                            ));
+                        }
+                    };
+
+                    // Check if the resolved path is outside the src directory
+                    if !resolved_path.starts_with(src_dir) {
+                        // External path target not found - Log a warning and continue
+                        log::warn!(
+                            target: LOG_TARGET_PATH_ATTR,
+                            "{} {} | {}",
+                            "External Path".yellow().bold(), // Use yellow for warning
+                            format!("({})", decl_module_id).log_id(),
+                            format!(
+                                "Target file outside src dir not found: {}",
+                                resolved_path.display()
+                            )
+                            .log_vis()
+                        );
+                        continue; // Skip to the next path attribute
+                    } else {
+                        self.log_module_error(
+                            *decl_module_id,
+                            &format!(
+                                "Path attribute target file not found in modules map: {}",
+                                resolved_path.display(),
+                            ),
+                        );
+                        return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
+                            "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
                             resolved_path.display(),
-                        ),
-                    );
-                    // Return an error because the tree is inconsistent
-                    // TODO: Consider a more specific error variant if needed.
-                    return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
-                        "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
-                        resolved_path.display(),
-                        decl_module_node.id,
+                            decl_module_node.id,
                             &decl_module_node,
-                    )));
+                        )));
+                    }
                 }
             }
         }
@@ -1360,7 +1399,7 @@ impl ModuleTree {
         details: Option<&str>,
     ) {
         debug!(target: LOG_TARGET_PATH_ATTR,
-            "{} {} {} | Path: {} | {} {}",
+            "{: <12} {: <20} {} | Path: {} | {} {}",
             "PathResolve".log_header(),
             module.name.log_name(),
             format!("({})", module.id).log_id(),
@@ -1432,8 +1471,8 @@ impl ModuleTree {
                 );
             }
             None => {
-                 // Simplified format
-                 debug!(target: LOG_TARGET_PATH_ATTR, "{} | No pending path attributes found (list was None or empty).",
+                // Simplified format
+                debug!(target: LOG_TARGET_PATH_ATTR, "{} | No pending path attributes found (list was None or empty).",
                     header
                 );
             }
@@ -1442,16 +1481,24 @@ impl ModuleTree {
 
     /// Logs a specific step during the resolution of a single module's path attribute.
     fn log_resolve_step(&self, module_id: ModuleNodeId, step: &str, outcome: &str, is_error: bool) {
-        let status_indicator = if is_error { "Error".log_error() } else { "Step".log_header() };
-        let outcome_styled = if is_error { outcome.log_error() } else { outcome.log_vis() };
+        let status_indicator = if is_error {
+            "Error".log_error()
+        } else {
+            "Step".log_header()
+        };
+        let outcome_styled = if is_error {
+            outcome.log_error()
+        } else {
+            outcome.log_vis()
+        };
         let id_str = format!("({})", module_id).log_id();
         let step_str = step.log_name();
 
         // Reordered format, removed padding
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {}: {}",
+        debug!(target: LOG_TARGET_PATH_ATTR, "{: <12} {: <20} {} | {}",
             status_indicator,
-            id_str,
             step_str,
+            id_str,
             outcome_styled
         );
     }
@@ -1464,10 +1511,10 @@ impl ModuleTree {
         let path_str = resolved_path.display().to_string().log_path();
 
         // Reordered format, removed padding
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {}: {}",
+        debug!(target: LOG_TARGET_PATH_ATTR, "{: <12} {: <20} {} | {}",
             header,
-            id_str,
             action_str,
+            id_str,
             path_str
         );
     }
@@ -1496,7 +1543,7 @@ impl ModuleTree {
         let detail_str = "Added to pending list".log_vis();
 
         // Reordered format, removed padding, similar to log_path_resolution
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} {} | {}",
+        debug!(target: LOG_TARGET_PATH_ATTR, "{: <12} {: <20} {} | {}",
             header,
             name_str,
             id_str,

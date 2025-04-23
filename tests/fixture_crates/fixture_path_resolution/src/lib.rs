@@ -73,7 +73,7 @@ pub mod restricted_vis_mod {
 }
 
 // 6c. Module using #[path] to point outside src/
-#[path = "../common_file.rs"]
+#[path = "../../common_file.rs"]
 pub mod common_import_mod; // rustc showing it can't read
 
 // === Imports (Private) ===

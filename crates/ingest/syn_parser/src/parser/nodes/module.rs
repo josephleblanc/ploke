@@ -148,7 +148,7 @@ impl ModuleNode {
     /// mod my_mod;
     /// ```
     pub fn has_path_attr(&self) -> bool {
-        self.is_inline() && self.attributes.iter().any(|attr| attr.name == "path")
+        self.is_declaration() && self.attributes.iter().any(|attr| attr.name == "path")
     }
 }
 
