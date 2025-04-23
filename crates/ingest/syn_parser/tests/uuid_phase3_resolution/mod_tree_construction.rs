@@ -163,7 +163,7 @@ fn test_module_tree_path_index_correctness() {
 /// within the `tree_relations` field. It finds specific module *declarations*
 /// (`mod foo;`) and their corresponding *definitions* (`foo.rs` or `mod foo {}`)
 /// in the graph and asserts that the expected relation linking them exists in the tree.
-/// This primarily tests the `ModuleTree::build_logical_paths()` method and implicitly
+/// This primarily tests the `ModuleTree::link_mods_syntactic()` method and implicitly
 /// the population of the `decl_index`.
 #[test]
 fn test_module_tree_resolves_to_definition_relation() {
