@@ -1,70 +1,78 @@
 //! Fixture crate designed to test complex edge cases for `shortest_public_path` (SPP).
-//! All code herein should be valid, stable Rust that compiles without errors or warnings.
+//! All code herein is valid, stable Rust that passes `cargo check`.
 //!
-//! # Tested Scenarios:
+//! # Implemented Test Scenarios & Targets:
 //!
 //! 1.  **Multi-Step Re-export Chains:**
-//!     - Chains of varying lengths (e.g., 2-step, 3-step).
-//!     - Chains involving renaming (`as`).
-//!     - Chains where intermediate links have different visibilities (e.g., `pub` -> `pub(crate)` -> `pub`).
-//!     - Multiple valid public paths to the same item via different re-export chains, testing shortest path selection.
+//!     - Target: `item_a` (original), `item_c` (3-step re-export), `item_alt_d` (4-step re-export).
+//!     - Tests: Chain traversal, renaming, shortest path selection.
 //!
 //! 2.  **Inline Module with `#[path]` Attribute:**
-//!     - An inline module (`mod name { ... }`) annotated with `#[path]`.
-//!     - Item shadowing: Items defined *inside* the inline module block should shadow items with the same name in the file specified by `#[path]`. SPP should resolve to the inline item.
-//!     - Items *only* present in the `#[path]` file should be accessible via the inline module's logical path.
+//!     - Target Module: `inline_path_mod` (inline, uses `#[path]`).
+//!     - Target Items: `shadow_me` (defined inline, shadows file), `item_only_in_inline` (inline only), `item_only_in_inline_target` (file only).
+//!     - Tests: SPP resolution to inline definition, access to items from target file via inline module path.
 //!
 //! 3.  **One File → Multiple Logical Modules:**
-//!     - Multiple `mod` declarations with different names but the same `#[path]` attribute pointing to a single file.
-//!     - Testing SPP for items within the shared file, ensuring it can find *a* valid public path if one exists via either logical module.
+//!     - Target File: `shared_target.rs` (contains `item_in_shared_target`, `crate_item_in_shared_target`).
+//!     - Logical Modules: `logical_mod_1` (pub), `logical_mod_2` (private), both using `#[path = "shared_target.rs"]`.
+//!     - Tests: SPP finding public item via the public logical module, SPP failing for crate-visible item.
 //!
 //! 4.  **Glob Re-exports (`pub use ...::*;`):**
-//!     - Re-exporting all public items from another module using `*`.
-//!     - Testing SPP for an item brought into scope via the glob re-export. The expected path should be relative to the re-exporting module.
-//!     - **Complex Targets:** Includes testing glob re-exports where the target module contains:
-//!         - Items defined under mutually exclusive `cfg` attributes.
-//!         - Items defined within a submodule accessed via `#[path]`.
-//!         - Items with restricted visibility (`pub(crate)`, `pub(super)`, etc.) to ensure the glob doesn't incorrectly elevate their visibility for SPP.
+//!     - Source Module: `glob_target` (re-exported via `pub use glob_target::*;`).
+//!     - Target Items:
+//!         - `glob_public_item` (should be accessible at crate root).
+//!         - `glob_crate_item` (should NOT be accessible at crate root).
+//!         - `glob_sub_path::item_in_glob_sub_path` (item in `#[path]` mod, should be accessible via `crate::glob_sub_path::...`).
+//!         - `glob_item_cfg_a` / `glob_item_cfg_not_a` (items under `cfg`, accessible at crate root if `cfg` matches).
+//!         - `pub_sub_with_restricted::public_item_here` (item in public sub-mod, accessible via `crate::pub_sub_with_restricted::...`).
+//!         - `pub_sub_with_restricted::super_visible_item` (`pub(super)`, should NOT be accessible at crate root).
+//!     - Tests: Correct propagation of items and their visibility through glob re-exports.
 //!
 //! 5.  **Re-exporting Items with Restricted Visibility:**
-//!     - `pub use` of an item originally defined as `pub(crate)`, `pub(super)`, or `pub(in path)`.
-//!     - SPP should correctly return `Err(ItemNotPubliclyAccessible)` as the re-export does not make the item publicly accessible outside the crate.
+//!     - Target Items: `restricted_vis::crate_func`, `restricted_vis::super_func`, `restricted_vis::inner::in_path_func`.
+//!     - Note: The invalid `pub use` of these at the root was removed to allow compilation.
+//!     - Tests: SPP targeting the *original definitions* should return `Err(ItemNotPubliclyAccessible)`.
 //!
 //! 6.  **Shadowing via Re-exports vs. Local Definitions:**
-//!     - A module contains both a local definition (`pub fn item()`) and a re-export of an item with the same name (`pub use other::item;`).
-//!     - SPP should resolve to the local definition's path (`Ok(["crate", "module"])`), respecting Rust's shadowing rules.
+//!     - Target Item: `shadowing::shadowed_item`.
+//!     - Note: The original scenario involving a `pub use` conflicting with a local `pub fn` is invalid Rust. The fixture now only contains the local definition.
+//!     - Tests: SPP correctly resolves to the local definition: `Ok(["crate", "shadowing"])`.
 //!
 //! 7.  **Relative Re-exports:**
-//!     - Using `pub use self::...` and `pub use super::...`.
-//!     - Ensuring SPP correctly constructs paths involving these relative segments.
+//!     - Target Items: `relative::inner::reexport_super` (`pub use super::...`), `relative::reexport_self` (`pub use self::...`).
+//!     - Tests: Correct path construction involving `super` and `self`.
 //!
 //! 8.  **Deep Re-export Chains:**
-//!     - Chains significantly longer than typical usage (e.g., 10+ levels) to test depth limits and performance.
+//!     - Target Item: `final_deep_item` (re-export of `deep_item` through 11 steps).
+//!     - Tests: SPP handling of long chains (potential depth limits).
 //!
 //! 9.  **Branching/Converging Re-exports:**
-//!     - An item made public via multiple different re-export paths.
-//!     - Includes scenarios where some intermediate paths might go through private modules before becoming public again.
-//!     - SPP must still find the absolute shortest *public* path.
+//!     - Target Item: `branch_item` (original), `item_via_a` (re-export), `item_via_b` (re-export).
+//!     - Tests: SPP selecting one of the shortest public paths (`item_via_a` or `item_via_b`).
 //!
 //! 10. **Multiple Renames in Chain:**
-//!     - An item is re-exported multiple times along a chain, with a different `as` rename at each (or multiple) steps.
-//!     - SPP needs to correctly identify the final visible name associated with the shortest path.
+//!     - Target Item: `final_renamed_item` (re-export of `multi_rename_item` with multiple `as` clauses).
+//!     - Tests: SPP correctly handling multiple renames.
 //!
 //! 11. **Nested `#[path]` Attributes:**
-//!     - A module declaration uses `#[path]` to include a file, and *that* file contains another module declaration using `#[path]`.
-//!     - Testing correct resolution of paths relative to the file containing the declaration.
+//!     - Target Modules: `nested_path_1`, `nested_path_1::nested_target_2`.
+//!     - Target Items: `item_in_nested_target_1`, `item_in_nested_target_2`.
+//!     - Tests: Correct SPP resolution through nested `#[path]` declarations.
 //!
 //! 12. **Mutually Exclusive `cfg` Attributes on Modules:**
-//!     - Two module definitions with the same name and path but mutually exclusive `cfg` attributes (e.g., `#[cfg(a)] mod foo;` and `#[cfg(not(a))] mod foo;`).
-//!     - Although `NodeId`s should be distinct due to `cfg_bytes`, SPP should find the path (`crate::foo`) if *either* variant is public, reflecting Phase 2 graph structure.
+//!     - Target Modules: `cfg_mod` (two variants based on `feature = "cfg_a"`).
+//!     - Target Items: `item_in_cfg_a`, `item_in_cfg_not_a`.
+//!     - Tests: SPP finding the path `crate::cfg_mod` regardless of which `cfg` variant is conceptually active (reflecting Phase 2 graph).
 //!
 //! 13. **Nested Mutually Exclusive `cfg` Attributes:**
-//!     - Similar to #12, but involving nested modules with different `cfg` combinations (e.g., `#[cfg(a)] mod foo { #[cfg(b)] mod bar; }` vs `#[cfg(not(a))] mod foo { #[cfg(c)] mod bar; }`).
-//!     - SPP should find the nested path (`crate::foo::bar`) if the modules are syntactically public in *any* valid `cfg` branch combination seen by the parser.
+//!     - Target Modules: `cfg_mod::nested_cfg` (variants based on `cfg_a`/`cfg_b` vs `not cfg_a`/`cfg_c`).
+//!     - Target Items: `item_in_cfg_ab`, `item_in_cfg_nac`.
+//!     - Tests: SPP finding the path `crate::cfg_mod::nested_cfg` based on syntactic visibility.
 //!
 //! 14. **Conflicting Parent/Child `cfg` Attributes:**
-//!     - A parent module has a `cfg` attribute, and a child module has a conflicting `cfg` (e.g., `#[cfg(a)] mod foo { #[cfg(not(a))] mod bar; }`).
-//!     - SPP should still find the syntactic path (`crate::foo::bar`) if both modules are marked `pub`, even though this path is impossible at compile time. Tests the traversal logic independent of `cfg` evaluation.
+//!     - Target Module: `conflict_parent::conflict_child`.
+//!     - Target Item: `impossible_item`.
+//!     - Tests: SPP finding the syntactic path `crate::conflict_parent::conflict_child` even though it's impossible at compile time.
 
 // --- Scenario 1: Multi-Step Re-export Chains ---
 mod chain_a {
