@@ -3,7 +3,6 @@
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 use colored::*; // Import colored for terminal colors
 use log::debug; // Import the debug macro
-use ploke_common::fixtures_crates_dir;
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::nodes::ModuleDef;
 
@@ -42,7 +41,6 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
     let module_tree = module_tree_result.expect("Module tree build failed unexpectedly");
 
-
     // --- Test `logical_path_mod` (#[path = "renamed_path/actual_file.rs"]) ---
 
     debug!(target: LOG_TARGET_GRAPH_FIND, "Searching for declaration of 'logical_path_mod'...");
@@ -78,7 +76,7 @@ fn test_path_attribute_handling() {
                 && m.is_file_based()
         })
         .expect("Could not find definition node for actual_file.rs");
-     debug!(target: LOG_TARGET_GRAPH_FIND, "Found definition: {} ({})", actual_file_defn.name.yellow(), actual_file_defn.id.to_string().magenta());
+    debug!(target: LOG_TARGET_GRAPH_FIND, "Found definition: {} ({})", actual_file_defn.name.yellow(), actual_file_defn.id.to_string().magenta());
 
     // 2b. Assert the definition node points to the correct file
     match &actual_file_defn.module_def {
@@ -111,8 +109,7 @@ fn test_path_attribute_handling() {
         logical_mod_decl.id,
         actual_file_defn.id
     );
-     debug!(target: LOG_TARGET_GRAPH_FIND, "CustomPath relation found: {}", custom_path_relation_exists);
-
+    debug!(target: LOG_TARGET_GRAPH_FIND, "CustomPath relation found: {}", custom_path_relation_exists);
 
     // --- Test `common_import_mod` (#[path = "../../common_file.rs"]) ---
 
