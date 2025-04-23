@@ -72,6 +72,25 @@ pub struct ModuleTree {
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 }
 
+/// Indicates a file-level module whose path has been resolved from a declaration that has the
+/// `#[path]` attribute, e.g.
+/// ```rust
+/// // somewhere in project, e.g. project/src/my_module.rs
+/// #[path = "path/to/file.rs"]
+/// pub mod path_attr_mod;
+///
+/// // In project/src/path/to/file.rs
+/// pub(crate) struct HiddenStruct;
+/// ```
+/// The module represented by the file `path/to/file.rs`, here containing `HiddenStruct`, will have
+/// its `ModuleNode { path: .. }` field resolved to ``
+struct ResolvedModule {
+    original_path: NodePath,     // The declared path (e.g. "path::to::file")
+    filesystem_path: PathBuf,    // The resolved path from #[path] attribute
+    source_span: (usize, usize), // Where the module was declared
+    is_path_override: bool,      // Whether this used #[path]
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingImport {
     module_node_id: ModuleNodeId, // Keep private
@@ -398,19 +417,29 @@ impl ModuleTree {
             let path_val = extract_path_attr_from_node(module).take().unwrap();
 
             let resolved = base_dir.join(path_val).normalize();
-            self.log_path_attr(&module, path_val, &resolved);
+            let debug_mod_clone: ModuleNode = module.to_owned();
+            let debug_path_val = path_val.to_owned();
+            let debug_resolved = resolved.clone();
+            let path_ctx = PathLogCtx::new(
+                &debug_mod_clone,
+                Some(&debug_path_val),
+                Some(&debug_resolved),
+            );
+            self.log_path(&path_ctx, "Resolve pending", None);
             match self.found_path_attrs.entry(module_id) {
-                // Clone node_path for the error case
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     // Path already exists
                     let existing_path = entry.get().clone();
+                    // TODO:
+                    // In this case the base_dir + path_val points to the same target of the
+                    // `#[path]` attribute. This is valid rust, and we need to handle this better.
+                    // For now we will add extra logging and remove the error
+                    self.log_path(&path_ctx, "PathAttr", None);
+                    // Previous error handling (this is actually valid rust)
                     return Err(ModuleTreeError::DuplicatePathAttribute {
                         module_id,
                         existing_path,
                         conflicting_path: resolved,
-                        // path: resolved, // Use the cloned path
-                        // existing_id,
-                        // conflicting_id: module_id.into_inner(),
                     });
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
@@ -426,16 +455,18 @@ impl ModuleTree {
         module_id: &ModuleNodeId,
     ) -> Result<&ModuleNode, ModuleTreeError> {
         self.modules
-            .get(&module_id)
+            .get(module_id)
             .ok_or(ModuleTreeError::ModuleNotFound(*module_id))
     }
 
+    /// Links modules (declaration/definition) syntactically by building relations between them and
+    /// adding the relations to the module tree's `tree_relation` field.
     /// Builds 'ResolvesToDefinition' relations between module declarations and their file-based definitions.
     /// Assumes the `path_index` and `decl_index` have been populated correctly by `add_module`.
     /// Returns `Ok(())` on complete success.
     /// Returns `Err(ModuleTreeError::FoundUnlinkedModules)` if only unlinked modules are found.
     /// Returns other `Err(ModuleTreeError)` variants on fatal errors (e.g., path validation).
-    pub(crate) fn build_logical_paths(
+    pub(crate) fn link_mods_syntactic(
         &mut self,
         modules: &[ModuleNode],
     ) -> Result<(), ModuleTreeError> {
@@ -448,7 +479,8 @@ impl ModuleTree {
             .iter()
             .filter(|m| m.is_file_based() && m.id() != *root_id.as_inner())
         {
-            let defn_path = module.defn_path(); // This is ["crate", "renamed_path", "actual_file"] for the file node
+            // This is ["crate", "renamed_path", "actual_file"] for the file node
+            let defn_path = module.defn_path();
 
             // Log the attempt to find a declaration matching the *file's* definition path
             self.log_path_resolution(module, defn_path, "Checking", Some("decl_index..."));
@@ -462,12 +494,12 @@ impl ModuleTree {
                         "Linked",
                         Some(&format!("to decl {}", decl_id)),
                     );
-                    let logical_relation = Relation {
+                    let resolves_to_rel = Relation {
                         source: GraphId::Node(*decl_id),    // Declaration Node
                         target: GraphId::Node(module.id()), // Definition Node (the file-based one)
                         kind: RelationKind::ResolvesToDefinition,
                     };
-                    new_relations.push(logical_relation.into());
+                    new_relations.push(resolves_to_rel.into());
                 }
                 None => {
                     // No declaration found matching the file's definition path.
@@ -499,6 +531,9 @@ impl ModuleTree {
         }
     }
 
+    // TODO: Rename/refactored
+    // This function has a misleading name. Currently it is getting all relations,
+    // not just `RelationKind::Contains`
     pub fn register_containment_batch(
         &mut self,
         relations: &[Relation],
@@ -701,6 +736,7 @@ impl ModuleTree {
         Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
     }
     // Helper to check if an item is part of a re-export chain leading to our target
+    // NOTE: Why is this currently unused? I'm fairly sure we were using it somewhere...
     fn is_part_of_reexport_chain(
         &self,
         start_id: NodeId,
@@ -759,6 +795,8 @@ impl ModuleTree {
                     // if renamed, use visible_name for path extension
                     // WARNING: Be careful when generating resolved ID not to use this `path` for
                     // NodeId of defining module.
+                    // TODO: Keep a list of renamed modules specifically to track possible
+                    // collisions.
                     reexport_path.push(export_node.visible_name.clone());
                 } else {
                     // otherwise, use standard name
@@ -1161,7 +1199,7 @@ impl ModuleTree {
                     let relation = Relation {
                         source: GraphId::Node(decl_module_id.into_inner()),
                         target: GraphId::Node(target_defn_id),
-                        kind: RelationKind::ResolvesToDefinition,
+                        kind: RelationKind::CustomPath,
                     };
                     self.log_relation(
                         relation,
@@ -1170,6 +1208,12 @@ impl ModuleTree {
                             decl_module_id, target_defn_id
                         )),
                     );
+                    // NOTE: Edge Case
+                    // It is actually valid to have a case of duplicate definitions. We'll
+                    // need to consider how to handle this case, since it is possible to have an
+                    // inline module with the `#[path]` attribute that contains items which shadow
+                    // the items in the linked file, in which case the shadowed items are ignored.
+                    // For now, just throw error.
                     if let Some(dup) = targets_iter.next() {
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
                         "Duplicate module definition for path attribute target '{}'  {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
