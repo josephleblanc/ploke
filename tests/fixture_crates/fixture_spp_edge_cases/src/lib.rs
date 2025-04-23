@@ -33,6 +33,22 @@
 //! 7.  **Relative Re-exports:**
 //!     - Using `pub use self::...` and `pub use super::...`.
 //!     - Ensuring SPP correctly constructs paths involving these relative segments.
+//!
+//! 8.  **Deep Re-export Chains:**
+//!     - Chains significantly longer than typical usage (e.g., 10+ levels) to test depth limits and performance.
+//!
+//! 9.  **Branching/Converging Re-exports:**
+//!     - An item made public via multiple different re-export paths.
+//!     - Includes scenarios where some intermediate paths might go through private modules before becoming public again.
+//!     - SPP must still find the absolute shortest *public* path.
+//!
+//! 10. **Multiple Renames in Chain:**
+//!     - An item is re-exported multiple times along a chain, with a different `as` rename at each (or multiple) steps.
+//!     - SPP needs to correctly identify the final visible name associated with the shortest path.
+//!
+//! 11. **Nested `#[path]` Attributes:**
+//!     - A module declaration uses `#[path]` to include a file, and *that* file contains another module declaration using `#[path]`.
+//!     - Testing correct resolution of paths relative to the file containing the declaration.
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
