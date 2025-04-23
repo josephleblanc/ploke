@@ -1,73 +1,83 @@
 # syn_parser Phase 3 Resolution Testing Strategy
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** 2025-04-23
-**Status:** Proposed
+**Status:** Adopted
 
 ## 1. Condensed Strategy
 
-Ensure high confidence in the correctness of Phase 3 resolution logic (e.g., `shortest_public_path`, canonical path resolution, visibility checks) by testing against diverse and complex code structures represented in the `ModuleTree` and `CodeGraph`.
+Ensure high confidence in the correctness and robustness of Phase 3 logic (`ModuleTree` construction, path resolution, visibility checks) through a tiered testing approach focused on structural integrity, diagnostic checks, complex scenarios, and explicit error handling validation.
 
-1.  **Module Tree Structure Verification:** Implicitly test the correctness of `ModuleTree` construction (`ResolvesToDefinition`, `CustomPath` relations) by relying on it as input for resolution tests. Failures in resolution tests may indicate underlying `ModuleTree` issues.
-2.  **Core Resolution Function Unit Tests:** Unit test helper functions used within main resolution algorithms (e.g., path manipulation, visibility checking helpers) in isolation.
-3.  **Shortest Public Path (SPP) Integration Tests:** Exhaustively test `ModuleTree::shortest_public_path` using dedicated fixtures (`fixture_path_resolution`, `fixture_spp_edge_cases`) covering:
-    *   Basic visibility (`pub`, private).
-    *   Restricted visibility (`pub(crate)`, `pub(super)`, `pub(in path)`) - expecting `Err`.
-    *   Single and multi-step re-exports (including renaming `as`).
-    *   Modules defined via `#[path]`.
-    *   Glob re-exports (`*`).
-    *   Complex interactions (e.g., re-exports of items from `#[path]` modules).
-    *   Edge cases (deep chains, branching paths, shadowing, `cfg` interactions).
-4.  **Canonical Path Resolution Tests (Future):** Once implemented, add tests similar to SPP tests to verify canonical path calculation.
-5.  **Visibility Logic Tests:** While SPP tests cover public accessibility, add specific tests (if needed beyond SPP) verifying internal visibility logic (e.g., `ModuleTree::is_accessible`) for `pub(crate)`, `pub(super)`, etc., within the crate.
-6.  **Fixture-Based Approach:** Utilize dedicated fixture crates to represent specific code structures and edge cases clearly. Maintain valid Rust code in primary fixtures (`fixture_crates/`) and potentially problematic code in `malformed_fixtures/`.
-7.  **Acknowledge Phase 2 Limitations:** Tests must account for the state of the graph after Phase 2 (e.g., `cfg` attributes present but not fully evaluated). SPP tests, for instance, should verify the *syntactic* path based on the graph, even if `cfg` conflicts make that path impossible at compile time.
+1.  **Tier 1: Core Function Unit Tests:** Exhaustively test critical *helper* functions used within Phase 3 algorithms (e.g., path manipulation, visibility helpers, relation filtering) in isolation.
+2.  **Tier 2: Diagnostic & Invariant Tests:** Verify key structural invariants and properties of the `ModuleTree` *after* `build_module_tree` completes (or fails gracefully). These tests are not exhaustive of all build logic but act as diagnostics for higher-tier failures. Examples:
+    *   All `ModuleNode`s from the input `CodeGraph` are present in the `ModuleTree.modules` map.
+    *   All `Contains` relations from the `CodeGraph` involving modules are reflected in `ModuleTree.tree_relations`.
+    *   All non-root, file-based `ModuleNode`s are linked via `ResolvesToDefinition` or `CustomPath`.
+    *   No unexpected `NodeId::Synthetic` remain for `ModuleNode`s.
+3.  **Tier 3: Canary Tests:** Use complex fixtures (`fixture_spp_edge_cases`) to perform detailed, brittle checks on specific items. Verify expected paths (SPP, canonical), relations, and properties for a few representative items in challenging scenarios (deep re-exports, nested `#[path]`, complex `cfg` interactions). These act as high-level integration checks.
+4.  **Tier 4: Error Handling & Propagation Tests:** Explicitly test the error handling logic within `build_module_tree` and resolution functions. Verify:
+    *   Fatal errors correctly halt processing and return appropriate `Err` variants.
+    *   Recoverable errors/warnings (e.g., unlinked modules, external `#[path]`) are handled correctly (logged, potentially returned in a specific non-fatal `Err` variant) without halting unnecessarily.
+    *   Error types clearly distinguish between states indicating an invalid/corrupt graph (unsafe for DB update) and states representing known limitations or recoverable issues.
 
-This strategy focuses on validating the resolution algorithms against realistic and challenging code patterns captured in the Phase 2 graph representation.
+This strategy balances rigorous validation of core logic and complex interactions with diagnostic checks for maintainability and explicit validation of critical error handling paths.
 
 ## 2. Detailed Elaboration
 
 ### 2.1 Rationale
 
-Phase 3 resolution logic operates on the `CodeGraph` and `ModuleTree` produced by Phase 2 parsing. The correctness of this logic is crucial for generating stable identifiers (`CanonId`, `PubPathId`) and enabling accurate code analysis and querying. Key functions like `shortest_public_path` involve complex graph traversal, visibility rule application, and handling of Rust features like re-exports and `#[path]` attributes.
-
-Testing must ensure these algorithms correctly interpret the graph structure and apply Rust's rules, even in complex edge cases. This requires dedicated fixtures designed to exercise specific scenarios.
+Phase 3 transforms the syntactically-focused `CodeGraph` from Phase 2 into a `ModuleTree` and enables resolution logic (like `shortest_public_path` and canonical path finding) crucial for generating stable IDs (`PubPathId`, `CanonId`). The process involves complex graph interpretation, relation building, visibility checks, and error handling. Testing must ensure not only the correctness of the final outputs (e.g., paths) but also the structural integrity of the intermediate `ModuleTree` and the robustness of the error handling mechanisms, particularly concerning the safety of downstream database operations.
 
 ### 2.2 Test Tiers Explained
 
-*   **Tier 1: Module Tree Structure Verification (Implicit)**
-    *   **Focus:** Ensuring the `ModuleTree` (built by `CodeGraph::build_module_tree`) accurately represents module relationships (`Contains`, `ResolvesToDefinition`, `CustomPath`).
-    *   **Method:** Primarily implicit. If resolution tests (like SPP) fail unexpectedly, investigate potential errors in the underlying `ModuleTree` structure or the relations it uses. Explicit tests for `build_module_tree` could be added if specific structural bugs are suspected.
-    *   **Goal:** Foundational correctness of the input data for resolution algorithms.
+*   **Tier 1: Core Function Unit Tests**
+    *   **Focus:** Exhaustive testing of small, pure, or easily mockable helper functions used within `build_module_tree` or resolution algorithms (e.g., `ModuleTree::resolve_relative_path`, path comparison logic, specific relation filtering helpers).
+    *   **Method:** Standard Rust unit tests (`#[test]`) located near function definitions.
+    *   **Goal:** Highest rigor on fundamental algorithms and utility functions.
 
-*   **Tier 2: Core Resolution Function Unit Tests**
-    *   **Focus:** Testing small, reusable helper functions used within larger resolution algorithms (e.g., path joining/splitting, relative path resolution, specific visibility checks).
-    *   **Method:** Standard Rust unit tests (`#[test]`) located near the function definitions (likely in `module_tree.rs` or utility modules).
-    *   **Goal:** Verify the correctness of low-level building blocks.
+*   **Tier 2: Diagnostic & Invariant Tests**
+    *   **Focus:** Verifying the structural integrity and key properties of the `ModuleTree` *after* calling `CodeGraph::build_module_tree`. These tests act as crucial diagnostics when Tier 3 (Canary) tests fail, helping pinpoint whether the issue lies in the resolution logic itself or in the underlying tree structure provided to it.
+    *   **Method:** Integration tests (e.g., in `tests/uuid_phase3_resolution/invariants.rs` - *to be created*). These tests run `build_module_tree` on various fixtures and assert properties of the resulting `ModuleTree`.
+    *   **Examples:**
+        *   Assert `tree.modules.len()` matches the count of `ModuleNode`s in the input `CodeGraph`.
+        *   Assert every `ModuleNodeId` from the input graph exists as a key in `tree.modules`.
+        *   Assert every `Contains` relation between modules in the input graph exists in `tree.tree_relations`.
+        *   Assert every non-root, file-based `ModuleNode` in `tree.modules` has an incoming `ResolvesToDefinition` or `CustomPath` relation in `tree.tree_relations`.
+        *   Assert `tree.path_index` and `tree.decl_index` correctly map paths to the expected `NodeId`s based on the fixture.
+    *   **Goal:** Ensure `build_module_tree` produces a structurally sound and complete representation. Detect regressions in tree construction logic. Provide diagnostic information for failures in path resolution or visibility tests.
 
-*   **Tier 3: Shortest Public Path (SPP) Integration Tests**
-    *   **Focus:** End-to-end testing of `ModuleTree::shortest_public_path`.
-    *   **Method:** Integration tests located in `tests/uuid_phase3_resolution/shortest_path.rs`. Use helper macros (`assert_spp!`) and dedicated fixtures (`fixture_path_resolution`, `fixture_spp_edge_cases`).
-    *   **Examples:** See `shortest_path.rs` and the documented scenarios in `fixture_spp_edge_cases/src/lib.rs`. Tests cover basic cases, re-exports, `#[path]`, visibility rules (expecting `Err` for non-public), and various edge cases.
-    *   **Goal:** High confidence in SPP calculation, which is critical for `PubPathId` generation.
+*   **Tier 3: Canary Tests**
+    *   **Focus:** End-to-end validation of resolution logic (SPP, canonical path, visibility) for a *representative sample* of complex scenarios using highly detailed assertions.
+    *   **Method:** Integration tests (e.g., `shortest_path.rs`, `canonical_path.rs`) using complex fixtures (`fixture_spp_edge_cases`). Tests select specific, challenging items within the fixture and assert:
+        *   The exact expected shortest public path (`Ok(["crate", "mod", ...])`).
+        *   The exact expected canonical path.
+        *   The presence and correctness of specific relations involving the item or its containing modules within the `ModuleTree`.
+        *   Expected visibility results (`is_accessible`).
+    *   **Examples:** Test SPP for `final_deep_item`, `item_in_nested_target_2`, an item accessed via glob import, `impossible_item`.
+    *   **Goal:** High-confidence "canary in the coal mine" for complex interactions. Failures indicate potential issues in resolution logic or underlying tree structure (diagnosed by Tier 2). These tests are intentionally brittle to catch subtle regressions.
 
-*   **Tier 4: Canonical Path Resolution Tests (Future)**
-    *   **Focus:** End-to-end testing of canonical path resolution logic (once implemented).
-    *   **Method:** Similar to SPP tests, using fixtures and potentially a dedicated test module (`tests/uuid_phase3_resolution/canonical_path.rs`).
-    *   **Goal:** High confidence in canonical path calculation for `CanonId` generation.
-
-*   **Tier 5: Visibility Logic Tests**
-    *   **Focus:** Explicitly testing internal visibility rules beyond simple public access (e.g., `pub(crate)` access from within the crate).
-    *   **Method:** Integration tests potentially using `ModuleTree::is_accessible` or similar functions, verifying access between different modules within a fixture.
-    *   **Goal:** Ensure correct application of Rust's visibility rules for potential internal analysis tasks, complementing the external focus of SPP.
+*   **Tier 4: Error Handling & Propagation Tests**
+    *   **Focus:** Explicitly verifying the error handling behavior of `build_module_tree` and resolution functions.
+    *   **Method:** Integration tests (e.g., in `tests/uuid_phase3_resolution/error_handling.rs` - *to be created*) using both valid and malformed fixtures (`malformed_fixture_spp_edge_cases`). Tests trigger specific error conditions and assert:
+        *   `build_module_tree` returns the expected `Err(SynParserError::...)` variant for fatal errors (e.g., `DuplicatePath`, `DuplicateModuleId`, critical internal errors).
+        *   `build_module_tree` returns `Ok(tree)` even when non-fatal issues occur (e.g., `FoundUnlinkedModules`), potentially logging warnings.
+        *   Resolution functions (like SPP) return expected errors (`ItemNotPubliclyAccessible`, `ExternalItemNotResolved`, `ReExportChainTooLong`).
+        *   Error types clearly map to whether the resulting graph/tree state is considered valid for database updates.
+    *   **Examples:** Test `build_module_tree` with fixtures containing duplicate module definitions, unlinked files, external `#[path]` targets. Test SPP with fixtures containing re-export cycles or private items.
+    *   **Goal:** Ensure predictable and safe error handling, preventing invalid states from propagating downstream (especially to the database) and correctly handling expected limitations.
 
 ### 2.3 Fixture Strategy
 
-*   **`fixture_path_resolution`:** Covers fundamental module structures, `#[path]`, basic re-exports, and `cfg` usage relevant to general path finding.
-*   **`fixture_spp_edge_cases`:** Contains complex and potentially interacting scenarios specifically designed to stress test SPP logic (multi-step re-exports, inline `#[path]`, glob imports, conflicting `cfg`s, etc.). Must contain only valid, stable Rust.
-*   **`malformed_fixture_spp_edge_cases`:** Contains code patterns that are invalid Rust or might cause issues like infinite loops (e.g., re-export cycles) to test the robustness and error handling of the resolution logic.
+*   Utilize dedicated fixtures (`fixture_path_resolution`, `fixture_spp_edge_cases`, `malformed_fixture_spp_edge_cases`, etc.) to isolate and clearly demonstrate specific scenarios for different test tiers.
+*   Maintain valid, stable Rust in primary fixtures (`fixture_crates/`).
+*   Use `malformed_fixtures/` specifically for testing error handling and robustness against invalid code patterns.
 
-### 2.4 Handling Phase 2 Limitations
+### 2.4 Testing Philosophy & Handling Failures
 
-*   Phase 3 tests must operate on the graph as produced by Phase 2.
-*   Crucially, tests involving `cfg` attributes should assert the expected outcome based on the *syntactic* graph structure and visibility, even if conflicting `cfg`s make a path impossible at compile time. For example, `shortest_public_path` *should* find the path `crate::foo::bar` for `impossible_item` in `#[cfg(a)] mod foo { #[cfg(not(a))] pub mod bar { pub fn impossible_item(); } }` if `foo` and `bar` are syntactically `pub`. This validates the traversal logic itself. Correct `cfg` filtering is a separate concern, likely for Phase 3 analysis or a `cfg`-aware SPP variant.
+*   **No Tests Confirming Undesired States:** Tests must assert the *desired* behavior. Tests for unimplemented features *must fail* initially.
+*   **Handling Known Limitations:** If a failing test represents a feature deliberately deferred or a known limitation deemed acceptable *and* non-corrupting:
+    1.  Document the limitation thoroughly in `docs/design/known_limitations/`, linking to the specific test(s).
+    2.  Mark the test(s) with `#[ignore = "Reason for ignoring (e.g., Known Limitation: XYZ - See docs/...)"]`.
+    3.  Add a comment within the test explaining the situation and linking to the documentation.
+    4.  Consider creating an ADR (`docs/design/decision_tracking/`) proposing a future solution or formally accepting the limitation.
+*   **Prioritize Graph Integrity:** Error handling tests must rigorously verify that scenarios potentially leading to inconsistent or invalid graph states result in errors that clearly signal "do not update database".
