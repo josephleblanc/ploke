@@ -620,10 +620,11 @@ fn test_spp_nested_path_level2() {
 }
 
 #[test]
-#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
 fn test_spp_cfg_exclusive_a() {
     // 22. Mutually Exclusive `cfg` (Branch A)
     //     Target: `item_in_cfg_a` (defined in `#[cfg(feature = "cfg_a")] cfg_mod`)
+    //     Ignored because ModuleTree build fails with fixture_spp_edge_cases due to P3-00.
     //     Expected: Ok(["crate", "cfg_mod"])
     //     Anticipated Status: PASS (SPP finds syntactic path, ignoring cfg evaluation)
     let (graph, tree) = build_tree_for_edge_cases();
@@ -645,10 +646,11 @@ fn test_spp_cfg_exclusive_a() {
 }
 
 #[test]
-#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
 fn test_spp_cfg_exclusive_not_a() {
     // 23. Mutually Exclusive `cfg` (Branch Not A)
     //     Target: `item_in_cfg_not_a` (defined in `#[cfg(not(feature = "cfg_a"))] cfg_mod`)
+    //     Ignored because ModuleTree build fails with fixture_spp_edge_cases due to P3-00.
     //     Expected: Ok(["crate", "cfg_mod"])
     //     Anticipated Status: PASS (SPP finds syntactic path, ignoring cfg evaluation)
     let (graph, tree) = build_tree_for_edge_cases();
@@ -670,10 +672,11 @@ fn test_spp_cfg_exclusive_not_a() {
 }
 
 #[test]
-#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
 fn test_spp_cfg_nested_exclusive_ab() {
     // 24. Nested Mutually Exclusive `cfg` (Branch AB)
     //     Target: `item_in_cfg_ab` (defined in `#[cfg(a)] cfg_mod { #[cfg(b)] nested_cfg }`)
+    //     Ignored because ModuleTree build fails with fixture_spp_edge_cases due to P3-00.
     //     Expected: Ok(["crate", "cfg_mod", "nested_cfg"])
     //     Anticipated Status: PASS (SPP finds syntactic path, ignoring cfg evaluation)
     let (graph, tree) = build_tree_for_edge_cases();
@@ -699,10 +702,11 @@ fn test_spp_cfg_nested_exclusive_ab() {
 }
 
 #[test]
-#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
 fn test_spp_cfg_nested_exclusive_nac() {
     // 25. Nested Mutually Exclusive `cfg` (Branch NotA C)
     //     Target: `item_in_cfg_nac` (defined in `#[cfg(not a)] cfg_mod { #[cfg(c)] nested_cfg }`)
+    //     Ignored because ModuleTree build fails with fixture_spp_edge_cases due to P3-00.
     //     Expected: Ok(["crate", "cfg_mod", "nested_cfg"])
     //     Anticipated Status: PASS (SPP finds syntactic path, ignoring cfg evaluation)
     let (graph, tree) = build_tree_for_edge_cases();
@@ -728,10 +732,11 @@ fn test_spp_cfg_nested_exclusive_nac() {
 }
 
 #[test]
-#[ignore = "cfg-feature disabled on this git branch, see feature/mod_tree_cfg"]
+#[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
 fn test_spp_cfg_conflicting() {
     // 26. Conflicting Parent/Child `cfg`
     //     Target: `impossible_item` (defined in `#[cfg(conflict)] parent { #[cfg(not conflict)] child }`)
+    //     Ignored because ModuleTree build fails with fixture_spp_edge_cases due to P3-00.
     //     Expected: Ok(["crate", "conflict_parent", "conflict_child"])
     //     Anticipated Status: PASS (SPP finds syntactic path, ignoring cfg impossibility)
     let (graph, tree) = build_tree_for_edge_cases();
