@@ -73,6 +73,9 @@ pub trait GraphNode {
     fn as_macro(&self) -> Option<&MacroNode> {
         None
     }
+    fn as_import(&self) -> Option<&ImportNode> {
+        None
+    }
 
     // Add others like VariantNode, FieldNode if they implement GraphNode directly
 }

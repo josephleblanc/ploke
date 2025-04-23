@@ -180,6 +180,35 @@ impl ImportNode {
     }
 }
 
+impl GraphNode for ImportNode {
+    fn id(&self) -> NodeId {
+        self.id
+    }
+
+    fn visibility(&self) -> VisibilityKind {
+        // The visibility of the *use statement itself* determines its effect.
+        // `extern crate` is effectively private to the module.
+        match &self.kind {
+            ImportKind::UseStatement(vis) => vis.clone(),
+            ImportKind::ExternCrate => VisibilityKind::Inherited,
+            ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
+        }
+    }
+
+    fn name(&self) -> &str {
+        // The "name" of an import is the identifier it brings into scope.
+        &self.visible_name
+    }
+
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
+
+    fn as_import(&self) -> Option<&ImportNode> {
+        Some(self)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
     ImportNode,                   // Placeholder or potentially for future import types
