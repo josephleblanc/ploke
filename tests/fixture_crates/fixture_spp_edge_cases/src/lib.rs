@@ -49,6 +49,18 @@
 //! 11. **Nested `#[path]` Attributes:**
 //!     - A module declaration uses `#[path]` to include a file, and *that* file contains another module declaration using `#[path]`.
 //!     - Testing correct resolution of paths relative to the file containing the declaration.
+//!
+//! 12. **Mutually Exclusive `cfg` Attributes on Modules:**
+//!     - Two module definitions with the same name and path but mutually exclusive `cfg` attributes (e.g., `#[cfg(a)] mod foo;` and `#[cfg(not(a))] mod foo;`).
+//!     - Although `NodeId`s should be distinct due to `cfg_bytes`, SPP should find the path (`crate::foo`) if *either* variant is public, reflecting Phase 2 graph structure.
+//!
+//! 13. **Nested Mutually Exclusive `cfg` Attributes:**
+//!     - Similar to #12, but involving nested modules with different `cfg` combinations (e.g., `#[cfg(a)] mod foo { #[cfg(b)] mod bar; }` vs `#[cfg(not(a))] mod foo { #[cfg(c)] mod bar; }`).
+//!     - SPP should find the nested path (`crate::foo::bar`) if the modules are syntactically public in *any* valid `cfg` branch combination seen by the parser.
+//!
+//! 14. **Conflicting Parent/Child `cfg` Attributes:**
+//!     - A parent module has a `cfg` attribute, and a child module has a conflicting `cfg` (e.g., `#[cfg(a)] mod foo { #[cfg(not(a))] mod bar; }`).
+//!     - SPP should still find the syntactic path (`crate::foo::bar`) if both modules are marked `pub`, even though this path is impossible at compile time. Tests the traversal logic independent of `cfg` evaluation.
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
