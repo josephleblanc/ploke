@@ -310,10 +310,6 @@ fn test_import_node_basic_smoke_test_full_parse() {
         match (&node.kind, &kind_disc) {
             (ImportKind::UseStatement(_), _) => {} // Match
             (ImportKind::ExternCrate, _) => {}     // Match
-            _ => panic!(
-                "Node '{}' path={:?}: Kind mismatch. Expected discriminant '{}', found {:?}",
-                name, node.path, kind_disc, node.kind
-            ),
         }
     }
 }

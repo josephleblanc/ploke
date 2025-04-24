@@ -7,6 +7,9 @@ use std::{
     path::PathBuf,
 };
 
+#[allow(unused_imports)]
+use std::collections::VecDeque;
+
 use crate::{
     error::SynParserError,
     parser::{

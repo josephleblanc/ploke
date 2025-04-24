@@ -1,5 +1,5 @@
 use crate::resolve::module_tree;
-use crate::resolve::module_tree::UnlinkedModuleInfo;
+// use crate::resolve::module_tree::UnlinkedModuleInfo;
 use crate::resolve::module_tree::ModuleTreeError;
 use crate::resolve::module_tree::ModuleTree;
 use crate::error::SynParserError;

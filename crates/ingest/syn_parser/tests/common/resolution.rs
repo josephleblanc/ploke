@@ -1,6 +1,6 @@
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
-use ploke_core::{ItemKind, NodeId};
+use ploke_core::NodeId;
 use syn_parser::{
     error::SynParserError,
     parser::{

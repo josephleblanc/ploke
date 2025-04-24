@@ -61,12 +61,6 @@ fn test_module_tree_module_count() {
         "ModuleTree should contain all modules from the merged graph"
     );
 }
-pub use b::*;
-
-pub mod b {
-    mod c {}
-}
-
 /// **Covers:** Correct population of the `path_index` field within the `ModuleTree`.
 /// It verifies that the canonical paths (e.g., `["crate"]`, `["crate", "top_pub_mod"]`,
 /// `["crate", "top_pub_mod", "nested_pub"]`, `["crate", "inline_pub_mod"]`) for
