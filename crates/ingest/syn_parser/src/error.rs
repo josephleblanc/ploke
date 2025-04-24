@@ -1,10 +1,8 @@
+use crate::resolve::module_tree::ModuleTreeError;
 use ploke_core::{NodeId, TypeId};
 use thiserror::Error;
 
-use crate::parser::{
-    module_tree::ModuleTreeError,
-    nodes::{ModuleNode, NodeError},
-};
+use crate::parser::nodes::{ModuleNode, NodeError};
 
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq)] // Removed Eq
@@ -112,8 +110,8 @@ impl From<std::io::Error> for SynParserError {
 }
 
 // Implement From<ModuleTreeError> for SynParserError
-impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
-    fn from(err: crate::parser::module_tree::ModuleTreeError) -> Self {
+impl From<ModuleTreeError> for SynParserError {
+    fn from(err: ModuleTreeError) -> Self {
         match err {
             ModuleTreeError::DuplicatePath {
                 path,
@@ -227,18 +225,16 @@ impl From<crate::parser::module_tree::ModuleTreeError> for SynParserError {
                 "Module with ID {} not found in ModuleTree.modules map.",
                 module_id
             )),
-            ModuleTreeError::DuplicateDefinition(msg) => SynParserError::InternalState(format!(
-                "ModuleTree processing error: {}",
-                msg
-            )),
-            ModuleTreeError::ModuleDefinitionNotFound(msg) => SynParserError::InternalState(
-                format!("ModuleTree processing error: {}", msg),
-            ),
+            ModuleTreeError::DuplicateDefinition(msg) => {
+                SynParserError::InternalState(format!("ModuleTree processing error: {}", msg))
+            }
+            ModuleTreeError::ModuleDefinitionNotFound(msg) => {
+                SynParserError::InternalState(format!("ModuleTree processing error: {}", msg))
+            }
             // --- Add new match arm ---
             ModuleTreeError::ExternalItemNotResolved(id) => {
                 SynParserError::ExternalItemNotResolved(id)
-            }
-            // --- END NEW ARMS ---
+            } // --- END NEW ARMS ---
         }
     }
 }

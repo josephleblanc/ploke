@@ -1,8 +1,11 @@
+use crate::resolve::module_tree;
+use crate::resolve::module_tree::UnlinkedModuleInfo;
+use crate::resolve::module_tree::ModuleTreeError;
+use crate::resolve::module_tree::ModuleTree;
 use crate::error::SynParserError;
 use crate::utils::LogStyle;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
-use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
 use super::nodes::{
     EnumNode, GraphId, GraphNode, ImportNode, ModuleDef, StructNode, TypeAliasNode, UnionNode,
 };
@@ -112,7 +115,7 @@ impl CodeGraph {
     #[allow(clippy::boxed_local, clippy::box_collection)]
     fn handle_unlinked_modules(
         &self,
-        unlinked_infos: Box<Vec<super::module_tree::UnlinkedModuleInfo>>,
+        unlinked_infos: Box<Vec<module_tree::UnlinkedModuleInfo>>,
     ) {
         if !unlinked_infos.is_empty() {
             eprintln!(
@@ -869,7 +872,7 @@ fn log_tree_build(module: &ModuleNode) {
 #[cfg(test)]
 pub mod test_interface {
     use super::CodeGraph;
-    use crate::{error::SynParserError, parser::module_tree::ModuleTree};
+    use crate::{error::SynParserError, resolve::module_tree::ModuleTree};
 
     impl CodeGraph {
         pub fn test_build_module_tree(&self) -> Result<ModuleTree, SynParserError> {

@@ -61,7 +61,7 @@
 //! ---
 
 use ploke_core::ItemKind; // Added ItemKind
-use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
+use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph;
 
 use crate::common::resolution::*;

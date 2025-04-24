@@ -50,9 +50,9 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-default = ["mod_tree_cfg", "reexport"]
-feature_a = []                         # Add feature_a used by fixture
-feature_b = []                         # Add feature_b used by test
+default = ["reexport"]
+feature_a = []         # Add feature_a used by fixture
+feature_b = []         # Add feature_b used by test
 verbose_debug = []
 mod_tree_cfg = []
 reexport = []

@@ -56,7 +56,7 @@
 // Removed unused ploke_core::NodeId import
 use ploke_core::NodeId;
 use syn_parser::error::SynParserError;
-use syn_parser::parser::module_tree::{ModuleTree, ModuleTreeError};
+use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph; // Removed unused SynParserError import
 
 use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
@@ -522,7 +522,8 @@ fn test_spp_reexport_external_dep() {
     // Final expected behavior: Error because SPP cannot resolve external items.
     assert!(
         matches!(spp_result, Err(ModuleTreeError::ExternalItemNotResolved(id)) if id == reexport_import_node.id),
-        "SPP for re-exported external item should be Err(ExternalItemNotResolved), but was {:?}", spp_result
+        "SPP for re-exported external item should be Err(ExternalItemNotResolved), but was {:?}",
+        spp_result
     );
 }
 

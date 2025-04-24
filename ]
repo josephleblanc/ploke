@@ -547,17 +547,12 @@ impl ModuleTree {
             match self.decl_index.get(defn_path.as_slice()) {
                 Some(decl_id) => {
                     // Found declaration, create relation
-                    self.log_path_resolution(
-                        module,
-                        defn_path,
-                        "Linked",
-                        Some(&format!("to decl {}", decl_id)),
-                    );
                     let resolves_to_rel = Relation {
                         source: GraphId::Node(*decl_id),    // Declaration Node
                         target: GraphId::Node(module.id()), // Definition Node (the file-based one)
                         kind: RelationKind::ResolvesToDefinition,
                     };
+                    self.log_relation(resolves_to_rel, None);
                     new_relations.push(resolves_to_rel.into());
                 }
                 None => {
@@ -603,6 +598,15 @@ impl ModuleTree {
         Ok(())
     }
 
+    #[cfg(feature = "reexport")]
+    pub fn shortest_public_path(
+        &self,
+        item_id: NodeId,
+        graph: &CodeGraph, // Need graph access for item visibility
+    ) -> Result<Vec<String>, ModuleTreeError> {
+        todo!()
+    }
+
     // Resolves visibility for target node as if it were a dependency.
     // Only used as a helper in the shortest public path.
     #[allow(unused_variables)]
@@ -638,6 +642,7 @@ impl ModuleTree {
     /// # Limitations
     /// * Currently does not handle re-exports (`pub use`). It only considers items directly
     ///   defined within a module.
+    #[cfg(not(feature = "reexport"))]
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
@@ -691,7 +696,7 @@ impl ModuleTree {
                                 // Check if it points to an external crate.
                                 // Heuristic: path doesn't start with "crate", "self", or "super".
                                 let is_external =
-                                    import_node.path().first().map_or(false, |first_seg| {
+                                    import_node.path().first().is_some_and(|first_seg| {
                                         !matches!(first_seg.as_str(), "crate" | "self" | "super")
                                     });
 
@@ -885,6 +890,8 @@ impl ModuleTree {
                 target: GraphId::Node(export_node.id),
                 kind: RelationKind::ReExport,
             };
+            self.log_relation(relation, None);
+
             self.tree_relations.push(relation.into());
 
             // Add to reexport_index
@@ -1301,13 +1308,7 @@ impl ModuleTree {
                         target: GraphId::Node(target_defn_id),
                         kind: RelationKind::CustomPath,
                     };
-                    self.log_relation(
-                        relation,
-                        Some(&format!(
-                            "Linking decl {} to file defn {}",
-                            decl_module_id, target_defn_id
-                        )),
-                    );
+                    self.log_relation(relation, None);
                     // NOTE: Edge Case
                     // It is actually valid to have a case of duplicate definitions. We'll
                     // need to consider how to handle this case, since it is possible to have an
@@ -1390,24 +1391,8 @@ impl ModuleTree {
         Ok(())
     }
 
-    /// Logs the details of path attribute processing using the provided context.
-    fn log_path(&self, context: &PathLogCtx, step: &str, result: Option<String>) {
-        debug!(target: LOG_TARGET_PATH_ATTR,
-            "{} {} {} | Path: {} | Attr: {} | Resolved: {} | {} | {}",
-            "PathAttr".log_header(),
-            context.module_name.log_name(),
-            format!("({})", context.module_id).log_id(),
-            format!("{:?}", context.module_path).log_path(),
-            context.attr_value.unwrap_or("-").log_path(),
-            context.resolved_path
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "-".to_string())
-                .log_path(),
-            step.log_name(),  // Using name color for step for visual distinction
-            result.unwrap_or_else(|| "✓".to_string()).log_vis()  // Using vis color for result
-        );
-    }
     /// Logs the details of path cfg processing using the provided context.
+    #[allow(dead_code, reason = "useful later for cfg-aware handling")]
     fn log_cfgs(&self, context: &CfgLogCtx, step: &str, result: Option<String>) {
         debug!(target: LOG_TARGET_PATH_CFGS,
             "{: <12} {: <20} {} | cfgs : {} | Attr: {} | Resolved: {} | {}",
@@ -1438,15 +1423,6 @@ impl ModuleTree {
             "Duplicate ID".log_error(),
             module.name.log_name(),
             format!("({})", module.id).log_id()
-        );
-    }
-
-    fn log_path_attr(&self, module: &ModuleNode, raw_path: &str, resolved: &path::Path) {
-        debug!(target: LOG_TARGET_PATH_ATTR, "{} {} | {} → {}",
-            "PathAttr".log_header(),
-            module.name.log_name(),
-            raw_path.log_path(),
-            resolved.display().to_string().log_path()
         );
     }
 
@@ -1708,36 +1684,11 @@ impl<'a> AccLogCtx<'a> {
 }
 
 /// Helper struct to hold context for path attribute logging.
-struct PathLogCtx<'a> {
-    module_id: ModuleNodeId,
-    module_name: &'a str,
-    module_path: &'a [String], // Use slice for efficiency
-    attr_value: Option<&'a str>,
-    resolved_path: Option<&'a PathBuf>,
-}
-
 struct PathProcessingContext<'a> {
     module_id: ModuleNodeId,
     module_name: &'a str,
     attr_value: Option<&'a str>,
     resolved_path: Option<&'a PathBuf>,
-}
-
-impl<'a> PathLogCtx<'a> {
-    /// Creates a new context for logging path attribute processing.
-    fn new(
-        module_node: &'a ModuleNode,
-        attr_value: Option<&'a str>,
-        resolved_path: Option<&'a PathBuf>,
-    ) -> Self {
-        Self {
-            module_id: ModuleNodeId::new(module_node.id()),
-            module_name: &module_node.name,
-            module_path: &module_node.path,
-            attr_value,
-            resolved_path,
-        }
-    }
 }
 
 /// Helper struct to hold context for path attribute logging.

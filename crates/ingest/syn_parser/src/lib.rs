@@ -1,6 +1,7 @@
 pub mod discovery;
 pub mod error;
 pub mod parser;
+pub mod resolve;
 pub(crate) mod utils; // Don't re-export `LogStyle` to keep it clear its a utility trait.
 
 // Re-export key items for easier access
@@ -16,7 +17,7 @@ pub mod test_utils {
     pub use crate::parser::graph::CodeGraph;
     pub use crate::{
         error::SynParserError,
-        parser::module_tree::{ModuleTree, ModuleTreeError},
+        resolve::module_tree::{ModuleTree, ModuleTreeError},
     };
     pub fn test_build_module_tree(graph: &CodeGraph) -> Result<ModuleTree, SynParserError> {
         graph.build_module_tree()

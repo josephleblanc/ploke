@@ -39,7 +39,8 @@ pub use union::UnionNode;
 pub use value::{ValueKind, ValueNode};
 // ... other re-exports
 
-// --- utility macro ---
+// ----- utility macro -----
+// Differentiators for primary id types
 use crate::define_node_id_wrapper;
 define_node_id_wrapper!(EnumNodeId);
 define_node_id_wrapper!(FunctionNodeId);
@@ -51,6 +52,9 @@ define_node_id_wrapper!(TraitNodeId);
 define_node_id_wrapper!(TypeAliasNodeId);
 define_node_id_wrapper!(UnionNodeId);
 define_node_id_wrapper!(ValueNodeId);
+
+// For more explicit differntiation within Phase 3 module tree processing
+define_node_id_wrapper!(ReexportNodeId);
 
 // Logging target
 const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
