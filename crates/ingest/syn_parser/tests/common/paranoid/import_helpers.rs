@@ -112,8 +112,6 @@ pub fn find_import_node_paranoid<'a>(
     let item_kind = match import_node.kind {
         syn_parser::parser::nodes::ImportKind::UseStatement(_) => ItemKind::Import,
         syn_parser::parser::nodes::ImportKind::ExternCrate => ItemKind::ExternCrate,
-        // Add the missing variant - treat it like a standard UseStatement for ItemKind
-        syn_parser::parser::nodes::ImportKind::ImportNode => ItemKind::Import,
     };
 
     // The visitor uses the module path where the item is defined as context.

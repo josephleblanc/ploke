@@ -1,4 +1,5 @@
 use super::attribute_processing::extract_attributes;
+use super::attribute_processing::extract_cfg_strings;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
@@ -526,7 +527,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
-        let item_cfgs = super::attribute_processing::extract_cfg_strings(&item_struct.attrs);
+        let item_cfgs = extract_cfg_strings(&item_struct.attrs);
         let provisional_effective_cfgs: Vec<String> = scope_cfgs
             .iter()
             .cloned()

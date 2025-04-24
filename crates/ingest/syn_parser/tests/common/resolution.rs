@@ -27,10 +27,10 @@ use syn_parser::{
 /// * `Err(SynParserError::ModulePathNotFound)` if the module path itself is not found.
 /// * `Err(SynParserError::NotFound)` if no item with that name is found in the module.
 /// * `Err(SynParserError::DuplicateNode)` if multiple items with the same name exist in the module.
-#[deprecated(
-    since = "0.1.0",
-    note = "Use find_item_id_by_path_name_kind_checked instead. Relies on name only and can return ambiguous results."
-)]
+// #[deprecated(
+//     since = "0.1.0",
+//     note = "Use find_item_id_by_path_name_kind_checked instead. Relies on name only and can return ambiguous results."
+// )] // Annoying warnings
 pub fn find_item_id_in_module_by_name(
     graph: &CodeGraph,
     module_defn_path: &[String],
@@ -160,29 +160,9 @@ pub fn find_item_id_by_path_name_kind_checked(
         // Use find_node_checked to ensure the contained node itself exists uniquely
         match graph.find_node_checked(contained_id) {
             Ok(node) => {
-                if node.name() == item_name {
+                if node.name() == item_name && node.kind_matchs(item_kind) {
                     // Name matches, now check if the kind matches the *target* kind
-                    let kind_matches = match item_kind {
-                        ItemKind::Function => node.as_function().is_some(),
-                        ItemKind::Struct => node.as_struct().is_some(),
-                        ItemKind::Enum => node.as_enum().is_some(),
-                        ItemKind::Union => node.as_union().is_some(),
-                        ItemKind::TypeAlias => node.as_type_alias().is_some(),
-                        ItemKind::Trait => node.as_trait().is_some(),
-                        ItemKind::Impl => node.as_impl().is_some(),
-                        ItemKind::Module => node.as_module().is_some(),
-                        ItemKind::Const | ItemKind::Static => node.as_value().is_some(), // Combine Const/Static check
-                        ItemKind::Macro => node.as_macro().is_some(),
-                        ItemKind::Import => node.as_import().is_some(),
-                        // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
-                        // are not directly represented as top-level GraphNode types searchable this way.
-                        // This helper is for finding top-level items within a module.
-                        _ => false,
-                    };
-
-                    if kind_matches {
-                        matches.push(contained_id);
-                    }
+                    matches.push(contained_id);
                     // If name matches but kind doesn't, we just ignore it for this specific search.
                 }
             }
@@ -223,7 +203,10 @@ pub fn find_item_id_by_path_name_kind_checked(
         }
         // If only errors occurred and no matches, return the first error encountered
         if matches.is_empty() {
-            return Err(errors.remove(0));
+            for e in &errors {
+                log::error!("{:?}", e);
+            }
+            return Err(errors.first().unwrap().to_owned());
         }
     }
 
@@ -293,7 +276,7 @@ pub fn find_reexport_import_node_by_name_checked(
                 }
                 // Ignore if it's not a re-export or name doesn't match
             }
-            Err(e @ SynParserError::NotFound(_)) => {
+            Err(_e @ SynParserError::NotFound(_)) => {
                 // This contained ID is not an ImportNode, ignore it for this search.
             }
             Err(e @ SynParserError::DuplicateNode(_)) => {

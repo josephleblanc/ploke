@@ -1,4 +1,5 @@
 use crate::error::SynParserError;
+use crate::utils::LogStyle;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
 use super::module_tree::{ModuleTree, ModuleTreeError}; // Import ModuleTreeError
@@ -250,7 +251,11 @@ impl CodeGraph {
 
         match first {
             Some(node) => {
-                debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Found unique non-declaration node:".green(), node.id.to_string().magenta())
+                debug!(target: LOG_TARGET_GRAPH_FIND, 
+                    "{} {}", 
+                    "Found unique non-declaration node:".log_header(), 
+                    node.id.to_string().magenta());
+                node.log_node_debug();
             }
             None => {
                 debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "No non-declaration node found!".yellow())

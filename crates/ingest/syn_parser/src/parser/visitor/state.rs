@@ -81,7 +81,6 @@ impl VisitorState {
         // Get the last pushed scope ID as the parent, if available
         let parent_scope_id = self.current_definition_scope.last().copied();
 
-        // --- DEBUG PRINT ---
         debug!(target: LOG_TARGET,
             "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
             name, item_kind
@@ -93,7 +92,6 @@ impl VisitorState {
         debug!(target: LOG_TARGET, "  item_kind: {:?}", item_kind);
         debug!(target: LOG_TARGET, "  parent_scope_id: {:?}", parent_scope_id);
         debug!(target: LOG_TARGET, "  cfg_bytes: {:?}", cfg_bytes);
-        // --- END DEBUG PRINT ---
 
         NodeId::generate_synthetic(
             self.crate_namespace,

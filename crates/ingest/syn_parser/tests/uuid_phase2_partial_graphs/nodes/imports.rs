@@ -350,7 +350,6 @@ fn test_import_node_field_id_regeneration() {
     let item_kind = match node.kind {
         ImportKind::UseStatement(_) => ploke_core::ItemKind::Import,
         ImportKind::ExternCrate => ploke_core::ItemKind::ExternCrate,
-        ImportKind::ImportNode => ploke_core::ItemKind::Import, // Treat like UseStatement
     };
 
     // ID generation now uses the *visible name* or "<glob>"

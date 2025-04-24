@@ -195,7 +195,6 @@ pub fn print_module_tree(
         print!("{}{}", prefix, if is_last { "       " } else { "│      " });
         print!(" -> ");
         match &import.kind {
-            ImportKind::ImportNode => { print!("quoia? ") },
             ImportKind::ExternCrate => { print!("extern crate ") },
             ImportKind::UseStatement(vis_kind) => {
                 match vis_kind {

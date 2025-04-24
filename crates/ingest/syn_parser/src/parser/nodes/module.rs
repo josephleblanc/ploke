@@ -200,3 +200,45 @@ impl HasAttributes for ModuleNode {
         &self.attributes
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct ModuleNodeId(NodeId);
+impl ModuleNodeId {
+    /// Create from raw NodeId
+    pub fn new(id: NodeId) -> Self {
+        Self(id)
+    }
+
+    /// Get inner NodeId
+    pub fn into_inner(self) -> NodeId {
+        self.0
+    }
+
+    /// Get reference to inner NodeId
+    pub fn as_inner(&self) -> &NodeId {
+        &self.0
+    }
+
+    /// Converts this ModuleNodeId into a GraphId::Node.
+    pub fn to_graph_id(self) -> GraphId {
+        GraphId::Node(self.0)
+    }
+}
+
+impl std::fmt::Display for ModuleNodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Delegate to the inner NodeId's Display implementation
+        write!(f, "{}", self.0)
+    }
+}
+
+impl TryFrom<GraphId> for ModuleNodeId {
+    type Error = NodeError;
+
+    fn try_from(value: GraphId) -> Result<Self, Self::Error> {
+        match value {
+            GraphId::Node(id) => Ok(ModuleNodeId::new(id)),
+            GraphId::Type(id) => Err(NodeError::Conversion(id)),
+        }
+    }
+}

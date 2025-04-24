@@ -14,11 +14,8 @@ use crate::parser::nodes::NodePath;
 use crate::{error::SynParserError, parser::nodes::extract_path_attr_from_node}; // Ensure NodePath is imported
 
 use super::{
-    nodes::{
-        Attribute, GraphId, GraphNode, HasAttributes, ImportNode, ModuleDef, ModuleNode,
-        ModuleNodeId,
-    }, // Add GraphId
-    relations::{Relation, RelationKind}, // Remove GraphId
+    nodes::{GraphId, GraphNode, ImportNode, ModuleDef, ModuleNode, ModuleNodeId}, // Add GraphId
+    relations::{Relation, RelationKind},                                          // Remove GraphId
     types::VisibilityKind,
     CodeGraph,
 };
@@ -704,11 +701,6 @@ impl ModuleTree {
                                     return Err(ModuleTreeError::ExternalItemNotResolved(item_id));
                                 } else {
                                     // It's an internal re-export.
-                                    // TODO: Implement proper re-export following logic here.
-                                    // For now, we don't return the path to the re-export statement itself.
-                                    // We need to follow the re-export to its target.
-                                    // Let the BFS continue to explore other paths or find the target directly.
-                                    // This branch intentionally does nothing for now.
                                     log::trace!(target: LOG_TARGET_VIS, "SPP: Found internal re-export ImportNode {} in {}, continuing BFS.", item_id, current_mod_id);
                                 }
                             } else {
@@ -871,12 +863,18 @@ impl ModuleTree {
         Ok(false)
     }
 
+    // #[cfg(feature = "reexport")]
+    // pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+    //
+    // }
+
     // TODO: Make a parallellized version with rayon
     // fn process_export_rels(&self, graph: &CodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
     //     todo!()
     // }
     // or
-    pub fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+    // #[cfg(not(feature = "reexport"))]
+    pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
         for export in &self.pending_exports {
             let source_mod_id = export.module_node_id();
             let export_node = export.export_node();
@@ -1268,7 +1266,7 @@ impl ModuleTree {
         let base_dir = self.find_declaring_file_dir(module_id)?;
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
-    pub fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
+    pub(crate) fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
         for (decl_module_id, resolved_path) in self.found_path_attrs.iter() {
             let ctx = PathProcessingContext {
                 module_id: *decl_module_id,

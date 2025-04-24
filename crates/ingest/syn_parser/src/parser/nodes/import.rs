@@ -191,7 +191,7 @@ impl GraphNode for ImportNode {
         match &self.kind {
             ImportKind::UseStatement(vis) => vis.clone(),
             ImportKind::ExternCrate => VisibilityKind::Inherited,
-            ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
+            // ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
         }
     }
 
@@ -211,7 +211,7 @@ impl GraphNode for ImportNode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
-    ImportNode,                   // Placeholder or potentially for future import types
+    // ImportNode,                   // Placeholder or potentially for future import types
     ExternCrate, // Represents an `extern crate foo;` or `extern crate foo as Bar;` statement
     UseStatement(VisibilityKind), // Represents a `use` statement, capturing its visibility
 }

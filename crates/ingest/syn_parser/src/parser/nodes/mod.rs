@@ -13,11 +13,15 @@ mod value;
 use std::borrow::Borrow;
 use std::fmt::Display;
 
-use crate::error::SynParserError;
+use crate::{
+    error::SynParserError,
+    utils::{LogStyle, LogStyleDebug},
+};
 
 // Removed GraphId import from relations
 use super::types::VisibilityKind;
-use ploke_core::{NodeId, TypeId};
+use log::debug;
+use ploke_core::{ItemKind, NodeId, TypeId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error; // Add thiserror
 
@@ -27,13 +31,29 @@ pub use function::{FunctionNode, ParamData};
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
-pub use module::{ModuleDef, ModuleNode};
+pub use module::{ModuleDef, ModuleNode, ModuleNodeId};
 pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
 pub use union::UnionNode;
 pub use value::{ValueKind, ValueNode};
 // ... other re-exports
+
+// --- utility macro ---
+use crate::define_node_id_wrapper;
+define_node_id_wrapper!(EnumNodeId);
+define_node_id_wrapper!(FunctionNodeId);
+define_node_id_wrapper!(ImplNodeId);
+define_node_id_wrapper!(ImportNodeId);
+// define_node_id_wrapper!(ModuleNodeId);
+define_node_id_wrapper!(StructNodeId);
+define_node_id_wrapper!(TraitNodeId);
+define_node_id_wrapper!(TypeAliasNodeId);
+define_node_id_wrapper!(UnionNodeId);
+define_node_id_wrapper!(ValueNodeId);
+
+// Logging target
+const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
 
 /// Core trait for all graph nodes
 pub trait GraphNode {
@@ -67,7 +87,14 @@ pub trait GraphNode {
     fn as_module(&self) -> Option<&ModuleNode> {
         None
     }
-    fn as_value(&self) -> Option<&ValueNode> {
+    // Replaced by following const/static differentiators
+    // fn as_value(&self) -> Option<&ValueNode> {
+    //     None
+    // }
+    fn as_value_const(&self) -> Option<&ValueNode> {
+        None
+    }
+    fn as_value_static(&self) -> Option<&ValueNode> {
         None
     }
     fn as_macro(&self) -> Option<&MacroNode> {
@@ -75,6 +102,82 @@ pub trait GraphNode {
     }
     fn as_import(&self) -> Option<&ImportNode> {
         None
+    }
+    fn kind_matchs(&self, kind: ItemKind) -> bool {
+        match kind {
+            ItemKind::Function => self.as_function().is_some(),
+            ItemKind::Struct => self.as_struct().is_some(),
+            ItemKind::Enum => self.as_enum().is_some(),
+            ItemKind::Union => self.as_union().is_some(),
+            ItemKind::TypeAlias => self.as_type_alias().is_some(),
+            ItemKind::Trait => self.as_trait().is_some(),
+            ItemKind::Impl => self.as_impl().is_some(),
+            ItemKind::Module => self.as_module().is_some(),
+            ItemKind::Const => self.as_value_const().is_some(),
+            ItemKind::Static => self.as_value_static().is_some(), // Combine Const/Static check
+            ItemKind::Macro => self.as_macro().is_some(),
+            ItemKind::Import => self.as_import().is_some(),
+            // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
+            // are not directly represented as top-level GraphNode types this way.
+            _ => false,
+        }
+    }
+
+    fn kind(&self) -> ItemKind {
+        if self.as_function().is_some() {
+            ItemKind::Function
+        } else if self.as_struct().is_some() {
+            ItemKind::Struct
+        } else if self.as_enum().is_some() {
+            ItemKind::Enum
+        } else if self.as_union().is_some() {
+            ItemKind::Union
+        } else if self.as_type_alias().is_some() {
+            ItemKind::TypeAlias
+        } else if self.as_trait().is_some() {
+            ItemKind::Trait
+        } else if self.as_impl().is_some() {
+            ItemKind::Impl
+        } else if self.as_module().is_some() {
+            ItemKind::Module
+        } else if self.as_macro().is_some() {
+            ItemKind::Macro
+        } else if self.as_import().is_some() {
+            ItemKind::Import
+        } else if self.as_value_static().is_some() {
+            ItemKind::Static
+        } else if self.as_value_const().is_some() {
+            ItemKind::Const
+        } else {
+            // Kind of a hack
+            panic!("Unknown TypeKind found.")
+        }
+
+        // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
+        // are not directly represented as top-level GraphNode types this way.
+    }
+
+    fn log_node_debug(&self) {
+        debug!(target: LOG_TARGET_NODE,
+            "{} {: <12} {: <20} | {: <12} | {: <15}",
+            "NodeInfo".log_header(),
+            self.name().log_name(),
+            self.id().to_string().log_id(),
+            self.kind().log_vis_debug(),
+            self.visibility().log_name_debug(),
+        );
+    }
+
+    fn log_node_error(&self) {
+        log::error!(target: LOG_TARGET_NODE,
+            "{} {} {: <12} {: <20} | {: <12} | {: <15}",
+            "ERROR".log_error(),
+            "NodeInfo".log_header(),
+            self.name().log_name(),
+            self.id().to_string().log_id(),
+            self.kind().log_vis_debug(),
+            self.visibility().log_name_debug(),
+        );
     }
 
     // Add others like VariantNode, FieldNode if they implement GraphNode directly
@@ -171,48 +274,6 @@ pub enum NodeError {
     Conversion(TypeId),
     #[error("Graph ID conversion error: {0}")]
     GraphIdConversion(#[from] GraphIdConversionError), // Add From conversion
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct ModuleNodeId(NodeId);
-impl ModuleNodeId {
-    /// Create from raw NodeId
-    pub fn new(id: NodeId) -> Self {
-        Self(id)
-    }
-
-    /// Get inner NodeId
-    pub fn into_inner(self) -> NodeId {
-        self.0
-    }
-
-    /// Get reference to inner NodeId
-    pub fn as_inner(&self) -> &NodeId {
-        &self.0
-    }
-
-    /// Converts this ModuleNodeId into a GraphId::Node.
-    pub fn to_graph_id(self) -> GraphId {
-        GraphId::Node(self.0)
-    }
-}
-
-impl std::fmt::Display for ModuleNodeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Delegate to the inner NodeId's Display implementation
-        write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<GraphId> for ModuleNodeId {
-    type Error = NodeError;
-
-    fn try_from(value: GraphId) -> Result<Self, Self::Error> {
-        match value {
-            GraphId::Node(id) => Ok(ModuleNodeId::new(id)),
-            GraphId::Type(id) => Err(NodeError::Conversion(id)),
-        }
-    }
 }
 
 /// Full module path name,

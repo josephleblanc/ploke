@@ -240,6 +240,7 @@ mod deep10 {
 mod deep11 {
     pub use crate::deep10::item10 as item11;
 }
+
 pub use deep11::item11 as final_deep_item; // 11 steps
                                            // SPP should find Ok(["crate"])
 
@@ -261,15 +262,16 @@ mod private_intermediate {
     #[allow(unused_imports)] // Allow re-export if not used directly
     pub use crate::branch_a::branch_item;
 }
-#[allow(dead_code)] // Allow unused module
+#[allow(unused_imports)] // Allow unused module
 mod branch_c {
     // Re-export from private - this doesn't make branch_item public via this path
-    // pub use crate::private_intermediate::branch_item as item_c;
+    pub use crate::private_intermediate::branch_item as item_c;
 }
+
 // Public paths:
+// SPP should find Ok(["crate"]) via either item_via_a or item_via_b
 pub use branch_a::branch_item as item_via_a; // Path length 2
 pub use branch_b::branch_item as item_via_b; // Path length 2
-                                             // SPP should find Ok(["crate"]) via either item_via_a or item_via_b
 
 // --- Scenario 10: Multiple Renames in Chain ---
 mod rename_source {

@@ -18,7 +18,11 @@ impl GraphNode for ValueNode {
         &self.cfgs
     }
 
-    fn as_value(&self) -> Option<&ValueNode> {
+    fn as_value_const(&self) -> Option<&ValueNode> {
+        Some(self)
+    }
+
+    fn as_value_static(&self) -> Option<&ValueNode> {
         Some(self)
     }
 }

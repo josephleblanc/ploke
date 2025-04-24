@@ -37,8 +37,8 @@ ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
 toml = { version = "0.8" }
 walkdir = { version = "2.4" }
 
-# cfg-expr = { version = "0.15" } # Removed: Not needed until Phase 3/RAG
-# target-lexicon = "0.12"         # Removed: Not needed until Phase 3/RAG
+parse_cfg = "4.1.1"
+# target-lexicon = "0.13"         # Removed: Not needed until Phase 3/RAG
 
 # debugging
 log = { workspace = true }
@@ -50,10 +50,11 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-default = ["mod_tree_cfg"]
-feature_a = []             # Add feature_a used by fixture
-feature_b = []             # Add feature_b used by test
+default = ["mod_tree_cfg", "reexport"]
+feature_a = []                         # Add feature_a used by fixture
+feature_b = []                         # Add feature_b used by test
 verbose_debug = []
 mod_tree_cfg = []
+reexport = []
 # Post-MVP feature
 workspace_vis = []
