@@ -35,6 +35,21 @@ const COLOR_ERROR: Color = Color::TrueColor {
     g: 118,
     b: 142,
 }; // Soft red
+const COLOR_GREEN: Color = Color::TrueColor {
+    r: 158,
+    g: 255,
+    b: 158,
+}; // Soft green
+const COLOR_YELLOW: Color = Color::TrueColor {
+    r: 255,
+    g: 255,
+    b: 158,
+}; // Soft yellow
+const COLOR_MAGENTA: Color = Color::TrueColor {
+    r: 255,
+    g: 158,
+    b: 255,
+}; // Soft magenta
 
 use crate::resolve::module_tree::ModuleTree;
 pub use colored::Colorize;
