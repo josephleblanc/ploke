@@ -118,6 +118,33 @@ pub trait LogStyle: AsRef<str> {
     fn log_error(&self) -> ColoredString {
         self.as_ref().color(COLOR_ERROR).bold()
     }
+    fn log_green(&self) -> ColoredString {
+        self.as_ref().color(COLOR_GREEN)
+    }
+    fn log_yellow(&self) -> ColoredString {
+        self.as_ref().color(COLOR_YELLOW)
+    }
+    fn log_magenta(&self) -> ColoredString {
+        self.as_ref().color(COLOR_MAGENTA)
+    }
+    fn log_foreground_primary(&self) -> ColoredString {
+        self.as_ref().color(COLOR_FOREGROUND_PRIMARY)
+    }
+    fn log_foreground_secondary(&self) -> ColoredString {
+        self.as_ref().color(COLOR_FOREGROUND_SECONDARY)
+    }
+    fn log_comment(&self) -> ColoredString {
+        self.as_ref().color(COLOR_COMMENT)
+    }
+    fn log_orange(&self) -> ColoredString {
+        self.as_ref().color(COLOR_ORANGE)
+    }
+    fn log_spring_green(&self) -> ColoredString {
+        self.as_ref().color(COLOR_SPRING_GREEN)
+    }
+    fn log_step(&self) -> ColoredString {
+        self.as_ref().color(COLOR_YELLOW).italic() // Using yellow italic for steps
+    }
     fn debug_fmt(&self) -> ColoredString
     where
         Self: Debug,
@@ -147,6 +174,33 @@ pub trait LogStyleDebug: Debug {
     }
     fn log_error_debug(&self) -> ColoredString {
         format!("{:?}", self).color(COLOR_ERROR).bold()
+    }
+    fn log_green_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_GREEN)
+    }
+    fn log_yellow_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_YELLOW)
+    }
+    fn log_magenta_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_MAGENTA)
+    }
+    fn log_foreground_primary_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_FOREGROUND_PRIMARY)
+    }
+    fn log_foreground_secondary_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_FOREGROUND_SECONDARY)
+    }
+    fn log_comment_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_COMMENT)
+    }
+    fn log_orange_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_ORANGE)
+    }
+    fn log_spring_green_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_SPRING_GREEN)
+    }
+    fn log_step_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_YELLOW).italic() // Using yellow italic for steps
     }
 }
 
