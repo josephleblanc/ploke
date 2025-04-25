@@ -58,6 +58,8 @@ pub enum DiscoveryError {
     },
     #[error("Source directory not found for crate at: {path}")]
     SrcNotFound { path: PathBuf },
+    #[error("Multiple non-fatal errors occurred during discovery")]
+    NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
 }
 
 // Helper structs for deserializing Cargo.toml
@@ -347,38 +349,51 @@ pub fn run_discovery_phase(
     _project_root: &Path,      // Keep for potential future use
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
-    // Reverted return type
     let mut crate_contexts = HashMap::new();
-    let mut initial_module_map = HashMap::new(); // Still mutable
-                                                 // Removed error collection vector
+    let mut initial_module_map = HashMap::new();
+    let mut non_fatal_errors: Vec<DiscoveryError> = Vec::new(); // Collect non-fatal errors
 
     for crate_root_path in target_crates {
-        // Process each crate directly, returning Err on first failure
+        // --- Check Crate Path Existence (Critical Error) ---
         if !crate_root_path.exists() || !crate_root_path.is_dir() {
+            // This is considered critical, return immediately.
             return Err(DiscoveryError::CratePathNotFound {
                 path: crate_root_path.clone(),
             });
+            // No need to continue if the path is invalid.
         }
 
-        // --- 3.2.2 Implement Cargo.toml Parsing ---
+        // --- 3.2.2 Implement Cargo.toml Parsing (Critical Errors) ---
         let cargo_toml_path = crate_root_path.join("Cargo.toml");
-        let cargo_content =
-            fs::read_to_string(&cargo_toml_path).map_err(|e| DiscoveryError::Io {
-                path: cargo_toml_path.clone(),
-                source: e,
-            })?;
-        let manifest: CargoManifest =
-            toml::from_str(&cargo_content).map_err(|e| DiscoveryError::TomlParse {
-                path: cargo_toml_path.clone(),
-                source: e,
-            })?;
+        let cargo_content = match fs::read_to_string(&cargo_toml_path) {
+            Ok(content) => content,
+            Err(e) => {
+                // Critical error: Cannot proceed without Cargo.toml content.
+                return Err(DiscoveryError::Io {
+                    path: cargo_toml_path.clone(),
+                    source: e,
+                });
+            }
+        };
+        let manifest: CargoManifest = match toml::from_str(&cargo_content) {
+            Ok(m) => m,
+            Err(e) => {
+                // Critical error: Invalid TOML structure prevents further processing.
+                return Err(DiscoveryError::TomlParse {
+                    path: cargo_toml_path.clone(),
+                    source: e,
+                });
+            }
+        };
 
-        // Extract required package info (serde ensures these fields exist based on PackageInfo)
-        let crate_name = manifest.package.name.clone();
-        let crate_version = manifest.package.version.clone();
+        // --- Extract Package Info (Non-Fatal Errors) ---
+        // Although PackageInfo deserialization requires name/version, we handle potential
+        // future scenarios or direct struct manipulation by checking here.
+        // For now, serde handles this, but let's keep the structure for robustness.
+        let crate_name = manifest.package.name.clone(); // Assume present due to serde
+        let crate_version = manifest.package.version.clone(); // Assume present due to serde
 
-        // Extract optional sections (features, dependencies)
-        // These are already parsed into the manifest struct using serde defaults
+        // --- Extract Optional Sections ---
         let features = manifest.features; // Cloned implicitly by struct move/copy if needed later
         let dependencies = manifest.dependencies;
         let dev_dependencies = manifest.dev_dependencies;
@@ -388,40 +403,44 @@ pub fn run_discovery_phase(
 
         // --- 3.2.1 Implement File Discovery Logic ---
         let src_path = crate_root_path.join("src");
-        if !src_path.exists() || !src_path.is_dir() {
-            // Allow crates without a src dir? Maybe just return empty file list.
-            // For now, let's error if src isn't found, common case.
-            // USER: Agreed, and good call on the clear enum error. We can expand this later once
-            // core functionality is built out.
-            return Err(DiscoveryError::SrcNotFound { path: src_path });
-            // files = Vec::new();
-        }
-
         let mut files = Vec::new();
-        // Single WalkDir loop
-        let walker = WalkDir::new(&src_path).into_iter();
-        for entry_result in walker {
-            match entry_result {
-                Ok(entry) => {
-                    if entry.file_type().is_file()
-                        && entry.path().extension().is_some_and(|ext| ext == "rs")
-                    {
-                        // Ensure we store absolute paths if target_crates might be relative
-                        // Assuming target_crates provides absolute paths for simplicity here.
-                        // If not, canonicalize crate_root_path first.
-                        files.push(entry.path().to_path_buf());
+
+        if !src_path.exists() || !src_path.is_dir() {
+            // Non-fatal: Log and collect error, continue processing other crates if possible.
+            eprintln!(
+                "Warning: Source directory not found for crate at {:?}, skipping file discovery.",
+                crate_root_path
+            );
+            non_fatal_errors.push(DiscoveryError::SrcNotFound {
+                path: src_path.clone(),
+            });
+            // files remains empty, context will be created without files.
+        } else {
+            // --- Perform File Discovery (Non-Fatal Walkdir Errors) ---
+            let walker = WalkDir::new(&src_path).into_iter();
+            for entry_result in walker {
+                match entry_result {
+                    Ok(entry) => {
+                        if entry.file_type().is_file()
+                            && entry.path().extension().is_some_and(|ext| ext == "rs")
+                        {
+                            files.push(entry.path().to_path_buf());
+                        }
                     }
-                }
-                Err(e) => {
-                    // Treat WalkDir errors as critical for now
-                    let path = e.path().unwrap_or(&src_path).to_path_buf();
-                    eprintln!("Error walking directory {:?}: {}", path, e); // Log to stderr
-                    return Err(DiscoveryError::Walkdir { path, source: e });
+                    Err(e) => {
+                        // Non-fatal: Log, collect error, and continue walking.
+                        let path = e.path().unwrap_or(&src_path).to_path_buf();
+                        eprintln!("Warning: Error walking directory {:?}: {}", path, e);
+                        non_fatal_errors.push(DiscoveryError::Walkdir {
+                            path,
+                            source: e.into(), // Convert walkdir::Error to our error type
+                        });
+                    }
                 }
             }
         }
 
-        // --- Combine into CrateContext ---
+        // --- Combine into CrateContext (Always created, might have empty files) ---
         let context = CrateContext {
             name: crate_name.clone(),
             version: crate_version,
@@ -436,30 +455,42 @@ pub fn run_discovery_phase(
         // --- 3.2.4 Implement Initial Module Mapping ---
         // Scan lib.rs and main.rs for `mod xyz;`
         for entry_point_name in ["lib.rs", "main.rs"] {
-            let entry_point_path = src_path.join(entry_point_name);
-            if files.contains(&entry_point_path) {
-                match scan_for_mods(&entry_point_path, &src_path, &files) {
-                    Ok(mods) => {
-                        // Merge results into the main map
-                        initial_module_map.extend(mods);
-                    }
-                    Err(e) => {
-                        // Treat scan errors as critical
-                        eprintln!("Error scanning modules in {:?}: {}", entry_point_path, e);
-                        return Err(e);
+            // Only scan if src_path exists and we found files
+            if src_path.exists() && !files.is_empty() {
+                let entry_point_path = src_path.join(entry_point_name);
+                if files.contains(&entry_point_path) {
+                    match scan_for_mods(&entry_point_path, &src_path, &files) {
+                        Ok(mods) => {
+                            initial_module_map.extend(mods);
+                        }
+                        Err(e) => {
+                            // Non-fatal: Log, collect error, continue.
+                            eprintln!(
+                                "Warning: Error scanning modules in {:?}: {}",
+                                entry_point_path, e
+                            );
+                            non_fatal_errors.push(e);
+                        }
                     }
                 }
             }
         }
-        // Add context only if successful so far, using the unique root path as the key
+
+        // Add context regardless of non-fatal errors encountered for this crate.
         crate_contexts.insert(crate_root_path.clone(), context);
     } // End of loop for target_crates
 
-    // Return Ok only if all crates processed without error
-    Ok(DiscoveryOutput {
-        crate_contexts,
-        initial_module_map,
-    })
+    // --- Final Check for Non-Fatal Errors ---
+    if non_fatal_errors.is_empty() {
+        // Success: No critical or non-fatal errors occurred.
+        Ok(DiscoveryOutput {
+            crate_contexts,
+            initial_module_map,
+        })
+    } else {
+        // Failure: Non-fatal errors occurred, report them collectively.
+        Err(DiscoveryError::NonFatalErrors(Box::new(non_fatal_errors)))
+    }
 }
 
 /// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
