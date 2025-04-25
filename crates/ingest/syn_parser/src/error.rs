@@ -70,6 +70,8 @@ pub enum SynParserError {
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
+    #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
+    ModuletreeRelationNotFound(NodeId, String),
     // Removed ModuleDefinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
     // ModuleDefinitionNotFound(String), // Store path string representation
@@ -202,7 +204,6 @@ impl From<ModuleTreeError> for SynParserError {
                     start_node_id
                 ))
             }
-            // --- NEW ARMS ---
             ModuleTreeError::DuplicatePathAttribute {
                 module_id,
                 existing_path,
@@ -231,10 +232,12 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::ModuleDefinitionNotFound(msg) => {
                 SynParserError::InternalState(format!("ModuleTree processing error: {}", msg))
             }
-            // --- Add new match arm ---
             ModuleTreeError::ExternalItemNotResolved(id) => {
                 SynParserError::ExternalItemNotResolved(id)
-            } // --- END NEW ARMS ---
+            }
+            ModuleTreeError::NoRelationsFound(id, msg) => {
+                SynParserError::ModuletreeRelationNotFound(id, msg)
+            }
         }
     }
 }

@@ -23,7 +23,7 @@ use crate::{
     },
     utils::{
         logging::{LogDataStructure, PathProcessingContext},
-        AccLogCtx, LogStyle, LOG_TARGET_BUILD, LOG_TARGET_PATH_ATTR, LOG_TARGET_VIS,
+        AccLogCtx, LogStyle, LogStyleDebug, LOG_TARGET_BUILD, LOG_TARGET_PATH_ATTR, LOG_TARGET_VIS,
     },
 };
 
@@ -73,6 +73,11 @@ pub struct ModuleTree {
     found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
     // Option for `take`
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
+
+    #[cfg(feature = "reexport")]
+    relations_by_source: HashMap<GraphId, Vec<usize>>,
+    #[cfg(feature = "reexport")]
+    relations_by_target: HashMap<GraphId, Vec<usize>>,
 }
 
 /// Indicates a file-level module whose path has been resolved from a declaration that has the
@@ -96,22 +101,31 @@ struct ResolvedModule {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingImport {
-    containing_id: ModuleNodeId, // Keep private
-    import_node: ImportNode,     // Keep private
+    containing_mod_id: ModuleNodeId, // Keep private
+    import_node: ImportNode,         // Keep private
 }
 
 impl PendingImport {
+    #[cfg(not(feature = "reexport"))]
     pub(crate) fn from_import(import: ImportNode) -> Self {
         // Make crate-visible if needed internally
         PendingImport {
-            containing_id: ModuleNodeId::new(import.id),
+            containing_mod_id: ModuleNodeId::new(import.id),
+            import_node: import,
+        }
+    }
+    #[cfg(feature = "reexport")]
+    pub(crate) fn from_import(import: ImportNode, containing_mod_id: NodeId) -> Self {
+        // Make crate-visible if needed internally
+        PendingImport {
+            containing_mod_id: ModuleNodeId::new(containing_mod_id),
             import_node: import,
         }
     }
 
     /// Returns the ID of the module containing this pending import.
-    pub fn containing_id(&self) -> ModuleNodeId {
-        self.containing_id
+    pub fn containing_mod_id(&self) -> ModuleNodeId {
+        self.containing_mod_id
     }
 
     /// Returns a reference to the `ImportNode` associated with this pending import.
@@ -122,22 +136,31 @@ impl PendingImport {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PendingExport {
-    module_node_id: ModuleNodeId, // Keep private
-    export_node: ImportNode,      // Keep private
+    containing_mod_id: ModuleNodeId, // Keep private
+    export_node: ImportNode,         // Keep private
 }
 
 impl PendingExport {
+    #[cfg(not(feature = "reexport"))]
     pub(crate) fn from_export(export: ImportNode) -> Self {
         // Make crate-visible if needed internally
         PendingExport {
-            module_node_id: ModuleNodeId::new(export.id),
+            containing_mod_id: ModuleNodeId::new(export.id),
+            export_node: export,
+        }
+    }
+    #[cfg(feature = "reexport")]
+    pub(crate) fn from_export(export: ImportNode, containing_module_id: NodeId) -> Self {
+        // Make crate-visible if needed internally
+        PendingExport {
+            containing_mod_id: ModuleNodeId::new(export.id),
             export_node: export,
         }
     }
 
     /// Returns the ID of the module containing this pending export.
-    pub fn module_node_id(&self) -> ModuleNodeId {
-        self.module_node_id
+    pub fn containing_mod_id(&self) -> ModuleNodeId {
+        self.containing_mod_id
     }
 
     /// Returns a reference to the `ImportNode` associated with this pending export.
@@ -252,6 +275,25 @@ pub enum ModuleTreeError {
     // --- NEW VARIANT ---
     #[error("Shortest public path resolution failed for external item re-export: {0}")]
     ExternalItemNotResolved(NodeId),
+
+    #[error("No relations found for node {0}: {1}")]
+    NoRelationsFound(NodeId, String),
+}
+
+impl ModuleTreeError {
+    pub(crate) fn no_relations_found(g_node: &dyn GraphNode) -> Self {
+        Self::NoRelationsFound(
+            g_node.id(),
+            format!(
+                "{} {: <12} {: <20} | {: <12} | {: <15}",
+                "NodeInfo".log_header(),
+                g_node.name().log_name(),
+                g_node.id().to_string().log_id(),
+                g_node.kind().log_vis_debug(),
+                g_node.visibility().log_name_debug(),
+            ),
+        )
+    }
 }
 
 // Manual implementation to satisfy the `?` operator
@@ -307,6 +349,10 @@ impl ModuleTree {
             reexport_index: HashMap::new(),
             found_path_attrs: HashMap::new(),
             pending_path_attrs: Some(Vec::new()),
+            #[cfg(feature = "reexport")]
+            relations_by_source: HashMap::new(),
+            #[cfg(feature = "reexport")]
+            relations_by_target: HashMap::new(),
         })
         // Should never happen, but might want to handle this sometime
         // // Initialize path attributes from root if present
@@ -320,6 +366,88 @@ impl ModuleTree {
         // }
     }
 
+    /// Finds relations originating from `source_id` that satisfy the `relation_filter` closure.
+    ///
+    /// The closure receives a reference to each candidate `TreeRelation` and should return `true`
+    /// if the relation should be included in the results.
+    ///
+    /// # Arguments
+    /// * `source_id`: The GraphId of the source node.
+    /// * `relation_filter`: A closure `Fn(&Relation) -> bool` used to filter relations.
+    ///
+    /// # Returns
+    /// A `Vec` containing references to the matching `Relation`s.
+    ///
+    /// # Complexity
+    /// O(1) average lookup for the source ID + O(k) filter application, where k is the
+    /// number of relations originating from `source_id`.
+    #[cfg(feature = "reexport")]
+    pub fn get_relations_from<F>(
+        &self,
+        source_id: &GraphId,
+        relation_filter: F, // Closure parameter
+    ) -> Option<Vec<&TreeRelation>>
+    where
+        F: Fn(&TreeRelation) -> bool, // Closure takes &Relation, returns bool
+    {
+        self.relations_by_source.get(source_id).map(|indices| {
+            // If source_id not in map, return empty
+            indices
+                .iter()
+                .filter_map(|&index| {
+                    self.tree_relations
+                        .get(index)
+                        // filter() on Option returns Some only if the closure is true.
+                        .filter(|&relation| relation_filter(relation))
+                })
+                .collect()
+        })
+    }
+
+    /// Finds relations pointing to `target_id` that satisfy the `relation_filter` closure.
+    ///
+    /// (Doc comments similar to get_relations_from)
+    #[cfg(feature = "reexport")]
+    pub fn get_relations_to<F>(
+        &self,
+        target_id: &GraphId,
+        relation_filter: F, // Closure parameter
+    ) -> Option<Vec<&TreeRelation>>
+    where
+        F: Fn(&TreeRelation) -> bool, // Closure takes &TreeRelation, returns bool
+    {
+        self.relations_by_target.get(target_id).map(|indices| {
+            indices
+                .iter()
+                .filter_map(|&index| {
+                    self.tree_relations
+                        .get(index)
+                        .filter(|&tr| relation_filter(tr))
+                })
+                .collect()
+        })
+    }
+
+    #[cfg(feature = "reexport")]
+    pub fn add_relation(&mut self, tr: TreeRelation) {
+        // TODO: Optionally check if source/target nodes exist in self.nodes first?
+        let new_index = self.tree_relations.len();
+        let source_id = tr.relation().source;
+        let target_id = tr.relation().target;
+
+        self.tree_relations.push(tr);
+
+        // Update indices
+        self.relations_by_source
+            .entry(source_id)
+            .or_default()
+            .push(new_index);
+        self.relations_by_target
+            .entry(target_id)
+            .or_default()
+            .push(new_index);
+    }
+
     pub fn get_root_module(&self) -> Result<&ModuleNode, ModuleTreeError> {
         self.modules
             .get(&self.root)
@@ -329,17 +457,36 @@ impl ModuleTree {
     pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
         let imports = module.imports.clone();
         // Add all private imports
+        #[cfg(feature = "reexport")]
         self.pending_imports.extend(
+            // NOTE: We already have `Relation::ModuleImports` created at parsing time.
+            imports
+                .iter()
+                .filter(|imp| imp.is_inherited_use())
+                .map(|imp| PendingImport::from_import(imp.clone(), module.id())),
+        );
+        #[cfg(not(feature = "reexport"))]
+        self.pending_imports.extend(
+            // NOTE: We already have `Relation::ModuleImports` created at parsing time.
             imports
                 .iter()
                 .filter(|imp| imp.is_inherited_use())
                 .map(|imp| PendingImport::from_import(imp.clone())),
         );
+
         // Add all re-exports
+        #[cfg(feature = "reexport")]
         self.pending_exports.extend(
             imports
                 .iter()
-                .filter(|imp| imp.is_reexport())
+                .filter(|imp| imp.is_local_reexport())
+                .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
+        );
+        #[cfg(not(feature = "reexport"))]
+        self.pending_exports.extend(
+            imports
+                .iter()
+                .filter(|imp| imp.is_local_reexport())
                 .map(|imp| PendingExport::from_export(imp.clone())),
         );
 
@@ -576,7 +723,12 @@ impl ModuleTree {
 
         // Append relations regardless of whether unlinked modules were found.
         // We only skip appending if a fatal error occurred earlier (which would have returned Err).
+        #[cfg(not(feature = "reexport"))]
         self.tree_relations.append(&mut new_relations);
+        #[cfg(feature = "reexport")]
+        for relation in new_relations.into_iter() {
+            self.add_relation(relation);
+        }
 
         // Check if any unlinked modules were collected
         if collected_unlinked.is_empty() {
@@ -592,13 +744,14 @@ impl ModuleTree {
     // TODO: Rename/refactored
     // This function has a misleading name. Currently it is getting all relations,
     // not just `RelationKind::Contains`
-    pub fn register_containment_batch(
-        &mut self,
-        relations: &[Relation],
-    ) -> Result<(), ModuleTreeError> {
+    pub fn add_relations_batch(&mut self, relations: &[Relation]) -> Result<(), ModuleTreeError> {
         for rel in relations.iter() {
+            #[cfg(not(feature = "reexport"))]
             self.tree_relations.push((*rel).into());
+            #[cfg(feature = "reexport")]
+            self.add_relation((*rel).into());
         }
+
         Ok(())
     }
 
@@ -606,9 +759,290 @@ impl ModuleTree {
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
-        graph: &CodeGraph, // Need graph access for item visibility
+        graph: &CodeGraph, // Still need graph for node details (visibility, name)
     ) -> Result<Vec<String>, ModuleTreeError> {
-        todo!()
+        // --- 1. Initial Setup ---
+
+        use ploke_core::ItemKind;
+        let item_node = graph.find_node_unique(item_id)?; // O(n) lookup, need to refactor
+                                                          // find_node_unique
+        if !item_node.visibility().is_pub() {
+            // If the item's own visibility isn't Public, it can never be reached
+            // via a public path from the crate root.
+            self.log_bfs_step(item_node, "Item not public, terminating early"); // Optional log
+            return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id));
+        }
+        if item_node.kind_matches(ItemKind::ExternCrate) {
+            return Err(ModuleTreeError::ExternalItemNotResolved(item_node.id()));
+        }
+        let item_gid = &GraphId::Node(item_node.id());
+        let item_name = item_node.name().to_string();
+
+        self.log_bfs_step(item_node, "Starting item");
+
+        // Find the direct parent module ID using the index
+        let initial_parent_relations = self
+            .get_relations_to(item_gid, |tr| tr.relation().kind == RelationKind::Contains)
+            .ok_or_else(|| ModuleTreeError::no_relations_found(item_node))?;
+        let parent_mod_id = match initial_parent_relations.first() {
+            Some(tr) => {
+                self.log_bfs_step(item_node, "Try finding parent");
+                ModuleNodeId::new(tr.relation().source.try_into()?)
+            } // O(1)+O(k) lookup
+            None => {
+                // Item isn't contained in any module? Maybe it's the root module itself?
+                if let Some(module_node) = item_node.as_module() {
+                    if module_node.id() == *self.root.as_inner() {
+                        // Special case: asking for the path to the root module itself
+                        return Ok(vec!["crate".to_string()]);
+                    }
+                }
+                // Otherwise, it's an error or uncontained item
+                return Err(ModuleTreeError::ContainingModuleNotFound(item_id));
+            }
+        };
+
+        let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
+        let mut visited: HashSet<ModuleNodeId> = HashSet::new();
+
+        // Enqueue the *parent* module. Path starts with the item's name.
+        queue.push_back((parent_mod_id, vec![item_name]));
+        visited.insert(parent_mod_id);
+
+        // --- 2. BFS Loop ---
+        while let Some((current_mod_id, path_to_item)) = queue.pop_front() {
+            // --- 3. Check for Goal ---
+            self.log_bfs_path(current_mod_id.into_inner(), &path_to_item, "Check if root");
+            if current_mod_id == self.root {
+                // Reached the crate root! Construct the final path.
+                let mut final_path = vec!["crate".to_string()];
+                // The path_to_item is currently [item, mod, parent_mod, ...]
+                // We need to reverse it.
+                final_path.extend(path_to_item.into_iter().rev());
+                // NOTE: Popping item's own identitity name for now to conform to same test
+                // structure as old version. Re-evaluate this strategy later.
+                final_path.pop();
+                return Ok(final_path);
+            }
+
+            // --- 4. Explore Upwards (Containing Module) ---
+
+            self.log_bfs_path(current_mod_id.into_inner(), &path_to_item, "Explore Up");
+            self.explore_up_via_containment(
+                current_mod_id,
+                &path_to_item,
+                &mut queue,
+                &mut visited,
+                graph,
+            ); // Need to handle errors
+               // When should this return error for invalid graph state?
+
+            // --- 5. Explore Sideways/Upwards (Re-exports) ---
+            self.log_bfs_path(
+                current_mod_id.into_inner(),
+                &path_to_item,
+                "Explore Re-exports",
+            );
+            self.explore_up_via_reexports(
+                current_mod_id,
+                &path_to_item,
+                &mut queue,
+                &mut visited,
+                graph,
+            )?; // Need to handle errors
+                // When should this return error for invalid graph state?
+        } // End while loop
+
+        // --- 6. Not Found ---
+        Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id))
+    }
+
+    // Helper function for exploring via parent modules
+    #[cfg(feature = "reexport")]
+    fn explore_up_via_containment(
+        &self,
+        current_mod_id: ModuleNodeId,
+        path_to_item: &[String],
+        queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
+        visited: &mut HashSet<ModuleNodeId>,
+        // NOTE: Unused variable `graph`. Why is it here?
+        graph: &CodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        // Added Result return
+
+        let current_mod_node = self.get_module_checked(&current_mod_id)?; // O(1)
+        self.log_bfs_step(current_mod_node, "Start explore up");
+        // Determine the ID and visibility source (declaration or definition)
+        let (effective_source_id, visibility_source_node) = if current_mod_node.is_file_based()
+            && current_mod_id != self.root
+        {
+            // For file-based modules, find the declaration
+            let decl_relations = self
+                .get_relations_to(&current_mod_id.to_graph_id(), |tr| {
+                    matches!(
+                        tr.relation().kind,
+                        RelationKind::ResolvesToDefinition | RelationKind::CustomPath
+                    )
+                })
+                .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
+            self.log_bfs_step(current_mod_node, "Check Vis Source");
+            if let Some(decl_rel) = decl_relations.first() {
+                let decl_id = ModuleNodeId::new(decl_rel.relation().source.try_into()?);
+                // Visibility comes from the declaration node
+                (decl_id, self.get_module_checked(&decl_id)?)
+            } else {
+                // Unlinked file-based module, treat as private/inaccessible upwards
+                // Or log a warning and use the definition itself? Let's treat as inaccessible.
+                log::warn!(target: LOG_TARGET_VIS, "SPP: Could not find declaration for file-based module {}, treating as inaccessible upwards.", current_mod_id);
+                return Ok(()); // Cannot proceed upwards via containment
+            }
+        } else {
+            self.log_bfs_step(current_mod_node, "Inline/root, use self");
+            // Inline module or root, use itself
+            (current_mod_id, current_mod_node)
+        };
+
+        // Find the parent of the effective source (declaration or inline module)
+        let parent_relations = self
+            .get_relations_to(&effective_source_id.to_graph_id(), |tr| {
+                tr.relation().kind == RelationKind::Contains
+            })
+            .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
+        if let Some(parent_rel) = parent_relations.first() {
+            let parent_mod_id = ModuleNodeId::new(parent_rel.relation().source.try_into()?);
+
+            // Check visibility: Is the declaration/inline module visible FROM the parent?
+            // We need the parent module node to check its scope if visibility is restricted
+            // NOTE: Why is this unused? Why did we get it?
+            let parent_mod_node = self.get_module_checked(&parent_mod_id)?;
+
+            self.log_bfs_step(parent_mod_node, "Checking Parent");
+            if self.is_accessible_from(parent_mod_id, effective_source_id) {
+                // Need is_accessible_from helper
+                if visited.insert(parent_mod_id) {
+                    // Check if parent is newly visited
+                    let mut new_path = path_to_item.to_vec();
+                    // Prepend the name used to declare/define the current module
+                    new_path.push(visibility_source_node.name().to_string());
+                    queue.push_back((parent_mod_id, new_path));
+                }
+            } else {
+                log::trace!(target: LOG_TARGET_VIS, "SPP: Module {} ({}) not accessible from parent {}, pruning containment path.", visibility_source_node.name(), effective_source_id, parent_mod_id);
+            }
+        } else if effective_source_id != self.root {
+            // Should only happen if root has no parent relation, otherwise inconsistent tree
+            log::warn!(target: LOG_TARGET_BUILD, "SPP: No parent found for non-root module {} via containment.", effective_source_id);
+        }
+        Ok(())
+    }
+
+    // Helper function for exploring via re-exports
+    #[cfg(feature = "reexport")]
+    fn explore_up_via_reexports(
+        &self,
+        // The ID of the item/module *potentially* being re-exported
+        target_id: ModuleNodeId, // Changed name for clarity
+        path_to_item: &[String],
+        queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
+        visited: &mut HashSet<ModuleNodeId>,
+        graph: &CodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        // Added Result return
+        self.log_bfs_path(
+            target_id.into_inner(),
+            path_to_item,
+            "Start Re-export Explore",
+        );
+        // Find ImportNodes that re-export the target_id
+        // Need reverse ReExport lookup: target = target_id -> source = import_node_id
+        let reexport_relations = self
+            .get_relations_to(&target_id.to_graph_id(), |tr| {
+                tr.relation().kind == RelationKind::ReExport
+            })
+            .ok_or_else(|| {
+                // WARNING:
+                // Placeholder `unwrap` here, need better error conversions for
+                // SynParserError <--> ModuleTreeError
+                let node = graph.find_node_unique(target_id.into_inner()).unwrap();
+                ModuleTreeError::no_relations_found(node)
+            })?;
+
+        for rel in reexport_relations {
+            let import_node_id = rel.relation().source.try_into()?; // ID of the ImportNode itself
+            let import_node = match graph.get_import_checked(import_node_id) {
+                // O(1) <--- not actually true, refactor graph method `get_import_checked`
+                Ok(node) => node,
+                Err(_) => {
+                    log::warn!(target: LOG_TARGET_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id);
+                    continue; // Skip this relation
+                }
+            };
+            // Check for extern crate, return error that needs to be handled by caller.
+            // This should only happen for items that are not defined in the target parsed crate.
+            if import_node.is_extern_crate() {
+                return Err(ModuleTreeError::ExternalItemNotResolved(import_node_id));
+            }
+            self.log_bfs_step(import_node, "Get import node");
+
+            // Check if the re-export itself is public (`pub use`, `pub(crate) use`, etc.)
+            if !import_node.is_public_use() {
+                self.log_bfs_step(import_node, "!is_reexport");
+                // Use the existing helper
+                continue; // Skip private `use` statements
+            }
+
+            // Find the module containing this ImportNode
+            let container_relations = self
+                .get_relations_to(&GraphId::Node(import_node_id), |r| {
+                    r.relation().kind == RelationKind::Contains
+                })
+                .ok_or_else(|| ModuleTreeError::no_relations_found(import_node))?;
+            if let Some(container_rel) = container_relations.first() {
+                let reexporting_mod_id =
+                    ModuleNodeId::new(container_rel.relation().source.try_into()?);
+
+                // IMPORTANT: Check if the *re-exporting module* itself is accessible
+                // This requires knowing *from where* we are checking. In BFS, we don't have
+                // a single "current location" in the same way as the downward search.
+                // We need to ensure the path *up to* reexporting_mod_id is public.
+                // The BFS naturally handles this: if we reach reexporting_mod_id, it means
+                // we got there via a public path from the original item's parent.
+                // So, we only need to check if we've visited this module before.
+
+                if visited.insert(reexporting_mod_id) {
+                    self.log_bfs_path(import_node_id, path_to_item, "Get path to item");
+                    let mut new_path = path_to_item.to_vec();
+                    // Prepend the name the item is re-exported AS
+                    new_path.push(import_node.visible_name.clone());
+
+                    self.log_bfs_step(import_node, "Push Import to queue");
+                    queue.push_back((reexporting_mod_id, new_path));
+                }
+            } else {
+                log::warn!(target: LOG_TARGET_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id);
+            }
+        }
+        Ok(())
+    }
+
+    // Helper needed for visibility check upwards (simplified version of ModuleTree::is_accessible)
+    // Checks if `target_id` (decl or inline mod) is accessible *from* `potential_parent_id`
+    fn is_accessible_from(
+        &self,
+        potential_parent_id: ModuleNodeId,
+        target_id: ModuleNodeId,
+    ) -> bool {
+        // This needs logic similar to ModuleTree::is_accessible, but focused:
+        // 1. Get the effective visibility of `target_id` (considering its declaration if file-based).
+        // 2. Check if that visibility allows access from `potential_parent_id`.
+        //    - Public: Yes
+        //    - Crate: Yes (within same crate)
+        //    - Restricted(path): Check if potential_parent_id is or is within the restriction path.
+        //    - Inherited: Yes, only if potential_parent_id *is* the direct parent module where target_id is defined/declared.
+        // Placeholder - requires careful implementation matching ModuleTree::is_accessible logic
+        // For now, let's assume public for testing, replace with real check
+        self.get_effective_visibility(target_id)
+            .is_some_and(|vis| vis.is_pub()) // TODO: Replace with full check
     }
 
     // Resolves visibility for target node as if it were a dependency.
@@ -694,13 +1128,14 @@ impl ModuleTree {
 
                         // Check if the contained item is itself an ImportNode (a use/re-export statement)
                         if let Some(import_node) = item_node.as_import() {
+                            // It's not reaally even worth enumerating them.
                             // It's an import/re-export statement.
-                            if import_node.is_reexport() {
+                            if import_node.is_local_reexport() {
                                 // This is a `pub use`, `pub(crate) use`, etc.
                                 // Check if it points to an external crate.
                                 // Heuristic: path doesn't start with "crate", "self", or "super".
                                 let is_external =
-                                    import_node.path().first().is_some_and(|first_seg| {
+                                    import_node.source_path().first().is_some_and(|first_seg| {
                                         !matches!(first_seg.as_str(), "crate" | "self" | "super")
                                     });
 
@@ -885,22 +1320,28 @@ impl ModuleTree {
     // or
     // #[cfg(not(feature = "reexport"))]
     pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+        let mut new_relations: Vec<TreeRelation> = Vec::new();
         for export in &self.pending_exports {
-            let source_mod_id = export.module_node_id();
+            // WARNING: Bug here, source_mod_id is incorrectly the same id for the ExportNode, NOT
+            // the parent module. Even worse, this isn't actually supposed to form a `ReExport`
+            // relation to its own parent module, it is supposed to form a link to the module/item
+            // the rexport is making public.
+            let source_mod_id = export.containing_mod_id();
             let export_node = export.export_node();
 
             // Create relation
             let relation = Relation {
+                // WARNING:
+                // Bug, currently forms relation with self.
                 source: GraphId::Node(*source_mod_id.as_inner()),
                 target: GraphId::Node(export_node.id),
                 kind: RelationKind::ReExport,
             };
             self.log_relation(relation, None);
 
-            self.tree_relations.push(relation.into());
-
+            new_relations.push(relation.into());
             // Add to reexport_index
-            if let Some(reexport_name) = export_node.path.last() {
+            if let Some(reexport_name) = export_node.source_path.last() {
                 let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
                 // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
                 if export_node.is_renamed() {
@@ -939,6 +1380,13 @@ impl ModuleTree {
                 }
             }
         }
+        for new_tr in new_relations {
+            #[cfg(feature = "reexport")]
+            self.add_relation(new_tr);
+            #[cfg(not(feature = "reexport"))]
+            self.tree_relations.push(new_tr);
+        }
+
         Ok(())
     }
 
@@ -946,11 +1394,20 @@ impl ModuleTree {
         self.found_path_attrs.get(&module_id)
     }
 
+    #[cfg(not(feature = "reexport"))]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
         self.pending_exports
             .iter()
-            .find(|exp| exp.module_node_id() == module_id && exp.export_node().id == item_id)
-            .and_then(|exp| exp.export_node().path.last().cloned())
+            .find(|exp| exp.containing_mod_id() == module_id && exp.export_node().id == item_id)
+            .and_then(|exp| exp.export_node().source_path.last().cloned())
+    }
+
+    #[cfg(feature = "reexport")]
+    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
+        self.pending_exports
+            .iter()
+            .find(|exp| exp.containing_mod_id() == module_id && exp.export_node().id == item_id)
+            .and_then(|exp| exp.export_node().source_path.last().cloned())
     }
 
     fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {

@@ -275,7 +275,7 @@ fn test_module_tree_import_export_segregation() {
         .iter()
         .map(|p| {
             let node = p.import_node();
-            let path_segments = node.path();
+            let path_segments = node.source_path();
             let base_path_str = if path_segments.first().is_some_and(|s| s.is_empty()) {
                 // Handle absolute paths like ::std::time::Duration
                 format!("::{}", path_segments[1..].join("::"))
@@ -300,7 +300,7 @@ fn test_module_tree_import_export_segregation() {
     let export_paths: HashSet<String> = tree
         .pending_exports()
         .iter()
-        .map(|p| p.export_node().path.join("::"))
+        .map(|p| p.export_node().source_path.join("::"))
         .collect();
 
     // --- Assertions for Private Imports (from imports.rs) ---
@@ -403,7 +403,7 @@ fn test_module_tree_imports_fixture_nodes() {
         "Expected no pending exports from fixture_nodes/imports.rs, found: {:?}",
         tree.pending_exports()
             .iter()
-            .map(|p| p.export_node().path.join("::"))
+            .map(|p| p.export_node().source_path.join("::"))
             .collect::<Vec<_>>()
     );
 
@@ -414,7 +414,7 @@ fn test_module_tree_imports_fixture_nodes() {
         .iter()
         .map(|p| {
             let node = p.import_node();
-            let path_str = node.path.join("::");
+            let path_str = node.source_path.join("::");
             // Return tuple: (path_string, is_glob, is_extern_crate)
             (path_str, node.is_glob, node.is_extern_crate())
         })
@@ -508,10 +508,10 @@ In Actual missing from Expected: {:#?}\n",
     let hashmap_import = tree
         .pending_imports()
         .iter()
-        .find(|p| p.import_node().path.join("::") == "std::collections::HashMap")
+        .find(|p| p.import_node().source_path.join("::") == "std::collections::HashMap")
         .map(|p| p.import_node())
         .expect("HashMap import not found");
-    assert!(!hashmap_import.is_reexport());
+    assert!(!hashmap_import.is_local_reexport());
     assert!(hashmap_import.is_inherited_use()); // Should be inherited visibility or extern crate
 
     let renamed_struct_import = tree
@@ -519,7 +519,7 @@ In Actual missing from Expected: {:#?}\n",
         .iter()
         .find(|p| {
             let node = p.import_node();
-            node.path.join("::") == "crate::structs::SampleStruct"
+            node.source_path.join("::") == "crate::structs::SampleStruct"
                 && node.visible_name == "MySimpleStruct"
         })
         .map(|p| p.import_node())
@@ -532,7 +532,7 @@ In Actual missing from Expected: {:#?}\n",
     let glob_import = tree
         .pending_imports()
         .iter()
-        .find(|p| p.import_node().is_glob && p.import_node().path.join("::") == "std::env")
+        .find(|p| p.import_node().is_glob && p.import_node().source_path.join("::") == "std::env")
         .map(|p| p.import_node())
         .expect("Glob import 'std::env::*' not found");
     assert_eq!(glob_import.visible_name, "*");
@@ -540,7 +540,9 @@ In Actual missing from Expected: {:#?}\n",
     let extern_serde = tree
         .pending_imports()
         .iter()
-        .find(|p| p.import_node().is_extern_crate() && p.import_node().path.join("::") == "serde")
+        .find(|p| {
+            p.import_node().is_extern_crate() && p.import_node().source_path.join("::") == "serde"
+        })
         .map(|p| p.import_node())
         .expect("Extern crate serde not found");
     assert!(extern_serde.is_inherited_use()); // Extern crates are treated as inherited for pending list

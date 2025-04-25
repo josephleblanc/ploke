@@ -107,7 +107,7 @@ pub trait GraphNode {
     fn as_import(&self) -> Option<&ImportNode> {
         None
     }
-    fn kind_matchs(&self, kind: ItemKind) -> bool {
+    fn kind_matches(&self, kind: ItemKind) -> bool {
         match kind {
             ItemKind::Function => self.as_function().is_some(),
             ItemKind::Struct => self.as_struct().is_some(),
@@ -121,6 +121,16 @@ pub trait GraphNode {
             ItemKind::Static => self.as_value_static().is_some(), // Combine Const/Static check
             ItemKind::Macro => self.as_macro().is_some(),
             ItemKind::Import => self.as_import().is_some(),
+            ItemKind::ExternCrate => {
+                // kind of a hack job. needs cleaner solution
+                if self.as_import().is_some() {
+                    let extern_crate = self.as_import().unwrap(); // safe due to check above
+                    extern_crate.is_extern_crate()
+                } else {
+                    false
+                }
+            }
+
             // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
             // are not directly represented as top-level GraphNode types this way.
             _ => false,

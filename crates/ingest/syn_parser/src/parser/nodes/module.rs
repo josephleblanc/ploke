@@ -8,7 +8,6 @@ use ploke_core::{NodeId, TrackingHash};
 use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-// #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub struct ModuleNode {
     pub id: NodeId,
     pub name: String,
@@ -17,11 +16,11 @@ pub struct ModuleNode {
     pub attributes: Vec<Attribute>, // Attributes on the `mod foo { ... }` item itself
     pub docstring: Option<String>,
     pub imports: Vec<ImportNode>,
-    pub exports: Vec<NodeId>, // TODO: Confirm if exports need tracking hash? Likely not.
-    pub span: (usize, usize), // Add span field
+    pub exports: Vec<NodeId>,
+    pub span: (usize, usize),
     pub tracking_hash: Option<TrackingHash>,
     pub module_def: ModuleDef,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item (`#[cfg] mod foo;` or `#[cfg] mod foo {}`)
+    pub cfgs: Vec<String>,
 }
 
 impl ModuleNode {

@@ -160,7 +160,7 @@ pub fn find_item_id_by_path_name_kind_checked(
         // Use find_node_checked to ensure the contained node itself exists uniquely
         match graph.find_node_checked(contained_id) {
             Ok(node) => {
-                if node.name() == item_name && node.kind_matchs(item_kind) {
+                if node.name() == item_name && node.kind_matches(item_kind) {
                     // Name matches, now check if the kind matches the *target* kind
                     matches.push(contained_id);
                     // If name matches but kind doesn't, we just ignore it for this specific search.
@@ -271,7 +271,7 @@ pub fn find_reexport_import_node_by_name_checked(
         match graph.get_import_checked(contained_id) {
             Ok(import_node) => {
                 // Check if it's a re-export and the visible name matches
-                if import_node.is_reexport() && import_node.visible_name == visible_name {
+                if import_node.is_local_reexport() && import_node.visible_name == visible_name {
                     matches.push(contained_id);
                 }
                 // Ignore if it's not a re-export or name doesn't match

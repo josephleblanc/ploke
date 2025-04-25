@@ -39,7 +39,7 @@ m.name = {}\nm.id = {}\nm.is_file_based() = {}\n",
                 "1. SEARCHING_USE_NAME: original name: {:?}, visible_name: {:?}",
                 import.original_name, &import.visible_name
             );
-            import.path == import_path
+            import.source_path == import_path
                 && import
                     .original_name
                     .clone()
@@ -203,7 +203,7 @@ pub fn print_module_tree(
                 }
             },
         }
-        print!("{}", import.path.join("::"));
+        print!("{}", import.source_path.join("::"));
         if import.original_name.is_some() {
         print!(" as {}", import.visible_name)
         } else if import.is_glob { print!("::*") }

@@ -92,7 +92,7 @@ pub fn find_reexport_import_node_by_name(
             // Check if this import is contained within the target module
             graph.module_contains_node(module_node.id, imp.id) &&
             // Ensure it's actually a re-export (pub use, pub(crate) use, etc.)
-            imp.is_reexport()
+            imp.is_local_reexport()
         })
         .map(|imp| imp.id) // Get the NodeId if found
         .ok_or_else(|| {
@@ -147,7 +147,7 @@ pub fn find_function_by_name<'a>(graph: &'a CodeGraph, name: &str) -> Option<&'a
             return graph.functions.iter().find(|f| &f.name == original_name);
         } else {
             // for non-renamed imports, use the last path segment
-            let original_name = use_stmt.path.last()?;
+            let original_name = use_stmt.source_path.last()?;
             return graph.functions.iter().find(|f| &f.name == original_name);
         }
     }

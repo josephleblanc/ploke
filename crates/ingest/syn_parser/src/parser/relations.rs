@@ -20,35 +20,66 @@ pub struct Relation {
 }
 
 // Different kinds of relations
+// TODO: These relations really need to be refactored. We are not taking advantage of type safety
+// very well here, and the RelationKind can currently be between any two nodes of any type or
+// TypeId, which is just bad.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RelationKind {
-    FunctionParameter,
-    FunctionReturn,
-    StructField,
-    Method, // e.g. StructNode -> FunctionNode
-    EnumVariant,
-    VariantField,
-    ImplementsFor,
-    ImplementsTrait,
-    Inherits,
-    References,
-    Contains,
-    Uses,
-    ValueType,
-    MacroUse,
-    ModuleImports,
-    ReExport, // e.g. `pub use some_dep::a::b::ReExportedStruct` --ReExport->ReExportedStruct defn
-    CustomPath, // module decl -> module defn for `#[path]` attribute
+    //-----------------------------------------------------------------------
+    //-----------------Defined in ModuleTree Methods-------------------------
+    //-----------------------------------------------------------------------
+    // e.g. `pub use some_dep::a::b::ReExportedStruct`--ReExport-->ReExportedStruct defn
+    // (currently only targets module in module_tree.rs)
+    // ImportNode--------------ReExport--------------> NodeId of reexported item
+    ReExport,
+    // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
+    CustomPath,
     /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
     /// `mod foo { ... }`).
-    /// Direction: `Declaration ModuleNode` -> `Definition ModuleNode`.
+    /// Direction: Declaration `ModuleNode` -> `Definition ModuleNode`.
+    // ModuleNode Delc---------ResolvesToDefinition--> ModuleNode definition
     ResolvesToDefinition,
+    //-----------------------------------------------------------------------
+    //-----------------Defined in visit_item_* methods-----------------------
+    //-----------------------------------------------------------------------
+    // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
+    // (including modules)
+    Contains,
+    // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
+    // NOTE: all `use` and `pub use` included, not distinguished by relation
+    ModuleImports,
+    // FunctionNode -----------FunctionParameter-----> TypeId of ParamNode
+    // FunctionNode (method) --FunctionParameter-----> TypeId of ParamNode
+    FunctionParameter,
+    // FunctionNode -----------FunctionReturn--------> TypeId of return type
+    FunctionReturn,
+    // StructNode/EnumNode ----StructField-----------> StructField (NodeId)
+    StructField,
+    // (TypeId of struct) -----Method----------------> FunctionNode (NodeId)
+    Method,
+    // EnumNode ---------------EnumVariant-----------> EnumVariant (NodeId)
+    EnumVariant,
+    // EnumNode ---------------VariantField----------> named/unnamed VariantNode (NodeId)
+    VariantField,
+    // ImplNode ---------------ImplementsFor---------> TypeId of `Self` (cannot be known at parse time)
+    ImplementsFor,
+    // ImplNode ---------------ImplementsTrait-------> TypeId of trait (cannot be known at parse time)
+    ImplementsTrait,
+    // ValueNode --------------ValueType-------------> TypeId of its own type
+    ValueType,
+    // ImportNode (Extern) ----Uses------------------> TypeId (honestly not sure about this one)
+    Uses,
+    Inherits,
+    // MacroUse,
+    // References, // Not currently used, possibly will use for tracking lifetimes later
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
+    // Inherits, // Not currently used, may wish to use this in a different context
 
     // TODO: Likely will delete this later.
     // Using it currently for testing an implementation of `shortest_public_path` in module_tree.rs
+    // ModuleNode --Sibling--> ModuleNode
     Sibling,
 }
 
@@ -72,7 +103,11 @@ impl RelationKind {
     }
 }
 
-/// The kind of scope used
+/// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
+/// through a `use module_a::SomeStruct`, which can then be freely used inside the module without
+/// including the path of the parent, e.g. `let some_struct: SomeStruct = SomeStruct::default();`
+/// and an relation that signifies a parent is required in its use, e.g. a parent being a struct
+/// and a child being one of its methods.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ScopeKind {
     /// Requires parent in path, e.g. `SomeStruct::associated_func()`
@@ -99,11 +134,9 @@ impl TryInto<ScopeKind> for RelationKind {
             Self::VariantField => Ok(ScopeKind::RequiresParent),
             Self::ImplementsFor => Err(RelationConversionError::NotApplicable(self)),
             Self::ImplementsTrait => Err(RelationConversionError::NotApplicable(self)),
-            Self::Inherits => Err(RelationConversionError::NotApplicable(self)),
-            Self::References => Err(RelationConversionError::NotApplicable(self)),
-            Self::MacroUse => Err(RelationConversionError::NotApplicable(self)),
             Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
             Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
+            Self::Inherits => Err(RelationConversionError::NotApplicable(self)),
             Self::CustomPath => Ok(ScopeKind::CanUse), // TODO: Revisit this one, not sure.
         }
     }

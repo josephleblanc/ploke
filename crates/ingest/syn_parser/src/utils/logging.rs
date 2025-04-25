@@ -2,6 +2,7 @@ pub(crate) const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for
 pub(crate) const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
 pub(crate) const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
 pub(crate) const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
+pub(crate) const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
 
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
@@ -40,6 +41,7 @@ pub use colored::Colorize;
 
 use colored::{Color, ColoredString};
 use log::debug;
+use ploke_core::NodeId;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -127,6 +129,28 @@ pub trait LogDataStructure {
             step.white().italic(),
             if result { "Accessible".green().bold() } else { "Inaccessible".red().bold() }
         );
+    }
+
+    fn log_bfs_step(&self, g_node: &dyn GraphNode, step: &str) {
+        debug!( target: LOG_TARGET_BFS,
+            "{} {: <14} {: <12} {: <20} | {: <12} | {: <15}",
+            "BFS ".log_header(),
+            step.white().italic(),
+            g_node.name().log_name(),
+            g_node.id().to_string().log_id(),
+            g_node.kind().log_vis_debug(),
+            g_node.visibility().log_name_debug(),
+        )
+    }
+    fn log_bfs_path(&self, id: NodeId, path: &[String], step: &str) {
+        debug!( target: LOG_TARGET_BFS,
+            "{} {: <14} {: <12} {: <20} | {: <12}",
+            "BFS ".log_header(),
+            step.white().italic(),
+            "",
+            id.to_string().log_id(),
+            path.log_vis_debug(),
+        )
     }
 
     /// Logs the details of path cfg processing using the provided context.

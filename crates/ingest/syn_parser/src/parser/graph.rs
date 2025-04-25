@@ -73,6 +73,23 @@ impl CodeGraph {
         Ok(())
     }
 
+    //  We already have the following `Relation`s from parsing that will be useful here:
+    //
+    // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
+    // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
+    // NOTE: all `use` and `pub use` included in ModuleImports, not distinguished by relation
+    //
+    // The following are necessary to define during module tree construction:
+    // (Must be constructed in this order)
+    //
+    // ModuleNode Delc---------ResolvesToDefinition--> ModuleNode definition
+    // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
+    // ImportNode--------------ReExport--------------> NodeId of reexported item
+    //  Some Notes:
+    //  ModuleImports - Note: Some duplication of concerns here, ModuleNode also has field for
+    //  `imports` with all the nodes it imports - not just the ids, the full node. I think we were
+    //  experimenting with trying to use nested data structures insted of parsing relations.
+    //      - Note: Includes both `pub use` and `use` reexports/imports
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
@@ -80,35 +97,56 @@ impl CodeGraph {
         // 1: Register all modules with their containment info
         for module in &self.modules {
             log_tree_build(module);
-            tree.add_module(module.clone())?;
+            // Populates:
+            //  - imports/reexports.
+            //  - module declaration index
+            //  - path_index for reverse lookup
+            //  - checks for duplicate paths/ids, causes early return on error.
+            tree.add_module(module.clone())?; 
         }
 
-        // 2: Process direct contains relationships between files
-        tree.register_containment_batch(&self.relations)?;
+        // 2: Copies all relations, stores them as TreeRelation for type safety
+        //      - Notably, includes `Contains` relations between parent definition module and all
+        //      child elements, e.g. other module declarations. Includes file--contains-->items.
+        //      - Does not include inter-file links, due to parallel parsing with no cross-channel
+        //      communication.
+        tree.add_relations_batch(&self.relations)?;
 
-        // abort parsing for target `#[path = "..."` not found.
         // 3: Build syntactic links
+        //      - Creates `Relation::ResolvesToDefinition` link from
+        //          module declaration --ResolvesToDefinition--> file-based module
+        //      - Does not process `#[path = "..."]` attributes (see 4 below)
         if let Err(module_tree_error) = tree.link_mods_syntactic(&self.modules) {
             match module_tree_error {
+                // Warn on this specific error, but it is safe to continue. Indicates file-level
+                // module is not linked to the module tree through a parent.
                 ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
                     self.handle_unlinked_modules(unlinked_infos);
                 }
-                // fatal error
+                // All other erros fatal, meaning abort resolution but do not panic.
                 _ => return Err(SynParserError::from(module_tree_error)),
             }
         }
 
         // 4: Process `#[path]` attributes, form `CustomPath` links
+        //  - module declaration (with `#[path]`) --CustomPath--> file-based module
         tree.resolve_pending_path_attrs()?;
         tree.process_path_attributes()?;
 
         // 5: Process re-export relationships beween `pub use` statements and the **modules** they
         //    are re-exporting (does not cover other items like structs, functions, etc)
+        //    - should be reexport --ReExports--> item definition 
+        //    - (currently bugged)
         //    All errors here indicate we should abort, handle these in caller:
         //      ModuleTreeError::NodePathValidation(Box::new(e))
         //      ModuleTreeError::ConflictingReExportPath
+        //  WARNING: Bug in process_export_rels, see method for more info
         tree.process_export_rels(self)?;
 
+        // By the time we are finished, we should have all the necessary relations to form the path
+        // of all definined items by ModuleTree's shortest_public_path method.
+        //  - Contains: Module --> contained items
+        //  - Imports: 
         Ok(tree)
     }
 
@@ -726,8 +764,8 @@ impl CodeGraph {
         if let Some(module) = current_module {
             for use_stmt in &module.imports {
                 // Check if use statement brings the item into scope
-                if use_stmt.path.ends_with(&[item.name().to_string()]) {
-                    return VisibilityResult::NeedsUse(use_stmt.path.clone());
+                if use_stmt.source_path.ends_with(&[item.name().to_string()]) {
+                    return VisibilityResult::NeedsUse(use_stmt.source_path.clone());
                 }
             }
         }

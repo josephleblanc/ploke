@@ -59,7 +59,7 @@ pub fn find_import_node_paranoid<'a>(
         .iter()
         .filter(|i| {
             i.visible_name == visible_name
-                && i.path == expected_path
+                && i.source_path == expected_path
                 && i.original_name.as_deref() == expected_original_name
                 && i.is_glob == expected_is_glob
         })

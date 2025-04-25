@@ -83,7 +83,7 @@ impl<'a> CodeVisitor<'a> {
 
                 imports.push(ImportNode {
                     id: import_id,
-                    path: full_path,
+                    source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: checked_name,
                     original_name: None,
@@ -110,7 +110,7 @@ impl<'a> CodeVisitor<'a> {
 
                 imports.push(ImportNode {
                     id: import_id,
-                    path: full_path, // Path uses original name segment
+                    source_path: full_path, // Path uses original name segment
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name,                       // The 'as' name
                     original_name: Some(original_name), // The original name before 'as'
@@ -133,7 +133,7 @@ impl<'a> CodeVisitor<'a> {
 
                 imports.push(ImportNode {
                     id: import_id,
-                    path: full_path, // Path to the glob
+                    source_path: full_path, // Path to the glob
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: "*".to_string(), // Visual representation
                     original_name: None,
@@ -1679,8 +1679,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let import_node = ImportNode {
             id: import_id,
             span,
-            path: vec![crate_name.clone()], // Path is just crate name
-            kind: ImportKind::ExternCrate,  // <<< Correct kind
+            source_path: vec![crate_name.clone()], // Path is just crate name
+            kind: ImportKind::ExternCrate,         // <<< Correct kind
             // Name used by `use` statements
             visible_name: extern_crate
                 .rename

@@ -47,7 +47,7 @@ fn find_import_node_basic<'a>(
         .iter()
         .find(|i| -> bool {
             i.visible_name == visible_name
-                && i.path.ends_with(expected_path_suffix)
+                && i.source_path.ends_with(expected_path_suffix)
                 && module_items.contains(&i.id)
         })
         .unwrap_or_else(|| {
@@ -281,8 +281,8 @@ fn test_import_node_basic_smoke_test_full_parse() {
             .use_statements
             .iter()
             .inspect(|i| {println!("SEARCHING USE STMT Is self? {}, ImportNode name '{}', original_name {:?} ending with path {:?} in graph.use_statements", 
-                i.is_self_import, i.visible_name, i.original_name, i.path())})
-            .find(|i| i.visible_name == name && i.path().ends_with(&path_suffix))
+                i.is_self_import, i.visible_name, i.original_name, i.source_path())})
+            .find(|i| i.visible_name == name && i.source_path().ends_with(&path_suffix))
             .unwrap_or_else(|| {
                 panic!(
                     "ImportNode '{}' ending with path {:?} not found in graph.use_statements",
@@ -294,7 +294,7 @@ fn test_import_node_basic_smoke_test_full_parse() {
             matches!(node.id, NodeId::Synthetic(_)),
             "Node '{}' path={:?}: ID should be Synthetic, found {:?}",
             name,
-            node.path,
+            node.source_path,
             node.id
         );
         assert_ne!(
@@ -302,7 +302,7 @@ fn test_import_node_basic_smoke_test_full_parse() {
             (0, 0),
             "Node '{}' path={:?}: Span should not be (0,0), found {:?}",
             name,
-            node.path,
+            node.source_path,
             node.span
         );
 
@@ -449,7 +449,7 @@ fn test_import_node_field_path() {
     ];
     let node1 = find_import_node_basic(graph, &module_path, visible_name1, &expected_path1);
     assert_eq!(
-        node1.path,
+        node1.source_path,
         expected_path1
             .iter()
             .map(|s| s.to_string())
@@ -463,7 +463,7 @@ fn test_import_node_field_path() {
     let expected_path2 = vec!["std".to_string(), "fs".to_string(), "File".to_string()];
     let node2 = find_import_node_basic(graph, &module_path, visible_name2, &expected_path2);
     assert_eq!(
-        node2.path,
+        node2.source_path,
         expected_path2
             .iter()
             .map(|s| s.to_string())
@@ -481,7 +481,7 @@ fn test_import_node_field_path() {
     ];
     let node3 = find_import_node_basic(graph, &module_path, visible_name3, &expected_path3);
     assert_eq!(
-        node3.path,
+        node3.source_path,
         expected_path3
             .iter()
             .map(|s| s.to_string())
@@ -499,7 +499,7 @@ fn test_import_node_field_path() {
     ];
     let node4 = find_import_node_basic(graph, &module_path, visible_name4, &expected_path4);
     assert_eq!(
-        node4.path,
+        node4.source_path,
         expected_path4
             .iter()
             .map(|s| s.to_string())
@@ -513,7 +513,7 @@ fn test_import_node_field_path() {
     let expected_path5 = vec!["serde".to_string()];
     let node5 = find_import_node_basic(graph, &module_path, visible_name5, &expected_path5);
     assert_eq!(
-        node5.path,
+        node5.source_path,
         expected_path5
             .iter()
             .map(|s| s.to_string())
@@ -1006,7 +1006,7 @@ fn test_import_node_in_module_imports_list() {
     let found_in_list = module_node
         .imports
         .iter()
-        .any(|i| i.visible_name == visible_name && i.path == expected_path);
+        .any(|i| i.visible_name == visible_name && i.source_path == expected_path);
 
     assert!(
         found_in_list,
@@ -1053,7 +1053,7 @@ fn test_import_node_paranoid_simple() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),
@@ -1144,7 +1144,7 @@ fn test_import_node_paranoid_renamed() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),
@@ -1234,7 +1234,7 @@ fn test_import_node_paranoid_glob() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),
@@ -1328,7 +1328,7 @@ fn test_import_node_paranoid_self() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),
@@ -1418,7 +1418,7 @@ fn test_import_node_paranoid_extern_crate() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),
@@ -1505,7 +1505,7 @@ fn test_import_node_paranoid_extern_crate_renamed() {
 
     // 2. Assert all fields
     assert_eq!(node.visible_name, visible_name, "GraphNode name mismatch");
-    assert_eq!(node.path, expected_path, "Path mismatch");
+    assert_eq!(node.source_path, expected_path, "Path mismatch");
     assert_eq!(
         node.original_name,
         expected_original_name.map(|s| s.to_string()),

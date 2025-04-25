@@ -565,7 +565,9 @@ fn test_module_node_inline_pub_mod_paranoid() {
     let hashmap_import_id = main_graph
         .use_statements
         .iter()
-        .find(|imp| imp.path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap")
+        .find(|imp| {
+            imp.source_path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap"
+        })
         .expect("Failed to find ImportNode for 'use std::collections::HashMap'")
         .id;
     let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_pub_func")
@@ -1170,7 +1172,7 @@ fn test_module_node_imports_list() {
     let path_import_node = main_graph
         .use_statements
         .iter()
-        .find(|imp| imp.path == ["std", "path", "Path"] && imp.visible_name == "Path")
+        .find(|imp| imp.source_path == ["std", "path", "Path"] && imp.visible_name == "Path")
         .expect("Failed to find ImportNode for 'use std::path::Path'");
 
     // Find `pub use crate::top_pub_mod::top_pub_func as reexported_func;` in crate root
@@ -1178,7 +1180,7 @@ fn test_module_node_imports_list() {
         .use_statements
         .iter()
         .find(|imp| {
-            imp.path == ["crate", "top_pub_mod", "top_pub_func"]
+            imp.source_path == ["crate", "top_pub_mod", "top_pub_func"]
                 && imp.visible_name == "reexported_func"
         })
         .expect("Failed to find ImportNode for 'pub use ... as reexported_func'");
@@ -1187,7 +1189,9 @@ fn test_module_node_imports_list() {
     let hashmap_import_node = main_graph
         .use_statements
         .iter()
-        .find(|imp| imp.path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap")
+        .find(|imp| {
+            imp.source_path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap"
+        })
         .expect("Failed to find ImportNode for 'use std::collections::HashMap'");
 
     // --- Assert Crate Module Imports/Items ---

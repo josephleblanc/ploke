@@ -80,7 +80,7 @@ pub struct ImportNode {
     pub span: (usize, usize),
 
     /// Full path segments in original order (e.g. ["std", "collections", "HashMap"])
-    pub path: Vec<String>,
+    pub source_path: Vec<String>,
 
     /// Type of import (regular use, extern crate, etc.)
     pub kind: ImportKind,
@@ -100,11 +100,11 @@ pub struct ImportNode {
 }
 
 impl ImportNode {
-    pub fn path(&self) -> &[String] {
-        &self.path
+    pub fn source_path(&self) -> &[String] {
+        &self.source_path
     }
 
-    /// Checks if this import node represents a public re-export (`pub use`).
+    /// Checks if this import node represents a public or restricted re-export (`pub use`).
     ///
     /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
     /// Returns `false` otherwise (including for `extern crate` or non-public `use` statements).
@@ -114,7 +114,7 @@ impl ImportNode {
     /// This includes `pub use`, `pub(crate) use`, and `pub(in path) use`.
     /// It returns `false` for `extern crate` statements and `use` statements with
     /// inherited (private) visibility.
-    pub fn is_reexport(&self) -> bool {
+    pub fn is_local_reexport(&self) -> bool {
         matches!(
             self.kind,
             ImportKind::UseStatement(
@@ -166,7 +166,7 @@ impl ImportNode {
 
     pub fn as_renamed_path(&self) -> Option<Vec<String>> {
         if self.original_name.is_some() {
-            let mut path = self.path.clone();
+            let mut path = self.source_path.clone();
             path.pop();
             path.push(self.visible_name.clone());
             Some(path)

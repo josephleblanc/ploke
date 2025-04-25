@@ -61,6 +61,11 @@ pub enum DiscoveryError {
 
 // Helper structs for deserializing Cargo.toml
 #[derive(Deserialize, Debug)]
+// AI: Let's expand this to handle the following keys read:
+// - features
+// - dependencies
+// - dev-dependencies
+// AI!
 struct CargoManifest {
     package: PackageInfo,
     // Add other fields like [lib], [bin] if needed later for module mapping
@@ -72,6 +77,9 @@ struct PackageInfo {
     version: String,
     // edition: Option<String>, // Could be useful later
 }
+
+// AI: Add more structs for features, dependencies, and dev-dependencies.
+// Use separate structs, we want to be type-safe
 
 /// Context information gathered for a single crate during discovery.
 ///
@@ -90,6 +98,7 @@ pub struct CrateContext {
     pub root_path: PathBuf,
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
+    // AI: Add fields for new elements parsed into `CargoManifest`
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -163,6 +172,8 @@ pub fn run_discovery_phase(
                 path: cargo_toml_path.clone(),
                 source: e,
             })?;
+        // AI: Add other new parsed elements you can mek up reasonable errors as needed. Errors
+        // don't have to be fatal.
 
         let crate_name = manifest.package.name.clone();
         // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
@@ -209,6 +220,7 @@ pub fn run_discovery_phase(
 
         // --- Combine into CrateContext ---
         let context = CrateContext {
+            // populate new fields
             name: crate_name.clone(),
             version: crate_version,
             namespace,

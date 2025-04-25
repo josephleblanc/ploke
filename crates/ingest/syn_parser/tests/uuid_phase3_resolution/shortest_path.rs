@@ -168,6 +168,10 @@ fn test_spp_public_item_in_nested_public_mod() {
 
 #[test]
 fn test_spp_private_item_in_public_mod() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_fixture(fixture_name);
 
@@ -273,9 +277,12 @@ fn test_spp_reexported_item_finds_original_path() {
         .iter()
         .find(|imp| imp.visible_name == "reexported_func")
         .expect("Could not find reexport ImportNode");
-    assert!(reexport_node.is_reexport());
-    assert_eq!(reexport_node.path, ["crate", "top_pub_mod", "top_pub_func"]); // Path points to original item
-                                                                              // Check that the re-export is contained in the crate root module
+    assert!(reexport_node.is_local_reexport());
+    assert_eq!(
+        reexport_node.source_path,
+        ["crate", "top_pub_mod", "top_pub_func"]
+    ); // Path points to original item
+       // Check that the re-export is contained in the crate root module
     let crate_root_id = tree.root().into_inner();
     assert!(graph.module_contains_node(crate_root_id, reexport_node.id));
 
@@ -504,6 +511,7 @@ fn test_spp_reexport_external_dep() {
         .iter()
         .find(|imp| imp.visible_name == "log_debug_reexport")
         .expect("Could not find re-export ImportNode for log_debug_reexport");
+    eprintln!("{:#?}", reexport_import_node);
 
     // SPP currently doesn't resolve external items via re-exports.
     // It would likely fail trying to find the original `log::debug` in the local graph.

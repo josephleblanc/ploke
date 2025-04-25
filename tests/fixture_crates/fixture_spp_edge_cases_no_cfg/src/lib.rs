@@ -199,7 +199,13 @@ mod relative {
         pub use super::item_in_relative as reexport_super; // pub use super::
     }
     pub use self::inner::item_in_inner as reexport_self; // pub use self::
+
+    mod inner_private {
+        pub fn pub_item_in_private_inner() {}
+    }
+    pub use self::inner_private::pub_item_in_private_inner;
 }
+
 // SPP for reexport_super should be Ok(["crate", "relative", "inner"])
 // SPP for reexport_self should be Ok(["crate", "relative"])
 
@@ -239,6 +245,95 @@ mod deep10 {
 }
 mod deep11 {
     pub use crate::deep10::item10 as item11;
+}
+
+pub use a::b::c::func as func_c; // 1. is this valid? Yes
+
+// pub use a::b::func as func_b; // 2. is this valid? No
+
+// pub use a::func as func_a; // 3. is this valid? No
+
+pub use a::pub_func; // 4. is this valid? Yes
+
+// pub use a::b_private::c::func as func_b_priv; // 5. valid? No
+
+pub use a::priv_func; // 6. valid? Yes
+
+pub use priv_func as very_public; // 7. valid? Yes
+
+pub(crate) use a::priv_func as crate_func; // 8. valid? Yes
+
+// pub use crate_func as crate_func_public; // 9. valid? No
+
+// All of the following are valid
+mod a {
+    pub use b::c::func as pub_func;
+    pub(crate) use b::c::func;
+
+    pub mod b {
+        pub(in crate::a) use c::func;
+
+        pub mod c {
+            pub fn func(y: &mut isize) -> isize {
+                eprintln!("{: ^3}in mod a::b::c::func | y = {y}", "");
+                eprint!("{: ^6} returning -> ", "");
+                *y *= 3;
+                *y
+            }
+
+            pub fn other() {
+                let mut ten = 10;
+                eprintln!("in mod a::b::c::other | ten = {ten}");
+                let one = crate::func_c(&mut ten);
+                eprintln!("other, crate::func_c: {}", one);
+                let two = crate::a::func(&mut ten);
+                eprintln!("other, crate::a::func: {}", two);
+            }
+        }
+    }
+
+    pub use b_private::c::func as priv_func;
+    mod b_private {
+        pub(in crate::a) use c::func;
+
+        pub mod c {
+            pub fn func(z: &mut isize) -> isize {
+                eprintln!("{: ^3}in mod a::b_private::c::func | z = {z}", "");
+                eprint!("{: ^6} returning -> ", "");
+                *z *= 2;
+                *z
+            }
+
+            pub fn other() {
+                let mut one_hundred = 100;
+                eprintln!("in mod a::b_private::c | one_hundred = {one_hundred}");
+                let one = crate::func_c(&mut one_hundred);
+                eprintln!("other, crate::func_c: {}", one);
+                let two = crate::a::func(&mut one_hundred);
+                eprintln!("other, crate::a::func: {}", two);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod vis_tests {
+
+    use super::*;
+
+    #[test]
+    fn test_vis() {
+        crate::a::b::c::other();
+        let mut x = 1;
+        eprintln!("in mod vis_tests | func_c({x})");
+        eprintln!(": {}", func_c(&mut x));
+        eprintln!("in mod vis_tests | pub_func({x})");
+        eprintln!(": {}", pub_func(&mut x));
+        eprintln!("in mod vis_tests | priv_func({x})");
+        eprintln!(": {}", priv_func(&mut x));
+        eprintln!("in mod vis_tests | very_public({x})");
+        eprintln!(": {}", very_public(&mut x));
+    }
 }
 
 pub use deep11::item11 as final_deep_item; // 11 steps
@@ -353,6 +448,12 @@ mod tests {
 
     #[test]
     fn it_works() {
+        let result = add(2, 2);
+        assert_eq!(result, 4);
+    }
+
+    #[test]
+    fn test_vis() {
         let result = add(2, 2);
         assert_eq!(result, 4);
     }

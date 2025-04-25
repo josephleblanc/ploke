@@ -472,6 +472,10 @@ fn test_spp_relative_reexport_super() {
 
 #[test]
 fn test_spp_relative_reexport_self() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     // 16. Relative Re-export (`self`)
     //     Target: `reexport_self` (re-export of `item_in_inner` inside `relative`)
     //     Expected: Ok(["crate", "relative"])
@@ -521,10 +525,6 @@ fn test_spp_deep_reexport_chain() {
 
 #[test]
 fn test_spp_branching_reexport() {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .try_init();
     // 18. Branching/Converging Re-export
     //     Target: `item_via_a` or `item_via_b` (re-exports of `branch_item`)
     //     Expected: Ok(["crate"])

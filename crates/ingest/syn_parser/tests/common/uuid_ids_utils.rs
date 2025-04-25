@@ -138,7 +138,7 @@ pub fn find_import_id(
         .use_statements
         .iter()
         .find(|import| {
-            import.path == import_path
+            import.source_path == import_path
                 && import
                     .original_name
                     .clone()
@@ -187,7 +187,7 @@ pub fn find_import_longname_by_id(graph: &CodeGraph, node_id: NodeId) -> Option<
         .map(|imp| {
             format!(
                 "{}::{}{}",
-                imp.path.join("::"),
+                imp.source_path.join("::"),
                 imp.visible_name,
                 if let Some(original_name) = &imp.original_name {
                     format!(" as {}", original_name)
