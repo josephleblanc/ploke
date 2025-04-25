@@ -323,13 +323,36 @@ pub struct DiscoveryOutput {
     /// This is built from `lib.rs`, `main.rs`, and `mod.rs` scans during Phase 1.
     /// It serves as a starting point for more accurate resolution in later phases.
     pub initial_module_map: HashMap<PathBuf, Vec<String>>,
-    // AI: Add documentation. This can hold the non-fatal errors. The caller can then decide what
-    // to do with them.
+    /// A list of non-fatal errors (warnings) encountered during discovery.
+    /// The caller can inspect this list to decide how to handle issues like
+    /// missing source directories, walkdir errors, or module scanning problems
+    /// that didn't prevent the overall discovery process from completing for
+    /// the affected crate(s).
     pub warnings: Vec<DiscoveryError>,
 }
 
 impl DiscoveryOutput {
-    // AI: Add convenience methods here. Include a way to access the warnings.
+    /// Returns a reference to the `CrateContext` for the given crate root path, if found.
+    pub fn get_crate_context(&self, crate_root_path: &Path) -> Option<&CrateContext> {
+        self.crate_contexts.get(crate_root_path)
+    }
+
+    /// Returns an iterator over the crate root paths and their corresponding `CrateContext`.
+    pub fn iter_crate_contexts(
+        &self,
+    ) -> impl Iterator<Item = (&PathBuf, &CrateContext)> + '_ {
+        self.crate_contexts.iter()
+    }
+
+    /// Returns a slice containing all non-fatal warnings collected during discovery.
+    pub fn warnings(&self) -> &[DiscoveryError] {
+        &self.warnings
+    }
+
+    /// Returns `true` if any non-fatal warnings were collected during discovery.
+    pub fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
 }
 
 /// Runs the single-threaded discovery phase to gather context about target crates.
@@ -487,20 +510,14 @@ pub fn run_discovery_phase(
         crate_contexts.insert(crate_root_path.clone(), context);
     } // End of loop for target_crates
 
-    // --- Final Check for Non-Fatal Errors ---
-    // AI: Change return handling here.
-    if non_fatal_errors.is_empty() {
-        // Success: No critical or non-fatal errors occurred.
-        Ok(DiscoveryOutput {
-            crate_contexts,
-            initial_module_map,
-            // AI: Add new field here
-        })
-    } else {
-        // Failure: Non-fatal errors occurred, report them collectively.
-        Err(DiscoveryError::NonFatalErrors(Box::new(non_fatal_errors)))
-    }
-    // AI!
+    // --- Final Check and Return ---
+    // Always return Ok if critical errors didn't occur.
+    // Non-fatal errors are packaged into the DiscoveryOutput.
+    Ok(DiscoveryOutput {
+        crate_contexts,
+        initial_module_map,
+        warnings: non_fatal_errors, // Include collected warnings
+    })
 }
 
 /// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
