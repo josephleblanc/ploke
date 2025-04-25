@@ -319,11 +319,7 @@ pub struct CrateContext {
 pub struct DiscoveryOutput {
     /// Context information for each successfully discovered crate, keyed by the absolute crate root path.
     pub crate_contexts: HashMap<PathBuf, CrateContext>,
-    /// An initial, potentially incomplete, mapping from file paths to their
-    /// anticipated module path (e.g., `src/parser/visitor.rs` -> `["crate", "parser", "visitor"]`).
-    /// This is built from `lib.rs`, `main.rs`, and `mod.rs` scans during Phase 1.
-    /// It serves as a starting point for more accurate resolution in later phases.
-    pub initial_module_map: HashMap<PathBuf, Vec<String>>,
+    // Removed initial_module_map: HashMap<PathBuf, Vec<String>>
     /// A list of non-fatal errors (warnings) encountered during discovery.
     /// The caller can inspect this list to decide how to handle issues like
     /// walkdir errors or module scanning problems that didn't prevent the
@@ -381,7 +377,7 @@ pub fn run_discovery_phase(
     target_crates: &[PathBuf], // Expecting absolute paths to crate root directories
 ) -> Result<DiscoveryOutput, DiscoveryError> {
     let mut crate_contexts = HashMap::new();
-    let mut initial_module_map = HashMap::new();
+    // Removed: let mut initial_module_map = HashMap::new();
     let mut non_fatal_errors: Vec<DiscoveryError> = Vec::new(); // Collect non-fatal errors
 
     for crate_root_path in target_crates {
@@ -483,29 +479,7 @@ pub fn run_discovery_phase(
             dev_dependencies,     // Add the parsed dev-dependencies
         };
 
-        // --- 3.2.4 Implement Initial Module Mapping ---
-        // Scan lib.rs and main.rs for `mod xyz;`
-        for entry_point_name in ["lib.rs", "main.rs"] {
-            // Only scan if src_path exists and we found files
-            if src_path.exists() && !files.is_empty() {
-                let entry_point_path = src_path.join(entry_point_name);
-                if files.contains(&entry_point_path) {
-                    match scan_for_mods(&entry_point_path, &src_path, &files) {
-                        Ok(mods) => {
-                            initial_module_map.extend(mods);
-                        }
-                        Err(e) => {
-                            // Non-fatal: Log, collect error, continue.
-                            eprintln!(
-                                "Warning: Error scanning modules in {:?}: {}",
-                                entry_point_path, e
-                            );
-                            non_fatal_errors.push(e);
-                        }
-                    }
-                }
-            }
-        }
+        // Removed: Initial Module Mapping section (scan_for_mods call)
 
         // Add context regardless of non-fatal errors encountered for this crate.
         crate_contexts.insert(crate_root_path.clone(), context);
@@ -516,7 +490,7 @@ pub fn run_discovery_phase(
     // Non-fatal errors are packaged into the DiscoveryOutput.
     Ok(DiscoveryOutput {
         crate_contexts,
-        initial_module_map,
+        // Removed: initial_module_map,
         warnings: non_fatal_errors, // Include collected warnings
     })
 }
@@ -532,57 +506,7 @@ pub fn run_discovery_phase(
 /// # Returns
 /// A `Result` containing a map from the resolved module file path to its module segments
 /// (e.g., `.../src/parser.rs` -> `["crate", "parser"]`), or a `DiscoveryError::Io` if
-/// the file cannot be read.
-pub(crate) fn scan_for_mods(
-    file_to_scan: &Path,
-    src_path: &Path,
-    existing_files: &[PathBuf],
-) -> Result<HashMap<PathBuf, Vec<String>>, DiscoveryError> {
-    let mut mod_map = HashMap::new();
-    let file = fs::File::open(file_to_scan).map_err(|e| DiscoveryError::Io {
-        path: file_to_scan.to_path_buf(),
-        source: Arc::new(e), // Wrap error in Arc
-    })?;
-    let reader = BufReader::new(file);
-
-    // Basic line-by-line scan for `mod name;` or `pub mod name;`
-    // This is a simplification and won't handle complex cases like `#[cfg] mod name;`
-    // or mods defined inside functions/blocks.
-    for line_result in reader.lines() {
-        let line = line_result.map_err(|e| DiscoveryError::Io {
-            path: file_to_scan.to_path_buf(),
-            source: Arc::new(e), // Wrap error in Arc
-        })?;
-        let trimmed = line.trim();
-
-        if (trimmed.starts_with("mod ") || trimmed.starts_with("pub mod "))
-            && trimmed.ends_with(';')
-        {
-            if let Some(name_part) = trimmed.split_whitespace().nth(1) {
-                let mod_name = name_part.trim_end_matches(';');
-
-                // Check for potential file paths: src/mod_name.rs or src/mod_name/mod.rs
-                let path1 = src_path.join(format!("{}.rs", mod_name));
-                let path2 = src_path.join(mod_name).join("mod.rs");
-
-                let found_path = if existing_files.contains(&path1) {
-                    Some(path1)
-                } else if existing_files.contains(&path2) {
-                    Some(path2)
-                } else {
-                    None
-                };
-
-                if let Some(p) = found_path {
-                    // Basic mapping: assumes it's directly under "crate"
-                    mod_map.insert(p, vec!["crate".to_string(), mod_name.to_string()]);
-                }
-            }
-        }
-    }
-
-    Ok(mod_map)
-}
+// Removed: scan_for_mods function
 
 /// Derives a deterministic UUID v5 namespace for a specific crate version.
 ///
@@ -639,133 +563,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_scan_for_mods_simple_file() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
-        let src_path = dir.path().join("src");
-        fs::create_dir(&src_path)?;
-
-        let lib_rs_path = src_path.join("lib.rs");
-        let mod_a_path = src_path.join("mod_a.rs");
-
-        let mut lib_rs = File::create(&lib_rs_path)?;
-        writeln!(lib_rs, "// Some comments")?;
-        writeln!(lib_rs, "mod mod_a;")?;
-        writeln!(lib_rs, "fn main() {{}}")?;
-        drop(lib_rs); // Close file
-
-        File::create(&mod_a_path)?; // Create the target file
-
-        let existing_files = vec![lib_rs_path.clone(), mod_a_path.clone()];
-
-        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
-
-        assert_eq!(result.len(), 1);
-        assert!(result.contains_key(&mod_a_path));
-        assert_eq!(
-            result.get(&mod_a_path).unwrap(),
-            &vec!["crate".to_string(), "mod_a".to_string()]
-        );
-
-        dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_for_mods_simple_dir() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
-        let src_path = dir.path().join("src");
-        fs::create_dir(&src_path)?;
-
-        let lib_rs_path = src_path.join("lib.rs");
-        let mod_b_dir = src_path.join("mod_b");
-        fs::create_dir(&mod_b_dir)?;
-        let mod_b_mod_rs_path = mod_b_dir.join("mod.rs");
-
-        let mut lib_rs = File::create(&lib_rs_path)?;
-        writeln!(lib_rs, "pub mod mod_b;")?;
-        drop(lib_rs);
-
-        File::create(&mod_b_mod_rs_path)?;
-
-        let existing_files = vec![lib_rs_path.clone(), mod_b_mod_rs_path.clone()];
-
-        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
-
-        assert_eq!(result.len(), 1);
-        assert!(result.contains_key(&mod_b_mod_rs_path));
-        assert_eq!(
-            result.get(&mod_b_mod_rs_path).unwrap(),
-            &vec!["crate".to_string(), "mod_b".to_string()]
-        );
-
-        dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_for_mods_no_mods() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
-        let src_path = dir.path().join("src");
-        fs::create_dir(&src_path)?;
-
-        let main_rs_path = src_path.join("main.rs");
-        let mut main_rs = File::create(&main_rs_path)?;
-        writeln!(main_rs, "fn main() {{ println!(\"Hello\"); }}")?;
-        drop(main_rs);
-
-        let existing_files = vec![main_rs_path.clone()];
-
-        let result = scan_for_mods(&main_rs_path, &src_path, &existing_files)?;
-
-        assert!(result.is_empty());
-
-        dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_for_mods_target_missing() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
-        let src_path = dir.path().join("src");
-        fs::create_dir(&src_path)?;
-
-        let lib_rs_path = src_path.join("lib.rs");
-        let mut lib_rs = File::create(&lib_rs_path)?;
-        writeln!(lib_rs, "mod missing_mod;")?; // Target file/dir doesn't exist
-        drop(lib_rs);
-
-        let existing_files = vec![lib_rs_path.clone()]; // Only lib.rs exists
-
-        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
-
-        // Should find the declaration but not map it because the file is missing
-        assert!(result.is_empty());
-
-        dir.close()?;
-        Ok(())
-    }
-
-    #[test]
-    fn test_scan_for_mods_file_not_found() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempdir()?;
-        let src_path = dir.path().join("src");
-        fs::create_dir(&src_path)?; // Create src dir, but not the file to scan
-
-        let non_existent_path = src_path.join("non_existent_lib.rs");
-        let existing_files = vec![]; // No files exist
-
-        let result = scan_for_mods(&non_existent_path, &src_path, &existing_files);
-
-        assert!(result.is_err());
-        match result {
-            Err(DiscoveryError::Io { path, .. }) => {
-                assert_eq!(path, non_existent_path);
-            }
-            _ => panic!("Expected Io error"),
-        }
-
-        dir.close()?;
-        Ok(())
-    }
+    // Removed tests for scan_for_mods:
+    // - test_scan_for_mods_simple_file
+    // - test_scan_for_mods_simple_dir
+    // - test_scan_for_mods_no_mods
+    // - test_scan_for_mods_target_missing
+    // - test_scan_for_mods_file_not_found
 }
