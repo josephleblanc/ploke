@@ -338,9 +338,7 @@ impl DiscoveryOutput {
     }
 
     /// Returns an iterator over the crate root paths and their corresponding `CrateContext`.
-    pub fn iter_crate_contexts(
-        &self,
-    ) -> impl Iterator<Item = (&PathBuf, &CrateContext)> + '_ {
+    pub fn iter_crate_contexts(&self) -> impl Iterator<Item = (&PathBuf, &CrateContext)> + '_ {
         self.crate_contexts.iter()
     }
 
@@ -364,7 +362,7 @@ impl DiscoveryOutput {
 ///
 /// # Arguments
 /// * `_project_root` - The root path of the project being analyzed (may be used later).
-/// * `_target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
+/// * `target_crates` - A slice of paths pointing to the root directories of the crates to analyze.
 ///
 /// # Returns
 /// A `Result` containing the `DiscoveryOutput` on success, or the first critical
