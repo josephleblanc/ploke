@@ -60,26 +60,63 @@ pub enum DiscoveryError {
 }
 
 // Helper structs for deserializing Cargo.toml
-#[derive(Deserialize, Debug)]
-// AI: Let's expand this to handle the following keys read:
-// - features
-// - dependencies
-// - dev-dependencies
-// AI!
-struct CargoManifest {
-    package: PackageInfo,
-    // Add other fields like [lib], [bin] if needed later for module mapping
-}
 
-#[derive(Deserialize, Debug)]
+/// Represents the `[package]` section of Cargo.toml.
+#[derive(Deserialize, Debug, Clone)]
 struct PackageInfo {
     name: String,
     version: String,
     // edition: Option<String>, // Could be useful later
 }
 
-// AI: Add more structs for features, dependencies, and dev-dependencies.
-// Use separate structs, we want to be type-safe
+/// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
+#[derive(Deserialize, Debug, Clone, Default)]
+struct Features(HashMap<String, Vec<String>>);
+
+/// Represents a dependency specification, which can be a simple version string
+/// or a more detailed table.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(untagged)] // Allows parsing either a string or a table
+enum DependencySpec {
+    Version(String),
+    Detailed {
+        version: Option<String>,
+        path: Option<String>,
+        git: Option<String>,
+        branch: Option<String>,
+        tag: Option<String>,
+        rev: Option<String>,
+        features: Option<Vec<String>>,
+        optional: Option<bool>,
+        #[serde(rename = "default-features")]
+        default_features: Option<bool>,
+        // Add other fields like 'package' if needed
+    },
+}
+
+/// Represents the `[dependencies]` section.
+#[derive(Deserialize, Debug, Clone, Default)]
+struct Dependencies(HashMap<String, DependencySpec>);
+
+/// Represents the `[dev-dependencies]` section.
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename = "dev-dependencies")] // Match the TOML key
+struct DevDependencies(HashMap<String, DependencySpec>);
+
+/// Represents the overall structure of a parsed Cargo.toml manifest.
+#[derive(Deserialize, Debug)]
+struct CargoManifest {
+    package: PackageInfo,
+    #[serde(default)] // Use default empty map if section is missing
+    features: Features,
+    #[serde(default)]
+    dependencies: Dependencies,
+    #[serde(default)]
+    #[serde(rename = "dev-dependencies")]
+    dev_dependencies: DevDependencies,
+    // Add other fields like [lib], [bin] if needed later for module mapping
+}
+
 
 /// Context information gathered for a single crate during discovery.
 ///
@@ -98,7 +135,12 @@ pub struct CrateContext {
     pub root_path: PathBuf,
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
-    // AI: Add fields for new elements parsed into `CargoManifest`
+    /// Parsed features from Cargo.toml.
+    pub features: Features,
+    /// Parsed dependencies from Cargo.toml.
+    pub dependencies: Dependencies,
+    /// Parsed dev-dependencies from Cargo.toml.
+    pub dev_dependencies: DevDependencies,
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -172,13 +214,17 @@ pub fn run_discovery_phase(
                 path: cargo_toml_path.clone(),
                 source: e,
             })?;
-        // AI: Add other new parsed elements you can mek up reasonable errors as needed. Errors
-        // don't have to be fatal.
 
+        // Extract required package info
         let crate_name = manifest.package.name.clone();
-        // .ok_or_else(|| DiscoveryError::MissingPackageName { path: cargo_toml_path.clone() })?;
         let crate_version = manifest.package.version.clone();
-        // .ok_or_else(|| DiscoveryError::MissingPackageVersion { path: cargo_toml_path.clone() })?;
+
+        // Extract optional sections (features, dependencies)
+        // These are already parsed into the manifest struct using serde defaults
+        let features = manifest.features; // Cloned implicitly by struct move/copy if needed later
+        let dependencies = manifest.dependencies;
+        let dev_dependencies = manifest.dev_dependencies;
+
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
@@ -220,12 +266,14 @@ pub fn run_discovery_phase(
 
         // --- Combine into CrateContext ---
         let context = CrateContext {
-            // populate new fields
             name: crate_name.clone(),
             version: crate_version,
             namespace,
             root_path: crate_root_path.clone(),
             files: files.clone(), // Clone needed for module mapping below
+            features,             // Add the parsed features
+            dependencies,         // Add the parsed dependencies
+            dev_dependencies,     // Add the parsed dev-dependencies
         };
 
         // --- 3.2.4 Implement Initial Module Mapping ---
