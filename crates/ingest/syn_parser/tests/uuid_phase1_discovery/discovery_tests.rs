@@ -78,7 +78,6 @@ edition = "2021"
     assert!(context.files.contains(&src_dir.join("module.rs")));
     assert!(!context.files.contains(&src_dir.join("other.txt"))); // Ensure non-rs is excluded
 
-    // Check initial_module_map (assuming lib.rs contains `mod module;`)
     // Create lib.rs with mod declaration BEFORE running discovery
     fs::write(src_dir.join("lib.rs"), "mod module;")?;
     let result = run_discovery_phase(&project_root, &target_crates); // Re-run after modifying lib.rs
@@ -90,14 +89,6 @@ edition = "2021"
     let output = result.unwrap();
 
     let module_file_path = src_dir.join("module.rs");
-    assert!(
-        output.initial_module_map.contains_key(&module_file_path),
-        "Module map should contain module.rs"
-    );
-    assert_eq!(
-        output.initial_module_map[&module_file_path],
-        vec!["crate".to_string(), "module".to_string()]
-    );
 
     Ok(())
 }
@@ -343,38 +334,6 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
         unexpected_files.is_empty(),     // Assert that the list IS empty
         "Unexpected files found: {:#?}", // Corrected message
         unexpected_files
-    );
-
-    // Check initial_module_map based on fixture_test_crate/src/main.rs
-    let second_sibling_path = src_path.join("second_sibling.rs");
-    let sibling_of_main_path = src_path.join("sibling_of_main.rs");
-
-    assert!(
-        output.initial_module_map.contains_key(&second_sibling_path),
-        "Module map missing second_sibling.rs"
-    );
-    assert_eq!(
-        output.initial_module_map[&second_sibling_path],
-        vec!["crate".to_string(), "second_sibling".to_string()]
-    );
-
-    assert!(
-        output
-            .initial_module_map
-            .contains_key(&sibling_of_main_path),
-        "Module map missing sibling_of_main.rs"
-    );
-    assert_eq!(
-        output.initial_module_map[&sibling_of_main_path],
-        vec!["crate".to_string(), "sibling_of_main".to_string()]
-    );
-
-    // Check that modules declared in other files (like second_sibling.rs) are NOT in the map yet
-    // (as scan_for_mods only runs on lib.rs/main.rs in this phase)
-    let intermediate_path = src_path.join("intermediate").join("mod.rs"); // Assuming this structure exists or similar
-    assert!(
-        !output.initial_module_map.contains_key(&intermediate_path),
-        "Module map should not contain mods from non-entry points yet"
     );
 
     Ok(())

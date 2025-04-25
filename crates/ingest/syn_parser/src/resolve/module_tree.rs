@@ -465,14 +465,6 @@ impl ModuleTree {
                 .filter(|imp| imp.is_inherited_use())
                 .map(|imp| PendingImport::from_import(imp.clone(), module.id())),
         );
-        #[cfg(not(feature = "reexport"))]
-        self.pending_imports.extend(
-            // NOTE: We already have `Relation::ModuleImports` created at parsing time.
-            imports
-                .iter()
-                .filter(|imp| imp.is_inherited_use())
-                .map(|imp| PendingImport::from_import(imp.clone())),
-        );
 
         // Add all re-exports
         #[cfg(feature = "reexport")]
