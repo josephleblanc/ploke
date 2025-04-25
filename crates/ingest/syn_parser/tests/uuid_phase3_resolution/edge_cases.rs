@@ -87,7 +87,7 @@ fn build_tree_for_edge_cases() -> (CodeGraph, ModuleTree) {
     }
     let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
     let tree = merged_graph
-        .build_module_tree(contexts.first().unwrap().clone()) // dirty, placeholder
+        .build_module_tree() // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
     (merged_graph, tree)
 }

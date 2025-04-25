@@ -11,6 +11,7 @@ use std::{
 use std::collections::VecDeque;
 
 use crate::{
+    discovery::CrateContext,
     error::SynParserError,
     parser::{
         nodes::{

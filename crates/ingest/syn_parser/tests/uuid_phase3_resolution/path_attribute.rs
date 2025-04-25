@@ -44,7 +44,7 @@ fn test_path_attribute_handling() {
         );
     }
 
-    let module_tree_result = merged_graph.build_module_tree(contexts.first().unwrap().clone());
+    let module_tree_result = merged_graph.build_module_tree(contexts.first());
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
     let module_tree = module_tree_result.expect("Module tree build failed unexpectedly");
 

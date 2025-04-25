@@ -23,10 +23,10 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     }
     let merged = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
     let _tree = merged
-        .build_module_tree(contexts.first().unwrap().clone()) // dirty, placeholder
+        .build_module_tree(contexts.first()) // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
 
-    let _module_tree = merged.build_module_tree(contexts.first().unwrap().clone())?;
+    let _module_tree = merged.build_module_tree(contexts.first())?;
 
     println!("File paths in merged modules:");
     let base_path: &Path = Path::new(

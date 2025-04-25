@@ -9,6 +9,6 @@ pub mod visitor;
 
 // Re-export key items
 pub use self::channel::{create_parser_channel, ParserMessage};
-pub use self::graph::CodeGraph;
+pub use self::graph::{CodeGraph, ParsedCodeGraph};
 pub use self::utils::ExtractSpan;
 pub use self::visitor::analyze_files_parallel;

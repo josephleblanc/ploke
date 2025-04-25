@@ -75,6 +75,8 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
     logical_path
 }
 
+use super::ParsedCodeGraph;
+
 use {
     super::nodes::ModuleNode,           // Moved ModuleNode import here
     crate::discovery::DiscoveryOutput,  // Import DiscoveryOutput
@@ -83,20 +85,6 @@ use {
     rayon::prelude::*, // Import rayon traits
     uuid::Uuid,
 };
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ParsedCodeGraph {
-    /// The absolute path of the file that was parsed.
-    pub file_path: PathBuf,
-    /// The UUID namespace of the crate this file belongs to.
-    pub crate_namespace: Uuid,
-    /// The resulting code graph from parsing the file.
-    pub graph: CodeGraph,
-    // TODO: Replace filepath above with CrateContext once I'm ready to refactor other
-    // examples/tests
-    //  - Option for now
-    pub crate_context: Option<CrateContext>,
-}
 
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.

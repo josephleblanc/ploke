@@ -1,16 +1,13 @@
 use crate::discovery::CrateContext;
+use crate::parser::nodes::*;
+use crate::parser::relations::RelationKind;
 use crate::resolve::module_tree;
-// use crate::resolve::module_tree::UnlinkedModuleInfo;
 use crate::resolve::module_tree::ModuleTreeError;
 use crate::resolve::module_tree::ModuleTree;
 use crate::error::SynParserError;
 use crate::utils::LogStyle;
 use ploke_core::{NodeId, TypeId, TypeKind};
 
-use super::nodes::{
-    EnumNode, GraphId, GraphNode, ImportNode, ModuleDef, StructNode, TypeAliasNode, UnionNode,
-};
-use super::relations::RelationKind;
 use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
     nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
@@ -91,7 +88,7 @@ impl CodeGraph {
     //  `imports` with all the nodes it imports - not just the ids, the full node. I think we were
     //  experimenting with trying to use nested data structures insted of parsing relations.
     //      - Note: Includes both `pub use` and `use` reexports/imports
-    pub fn build_module_tree(&self, ctx: CrateContext) -> Result<ModuleTree, SynParserError> {
+    pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
         // tree.process_export_rels(self)?; // abort parsing for invalid re-export nodes.
