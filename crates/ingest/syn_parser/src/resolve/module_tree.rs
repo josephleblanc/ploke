@@ -715,9 +715,6 @@ impl ModuleTree {
 
         // Append relations regardless of whether unlinked modules were found.
         // We only skip appending if a fatal error occurred earlier (which would have returned Err).
-        #[cfg(not(feature = "reexport"))]
-        self.tree_relations.append(&mut new_relations);
-        #[cfg(feature = "reexport")]
         for relation in new_relations.into_iter() {
             self.add_relation(relation);
         }
@@ -738,9 +735,6 @@ impl ModuleTree {
     // not just `RelationKind::Contains`
     pub fn add_relations_batch(&mut self, relations: &[Relation]) -> Result<(), ModuleTreeError> {
         for rel in relations.iter() {
-            #[cfg(not(feature = "reexport"))]
-            self.tree_relations.push((*rel).into());
-            #[cfg(feature = "reexport")]
             self.add_relation((*rel).into());
         }
 
