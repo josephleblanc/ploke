@@ -57,6 +57,7 @@ pub enum DiscoveryError {
     },
     #[error("Source directory not found for crate at: {path}")]
     SrcNotFound { path: PathBuf },
+    // AI: Add more error types for new enum
 }
 
 // Helper structs for deserializing Cargo.toml
@@ -69,15 +70,33 @@ struct PackageInfo {
     // edition: Option<String>, // Could be useful later
 }
 
+impl PackageInfo {
+    fn new(name: String, version: String) -> Self {
+        Self { name, version }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
+    // AI: Implement Display AI!
+}
+
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
 #[derive(Deserialize, Debug, Clone, Default)]
-struct Features(HashMap<String, Vec<String>>);
+pub struct Features(HashMap<String, Vec<String>>);
+
+// AI: add convenience methods here
+impl Features {}
 
 /// Represents a dependency specification, which can be a simple version string
 /// or a more detailed table.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)] // Allows parsing either a string or a table
-enum DependencySpec {
+pub enum DependencySpec {
     Version(String),
     Detailed {
         version: Option<String>,
@@ -94,14 +113,52 @@ enum DependencySpec {
     },
 }
 
+impl DependencySpec {
+    /// Returns `true` if the dependency spec is [`Detailed`].
+    ///
+    /// [`Detailed`]: DependencySpec::Detailed
+    #[must_use]
+    pub fn is_detailed(&self) -> bool {
+        matches!(self, Self::Detailed { .. })
+    }
+
+    /// Returns `true` if the dependency spec is [`Version`].
+    ///
+    /// [`Version`]: DependencySpec::Version
+    #[must_use]
+    pub fn is_version(&self) -> bool {
+        matches!(self, Self::Version(..))
+    }
+
+    pub fn as_version(&self) -> Option<&String> {
+        if let Self::Version(v) = self {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
+    // AI: Change this to box error.
+    pub fn try_into_version(self) -> Result<String, Self> {
+        if let Self::Version(v) = self {
+            Ok(v)
+        } else {
+            Err(self)
+        }
+    }
+
+    // AI: Add pub convenience getter methods for the underlying types in `Detailed`, but keep the
+    // original fields private.
+}
+
 /// Represents the `[dependencies]` section.
 #[derive(Deserialize, Debug, Clone, Default)]
-struct Dependencies(HashMap<String, DependencySpec>);
+pub struct Dependencies(HashMap<String, DependencySpec>);
 
 /// Represents the `[dev-dependencies]` section.
 #[derive(Deserialize, Debug, Clone, Default)]
 #[serde(rename = "dev-dependencies")] // Match the TOML key
-struct DevDependencies(HashMap<String, DependencySpec>);
+pub struct DevDependencies(HashMap<String, DependencySpec>);
 
 /// Represents the overall structure of a parsed Cargo.toml manifest.
 #[derive(Deserialize, Debug)]
@@ -116,7 +173,6 @@ struct CargoManifest {
     dev_dependencies: DevDependencies,
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
-
 
 /// Context information gathered for a single crate during discovery.
 ///
@@ -136,11 +192,11 @@ pub struct CrateContext {
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
     /// Parsed features from Cargo.toml.
-    pub features: Features,
+    features: Features,
     /// Parsed dependencies from Cargo.toml.
-    pub dependencies: Dependencies,
+    dependencies: Dependencies,
     /// Parsed dev-dependencies from Cargo.toml.
-    pub dev_dependencies: DevDependencies,
+    dev_dependencies: DevDependencies,
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -216,15 +272,14 @@ pub fn run_discovery_phase(
             })?;
 
         // Extract required package info
-        let crate_name = manifest.package.name.clone();
-        let crate_version = manifest.package.version.clone();
+        let crate_name = manifest.package.name.clone(); // AI: Add error type here
+        let crate_version = manifest.package.version.clone(); // AI: Add error type here.
 
         // Extract optional sections (features, dependencies)
         // These are already parsed into the manifest struct using serde defaults
         let features = manifest.features; // Cloned implicitly by struct move/copy if needed later
         let dependencies = manifest.dependencies;
         let dev_dependencies = manifest.dev_dependencies;
-
 
         // --- 3.2.3 Implement Namespace Generation (Called below) ---
         let namespace = derive_crate_namespace(&crate_name, &crate_version);
