@@ -5,6 +5,7 @@ use std::fmt; // Import fmt for Display trait
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::Arc; // Import Arc
 use thiserror::Error;
 use toml;
 use uuid::Uuid;
@@ -54,10 +55,10 @@ pub enum DiscoveryError {
     Walkdir {
         path: PathBuf,
         #[source]
-        source: walkdir::Error,
+        source: Arc<walkdir::Error>, // Wrap in Arc
     },
     #[error("Source directory not found for crate at: {path}")]
-    SrcNotFound { path: PathBuf },
+    SrcNotFound { path: PathBuf }, // This variant is already Clone
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
 }
@@ -399,7 +400,7 @@ pub fn run_discovery_phase(
                 // Critical error: Cannot proceed without Cargo.toml content.
                 return Err(DiscoveryError::Io {
                     path: cargo_toml_path.clone(),
-                    source: e,
+                    source: Arc::new(e), // Wrap error in Arc
                 });
             }
         };
@@ -409,7 +410,7 @@ pub fn run_discovery_phase(
                 // Critical error: Invalid TOML structure prevents further processing.
                 return Err(DiscoveryError::TomlParse {
                     path: cargo_toml_path.clone(),
-                    source: e,
+                    source: Arc::new(e), // Wrap error in Arc
                 });
             }
         };
@@ -459,9 +460,14 @@ pub fn run_discovery_phase(
                         // Non-fatal: Log, collect error, and continue walking.
                         let path = e.path().unwrap_or(&src_path).to_path_buf();
                         eprintln!("Warning: Error walking directory {:?}: {}", path, e);
+                        // Note: walkdir::Error might not directly implement Error needed for #[source]
+                        // depending on its structure. Wrapping it ensures compatibility.
+                        // If walkdir::Error *does* implement std::error::Error, Arc::new(e) is fine.
+                        // If not, we might need Arc::new(e.into_io_error().unwrap_or_else(...)) or similar.
+                        // Assuming walkdir::Error implements std::error::Error for now.
                         non_fatal_errors.push(DiscoveryError::Walkdir {
                             path,
-                            source: e.into(), // Convert walkdir::Error to our error type
+                            source: Arc::new(e), // Wrap error in Arc
                         });
                     }
                 }
@@ -538,7 +544,7 @@ pub(crate) fn scan_for_mods(
     let mut mod_map = HashMap::new();
     let file = fs::File::open(file_to_scan).map_err(|e| DiscoveryError::Io {
         path: file_to_scan.to_path_buf(),
-        source: e,
+        source: Arc::new(e), // Wrap error in Arc
     })?;
     let reader = BufReader::new(file);
 
@@ -548,7 +554,7 @@ pub(crate) fn scan_for_mods(
     for line_result in reader.lines() {
         let line = line_result.map_err(|e| DiscoveryError::Io {
             path: file_to_scan.to_path_buf(),
-            source: e,
+            source: Arc::new(e), // Wrap error in Arc
         })?;
         let trimmed = line.trim();
 
