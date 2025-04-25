@@ -58,7 +58,7 @@ pub enum DiscoveryError {
         source: Arc<walkdir::Error>, // Wrap in Arc
     },
     #[error("Source directory not found for crate at: {path}")]
-    SrcNotFound { path: PathBuf }, // This variant is already Clone
+    SrcNotFound { path: PathBuf }, // Critical error: Cannot proceed without source files.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
 }
@@ -326,9 +326,10 @@ pub struct DiscoveryOutput {
     pub initial_module_map: HashMap<PathBuf, Vec<String>>,
     /// A list of non-fatal errors (warnings) encountered during discovery.
     /// The caller can inspect this list to decide how to handle issues like
-    /// missing source directories, walkdir errors, or module scanning problems
-    /// that didn't prevent the overall discovery process from completing for
-    /// the affected crate(s).
+    /// walkdir errors or module scanning problems that didn't prevent the
+    /// overall discovery process from completing for the affected crate(s).
+    /// Note: Missing `src` directories are treated as critical errors and will
+    /// cause `run_discovery_phase` to return `Err`, not just add a warning here.
     pub warnings: Vec<DiscoveryError>,
 }
 
@@ -367,10 +368,11 @@ impl DiscoveryOutput {
 ///
 /// # Returns
 /// A `Result` containing the `DiscoveryOutput` on success, or the first critical
-/// `DiscoveryError` encountered during processing. If successful, it means all
-/// target crates were processed without critical errors.
+/// `DiscoveryError` encountered during processing (e.g., `CratePathNotFound`,
+/// `Io` error reading `Cargo.toml`, `TomlParse` error, `SrcNotFound`).
+/// If successful, it means all target crates were processed without critical errors,
+/// though non-fatal warnings might still be present in `DiscoveryOutput.warnings`.
 // NOTE: Known limitations:
-// * Does not handle case of crate with no `src` directory in project (currently returns SrcNotFoucrates/ingest/syn_parser/src/discovery.rsnd error)
 // * Assuming target_crates provides absolute paths for simplicity
 //  * No UI design yet, but contract with `run_discovery_phase` should be that `run_discover_phase`
 //  should only ever receive full paths. (Seperation of Concerns: UI vs Traversal)
@@ -435,15 +437,10 @@ pub fn run_discovery_phase(
         let mut files = Vec::new();
 
         if !src_path.exists() || !src_path.is_dir() {
-            // Non-fatal: Log and collect error, continue processing other crates if possible.
-            eprintln!(
-                "Warning: Source directory not found for crate at {:?}, skipping file discovery.",
-                crate_root_path
-            );
-            non_fatal_errors.push(DiscoveryError::SrcNotFound {
+            // Critical error: Cannot proceed without a source directory.
+            return Err(DiscoveryError::SrcNotFound {
                 path: src_path.clone(),
             });
-            // files remains empty, context will be created without files.
         } else {
             // --- Perform File Discovery (Non-Fatal Walkdir Errors) ---
             let walker = WalkDir::new(&src_path).into_iter();
