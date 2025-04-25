@@ -31,22 +31,22 @@ use walkdir::WalkDir;
 //  * Fine for now. Evaluate potential for pros/cons of this approach another time.
 
 /// Errors that can occur during the discovery phase.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)] // Add Clone derive
 pub enum DiscoveryError {
     #[error("I/O error accessing path {path}: {source}")]
     Io {
         path: PathBuf,
         #[source]
-        source: std::io::Error,
+        source: Arc<std::io::Error>, // Wrap in Arc
     },
     #[error("Failed to parse Cargo.toml at {path}: {source}")]
     TomlParse {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: Arc<toml::de::Error>, // Wrap in Arc
     },
     #[error("Missing 'package.name' in Cargo.toml at {path}")]
-    MissingPackageName { path: PathBuf },
+    MissingPackageName { path: PathBuf }, // This variant is already Clone
     #[error("Missing 'package.version' in Cargo.toml at {path}")]
     MissingPackageVersion { path: PathBuf },
     #[error("Target crate path not found: {path}")]
