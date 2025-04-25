@@ -1,6 +1,7 @@
 use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt; // Import fmt for Display trait
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -57,7 +58,6 @@ pub enum DiscoveryError {
     },
     #[error("Source directory not found for crate at: {path}")]
     SrcNotFound { path: PathBuf },
-    // AI: Add more error types for new enum
 }
 
 // Helper structs for deserializing Cargo.toml
@@ -82,15 +82,44 @@ impl PackageInfo {
     fn version(&self) -> &str {
         &self.version
     }
-    // AI: Implement Display AI!
+}
+
+impl fmt::Display for PackageInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.name, self.version)
+    }
 }
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct Features(HashMap<String, Vec<String>>);
 
-// AI: add convenience methods here
-impl Features {}
+impl Features {
+    /// Returns a reference to the list of features/dependencies enabled by the given feature name.
+    pub fn get(&self, feature_name: &str) -> Option<&Vec<String>> {
+        self.0.get(feature_name)
+    }
+
+    /// Returns `true` if the map contains the specified feature name.
+    pub fn contains_key(&self, feature_name: &str) -> bool {
+        self.0.contains_key(feature_name)
+    }
+
+    /// Returns an iterator over the feature names and their corresponding enabled items.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.0.iter()
+    }
+
+    /// Returns an iterator over the feature names.
+    pub fn keys(&self) -> impl Iterator<Item = &String> {
+        self.0.keys()
+    }
+
+    /// Returns an iterator over the lists of enabled items for each feature.
+    pub fn values(&self) -> impl Iterator<Item = &Vec<String>> {
+        self.0.values()
+    }
+}
 
 /// Represents a dependency specification, which can be a simple version string
 /// or a more detailed table.
@@ -138,17 +167,90 @@ impl DependencySpec {
         }
     }
 
-    // AI: Change this to box error.
-    pub fn try_into_version(self) -> Result<String, Self> {
+    pub fn try_into_version(self) -> Result<String, Box<Self>> {
         if let Self::Version(v) = self {
             Ok(v)
         } else {
-            Err(self)
+            // Box the error variant to reduce the size of the Result's error type
+            Err(Box::new(self))
         }
     }
 
-    // AI: Add pub convenience getter methods for the underlying types in `Detailed`, but keep the
-    // original fields private.
+    // --- Convenience Getters for Detailed variant ---
+
+    /// Returns the version string if this is a detailed spec.
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { version, .. } => version.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the path string if this is a detailed spec.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { path, .. } => path.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the git URL string if this is a detailed spec.
+    pub fn git(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { git, .. } => git.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the branch name string if this is a detailed spec.
+    pub fn branch(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { branch, .. } => branch.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the tag string if this is a detailed spec.
+    pub fn tag(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { tag, .. } => tag.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the revision string if this is a detailed spec.
+    pub fn rev(&self) -> Option<&str> {
+        match self {
+            DependencySpec::Detailed { rev, .. } => rev.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns the list of features if this is a detailed spec.
+    pub fn features(&self) -> Option<&[String]> {
+        match self {
+            DependencySpec::Detailed { features, .. } => features.as_deref(),
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns whether the dependency is optional if this is a detailed spec.
+    pub fn is_optional(&self) -> Option<bool> {
+        match self {
+            DependencySpec::Detailed { optional, .. } => *optional,
+            DependencySpec::Version(_) => None,
+        }
+    }
+
+    /// Returns whether default features are enabled if this is a detailed spec.
+    pub fn has_default_features(&self) -> Option<bool> {
+        match self {
+            DependencySpec::Detailed {
+                default_features, ..
+            } => *default_features,
+            DependencySpec::Version(_) => None,
+        }
+    }
 }
 
 /// Represents the `[dependencies]` section.
@@ -271,9 +373,9 @@ pub fn run_discovery_phase(
                 source: e,
             })?;
 
-        // Extract required package info
-        let crate_name = manifest.package.name.clone(); // AI: Add error type here
-        let crate_version = manifest.package.version.clone(); // AI: Add error type here.
+        // Extract required package info (serde ensures these fields exist based on PackageInfo)
+        let crate_name = manifest.package.name.clone();
+        let crate_version = manifest.package.version.clone();
 
         // Extract optional sections (features, dependencies)
         // These are already parsed into the manifest struct using serde defaults
