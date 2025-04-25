@@ -51,6 +51,33 @@ const COLOR_MAGENTA: Color = Color::TrueColor {
     b: 255,
 }; // Soft magenta
 
+// Additional Tokyo Night Colors
+const COLOR_FOREGROUND_PRIMARY: Color = Color::TrueColor {
+    r: 192,
+    g: 202,
+    b: 245,
+}; // #c0caf5 - Default Text
+const COLOR_FOREGROUND_SECONDARY: Color = Color::TrueColor {
+    r: 169,
+    g: 177,
+    b: 214,
+}; // #a9b1d6 - Lighter Text
+const COLOR_COMMENT: Color = Color::TrueColor {
+    r: 86,
+    g: 95,
+    b: 137,
+}; // #565f89 - Comments
+const COLOR_ORANGE: Color = Color::TrueColor {
+    r: 255,
+    g: 158,
+    b: 100,
+}; // #ff9e64 - Orange (Constants, numbers)
+const COLOR_SPRING_GREEN: Color = Color::TrueColor {
+    r: 115,
+    g: 218,
+    b: 202,
+}; // #73daca - Teal/Spring Green (Types)
+
 use crate::resolve::module_tree::ModuleTree;
 pub use colored::Colorize;
 
