@@ -618,7 +618,10 @@ mod tests {
     fn test_derive_crate_namespace_consistency() {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.0");
-        assert_eq!(ns1, ns2, "Namespace should be consistent for the same input");
+        assert_eq!(
+            ns1, ns2,
+            "Namespace should be consistent for the same input"
+        );
     }
 
     #[test]
@@ -626,8 +629,14 @@ mod tests {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.1");
         let ns3 = derive_crate_namespace("other-crate", "1.0.0");
-        assert_ne!(ns1, ns2, "Different versions should produce different namespaces");
-        assert_ne!(ns1, ns3, "Different crate names should produce different namespaces");
+        assert_ne!(
+            ns1, ns2,
+            "Different versions should produce different namespaces"
+        );
+        assert_ne!(
+            ns1, ns3,
+            "Different crate names should produce different namespaces"
+        );
     }
 
     #[test]
