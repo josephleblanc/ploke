@@ -1,7 +1,9 @@
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
 use ploke_core::NodeId;
+use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::{
+    discovery::CrateContext,
     error::SynParserError,
     parser::{
         graph::CodeGraph,
@@ -9,6 +11,26 @@ use syn_parser::{
         relations::RelationKind, // Removed TypeDefNode
     },
 };
+
+use super::uuid_ids_utils::run_phases_and_collect;
+
+pub fn build_tree_for_tests(fixture_name: &str) -> (CodeGraph, ModuleTree) {
+    let results = run_phases_and_collect(fixture_name);
+    let mut contexts: Vec<CrateContext> = Vec::new();
+    let mut graphs: Vec<CodeGraph> = Vec::new();
+    for parsed_graph in results {
+        graphs.push(parsed_graph.graph);
+        if let Some(ctx) = parsed_graph.crate_context {
+            // dirty, placeholder
+            contexts.push(ctx);
+        }
+    }
+    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
+    let tree = merged_graph
+        .build_module_tree(contexts.first().unwrap().clone()) // dirty, placeholder
+        .expect("Failed to build module tree for edge cases fixture");
+    (merged_graph, tree)
+}
 
 /// Finds the NodeId of an item (function, struct, enum, trait, macro, etc.)
 /// by its simple name within a specific module's definition path.

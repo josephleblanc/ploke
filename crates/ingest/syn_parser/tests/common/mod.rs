@@ -18,6 +18,7 @@ use {
 };
 
 use ploke_common::{fixtures_crates_dir, fixtures_dir};
+pub use resolution::build_tree_for_tests;
 
 pub mod uuid_ids_utils;
 

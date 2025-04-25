@@ -23,24 +23,9 @@ use syn_parser::parser::relations::{Relation, RelationKind};
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::CodeGraph;
 
+use crate::common::build_tree_for_tests;
 // Removed unused imports for helpers moved to CodeGraph
 use crate::common::uuid_ids_utils::run_phases_and_collect;
-
-// Helper to build the tree for tests
-fn build_tree_for_fixture(fixture_name: &str) -> (CodeGraph, ModuleTree) {
-    let results = run_phases_and_collect(fixture_name);
-    let mut graphs: Vec<CodeGraph> = Vec::new();
-    for parsed_graph in results {
-        // Directly use the ParsedCodeGraph's graph field
-        graphs.push(parsed_graph.graph);
-    }
-    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
-    let tree = merged_graph
-        .build_module_tree()
-        .expect("Failed to build module tree");
-    // Return graph and tree separately, avoiding tuple deconstruction
-    (merged_graph, tree)
-}
 
 /// **Covers:** Basic sanity check. Ensures that the number of `ModuleNode`s stored
 /// in the `ModuleTree`'s internal map (`tree.modules()`) matches the total number
@@ -50,7 +35,7 @@ fn build_tree_for_fixture(fixture_name: &str) -> (CodeGraph, ModuleTree) {
 fn test_module_tree_module_count() {
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
 
@@ -70,7 +55,7 @@ fn test_module_tree_module_count() {
 fn test_module_tree_path_index_correctness() {
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
 
@@ -168,7 +153,7 @@ fn test_module_tree_path_index_correctness() {
 fn test_module_tree_resolves_to_definition_relation() {
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
 
@@ -266,7 +251,7 @@ fn test_module_tree_resolves_to_definition_relation() {
 fn test_module_tree_import_export_segregation() {
     // Use the fixture_nodes crate, specifically focusing on imports.rs
     let fixture_name = "fixture_nodes";
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let tree = graph_and_tree.1;
 
     // Collect paths from pending imports and exports
@@ -394,7 +379,7 @@ fn test_module_tree_import_export_segregation() {
 #[test]
 fn test_module_tree_imports_fixture_nodes() {
     let fixture_name = "fixture_nodes";
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let tree = graph_and_tree.1; // We only need the tree for this test
 
     // --- Check Pending Exports ---
@@ -573,7 +558,7 @@ fn test_module_tree_is_accessible() {
         .try_init(); // Use try_init to avoid panic if already initialized
 
     let fixture_name = "file_dir_detection";
-    let graph_and_tree = build_tree_for_fixture(fixture_name);
+    let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
 

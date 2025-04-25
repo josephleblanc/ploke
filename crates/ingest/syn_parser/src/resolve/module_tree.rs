@@ -74,9 +74,7 @@ pub struct ModuleTree {
     // Option for `take`
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 
-    #[cfg(feature = "reexport")]
     relations_by_source: HashMap<GraphId, Vec<usize>>,
-    #[cfg(feature = "reexport")]
     relations_by_target: HashMap<GraphId, Vec<usize>>,
 }
 
@@ -106,15 +104,6 @@ pub struct PendingImport {
 }
 
 impl PendingImport {
-    #[cfg(not(feature = "reexport"))]
-    pub(crate) fn from_import(import: ImportNode) -> Self {
-        // Make crate-visible if needed internally
-        PendingImport {
-            containing_mod_id: ModuleNodeId::new(import.id),
-            import_node: import,
-        }
-    }
-    #[cfg(feature = "reexport")]
     pub(crate) fn from_import(import: ImportNode, containing_mod_id: NodeId) -> Self {
         // Make crate-visible if needed internally
         PendingImport {
@@ -141,15 +130,6 @@ pub struct PendingExport {
 }
 
 impl PendingExport {
-    #[cfg(not(feature = "reexport"))]
-    pub(crate) fn from_export(export: ImportNode) -> Self {
-        // Make crate-visible if needed internally
-        PendingExport {
-            containing_mod_id: ModuleNodeId::new(export.id),
-            export_node: export,
-        }
-    }
-    #[cfg(feature = "reexport")]
     pub(crate) fn from_export(export: ImportNode, containing_module_id: NodeId) -> Self {
         // Make crate-visible if needed internally
         PendingExport {
@@ -349,9 +329,7 @@ impl ModuleTree {
             reexport_index: HashMap::new(),
             found_path_attrs: HashMap::new(),
             pending_path_attrs: Some(Vec::new()),
-            #[cfg(feature = "reexport")]
             relations_by_source: HashMap::new(),
-            #[cfg(feature = "reexport")]
             relations_by_target: HashMap::new(),
         })
         // Should never happen, but might want to handle this sometime
@@ -381,7 +359,6 @@ impl ModuleTree {
     /// # Complexity
     /// O(1) average lookup for the source ID + O(k) filter application, where k is the
     /// number of relations originating from `source_id`.
-    #[cfg(feature = "reexport")]
     pub fn get_relations_from<F>(
         &self,
         source_id: &GraphId,
@@ -407,7 +384,6 @@ impl ModuleTree {
     /// Finds relations pointing to `target_id` that satisfy the `relation_filter` closure.
     ///
     /// (Doc comments similar to get_relations_from)
-    #[cfg(feature = "reexport")]
     pub fn get_relations_to<F>(
         &self,
         target_id: &GraphId,
@@ -428,7 +404,6 @@ impl ModuleTree {
         })
     }
 
-    #[cfg(feature = "reexport")]
     pub fn add_relation(&mut self, tr: TreeRelation) {
         // TODO: Optionally check if source/target nodes exist in self.nodes first?
         let new_index = self.tree_relations.len();
@@ -457,7 +432,6 @@ impl ModuleTree {
     pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
         let imports = module.imports.clone();
         // Add all private imports
-        #[cfg(feature = "reexport")]
         self.pending_imports.extend(
             // NOTE: We already have `Relation::ModuleImports` created at parsing time.
             imports
@@ -467,19 +441,11 @@ impl ModuleTree {
         );
 
         // Add all re-exports
-        #[cfg(feature = "reexport")]
         self.pending_exports.extend(
             imports
                 .iter()
                 .filter(|imp| imp.is_local_reexport())
                 .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
-        );
-        #[cfg(not(feature = "reexport"))]
-        self.pending_exports.extend(
-            imports
-                .iter()
-                .filter(|imp| imp.is_local_reexport())
-                .map(|imp| PendingExport::from_export(imp.clone())),
         );
 
         // Use map_err for explicit conversion from SynParserError to ModuleTreeError
@@ -741,7 +707,6 @@ impl ModuleTree {
         Ok(())
     }
 
-    #[cfg(feature = "reexport")]
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
@@ -844,7 +809,6 @@ impl ModuleTree {
     }
 
     // Helper function for exploring via parent modules
-    #[cfg(feature = "reexport")]
     fn explore_up_via_containment(
         &self,
         current_mod_id: ModuleNodeId,
@@ -923,7 +887,6 @@ impl ModuleTree {
     }
 
     // Helper function for exploring via re-exports
-    #[cfg(feature = "reexport")]
     fn explore_up_via_reexports(
         &self,
         // The ID of the item/module *potentially* being re-exported
@@ -1049,216 +1012,6 @@ impl ModuleTree {
         todo!() // Rest of the visibility logic still needs implementation
     }
 
-    /// Calculates the shortest public path to access a given item ID from the crate root.
-    ///
-    /// Performs a Breadth-First Search (BFS) starting from the crate root, exploring
-    /// only publicly accessible modules.
-    ///
-    /// # Arguments
-    /// * `item_id` - The `NodeId` of the item (function, struct, etc.) to find the path for.
-    /// * `graph` - A reference to the `CodeGraph` containing the item and module definitions.
-    ///
-    /// # Returns
-    /// * `Some(Vec<String>)` containing the path segments (e.g., `["crate", "module", "submodule"]`)
-    ///   if a public path is found.
-    /// * `None` if the item is not publicly accessible from the crate root.
-    ///
-    /// # Limitations
-    /// * Currently does not handle re-exports (`pub use`). It only considers items directly
-    ///   defined within a module.
-    #[cfg(not(feature = "reexport"))]
-    pub fn shortest_public_path(
-        &self,
-        item_id: NodeId,
-        graph: &CodeGraph, // Need graph access for item visibility
-    ) -> Result<Vec<String>, ModuleTreeError> {
-        // Changed return type to Result
-        // BFS queue: (module_id, current_path_segments)
-        let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
-        let mut visited: HashSet<ModuleNodeId> = HashSet::new();
-
-        // Start BFS from the crate root
-        let start_module_id = self.root();
-        let initial_path = vec!["crate".to_string()]; // Path always starts with "crate"
-
-        queue.push_back((start_module_id, initial_path.clone()));
-        visited.insert(start_module_id);
-
-        while let Some((current_mod_id, current_path)) = queue.pop_front() {
-            // Handle path attribute if present
-            let effective_path =
-                if let Some(_custom_path) = self.resolve_custom_path(current_mod_id) {
-                    // For modules with #[path], we need to check if the item exists at that location
-                    if let Some(module_node) = self.modules.get(&current_mod_id) {
-                        if let Some(items) = module_node.items() {
-                            if items.contains(&item_id) {
-                                return Ok(current_path);
-                            }
-                        }
-                    }
-                    continue; // Skip further processing for #[path] modules
-                } else {
-                    current_path
-                };
-
-            // Check both direct definitions and re-exports
-            for rel in self
-                .tree_relations
-                .iter()
-                .filter(|tr| tr.relation().source == GraphId::Node(current_mod_id.into_inner()))
-            {
-                match rel.relation().kind {
-                    RelationKind::Contains if rel.relation().target == GraphId::Node(item_id) => {
-                        // Direct containment case. The item_id is directly contained in current_mod_id.
-                        let item_node = graph.find_node_unique(item_id)?;
-
-                        // Check if the contained item is itself an ImportNode (a use/re-export statement)
-                        if let Some(import_node) = item_node.as_import() {
-                            // It's not reaally even worth enumerating them.
-                            // It's an import/re-export statement.
-                            if import_node.is_local_reexport() {
-                                // This is a `pub use`, `pub(crate) use`, etc.
-                                // Check if it points to an external crate.
-                                // Heuristic: path doesn't start with "crate", "self", or "super".
-                                let is_external =
-                                    import_node.source_path().first().is_some_and(|first_seg| {
-                                        !matches!(first_seg.as_str(), "crate" | "self" | "super")
-                                    });
-
-                                if is_external {
-                                    // We found the re-export statement, but it points externally.
-                                    // SPP cannot resolve paths for external items directly.
-                                    return Err(ModuleTreeError::ExternalItemNotResolved(item_id));
-                                } else {
-                                    // It's an internal re-export.
-                                    log::trace!(target: LOG_TARGET_VIS, "SPP: Found internal re-export ImportNode {} in {}, continuing BFS.", item_id, current_mod_id);
-                                }
-                            } else {
-                                // It's a private `use` statement (is_inherited_use).
-                                // These are not part of the public path. Continue BFS.
-                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found private ImportNode {} in {}, continuing BFS.", item_id, current_mod_id);
-                            }
-                        } else {
-                            // It's a regular item (Function, Struct, etc.), not an ImportNode.
-                            // Check its visibility directly.
-                            if item_node.visibility().is_pub() {
-                                // Found the target item directly via a public path.
-                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found target item {} directly in public module {}, returning path.", item_id, current_mod_id);
-                                return Ok(effective_path);
-                            } else {
-                                // Item is contained but not public. Continue BFS.
-                                log::trace!(target: LOG_TARGET_VIS, "SPP: Found target item {} directly in non-public module {}, continuing BFS.", item_id, current_mod_id);
-                            }
-                        }
-                    }
-                    // And in shortest_public_path's ReExport case:
-                    RelationKind::ReExport => {
-                        let target_id: NodeId = rel.relation().target.try_into()?;
-
-                        // Check for cycles by limiting chain length
-                        let mut chain_visited = HashSet::new();
-                        let mut current_chain_id = target_id;
-                        let mut is_reexport_chain = false;
-
-                        // Check chain with cycle detection
-                        while chain_visited.insert(current_chain_id) {
-                            if current_chain_id == item_id {
-                                is_reexport_chain = true;
-                                break;
-                            }
-
-                            if let Some(next_rel) = self.tree_relations.iter().find(|tr| {
-                                tr.relation().kind == RelationKind::ReExport
-                                    && tr.relation().source == GraphId::Node(current_chain_id)
-                            }) {
-                                current_chain_id = next_rel.relation().target.try_into()?;
-                            } else {
-                                break;
-                            }
-
-                            // Prevent infinite loops from extremely long chains
-                            if chain_visited.len() > 32 {
-                                // Return the new error variant
-                                return Err(ModuleTreeError::ReExportChainTooLong {
-                                    start_node_id: target_id, // The ID where the chain started
-                                });
-                            }
-                        }
-
-                        if is_reexport_chain {
-                            if let Some(reexport_name) =
-                                self.get_reexport_name(current_mod_id, target_id)
-                            {
-                                let mut reexport_path = effective_path.clone();
-                                reexport_path.push(reexport_name);
-
-                                // For chains, recursively build path to original
-                                if target_id != item_id {
-                                    if let Ok(/* mut */ original_path) =
-                                        self.shortest_public_path(target_id, graph)
-                                    {
-                                        reexport_path.extend(original_path);
-                                    }
-                                }
-
-                                return Ok(reexport_path);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            // --- Neighbor (Public Child) Exploration ---
-            let child_relations = self.tree_relations.iter().filter(|tr| {
-                let rel = tr.relation();
-                rel.source == GraphId::Node(current_mod_id.into_inner())
-                    && rel.kind == RelationKind::Contains
-            });
-
-            for child_rel in child_relations {
-                let child_id: ModuleNodeId = child_rel.relation().target.try_into()?;
-                // Get the module node (declaration or definition) linked by Contains
-                if let Ok(child_module_node) = self.get_contained_mod(child_id) {
-                    // Determine the ID of the actual module definition (handling declarations)
-                    let definition_id = if child_module_node.is_declaration() {
-                        self.find_definition_for_declaration(child_id)
-                                .unwrap_or_else(|| {
-                                    // Log fallback case
-                                    log::warn!(target: LOG_TARGET_BUILD, "SPP: Could not find definition for declaration {}, falling back to using declaration ID itself.", child_id);
-                                    child_id
-                                })
-                    } else {
-                        child_id // It's already the definition
-                    };
-
-                    // Check visibility and enqueue if public and unvisited
-                    if let Some(id_to_enqueue) = self
-                        .get_effective_visibility(definition_id)
-                        .filter(|vis| vis.is_pub()) // Keep only if public
-                        .and_then(|_vis| {
-                            // If public...
-                            if visited.insert(definition_id) {
-                                // ...and not visited...
-                                Some(definition_id) // ...return the ID to enqueue.
-                            } else {
-                                None // Already visited
-                            }
-                        })
-                    {
-                        // If we should enqueue...
-                        let mut new_path = effective_path.clone();
-                        // Use the name from the original child node (decl or defn)
-                        new_path.push(child_module_node.name.clone());
-                        queue.push_back((id_to_enqueue, new_path));
-                    }
-                }
-            }
-        }
-
-        // Item not found via any public path
-        Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id)) // Return Err
-    }
     // Helper to check if an item is part of a re-export chain leading to our target
     // NOTE: Why is this currently unused? I'm fairly sure we were using it somewhere...
     #[allow(dead_code, reason = "This is almost certainly useful somewhere")]
@@ -1294,17 +1047,11 @@ impl ModuleTree {
         Ok(false)
     }
 
-    // #[cfg(feature = "reexport")]
-    // pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
-    //
-    // }
-
     // TODO: Make a parallellized version with rayon
     // fn process_export_rels(&self, graph: &CodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
     //     todo!()
     // }
     // or
-    // #[cfg(not(feature = "reexport"))]
     pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
         let mut new_relations: Vec<TreeRelation> = Vec::new();
         for export in &self.pending_exports {
@@ -1367,10 +1114,7 @@ impl ModuleTree {
             }
         }
         for new_tr in new_relations {
-            #[cfg(feature = "reexport")]
             self.add_relation(new_tr);
-            #[cfg(not(feature = "reexport"))]
-            self.tree_relations.push(new_tr);
         }
 
         Ok(())
@@ -1380,15 +1124,6 @@ impl ModuleTree {
         self.found_path_attrs.get(&module_id)
     }
 
-    #[cfg(not(feature = "reexport"))]
-    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
-        self.pending_exports
-            .iter()
-            .find(|exp| exp.containing_mod_id() == module_id && exp.export_node().id == item_id)
-            .and_then(|exp| exp.export_node().source_path.last().cloned())
-    }
-
-    #[cfg(feature = "reexport")]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
         self.pending_exports
             .iter()

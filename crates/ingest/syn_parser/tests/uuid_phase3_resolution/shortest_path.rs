@@ -59,27 +59,16 @@ use syn_parser::error::SynParserError;
 use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph; // Removed unused SynParserError import
 
+use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for tests
-fn build_tree_for_fixture(fixture_name: &str) -> (CodeGraph, ModuleTree) {
-    let results = run_phases_and_collect(fixture_name);
-    let mut graphs: Vec<CodeGraph> = Vec::new();
-    for parsed_graph in results {
-        graphs.push(parsed_graph.graph);
-    }
-    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
-    let tree = merged_graph
-        .build_module_tree()
-        .expect("Failed to build module tree");
-    (merged_graph, tree)
-}
 
 #[test]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the public function `main_pub_func` in the crate root
     let main_pub_func_id = graph
@@ -106,7 +95,7 @@ fn test_spp_public_item_in_root() {
 #[test]
 fn test_spp_public_item_in_public_mod() {
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the public function `top_pub_func` in `top_pub_mod`
     let top_pub_func_id = graph
@@ -135,7 +124,7 @@ fn test_spp_public_item_in_public_mod() {
 #[test]
 fn test_spp_public_item_in_nested_public_mod() {
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the public function `nested_pub_func` in `top_pub_mod::nested_pub`
     let nested_pub_func_id = graph
@@ -173,7 +162,7 @@ fn test_spp_private_item_in_public_mod() {
         .format_timestamp(None) // Disable timestamps
         .try_init();
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the private function `top_pub_priv_func` in `top_pub_mod`
     let top_pub_priv_func_id = graph
@@ -201,7 +190,7 @@ fn test_spp_private_item_in_public_mod() {
 #[test]
 fn test_spp_item_in_private_mod() {
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the public function `nested_pub_func` in `top_priv_mod::nested_pub_in_priv`
     // Even though the function is pub, its containing module `top_priv_mod` is private.
@@ -233,7 +222,7 @@ fn test_spp_item_in_private_mod() {
 // #[test]
 // fn test_spp_reexported_item() {
 //     let fixture_name = "reexport_fixture"; // Need a fixture with re-exports
-//     let (graph, tree) = build_tree_for_fixture(fixture_name);
+//     let (graph, tree) = build_tree_for_tests(fixture_name);
 //     // ... find original item ID and re-exporting module ID ...
 //     let spp = tree.shortest_public_path(original_item_id, crate_root_id);
 //     // Assert spp matches the shorter, re-exported path
@@ -242,7 +231,7 @@ fn test_spp_item_in_private_mod() {
 #[test]
 fn test_spp_reexported_item_finds_original_path() {
     let fixture_name = "file_dir_detection";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the *original* public function `top_pub_func` in `top_pub_mod`.
     // This function is re-exported as `reexported_func` in the crate root.
@@ -304,7 +293,7 @@ macro_rules! assert_spp {
                 .try_init();
 
             let fixture_name = "fixture_path_resolution";
-            let (graph, tree) = build_tree_for_fixture(fixture_name);
+            let (graph, tree) = build_tree_for_tests(fixture_name);
 
             // Convert module path slice to Vec<String>
             let module_path_vec: Vec<String> =
@@ -342,7 +331,7 @@ macro_rules! assert_spp {
                 .try_init();
 
             let fixture_name = "fixture_path_resolution";
-            let (graph, tree) = build_tree_for_fixture(fixture_name);
+            let (graph, tree) = build_tree_for_tests(fixture_name);
 
             // Convert module path slice to Vec<String>
             let module_path_vec: Vec<String> =
@@ -477,7 +466,7 @@ assert_spp!(
 // #[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
 fn test_spp_reexport_cfg_gated_inactive() {
     let fixture_name = "fixture_path_resolution";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // Find the original item
     let module_path_vec = vec!["crate".to_string(), "local_mod".to_string()]; // Create Vec<String>
@@ -501,7 +490,7 @@ fn test_spp_reexport_cfg_gated_inactive() {
 // #[ignore = "Requires dependency resolution for SPP"]
 fn test_spp_reexport_external_dep() {
     let fixture_name = "fixture_path_resolution";
-    let (graph, tree) = build_tree_for_fixture(fixture_name);
+    let (graph, tree) = build_tree_for_tests(fixture_name);
 
     // We need the NodeId of the *re-export itself* (`log_debug_reexport`)
     // Finding external items by name isn't directly supported by find_item_id_in_module_by_name.

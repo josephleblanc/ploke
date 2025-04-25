@@ -2,23 +2,31 @@ use std::path::Path;
 
 use colored::Colorize;
 // Removed unused: use ploke_core::NodeId;
-use syn_parser::CodeGraph;
+use syn_parser::{discovery::CrateContext, CodeGraph};
 
 use crate::common::{debug_printers::print_module_tree, uuid_ids_utils::run_phases_and_collect};
 
 #[test]
 fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
+
+    let mut contexts: Vec<CrateContext> = Vec::new();
     let mut graphs: Vec<CodeGraph> = Vec::new();
 
-    for parsed in results {
-        graphs.push(parsed.graph);
+    let results = run_phases_and_collect(fixture_name);
+    for parsed_graph in results {
+        graphs.push(parsed_graph.graph);
+        if let Some(ctx) = parsed_graph.crate_context {
+            // dirty, placeholder
+            contexts.push(ctx);
+        }
     }
+    let merged = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
+    let _tree = merged
+        .build_module_tree(contexts.first().unwrap().clone()) // dirty, placeholder
+        .expect("Failed to build module tree for edge cases fixture");
 
-    let merged = CodeGraph::merge_new(graphs)?;
-    // Prefix with underscore to silence warning, as it's only used for its side effects (building)
-    let _module_tree = merged.build_module_tree()?;
+    let _module_tree = merged.build_module_tree(contexts.first().unwrap().clone())?;
 
     println!("File paths in merged modules:");
     let base_path: &Path = Path::new(

@@ -2,7 +2,9 @@
 
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 use colored::*; // Import colored for terminal colors
-use log::debug; // Import the debug macro
+use log::debug;
+use syn_parser::discovery::CrateContext;
+// Import the debug macro
 use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::nodes::ModuleDef;
 
@@ -18,9 +20,14 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "Starting test_path_attribute_handling".green());
     let fixture_name = "fixture_path_resolution";
     let results = run_phases_and_collect(fixture_name);
+    let mut contexts: Vec<CrateContext> = Vec::new();
     let mut graphs: Vec<CodeGraph> = Vec::new();
     for parsed_graph in results {
         graphs.push(parsed_graph.graph);
+        if let Some(ctx) = parsed_graph.crate_context {
+            // dirty, placeholder
+            contexts.push(ctx);
+        }
     }
     let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
     debug!(target: LOG_TARGET_GRAPH_FIND, "Merged graph contains {} modules.", merged_graph.modules.len());
@@ -37,7 +44,7 @@ fn test_path_attribute_handling() {
         );
     }
 
-    let module_tree_result = merged_graph.build_module_tree();
+    let module_tree_result = merged_graph.build_module_tree(contexts.first().unwrap().clone());
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
     let module_tree = module_tree_result.expect("Module tree build failed unexpectedly");
 

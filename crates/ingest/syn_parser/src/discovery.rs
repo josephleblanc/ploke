@@ -1,5 +1,6 @@
 use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
 use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt; // Import fmt for Display trait
 use std::fs;
@@ -94,7 +95,7 @@ impl fmt::Display for PackageInfo {
 }
 
 /// Represents the `[features]` section. Keys are feature names, values are lists of enabled features/dependencies.
-#[derive(Deserialize, Debug, Clone, Default)]
+#[derive(Deserialize, Debug, Clone, Default, Serialize)]
 pub struct Features(HashMap<String, Vec<String>>);
 
 impl Features {
@@ -283,7 +284,7 @@ struct CargoManifest {
 ///
 /// This struct automatically implements `Send + Sync` because all its members
 /// (`String`, `Uuid`, `PathBuf`, `Vec<PathBuf>`) are `Send + Sync`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CrateContext {
     /// The simple name of the crate (e.g., "syn_parser").
     pub name: String,

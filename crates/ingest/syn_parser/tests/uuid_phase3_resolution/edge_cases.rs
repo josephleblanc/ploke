@@ -60,7 +60,9 @@
 //!
 //! ---
 
-use ploke_core::ItemKind; // Added ItemKind
+use ploke_core::ItemKind;
+use syn_parser::discovery::CrateContext;
+// Added ItemKind
 use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
 use syn_parser::CodeGraph;
 
@@ -74,13 +76,18 @@ fn build_tree_for_edge_cases() -> (CodeGraph, ModuleTree) {
     // on cfg-capable mod tree happening on git branch feature/mod_tree_cfg
     let fixture_name = "fixture_spp_edge_cases_no_cfg";
     let results = run_phases_and_collect(fixture_name);
+    let mut contexts: Vec<CrateContext> = Vec::new();
     let mut graphs: Vec<CodeGraph> = Vec::new();
     for parsed_graph in results {
         graphs.push(parsed_graph.graph);
+        if let Some(ctx) = parsed_graph.crate_context {
+            // dirty, placeholder
+            contexts.push(ctx);
+        }
     }
     let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
     let tree = merged_graph
-        .build_module_tree()
+        .build_module_tree(contexts.first().unwrap().clone()) // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
     (merged_graph, tree)
 }

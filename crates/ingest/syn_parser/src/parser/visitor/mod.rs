@@ -11,7 +11,10 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::parser::{graph::CodeGraph, nodes::GraphId};
+use crate::{
+    discovery::CrateContext,
+    parser::{graph::CodeGraph, nodes::GraphId},
+};
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -81,7 +84,7 @@ use {
     uuid::Uuid,
 };
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ParsedCodeGraph {
     /// The absolute path of the file that was parsed.
     pub file_path: PathBuf,
@@ -89,7 +92,10 @@ pub struct ParsedCodeGraph {
     pub crate_namespace: Uuid,
     /// The resulting code graph from parsing the file.
     pub graph: CodeGraph,
-    // Potentially add other relevant context if needed in the future
+    // TODO: Replace filepath above with CrateContext once I'm ready to refactor other
+    // examples/tests
+    //  - Option for now
+    pub crate_context: Option<CrateContext>,
 }
 
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
@@ -123,14 +129,12 @@ pub fn analyze_file_phase2(
     // Set the correct initial module path for the visitor
     state.current_module_path = logical_module_path.clone();
 
-    // --- NEW: Initialize CFG State (Raw Strings) ---
     // Extract raw file-level CFG strings (#![cfg(...)])
     let file_cfgs = extract_cfg_strings(&file.attrs);
     // Set the initial scope CFGs for the visitor state
     state.current_scope_cfgs = file_cfgs.clone();
     // Hash the file-level CFG strings for the root module ID
     let root_cfg_bytes = calculate_cfg_hash_bytes(&file_cfgs);
-    // --- END NEW ---
 
     // 2. Generate root module ID using the derived logical path context AND CFG context
     let root_module_name = logical_module_path
@@ -213,14 +217,11 @@ pub fn analyze_file_phase2(
         }
     }
 
-    // TODO: Add another debug_print_all_visible function under cfg "uuid_ids", since our recent
-    // changes would break the normal version.
-    // visitor.state.code_graph.debug_print_all_visible();
-
     Ok(ParsedCodeGraph {
         graph: state.code_graph,
         file_path,
         crate_namespace,
+        crate_context: None,
     })
 }
 
@@ -244,13 +245,6 @@ pub fn analyze_files_parallel(
         .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
         .flat_map(|crate_context| {
             // Process each crate in parallel
-            #[cfg(feature = "verbose_debug")]
-            println!(
-                // Temporary debug print
-                "  Processing crate '{}' with {} files...",
-                crate_context.name,
-                crate_context.files.len()
-            );
             // For each crate, parallelize over its files
             // Assume CrateContext has a `root_dir` field or similar
             // If not, we might need to adjust how src_dir is found
