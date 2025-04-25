@@ -323,6 +323,13 @@ pub struct DiscoveryOutput {
     /// This is built from `lib.rs`, `main.rs`, and `mod.rs` scans during Phase 1.
     /// It serves as a starting point for more accurate resolution in later phases.
     pub initial_module_map: HashMap<PathBuf, Vec<String>>,
+    // AI: Add documentation. This can hold the non-fatal errors. The caller can then decide what
+    // to do with them.
+    pub warnings: Vec<DiscoveryError>,
+}
+
+impl DiscoveryOutput {
+    // AI: Add convenience methods here. Include a way to access the warnings.
 }
 
 /// Runs the single-threaded discovery phase to gather context about target crates.
@@ -481,16 +488,19 @@ pub fn run_discovery_phase(
     } // End of loop for target_crates
 
     // --- Final Check for Non-Fatal Errors ---
+    // AI: Change return handling here.
     if non_fatal_errors.is_empty() {
         // Success: No critical or non-fatal errors occurred.
         Ok(DiscoveryOutput {
             crate_contexts,
             initial_module_map,
+            // AI: Add new field here
         })
     } else {
         // Failure: Non-fatal errors occurred, report them collectively.
         Err(DiscoveryError::NonFatalErrors(Box::new(non_fatal_errors)))
     }
+    // AI!
 }
 
 /// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
