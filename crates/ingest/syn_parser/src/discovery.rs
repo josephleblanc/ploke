@@ -606,3 +606,157 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
     let name_version = format!("{}@{}", name, version);
     Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name_version.as_bytes())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_derive_crate_namespace_consistency() {
+        let ns1 = derive_crate_namespace("my-crate", "1.0.0");
+        let ns2 = derive_crate_namespace("my-crate", "1.0.0");
+        assert_eq!(ns1, ns2, "Namespace should be consistent for the same input");
+    }
+
+    #[test]
+    fn test_derive_crate_namespace_uniqueness() {
+        let ns1 = derive_crate_namespace("my-crate", "1.0.0");
+        let ns2 = derive_crate_namespace("my-crate", "1.0.1");
+        let ns3 = derive_crate_namespace("other-crate", "1.0.0");
+        assert_ne!(ns1, ns2, "Different versions should produce different namespaces");
+        assert_ne!(ns1, ns3, "Different crate names should produce different namespaces");
+    }
+
+    #[test]
+    fn test_scan_for_mods_simple_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let src_path = dir.path().join("src");
+        fs::create_dir(&src_path)?;
+
+        let lib_rs_path = src_path.join("lib.rs");
+        let mod_a_path = src_path.join("mod_a.rs");
+
+        let mut lib_rs = File::create(&lib_rs_path)?;
+        writeln!(lib_rs, "// Some comments")?;
+        writeln!(lib_rs, "mod mod_a;")?;
+        writeln!(lib_rs, "fn main() {{}}")?;
+        drop(lib_rs); // Close file
+
+        File::create(&mod_a_path)?; // Create the target file
+
+        let existing_files = vec![lib_rs_path.clone(), mod_a_path.clone()];
+
+        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
+
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key(&mod_a_path));
+        assert_eq!(
+            result.get(&mod_a_path).unwrap(),
+            &vec!["crate".to_string(), "mod_a".to_string()]
+        );
+
+        dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_for_mods_simple_dir() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let src_path = dir.path().join("src");
+        fs::create_dir(&src_path)?;
+
+        let lib_rs_path = src_path.join("lib.rs");
+        let mod_b_dir = src_path.join("mod_b");
+        fs::create_dir(&mod_b_dir)?;
+        let mod_b_mod_rs_path = mod_b_dir.join("mod.rs");
+
+        let mut lib_rs = File::create(&lib_rs_path)?;
+        writeln!(lib_rs, "pub mod mod_b;")?;
+        drop(lib_rs);
+
+        File::create(&mod_b_mod_rs_path)?;
+
+        let existing_files = vec![lib_rs_path.clone(), mod_b_mod_rs_path.clone()];
+
+        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
+
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key(&mod_b_mod_rs_path));
+        assert_eq!(
+            result.get(&mod_b_mod_rs_path).unwrap(),
+            &vec!["crate".to_string(), "mod_b".to_string()]
+        );
+
+        dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_for_mods_no_mods() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let src_path = dir.path().join("src");
+        fs::create_dir(&src_path)?;
+
+        let main_rs_path = src_path.join("main.rs");
+        let mut main_rs = File::create(&main_rs_path)?;
+        writeln!(main_rs, "fn main() {{ println!(\"Hello\"); }}")?;
+        drop(main_rs);
+
+        let existing_files = vec![main_rs_path.clone()];
+
+        let result = scan_for_mods(&main_rs_path, &src_path, &existing_files)?;
+
+        assert!(result.is_empty());
+
+        dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_for_mods_target_missing() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let src_path = dir.path().join("src");
+        fs::create_dir(&src_path)?;
+
+        let lib_rs_path = src_path.join("lib.rs");
+        let mut lib_rs = File::create(&lib_rs_path)?;
+        writeln!(lib_rs, "mod missing_mod;")?; // Target file/dir doesn't exist
+        drop(lib_rs);
+
+        let existing_files = vec![lib_rs_path.clone()]; // Only lib.rs exists
+
+        let result = scan_for_mods(&lib_rs_path, &src_path, &existing_files)?;
+
+        // Should find the declaration but not map it because the file is missing
+        assert!(result.is_empty());
+
+        dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_for_mods_file_not_found() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let src_path = dir.path().join("src");
+        fs::create_dir(&src_path)?; // Create src dir, but not the file to scan
+
+        let non_existent_path = src_path.join("non_existent_lib.rs");
+        let existing_files = vec![]; // No files exist
+
+        let result = scan_for_mods(&non_existent_path, &src_path, &existing_files);
+
+        assert!(result.is_err());
+        match result {
+            Err(DiscoveryError::Io { path, .. }) => {
+                assert_eq!(path, non_existent_path);
+            }
+            _ => panic!("Expected Io error"),
+        }
+
+        dir.close()?;
+        Ok(())
+    }
+}
