@@ -76,8 +76,9 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
-    // AI: Let's turn `found_path_attr` into an `Option<HashMap<ModuleNodeId, PathBuf>>` AI!
-    found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
+    /// Stores resolved absolute paths for modules declared with `#[path]`.
+    /// Wrapped in Option to allow taking ownership. Initialized with Some(HashMap::new()).
+    found_path_attrs: Option<HashMap<ModuleNodeId, PathBuf>>,
     // Option for `take`
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 
@@ -352,8 +353,7 @@ impl ModuleTree {
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
-            // AI: update type
-            found_path_attrs: HashMap::new(),
+            found_path_attrs: Some(HashMap::new()), // Initialize with Some(HashMap)
             pending_path_attrs: Some(Vec::new()),
             relations_by_source: HashMap::new(),
             relations_by_target: HashMap::new(),
@@ -777,23 +777,29 @@ where
 
             // Remove the old PathLogCtx logging block as it's replaced by the step-by-step logs
 
-            // AI: Update for Option
-            match self.found_path_attrs.entry(module_id) {
-                std::collections::hash_map::Entry::Occupied(entry) => {
-                    let existing_path = entry.get().clone();
-                    // *** NEW LOGGING CALL ***
+            // Get mutable access to the inner HashMap, handling the Option
+            if let Some(found_attrs_map) = self.found_path_attrs.as_mut() {
+                match found_attrs_map.entry(module_id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => {
+                        let existing_path = entry.get().clone();
+                        // *** NEW LOGGING CALL ***
                     self.log_resolve_duplicate(module_id, &existing_path, &resolved);
                     return Err(ModuleTreeError::DuplicatePathAttribute {
                         module_id,
                         existing_path,
                         conflicting_path: resolved,
-                    });
-                }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    Self::log_resolve_insert(module_id, &resolved);
-                    entry.insert(resolved);
-                }
-            };
+                        });
+                    }
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        Self::log_resolve_insert(module_id, &resolved);
+                        entry.insert(resolved);
+                    }
+                };
+            } else {
+                // This should ideally not happen if initialized correctly
+                log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "found_path_attrs was None during resolve_pending_path_attrs for module {}", module_id);
+                return Err(ModuleTreeError::InternalState("found_path_attrs was None unexpectedly".to_string()));
+            }
         }
 
         // *** NEW LOGGING CALL ***
@@ -1612,8 +1618,8 @@ where
     // ... other methods ...
 
     pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
-        // AI: Update for Option
-        self.found_path_attrs.get(&module_id)
+        // Use flat_map to chain the Option and the HashMap lookup
+        self.found_path_attrs.as_ref().and_then(|map| map.get(&module_id))
     }
 
     #[allow(dead_code)]
@@ -2048,12 +2054,37 @@ where
                         )))
                     }
                 }
-            }
+                }
 
-        })
-            .filter(|result| !result.as_ref().is_err_and(|e| matches!(e, ModuleTreeError::Warning(_))))
-        ;
-        Ok(())
+            })
+            // Filter out warnings before collecting into Result<Vec<_>>
+            .filter(|result| !matches!(result, Err(ModuleTreeError::Warning(_))))
+            .collect(); // Collect into Result<Vec<Relation>, ModuleTreeError>
+
+            // Put the original map back if no fatal error occurred during iteration
+            // Note: If a fatal error occurred, found_path_attrs remains None
+            self.found_path_attrs = Some(found_attrs);
+
+            // Handle the collected results
+            match results {
+                Ok(relations_to_add) => {
+                    // Add all successfully created relations
+                    for relation in relations_to_add {
+                        // Use add_relation to update indices correctly
+                        self.add_relation(relation.into());
+                    }
+                    Ok(())
+                }
+                Err(fatal_error) => {
+                    // A non-warning error occurred, propagate it
+                    Err(fatal_error)
+                }
+            }
+        } else {
+            // found_path_attrs was already None, nothing to process
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "process_path_attributes called when found_path_attrs was None.");
+            Ok(())
+        }
     }
 
     /// Updates the `path_index` to use canonical paths for modules affected by `#[path]` attributes.
@@ -2073,12 +2104,13 @@ where
     /// *contained within* the modules affected by `#[path]`.
     pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
         self.log_update_path_index_entry_exit(true);
-        // Collect keys to avoid borrowing issues while modifying the map inside the loop.
-        // We iterate based on the declarations found to have path attributes.
-        // AI: I'll make sure the `Option` on `found_path_attrs` is `Some` by the time this
-        // function runs. Don't worry about that part, just update this for an `Option`
-        let decl_ids_with_path_attrs: Vec<ModuleNodeId> =
-            self.found_path_attrs.keys().copied().collect();
+
+        // Get the keys from the inner HashMap if it exists
+        let decl_ids_with_path_attrs: Vec<ModuleNodeId> = self
+            .found_path_attrs // Option<HashMap>
+            .as_ref() // Option<&HashMap>
+            .map(|map| map.keys().copied().collect()) // Option<Vec<ModuleNodeId>>
+            .unwrap_or_default(); // Vec<ModuleNodeId> (empty if None)
 
         if decl_ids_with_path_attrs.is_empty() {
             self.log_update_path_index_status(None);
