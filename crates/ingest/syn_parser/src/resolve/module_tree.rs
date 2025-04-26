@@ -275,6 +275,8 @@ pub enum ModuleTreeError {
     // --- NEW VARIANT ---
     #[error("Invalid internal state: pending_exports was None when adding module {module_id}")]
     InvalidStatePendingExportsMissing { module_id: NodeId },
+    #[error("Internal state error: {0}")]
+    InternalState(String),
 }
 
 impl ModuleTreeError {
@@ -2036,8 +2038,6 @@ impl ModuleTree {
                     // This indicates a major inconsistency if the removed ID doesn't match
                     log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}", removed_id, original_path, def_mod_id);
                     // This suggests the path_index was corrupted earlier.
-                    // Return an error? For now, log and continue, but this is problematic.
-                    // AI: Implement this new error variant AI!
                     return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}", original_path, def_mod_id, removed_id)));
                 }
                 log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed old path index entry: {} -> {}", original_path, def_mod_id);
