@@ -2091,24 +2091,12 @@ impl ModuleTree {
                 Err(e) => {
                     self.log_update_path_index_target_error(decl_mod_id, &e);
                     if self.external_path_attrs.contains_key(&decl_mod_id) {
-                        // Log a warning, but continue processing other modules.
-                        // This is expected if the #[path] pointed outside the src dir.
-                        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD,
-                            // AI: Same here, make style consistent with our colorschemes, put into
-                            // method, etc. AI!
-                            "Skipping path index update for external path declaration {} (target not found as expected).",
-                            decl_mod_id.to_string().log_id()
-                        );
+                        // Log a warning using the helper method, but continue processing.
+                        self.log_update_path_index_skip_external(decl_mod_id);
                         continue; // Skip to the next decl_mod_id
                     } else {
-                        // Target module definition not found, and it wasn't an expected external path.
-                        // This indicates an inconsistent graph state. Log error and abort.
-                        log::error!(target: LOG_TARGET_MOD_TREE_BUILD,
-                            "Aborting path index update: Inconsistent state. CustomPath target not found for internal declaration {}, but it wasn't marked as external.",
-                            decl_mod_id.to_string().log_id()
-                        ); // AI: Make this error consistent with our logging style of using
-                           // methods. If possible use a method that already exists and would suite
-                           // the situation. AI!
+                        // Log the fatal error using the helper method and abort.
+                        self.log_update_path_index_abort_inconsistent(decl_mod_id);
                         return Err(e);
                     }
                 }
@@ -2656,6 +2644,33 @@ impl ModuleTree {
             "This implies a non-unique canonical path was generated or indexed incorrectly.".log_comment()
         );
     }
+
+    fn log_update_path_index_skip_external(&self, decl_mod_id: ModuleNodeId) {
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Skipping index update for external path declaration {} ({}). Target not found as expected.",
+            "Warning:".log_yellow(),
+            decl_mod_name.log_name(),
+            decl_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_abort_inconsistent(&self, decl_mod_id: ModuleNodeId) {
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Aborting path index update: Inconsistent state. CustomPath target not found for internal declaration {} ({}), but it wasn't marked as external.",
+            "Error:".log_error(),
+            decl_mod_name.log_name(),
+            decl_mod_id.to_string().log_id()
+        );
+    }
+
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
