@@ -706,7 +706,11 @@ fn test_spp_cfg_exclusive_a() {
     .expect("Failed to find item_in_cfg_a");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "cfg_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "cfg_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -732,7 +736,11 @@ fn test_spp_cfg_exclusive_not_a() {
     .expect("Failed to find item_in_cfg_not_a");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "cfg_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "cfg_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -758,11 +766,15 @@ fn test_spp_cfg_nested_exclusive_ab() {
     .expect("Failed to find item_in_cfg_ab");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "cfg_mod".to_string(),
-        "nested_cfg".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "cfg_mod".to_string(),
+            "nested_cfg".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -788,11 +800,15 @@ fn test_spp_cfg_nested_exclusive_nac() {
     .expect("Failed to find item_in_cfg_nac");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "cfg_mod".to_string(),
-        "nested_cfg".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "cfg_mod".to_string(),
+            "nested_cfg".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -818,11 +834,15 @@ fn test_spp_cfg_conflicting() {
     .expect("Failed to find impossible_item");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "conflict_parent".to_string(),
-        "conflict_child".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "conflict_parent".to_string(),
+            "conflict_child".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
