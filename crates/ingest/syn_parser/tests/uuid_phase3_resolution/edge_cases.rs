@@ -461,7 +461,11 @@ fn test_spp_shadowing_local() {
     .expect("Failed to find local shadowed_item");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "shadowing".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "shadowing".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -486,11 +490,15 @@ fn test_spp_relative_reexport_super() {
     .expect("Failed to find item_in_relative");
 
     let spp_result = tree.shortest_public_path(original_item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "relative".to_string(),
-        "inner".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "relative".to_string(),
+            "inner".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
+        target_id: original_item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -519,7 +527,11 @@ fn test_spp_relative_reexport_self() {
     .expect("Failed to find item_in_inner");
 
     let spp_result = tree.shortest_public_path(original_item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "relative".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "relative".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
+        target_id: original_item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -543,7 +555,11 @@ fn test_spp_deep_reexport_chain() {
     .expect("Failed to find deep_item");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -600,7 +616,11 @@ fn test_spp_multiple_renames() {
     .expect("Failed to find multi_rename_item");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -624,7 +644,11 @@ fn test_spp_nested_path_level1() {
     .expect("Failed to find item_in_nested_target_1");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "nested_path_1".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "nested_path_1".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -648,11 +672,15 @@ fn test_spp_nested_path_level2() {
     .expect("Failed to find item_in_nested_target_2");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "nested_path_1".to_string(),
-        "nested_target_2".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "nested_path_1".to_string(),
+            "nested_target_2".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
