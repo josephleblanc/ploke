@@ -317,6 +317,8 @@ impl NodePath {
         Ok(Self(segments))
     }
 
+    // AI: create the new_unchecked method here. AI!
+
     pub fn as_segments(&self) -> &[String] {
         &self.0
     }
