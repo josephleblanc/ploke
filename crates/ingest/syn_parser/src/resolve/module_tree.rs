@@ -1,4 +1,4 @@
-use crate::parser::graph::GraphAccess;
+use crate::{parser::graph::GraphAccess, utils::logging::LOG_TARGET_BFS};
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use ploke_core::NodeId;
@@ -928,35 +928,34 @@ impl ModuleTree {
         let current_mod_node = self.get_module_checked(&current_mod_id)?; // O(1)
         self.log_spp_containment_start(current_mod_node);
         // Determine the ID and visibility source (declaration or definition)
-        let (effective_source_id, visibility_source_node) = if current_mod_node.is_file_based()
-            && current_mod_id != self.root
-        {
-            // For file-based modules, find the declaration
-            let decl_relations = self
-                .get_relations_to(&current_mod_id.to_graph_id(), |tr| {
-                    matches!(
-                        tr.relation().kind,
-                        RelationKind::ResolvesToDefinition | RelationKind::CustomPath
-                    )
-                })
-                .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
-            self.log_spp_containment_vis_source(current_mod_node);
-            if let Some(decl_rel) = decl_relations.first() {
-                let decl_id = ModuleNodeId::new(decl_rel.relation().source.try_into()?);
-                // Visibility comes from the declaration node
-                self.log_spp_containment_vis_source_decl(decl_id);
-                (decl_id, self.get_module_checked(&decl_id)?)
+        let (effective_source_id, visibility_source_node) =
+            if current_mod_node.is_file_based() && current_mod_id != self.root {
+                // For file-based modules, find the declaration
+                let decl_relations = self
+                    .get_relations_to(&current_mod_id.to_graph_id(), |tr| {
+                        matches!(
+                            tr.relation().kind,
+                            RelationKind::ResolvesToDefinition | RelationKind::CustomPath
+                        )
+                    })
+                    .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
+                self.log_spp_containment_vis_source(current_mod_node);
+                if let Some(decl_rel) = decl_relations.first() {
+                    let decl_id = ModuleNodeId::new(decl_rel.relation().source.try_into()?);
+                    // Visibility comes from the declaration node
+                    self.log_spp_containment_vis_source_decl(decl_id);
+                    (decl_id, self.get_module_checked(&decl_id)?)
+                } else {
+                    // Unlinked file-based module, treat as private/inaccessible upwards
+                    // Or log a warning and use the definition itself? Let's treat as inaccessible.
+                    self.log_spp_containment_unlinked(current_mod_id);
+                    return Ok(()); // Cannot proceed upwards via containment
+                }
             } else {
-                // Unlinked file-based module, treat as private/inaccessible upwards
-                // Or log a warning and use the definition itself? Let's treat as inaccessible.
-                self.log_spp_containment_unlinked(current_mod_id);
-                return Ok(()); // Cannot proceed upwards via containment
-            }
-        } else {
-            self.log_spp_containment_vis_source_inline(current_mod_node);
-            // Inline module or root, use itself
-            (current_mod_id, current_mod_node)
-        };
+                self.log_spp_containment_vis_source_inline(current_mod_node);
+                // Inline module or root, use itself
+                (current_mod_id, current_mod_node)
+            };
 
         // Find the parent of the effective source (declaration or inline module)
         let parent_relations = self
@@ -1436,33 +1435,30 @@ impl ModuleTree {
             let mut candidates: Vec<NodeId> = Vec::new();
             self.log_resolve_segment_start(segment, search_in_module_id, contains_relations.len());
 
-            for rel in &contains_relations { // Iterate by reference
+            for rel in &contains_relations {
+                // Iterate by reference
                 if let GraphId::Node(target_id) = rel.relation().target {
                     self.log_resolve_segment_relation(target_id);
                     match graph.find_node_unique(target_id) {
                         Ok(target_node) => {
                             let name_matches = target_node.name() == segment;
-                            self.log_resolve_segment_found_node(
-                                target_node,
-                                segment,
-                                name_matches,
-                            );
+                            self.log_resolve_segment_found_node(target_node, segment, name_matches);
                             if name_matches {
                                 // Original visibility check logic follows...
                                 // 5. Visibility Check (Simplified: Check if accessible from the module we are searching *in*)
                                 // TODO: Refine visibility check if needed. is_accessible might be too broad here?
-                            //       Maybe need a check specific to direct children?
-                            //       For now, using is_accessible.
-                            if let Some(target_mod_id) =
-                                target_node.as_module().map(|m| ModuleNodeId::new(m.id()))
-                            {
-                                // If the target is a module, check its accessibility
-                                if self.is_accessible(search_in_module_id, target_mod_id) {
-                                    candidates.push(target_id);
-                                }
-                            } else {
-                                // If the target is not a module (e.g., function, struct),
-                                // its visibility is inherent. Check if it's public or accessible
+                                //       Maybe need a check specific to direct children?
+                                //       For now, using is_accessible.
+                                if let Some(target_mod_id) =
+                                    target_node.as_module().map(|m| ModuleNodeId::new(m.id()))
+                                {
+                                    // If the target is a module, check its accessibility
+                                    if self.is_accessible(search_in_module_id, target_mod_id) {
+                                        candidates.push(target_id);
+                                    }
+                                } else {
+                                    // If the target is not a module (e.g., function, struct),
+                                    // its visibility is inherent. Check if it's public or accessible
                                     // within the crate/restricted path.
                                     // For simplicity here, let's assume if it's contained, it's accessible
                                     // for the purpose of path resolution *within* the module structure.
@@ -1482,7 +1478,7 @@ impl ModuleTree {
                     }
                     // Else: Relation target was not a GraphId::Node
                 } else {
-                     debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD,
                         "  {} Relation Target was not GraphId::Node: {:?}",
                         "->".log_comment(),
                         rel.relation().target.log_id_debug()
@@ -1490,7 +1486,6 @@ impl ModuleTree {
                 }
             }
             // --- DIAGNOSTIC LOGGING END ---
-
 
             // --- Filter and Select ---
             match candidates.len() {
@@ -1707,7 +1702,8 @@ impl ModuleTree {
             match decl_id_opt {
                 Some(decl_id) => {
                     // Found the declaration, get its visibility
-                    self.modules.get(&ModuleNodeId::new(decl_id))
+                    self.modules
+                        .get(&ModuleNodeId::new(decl_id))
                         .map(|decl_node| decl_node.visibility())
                         .unwrap_or_else(|| {
                             // Should not happen if tree is consistent, but default to Inherited if decl node missing
@@ -1767,10 +1763,7 @@ impl ModuleTree {
                 // Check if the source module is a descendant of the restriction module
                 let mut current_ancestor = self.get_parent_module_id(source);
                 while let Some(ancestor_id) = current_ancestor {
-                    self.log_access_restricted_check_ancestor(
-                        ancestor_id,
-                        restriction_module_id,
-                    );
+                    self.log_access_restricted_check_ancestor(ancestor_id, restriction_module_id);
                     if ancestor_id == restriction_module_id {
                         self.log_access(&log_ctx, "Restricted Visibility (Ancestor Match)", true);
                         return true; // Found restriction module in ancestors
@@ -1975,6 +1968,148 @@ impl ModuleTree {
         Ok(())
     }
 
+    // Add this function to the impl ModuleTree block in
+    // crates/ingest/syn_parser/src/resolve/module_tree.rs
+
+    /// Updates the `path_index` to use canonical paths for modules affected by `#[path]` attributes.
+    ///
+    /// This function iterates through modules that had a `#[path]` attribute (identified via
+    /// `found_path_attrs`). For each such module declaration, it finds the corresponding
+    /// definition module (linked by `RelationKind::CustomPath`). It then:
+    /// 1. Removes the `path_index` entry based on the definition module's original file-system path.
+    /// 2. Inserts a new `path_index` entry using the declaration module's canonical path as the key
+    ///    and the definition module's ID as the value.
+    ///
+    /// This ensures that lookups in `path_index` using canonical paths will correctly resolve
+    /// to the definition module, even when `#[path]` is used.
+    ///
+    /// This function assumes it's called after `process_path_attributes` has run and created
+    /// the necessary `CustomPath` relations. It does *not* yet handle updating paths for items
+    /// *contained within* the modules affected by `#[path]`.
+    pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
+        log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Entering update_path_index_for_custom_paths...");
+        // Collect keys to avoid borrowing issues while modifying the map inside the loop.
+        // We iterate based on the declarations found to have path attributes.
+        let decl_ids_with_path_attrs: Vec<ModuleNodeId> =
+            self.found_path_attrs.keys().copied().collect();
+
+        if decl_ids_with_path_attrs.is_empty() {
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "No path attributes found, skipping index update.");
+            return Ok(());
+        }
+
+        log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Found {} modules with path attributes to process for index update.", decl_ids_with_path_attrs.len());
+
+        for decl_mod_id in decl_ids_with_path_attrs {
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Processing decl_mod_id with path attr: {}", decl_mod_id);
+
+            // 1. Find the definition module ID using the CustomPath relation
+            let def_mod_id = match self.find_custom_path_target(decl_mod_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Failed to find CustomPath target for {}: {:?}. Skipping index update for this module.", decl_mod_id, e);
+                    // Decide whether to continue or return error. Continuing might leave index inconsistent.
+                    // Let's return error for now to be safe.
+                    return Err(e);
+                }
+            };
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Found corresponding definition module ID: {}", def_mod_id);
+
+            // 2. Get both module nodes
+            // Use .cloned() because we need ownership for path conversion and potentially for error reporting
+            let decl_mod = self.get_module_checked(&decl_mod_id)?.clone();
+            let def_mod = self.get_module_checked(&def_mod_id)?.clone();
+
+            // 3. Get the paths (convert Vec<String> to NodePath)
+            // The declaration's path IS the canonical path relative to its parent.
+            let canonical_path = NodePath::try_from(decl_mod.path)?;
+            // The definition's path is the original file-system derived path.
+            let original_path = NodePath::try_from(def_mod.path)?;
+
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Decl Mod: {} ({}) -> Canonical Path: {}", decl_mod.name, decl_mod_id, canonical_path);
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Def Mod: {} ({}) -> Original Path: {}", def_mod.name, def_mod_id, original_path);
+
+            // 4. Remove the old path index entry for the definition module
+            // Use the original_path (derived from file system) as the key to remove.
+            if let Some(removed_id) = self.path_index.remove(&original_path) {
+                if removed_id != *def_mod_id.as_inner() {
+                    // This indicates a major inconsistency if the removed ID doesn't match
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}", removed_id, original_path, def_mod_id);
+                    // This suggests the path_index was corrupted earlier.
+                    // Return an error? For now, log and continue, but this is problematic.
+                    // AI: Implement this new error variant AI!
+                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}", original_path, def_mod_id, removed_id)));
+                }
+                log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed old path index entry: {} -> {}", original_path, def_mod_id);
+            } else {
+                // This might happen if the file-based module wasn't indexed correctly initially.
+                // It *should* have been indexed under its original path in add_module.
+                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "  Original path {} not found in path_index for removal (Def Mod ID: {}). This might indicate an earlier indexing issue.", original_path, def_mod_id);
+            }
+
+            // 5. Insert the new path index entry using the canonical path
+            // Use the canonical_path (from the declaration) as the key, mapping to the definition ID.
+            let def_mod_inner_id = *def_mod_id.as_inner(); // Get the inner NodeId
+            if let Some(existing_id) = self
+                .path_index
+                .insert(canonical_path.clone(), def_mod_inner_id)
+            {
+                // This *shouldn't* normally happen if canonical paths are unique for non-declaration items.
+                // If it does, it means another non-declaration item was already indexed at the declaration's path.
+                if existing_id != def_mod_inner_id {
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}", canonical_path, def_mod_id, existing_id);
+                    // This implies a non-unique canonical path was generated or indexed incorrectly.
+                    return Err(ModuleTreeError::DuplicatePath {
+                        path: canonical_path,
+                        existing_id,
+                        conflicting_id: def_mod_inner_id,
+                    });
+                }
+                // If existing_id == def_mod_inner_id, it means we are re-inserting the same mapping, which is fine.
+                log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Re-inserted path index entry (idempotent): {} -> {}", canonical_path, def_mod_id);
+            } else {
+                log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Inserted new path index entry: {} -> {}", canonical_path, def_mod_id);
+            }
+        }
+
+        log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Finished update_path_index_for_custom_paths.");
+        Ok(())
+    }
+
+    // Helper function to find the target of a CustomPath relation
+    // (Ensure this exists or add it if it doesn't)
+    fn find_custom_path_target(
+        &self,
+        decl_mod_id: ModuleNodeId,
+    ) -> Result<ModuleNodeId, ModuleTreeError> {
+        let source_gid = decl_mod_id.to_graph_id();
+        self.relations_by_source
+         .get(&source_gid)
+         .and_then(|indices| {
+             indices.iter().find_map(|&index| {
+                 // Use .get() for safe access and .relation() to get inner Relation
+                 let relation = self.tree_relations.get(index)?.relation();
+                 if relation.kind == RelationKind::CustomPath {
+                     // Target should be the definition module's NodeId
+                     match relation.target {
+                         GraphId::Node(id) => Some(ModuleNodeId::new(id)),
+                         _ => None, // CustomPath should target a Node
+                     }
+                 } else {
+                     None
+                 }
+             })
+         })
+         .ok_or_else(|| {
+             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "CustomPath relation target not found for declaration module {}", decl_mod_id);
+             // Use a more specific error if available, otherwise adapt ModuleDefinitionNotFound
+             ModuleTreeError::ModuleDefinitionNotFound(format!(
+                 "Definition module for declaration {} (via CustomPath relation) not found",
+                 decl_mod_id
+             ))
+         })
+    }
+
     // --- Private Logging Helpers for resolve_path_relative_to ---
 
     fn log_resolve_segment_start(
@@ -2061,11 +2196,19 @@ impl ModuleTree {
     }
 
     fn log_spp_explore_containment(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Explore Up (Containment)");
+        self.log_bfs_path(
+            current_mod_id.into_inner(),
+            path_to_item,
+            "Explore Up (Containment)",
+        );
     }
 
     fn log_spp_explore_reexports(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Explore Up (Re-exports)");
+        self.log_bfs_path(
+            current_mod_id.into_inner(),
+            path_to_item,
+            "Explore Up (Re-exports)",
+        );
     }
 
     // --- Logging Helpers for explore_up_via_containment ---
@@ -2187,8 +2330,12 @@ impl ModuleTree {
 
     // --- Logging Helpers for process_path_attributes ---
 
-    fn log_path_attr_external_not_found(&self, decl_module_id: ModuleNodeId, resolved_path: &PathBuf) {
-         log::warn!(
+    fn log_path_attr_external_not_found(
+        &self,
+        decl_module_id: ModuleNodeId,
+        resolved_path: &PathBuf,
+    ) {
+        log::warn!(
             target: LOG_TARGET_PATH_ATTR,
             "{} {} | {}",
             "External Path".yellow().bold(), // Use yellow for warning
@@ -2204,7 +2351,7 @@ impl ModuleTree {
     // --- Logging Helpers for resolve_single_export ---
 
     fn log_resolve_single_export_external(&self, segments_to_resolve: &[String]) {
-         log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve.log_path_debug());
+        log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve.log_path_debug());
     }
 
     /// Wraps a resolution error from `resolve_path_relative_to` into `UnresolvedReExportTarget`.
@@ -2227,7 +2374,6 @@ impl ModuleTree {
             },
         }
     }
-
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
