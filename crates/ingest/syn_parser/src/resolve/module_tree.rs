@@ -1320,12 +1320,9 @@ impl ModuleTree {
     ) -> Result<(Relation, NodePath), ModuleTreeError> {
         let source_mod_id = export.containing_mod_id();
         let export_node = export.export_node();
-        let target_path = if let Some(renamed_path) = export_node.as_renamed_path() {
-            renamed_path
-        } else {
-            export_node.source_path().to_vec()
-        };
-        let target_path_segments = target_path;
+
+        // Always use the original source_path to find the target item
+        let target_path_segments = export_node.source_path();
 
         if target_path_segments.is_empty() {
             return Err(ModuleTreeError::NodePathValidation(Box::new(
@@ -1336,57 +1333,58 @@ impl ModuleTree {
         let first_segment = &target_path_segments[0];
         let target_node_id: NodeId; // We need to find this
 
-        // --- Resolution Logic ---
-        if graph
-            .iter_dependency_names()
-            .any(|name| name == first_segment.as_str())
-        {
-            // Case 1: External Crate Re-export
-            // We cannot resolve this to a local NodeId.
-            // For SPP, we need to know this happened. How?
-            // Option 1: Return a specific error that SPP can catch.
-            // Option 2: Don't create a relation (but SPP might not detect it failed?)
-            // Let's return an error for clarity. SPP needs modification to handle this.
-            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export: {:?}", target_path_segments);
-            return Err(ModuleTreeError::UnresolvedReExportTarget {
-                // Or a new specific error variant
-                import_node_id: Some(export_node.id),
-                path: NodePath::try_from(target_path_segments.to_vec())?, // Convert Vec<String> to NodePath for error
-            });
-        } else if first_segment == "crate" {
-            // Case 2: Absolute path from crate root
-            let target_path = NodePath::try_from(target_path_segments.to_vec())?;
-            target_node_id = self
-                .path_index
-                .get(&target_path)
-                .or_else(|| self.decl_index.get(&target_path))
-                .copied()
-                .ok_or_else(|| ModuleTreeError::UnresolvedReExportTarget {
-                    import_node_id: Some(export_node.id),
-                    path: target_path.clone(),
-                })?;
+        // --- Delegate ALL path resolution to resolve_path_relative_to ---
+        let (base_module_id, segments_to_resolve) = if first_segment == "crate" {
+            (self.root(), &target_path_segments[1..]) // Start from root, skip "crate"
         } else {
-            // Case 3, 4, 5: Relative paths (self::, super::, or implicit)
-            // This requires a new helper function that understands scope and imports.
-            // Placeholder for the complex part:
-            target_node_id = self.resolve_path_relative_to(
-                source_mod_id,
-                &target_path_segments,
-                graph, // Pass graph access
-            )?;
+            (source_mod_id, target_path_segments) // Start from containing mod, use full path
+        };
+
+        // Check for external crate re-exports *before* attempting local resolution
+        // This check might need refinement depending on how extern crates are represented.
+        // Assuming iter_dependency_names gives names of direct dependencies.
+        if base_module_id == self.root() // Only check for external if path starts relative to root
+            && !segments_to_resolve.is_empty() // Ensure there's a segment to check
+            && graph.iter_dependency_names().any(|dep_name| dep_name == segments_to_resolve[0])
+        {
+             log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve);
+             // Return specific error for external re-exports that SPP might handle later
+             return Err(ModuleTreeError::ExternalItemNotResolved(export_node.id));
         }
+
+
+        target_node_id = self
+            .resolve_path_relative_to(
+                base_module_id,
+                segments_to_resolve,
+                graph, // Pass graph access
+            )
+            .map_err(|e| {
+                // If resolution fails, wrap the error, providing the original path context
+                match e {
+                    // Preserve existing UnresolvedReExportTarget if it came from the helper
+                    ModuleTreeError::UnresolvedReExportTarget { .. } => e,
+                    // Otherwise, create a new UnresolvedReExportTarget with the correct path
+                    _ => ModuleTreeError::UnresolvedReExportTarget {
+                        import_node_id: Some(export_node.id),
+                        // Use the original full path for the error message
+                        path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_else(|_| NodePath::new_unchecked(vec!["<invalid>".to_string()])), // Handle potential error in path conversion for error reporting
+                    },
+                }
+            })?;
+
 
         // --- If target_node_id was found ---
         let relation = Relation {
-            source: GraphId::Node(export_node.id),
-            target: GraphId::Node(target_node_id),
+            source: GraphId::Node(export_node.id), // Source is the ImportNode itself
+            target: GraphId::Node(target_node_id), // Target is the resolved item
             kind: RelationKind::ReExports,
         };
 
-        // Construct the public path (same logic as before)
+        // Construct the public path using the visible_name
         let containing_module = self.get_module_checked(&source_mod_id)?;
         let mut public_path_vec = containing_module.defn_path().clone();
-        public_path_vec.push(export_node.visible_name.clone());
+        public_path_vec.push(export_node.visible_name.clone()); // Use the name it's exported AS
         let public_reexport_path = NodePath::try_from(public_path_vec)?;
 
         Ok((relation, public_reexport_path))
