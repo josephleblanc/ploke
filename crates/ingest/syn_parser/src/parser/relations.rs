@@ -101,8 +101,43 @@ impl RelationKind {
     pub fn is_use(self) -> bool {
         matches!(self.try_into(), Ok(ScopeKind::CanUse))
     }
-    // AI: Implement some helpful methods for comparing `RelationKind` here.
-    // Don't do anything to change core logic or remove code AI!
+
+    /// Checks if this relation kind relates to module structure or definition.
+    pub fn is_module_related(self) -> bool {
+        matches!(
+            self,
+            RelationKind::Contains
+                | RelationKind::ModuleImports
+                | RelationKind::ResolvesToDefinition
+                | RelationKind::CustomPath
+                | RelationKind::Sibling
+        )
+    }
+
+    /// Checks if this relation kind relates to type definitions, usage, or implementation.
+    pub fn is_type_related(self) -> bool {
+        matches!(
+            self,
+            RelationKind::FunctionParameter
+                | RelationKind::FunctionReturn
+                | RelationKind::StructField
+                | RelationKind::Method // Method is a function related to a type
+                | RelationKind::EnumVariant
+                | RelationKind::VariantField
+                | RelationKind::ImplementsFor
+                | RelationKind::ImplementsTrait
+                | RelationKind::ValueType
+                | RelationKind::Inherits // Assuming Inherits relates types
+        )
+    }
+
+    /// Checks if this relation kind relates to importing or exporting items.
+    pub fn is_import_export_related(self) -> bool {
+        matches!(
+            self,
+            RelationKind::ModuleImports | RelationKind::ReExports | RelationKind::Uses
+        )
+    }
 }
 
 /// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
