@@ -2094,6 +2094,8 @@ impl ModuleTree {
                         // Log a warning, but continue processing other modules.
                         // This is expected if the #[path] pointed outside the src dir.
                         log::warn!(target: LOG_TARGET_MOD_TREE_BUILD,
+                            // AI: Same here, make style consistent with our colorschemes, put into
+                            // method, etc. AI!
                             "Skipping path index update for external path declaration {} (target not found as expected).",
                             decl_mod_id.to_string().log_id()
                         );
@@ -2104,7 +2106,9 @@ impl ModuleTree {
                         log::error!(target: LOG_TARGET_MOD_TREE_BUILD,
                             "Aborting path index update: Inconsistent state. CustomPath target not found for internal declaration {}, but it wasn't marked as external.",
                             decl_mod_id.to_string().log_id()
-                        );
+                        ); // AI: Make this error consistent with our logging style of using
+                           // methods. If possible use a method that already exists and would suite
+                           // the situation. AI!
                         return Err(e);
                     }
                 }
