@@ -532,13 +532,12 @@ impl ModuleTree {
                     .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
             );
         } else {
-            // AI: Add an error here, this is an invalid state. AI!
-            // This case should ideally not happen if initialized correctly and only taken once.
-            // Log an error or panic if pending_exports is None when it shouldn't be.
-            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Attempted to add exports, but pending_exports was None in module {}", module.id());
-            // Optionally re-initialize: self.pending_exports = Some(vec![new_export]);
-            // Or return an error if this state is invalid.
-            // For now, just log and skip adding.
+            // This state is invalid. pending_exports should only be None after process_export_rels
+            // has been called and taken ownership. If we are adding a module, it means
+            // process_export_rels hasn't run yet (or ran unexpectedly early).
+            return Err(ModuleTreeError::InvalidStatePendingExportsMissing {
+                module_id: module.id(),
+            });
         }
 
         // Original code for reference:
