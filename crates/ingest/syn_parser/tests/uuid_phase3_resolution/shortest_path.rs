@@ -64,7 +64,6 @@ use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
-// AI: Go ahead and fix the errors in this file AI!
 #[test]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
@@ -84,10 +83,14 @@ fn test_spp_public_item_in_root() {
     let spp = tree.shortest_public_path(main_pub_func_id, &graph);
 
     // Expected path: Ok(["crate"]) (path to the containing module)
-    let expected_path = Ok(vec!["crate".to_string()]); // Path to the containing module
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: main_pub_func_id,
+    });
 
     assert_eq!(
-        spp, expected_path,
+        spp, expected_result,
         "Shortest public path for root public function should be Ok([\"crate\"])"
     );
 }
@@ -113,10 +116,14 @@ fn test_spp_public_item_in_public_mod() {
     let spp = tree.shortest_public_path(top_pub_func_id, &graph);
 
     // Expected path: Ok(["crate", "top_pub_mod"])
-    let expected_path = Ok(vec!["crate".to_string(), "top_pub_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: top_pub_func_id,
+    });
 
     assert_eq!(
-        spp, expected_path,
+        spp, expected_result,
         "Shortest public path for public function in public module should be Ok([\"crate\", \"top_pub_mod\"])"
     );
 }
@@ -143,14 +150,18 @@ fn test_spp_public_item_in_nested_public_mod() {
     let spp = tree.shortest_public_path(nested_pub_func_id, &graph);
 
     // Expected path: Ok(["crate", "top_pub_mod", "nested_pub"])
-    let expected_path = Ok(vec![
-        "crate".to_string(),
-        "top_pub_mod".to_string(),
-        "nested_pub".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "top_pub_mod".to_string(),
+            "nested_pub".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: nested_pub_func_id,
+    });
 
     assert_eq!(
-        spp, expected_path,
+        spp, expected_result,
         "Shortest public path for public function in nested public module should be Ok([\"crate\", \"top_pub_mod\", \"nested_pub\"])"
     );
 }
@@ -250,13 +261,17 @@ fn test_spp_reexported_item_finds_original_path() {
     // Expected path: Ok(["crate", "top_pub_mod"])
     // The current implementation finds the path to the module containing the
     // item's definition, it does not yet account for shorter paths via re-exports.
-    let expected_path = Ok(vec!["crate".to_string(), "top_pub_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: original_func_id,
+    });
 
     // NOTE: This assertion checks the *current* behavior.
     // Once shortest_public_path handles re-exports correctly, this test *should fail*,
-    // and the expected_path should become Ok(vec!["crate".to_string()]).
+    // and the expected_result should become Ok(ResolvedItemInfo { path: vec!["crate".to_string()], ... }).
     assert_eq!(
-        spp, expected_path,
+        spp, expected_result,
         "EXPECTED BEHAVIOR (PRE-REEXPORT): SPP for re-exported item resolves to original module path. This test WILL FAIL once re-exports are handled."
     );
 
@@ -309,13 +324,17 @@ macro_rules! assert_spp {
 
             let spp_result = tree.shortest_public_path(item_id, &graph);
 
-            // Construct the expected Ok variant
-            let expected_ok: Result<Vec<String>, ModuleTreeError> = Ok($final_path);
+            // Construct the expected Ok variant using ResolvedItemInfo
+            let expected_ok = Ok(ResolvedItemInfo {
+                path: $final_path,
+                target_kind: ResolvedTargetKind::InternalDefinition, // Assume internal for these tests
+                target_id: item_id,
+            });
 
             // Assert FINAL expected behavior
             assert_eq!(
                 spp_result,
-                expected_ok, // Compare against the expected Ok result
+                expected_ok, // Compare against the expected ResolvedItemInfo result
                 "SPP for '{}' did not match expected Ok path.", // Updated message
                 $item_name
             );
