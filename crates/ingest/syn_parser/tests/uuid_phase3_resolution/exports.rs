@@ -183,8 +183,7 @@ mod export_tests {
             PROJECT_NAMESPACE_UUID,
         )
         .id;
-        let final_import_id =
-            find_import_node_id_by_name(&graph, &["crate"], "final_renamed_item");
+        let final_import_id = find_import_node_id_by_name(&graph, &["crate"], "final_renamed_item");
         let expected_public_path =
             NodePath::try_from(vec!["crate".into(), "final_renamed_item".into()])?;
 
@@ -271,11 +270,8 @@ mod export_tests {
         )
         .id;
         // The ImportNode is inside `relative::inner` and named `reexport_super`
-        let import_id = find_import_node_id_by_name(
-            &graph,
-            &["crate", "relative", "inner"],
-            "reexport_super",
-        );
+        let import_id =
+            find_import_node_id_by_name(&graph, &["crate", "relative", "inner"], "reexport_super");
         // The public path is where the item is defined/re-exported publicly
         let expected_public_path = NodePath::try_from(vec![
             "crate".into(),
@@ -318,10 +314,14 @@ mod export_tests {
         )
         .id;
         // The ImportNode is inside `relative` and named `reexport_self`
-        let import_id = find_import_node_id_by_name(&graph, &["crate", "relative"], "reexport_self");
+        let import_id =
+            find_import_node_id_by_name(&graph, &["crate", "relative"], "reexport_self");
         // The public path is where the item is defined/re-exported publicly
-        let expected_public_path =
-            NodePath::try_from(vec!["crate".into(), "relative".into(), "reexport_self".into()])?;
+        let expected_public_path = NodePath::try_from(vec![
+            "crate".into(),
+            "relative".into(),
+            "reexport_self".into(),
+        ])?;
 
         assert_relation_exists(
             &graph,
