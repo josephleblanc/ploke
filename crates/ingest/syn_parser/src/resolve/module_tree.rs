@@ -2015,22 +2015,19 @@ impl ModuleTree {
             };
             self.log_update_path_index_found_target(decl_mod_id, def_mod_id);
 
-            // 2. Get both module nodes
-            // Use .cloned() because we need ownership for path conversion and potentially for error reporting
-            // Cloning is acceptable here as this runs only once per build and avoids complex borrowing.
-            let decl_mod = self.get_module_checked(&decl_mod_id)?.clone();
-            let def_mod = self.get_module_checked(&def_mod_id)?.clone();
+            // 2. Get paths (convert Vec<String> to NodePath)
+            // We need the nodes temporarily to get their paths, but avoid cloning them.
+            let canonical_path = {
+                let decl_mod = self.get_module_checked(&decl_mod_id)?;
+                NodePath::try_from(decl_mod.path.clone())? // Clone path Vec, not whole node
+            };
+            let original_path = {
+                let def_mod = self.get_module_checked(&def_mod_id)?;
+                NodePath::try_from(def_mod.path.clone())? // Clone path Vec, not whole node
+            };
 
-            // 3. Get the paths (convert Vec<String> to NodePath)
-            // The declaration's path IS the canonical path relative to its parent.
-            let canonical_path = NodePath::try_from(decl_mod.path)?;
-            // The definition's path is the original file-system derived path.
-            let original_path = NodePath::try_from(def_mod.path)?;
-
-            // AI: The following breaks due to borrowing rules. Instead of cloning, use a lookup
-            // of the modules by using `self` methods inside of the `log_update_path_index_paths`
-            // method using the Ids. AI!
-            self.log_update_path_index_paths(&decl_mod, &def_mod, &canonical_path, &original_path);
+            // 3. Log using IDs
+            self.log_update_path_index_paths(decl_mod_id, def_mod_id, &canonical_path, &original_path);
 
             // 4. Remove the old path index entry for the definition module
             // Use the original_path (derived from file system) as the key to remove.
@@ -2459,21 +2456,25 @@ impl ModuleTree {
 
     fn log_update_path_index_paths(
         &self,
-        decl_mod: &ModuleNode,
-        def_mod: &ModuleNode,
+        decl_mod_id: ModuleNodeId,
+        def_mod_id: ModuleNodeId,
         canonical_path: &NodePath,
         original_path: &NodePath,
     ) {
+        // Lookup names using IDs
+        let decl_mod_name = self.modules.get(&decl_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
+        let def_mod_name = self.modules.get(&def_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
+
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Decl Mod: {} ({}) -> Canonical Path: {}",
             "->".log_comment(),
-            decl_mod.name.log_name(),
-            decl_mod.id.to_string().log_id(),
+            decl_mod_name.log_name(),
+            decl_mod_id.to_string().log_id(), // Use ID directly
             canonical_path.to_string().log_path()
         );
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Def Mod:  {} ({}) -> Original Path:  {}",
              "->".log_comment(),
-            def_mod.name.log_name(),
-            def_mod.id.to_string().log_id(),
+            def_mod_name.log_name(),
+            def_mod_id.to_string().log_id(), // Use ID directly
             original_path.to_string().log_path()
         );
     }
