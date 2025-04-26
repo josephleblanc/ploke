@@ -495,9 +495,13 @@ fn test_spp_reexport_cfg_gated_inactive() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
 
     // Since feature_b is inactive, the re-export doesn't exist. SPP finds the original path.
-    let expected_path = Ok(vec!["crate".to_string(), "local_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "local_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
     assert_eq!(
-        spp_result, expected_path,
+        spp_result, expected_result,
         "SPP for item with inactive cfg re-export should resolve to original path."
     );
 }
