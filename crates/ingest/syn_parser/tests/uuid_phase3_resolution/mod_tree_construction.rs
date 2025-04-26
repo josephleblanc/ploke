@@ -149,6 +149,10 @@ fn test_module_tree_path_index_correctness() {
 /// the population of the `decl_index`.
 #[test]
 fn test_module_tree_resolves_to_definition_relation() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);
@@ -539,8 +543,7 @@ use std::io::Write; // Import Write trait for formatting
 #[test]
 fn test_module_tree_is_accessible() {
     // Initialize logger with custom format for this test
-    let _ = env_logger::builder()
-        // Parse RUST_LOG environment variable
+    let _ = env_logger::builder() // Parse RUST_LOG environment variable
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
         // Define custom format without timestamp
         .format(|buf, record| {

@@ -1402,7 +1402,9 @@ impl ModuleTree {
     ) -> Result<NodeId, ModuleTreeError> {
         if path_segments.is_empty() {
             return Err(ModuleTreeError::NodePathValidation(Box::new(
-                SynParserError::NodeValidation("Empty path segments for relative resolution".into()),
+                SynParserError::NodeValidation(
+                    "Empty path segments for relative resolution".into(),
+                ),
             )));
         }
 
@@ -1420,12 +1422,13 @@ impl ModuleTree {
         // 2. Handle `super::` prefix (potentially multiple times)
         else {
             while remaining_segments[0] == "super" {
-                current_module_id = self
-                    .get_parent_module_id(current_module_id)
-                    .ok_or_else(|| ModuleTreeError::UnresolvedReExportTarget {
-                        path: NodePath::try_from(path_segments.to_vec())?, // Original path for error
+                let node_path = NodePath::try_from(path_segments.to_vec())?;
+                current_module_id = self.get_parent_module_id(current_module_id).ok_or({
+                    ModuleTreeError::UnresolvedReExportTarget {
+                        path: node_path,      // Original path for error
                         import_node_id: None, // Indicate failure resolving 'super'
-                    })?;
+                    }
+                })?;
                 remaining_segments = &remaining_segments[1..];
                 if remaining_segments.is_empty() {
                     // Path ended with "super", refers to the parent module
@@ -1460,10 +1463,12 @@ impl ModuleTree {
                             // TODO: Refine visibility check if needed. is_accessible might be too broad here?
                             //       Maybe need a check specific to direct children?
                             //       For now, using is_accessible.
-                            if let Some(target_mod_id) = target_node.as_module().map(|m| ModuleNodeId::new(m.id())) {
+                            if let Some(target_mod_id) =
+                                target_node.as_module().map(|m| ModuleNodeId::new(m.id()))
+                            {
                                 // If the target is a module, check its accessibility
                                 if self.is_accessible(search_in_module_id, target_mod_id) {
-                                     candidates.push(target_id);
+                                    candidates.push(target_id);
                                 }
                             } else {
                                 // If the target is not a module (e.g., function, struct),
@@ -1499,7 +1504,8 @@ impl ModuleTree {
                     } else {
                         // More segments remain, ensure the found item is a module
                         if graph.find_node_unique(found_id)?.as_module().is_none() {
-                            return Err(ModuleTreeError::UnresolvedReExportTarget { // Or a more specific error like "PathNotAModule"
+                            return Err(ModuleTreeError::UnresolvedReExportTarget {
+                                // Or a more specific error like "PathNotAModule"
                                 path: NodePath::try_from(path_segments.to_vec())?,
                                 import_node_id: None,
                             });
