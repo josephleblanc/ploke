@@ -269,6 +269,10 @@ pub enum ModuleTreeError {
         import_node_id: Option<NodeId>,
         path: NodePath, // The original path that failed to resolve
     },
+
+    // --- NEW VARIANT ---
+    #[error("Invalid internal state: pending_exports was None when adding module {module_id}")]
+    InvalidStatePendingExportsMissing { module_id: NodeId },
 }
 
 impl ModuleTreeError {
