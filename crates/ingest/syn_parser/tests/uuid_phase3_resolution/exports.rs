@@ -737,17 +737,20 @@ mod export_tests {
     #[cfg(feature = "reexport")]
     #[ignore = "CFG attribute handling not implemented in process_export_rels"]
     fn test_spp_cfg_limitation() -> Result<(), SynParserError> {
-        let (graph, tree) = build_tree_and_process_exports("fixture_spp_edge_cases")?; // Use the CFG version
-
+        let fixture_name = "fixture_spp_edge_cases"; // Use the CFG version
+        let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `glob_item_cfg_a` (re-exported via glob from `glob_target`)
         // We expect this re-export *not* to be processed because of the CFG.
         let target_item_id = find_function_node_paranoid(
-            &graph,                    // Pass the merged graph
-            &["crate", "glob_target"], // Original location
+            &pre_merge_graphs, // Use pre-merged graphs
+            fixture_name,
+            "src/glob_target/mod.rs", // Defined in file
+            &["crate".into(), "glob_target".into()],
             "glob_item_cfg_a",
-            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
+
+        let (merged_parsed_graph, tree) = build_tree_and_process_exports(fixture_name)?;
 
         // The public path *would be* ["crate", "glob_item_cfg_a"] if processed
         let expected_public_path =
