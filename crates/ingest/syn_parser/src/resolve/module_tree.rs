@@ -414,9 +414,8 @@ impl ModuleTree {
         })
     }
 
+    /// Adds a relation to the tree without checking if the source/target nodes exist.
     pub fn add_relation(&mut self, tr: TreeRelation) {
-        // AI: Create a new method that will check if node exists first,
-        // call it add_relation_checked AI!
         // TODO: Optionally check if source/target nodes exist in self.nodes first?
         let new_index = self.tree_relations.len();
         let source_id = tr.relation().source;
@@ -434,6 +433,48 @@ impl ModuleTree {
             .or_default()
             .push(new_index);
     }
+
+    /// Adds a relation to the tree, first checking if the source and target nodes
+    /// (if they are `GraphId::Node`) exist in the `modules` map.
+    /// Returns `ModuleTreeError::ModuleNotFound` if a check fails.
+    pub fn add_relation_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
+        let relation = tr.relation();
+        let source_id = relation.source;
+        let target_id = relation.target;
+
+        // Check source node if it's a NodeId
+        if let GraphId::Node(node_id) = source_id {
+            let mod_id = ModuleNodeId::new(node_id);
+            if !self.modules.contains_key(&mod_id) {
+                return Err(ModuleTreeError::ModuleNotFound(mod_id));
+            }
+        }
+
+        // Check target node if it's a NodeId
+        if let GraphId::Node(node_id) = target_id {
+            let mod_id = ModuleNodeId::new(node_id);
+            if !self.modules.contains_key(&mod_id) {
+                return Err(ModuleTreeError::ModuleNotFound(mod_id));
+            }
+        }
+
+        // Checks passed, add the relation using the unchecked method's logic
+        let new_index = self.tree_relations.len();
+        self.tree_relations.push(tr);
+
+        // Update indices
+        self.relations_by_source
+            .entry(source_id)
+            .or_default()
+            .push(new_index);
+        self.relations_by_target
+            .entry(target_id)
+            .or_default()
+            .push(new_index);
+
+        Ok(())
+    }
+
 
     fn add_reexport_checked(
         &mut self,
