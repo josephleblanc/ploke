@@ -19,8 +19,37 @@ pub struct Relation {
     pub kind: RelationKind,
 }
 
-// AI: Add helpful convenience implemnetations here. They should facilitate comparing relations,
-// including source/target nodes. AI!
+impl Relation {
+    /// Checks if the relation's source matches the given `GraphId`.
+    pub fn matches_source(&self, source_id: GraphId) -> bool {
+        self.source == source_id
+    }
+
+    /// Checks if the relation's target matches the given `GraphId`.
+    pub fn matches_target(&self, target_id: GraphId) -> bool {
+        self.target == target_id
+    }
+
+    /// Checks if the relation's source and kind match the given values.
+    pub fn matches_source_and_kind(&self, source_id: GraphId, kind: RelationKind) -> bool {
+        self.source == source_id && self.kind == kind
+    }
+
+    /// Checks if the relation's target and kind match the given values.
+    pub fn matches_target_and_kind(&self, target_id: GraphId, kind: RelationKind) -> bool {
+        self.target == target_id && self.kind == kind
+    }
+
+    /// Checks if the relation's source, target, and kind match the given values.
+    pub fn matches_source_target_kind(
+        &self,
+        source_id: GraphId,
+        target_id: GraphId,
+        kind: RelationKind,
+    ) -> bool {
+        self.source == source_id && self.target == target_id && self.kind == kind
+    }
+}
 
 // Different kinds of relations
 // TODO: These relations really need to be refactored. We are not taking advantage of type safety
