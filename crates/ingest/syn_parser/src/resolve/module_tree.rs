@@ -68,6 +68,8 @@ pub struct ModuleTree {
     /// Contains all `NodeId` items except module declarations due to
     /// path collision with defining module.
     path_index: HashMap<NodePath, NodeId>,
+    // AI: Add doc comments.
+    external_path_attrs: HashMap<ModuleNodeId, PathBuf>,
     /// Separate HashMap for module declarations.
     /// Reverse lookup, but can't be in the same HashMap as the modules that define them, since
     /// they both have the same `path`. This should be the only case in which two items have the
@@ -76,12 +78,13 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
-    /// Stores resolved absolute paths for modules declared with `#[path]`.
-    /// Wrapped in Option to allow taking ownership. Initialized with Some(HashMap::new()).
-    found_path_attrs: Option<HashMap<ModuleNodeId, PathBuf>>,
+    // AI: Add doc-comments
+    found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
+    // AI: Add doc-comments
     // Option for `take`
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 
+    // AI: Add doc-comments
     relations_by_source: HashMap<GraphId, Vec<usize>>,
     relations_by_target: HashMap<GraphId, Vec<usize>>,
 }
@@ -353,8 +356,9 @@ impl ModuleTree {
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
-            found_path_attrs: Some(HashMap::new()), // Initialize with Some(HashMap)
+            found_path_attrs: HashMap::new(),
             pending_path_attrs: Some(Vec::new()),
+            // AI: update with new field AI!
             relations_by_source: HashMap::new(),
             relations_by_target: HashMap::new(),
         })
@@ -494,70 +498,69 @@ impl ModuleTree {
 
         Ok(())
     }
-/// Extends the module tree with multiple relations efficiently.
-///
-/// This method takes an iterator yielding `Relation` items and adds them to the
-/// tree's internal storage. It updates the `tree_relations` vector and both
-/// index HashMaps (`relations_by_source` and `relations_by_target`).
-///
-/// This is generally more efficient than calling `add_relation` repeatedly in a loop,
-/// especially for large numbers of relations, as it reserves capacity for the
-/// `tree_relations` vector upfront if the iterator provides a size hint.
-///
-/// Note: This method performs *unchecked* insertion, meaning it does not verify
-/// if the source or target nodes of the relations exist within the `modules` map.
-/// Use `add_relation_checked` if such checks are required for individual relations.
-///
-/// # Arguments
-/// * `relations_iter`: An iterator that yields `Relation` items to be added.
-pub(crate) fn extend_relations<I>(&mut self, relations_iter: I)
-where
-    I: IntoIterator<Item = Relation>,
-{
-    let relations_iter = relations_iter.into_iter(); // Ensure we have an iterator
+    /// Extends the module tree with multiple relations efficiently.
+    ///
+    /// This method takes an iterator yielding `Relation` items and adds them to the
+    /// tree's internal storage. It updates the `tree_relations` vector and both
+    /// index HashMaps (`relations_by_source` and `relations_by_target`).
+    ///
+    /// This is generally more efficient than calling `add_relation` repeatedly in a loop,
+    /// especially for large numbers of relations, as it reserves capacity for the
+    /// `tree_relations` vector upfront if the iterator provides a size hint.
+    ///
+    /// Note: This method performs *unchecked* insertion, meaning it does not verify
+    /// if the source or target nodes of the relations exist within the `modules` map.
+    /// Use `add_relation_checked` if such checks are required for individual relations.
+    ///
+    /// # Arguments
+    /// * `relations_iter`: An iterator that yields `Relation` items to be added.
+    pub(crate) fn extend_relations<I>(&mut self, relations_iter: I)
+    where
+        I: IntoIterator<Item = Relation>,
+    {
+        let relations_iter = relations_iter.into_iter(); // Ensure we have an iterator
 
-    // Get the starting index for the new relations
-    let mut current_index = self.tree_relations.len();
+        // Get the starting index for the new relations
+        let mut current_index = self.tree_relations.len();
 
-    // Reserve capacity in the main vector if the iterator provides a hint
-    let (lower_bound, upper_bound) = relations_iter.size_hint();
-    let reserve_amount = upper_bound.unwrap_or(lower_bound);
-    if reserve_amount > 0 {
-        self.tree_relations.reserve(reserve_amount);
-        // Note: Reserving capacity for HashMaps is more complex as it depends on
-        // the number of *new* keys, not just the total number of relations.
-        // We'll let the HashMaps resize as needed for simplicity here.
+        // Reserve capacity in the main vector if the iterator provides a hint
+        let (lower_bound, upper_bound) = relations_iter.size_hint();
+        let reserve_amount = upper_bound.unwrap_or(lower_bound);
+        if reserve_amount > 0 {
+            self.tree_relations.reserve(reserve_amount);
+            // Note: Reserving capacity for HashMaps is more complex as it depends on
+            // the number of *new* keys, not just the total number of relations.
+            // We'll let the HashMaps resize as needed for simplicity here.
+        }
+
+        // Iterate through the provided relations
+        for relation in relations_iter {
+            // Convert to TreeRelation (cheap wrapper)
+            let tr = TreeRelation::new(relation);
+            let source_id = tr.relation().source;
+            let target_id = tr.relation().target;
+
+            // Update the source index HashMap
+            // entry().or_default() gets the Vec<usize> for the source_id,
+            // creating it if it doesn't exist, then pushes the current_index.
+            self.relations_by_source
+                .entry(source_id)
+                .or_default()
+                .push(current_index);
+
+            // Update the target index HashMap similarly
+            self.relations_by_target
+                .entry(target_id)
+                .or_default()
+                .push(current_index);
+
+            // Add the relation to the main vector
+            self.tree_relations.push(tr);
+
+            // Increment the index for the next relation
+            current_index += 1;
+        }
     }
-
-    // Iterate through the provided relations
-    for relation in relations_iter {
-        // Convert to TreeRelation (cheap wrapper)
-        let tr = TreeRelation::new(relation);
-        let source_id = tr.relation().source;
-        let target_id = tr.relation().target;
-
-        // Update the source index HashMap
-        // entry().or_default() gets the Vec<usize> for the source_id,
-        // creating it if it doesn't exist, then pushes the current_index.
-        self.relations_by_source
-            .entry(source_id)
-            .or_default()
-            .push(current_index);
-
-        // Update the target index HashMap similarly
-        self.relations_by_target
-            .entry(target_id)
-            .or_default()
-            .push(current_index);
-
-        // Add the relation to the main vector
-        self.tree_relations.push(tr);
-
-        // Increment the index for the next relation
-        current_index += 1;
-    }
-}
-
 
     fn add_reexport_checked(
         &mut self,
@@ -619,16 +622,6 @@ where
                 module_id: module.id(),
             });
         }
-
-        // Original code for reference:
-        /*
-        self.pending_exports.extend(
-            imports
-                .iter()
-                .filter(|imp| imp.is_local_reexport())
-                .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
-        );
-        */
 
         // Use map_err for explicit conversion from SynParserError to ModuleTreeError
         let node_path = NodePath::try_from(module.defn_path().clone())
@@ -777,29 +770,22 @@ where
 
             // Remove the old PathLogCtx logging block as it's replaced by the step-by-step logs
 
-            // Get mutable access to the inner HashMap, handling the Option
-            if let Some(found_attrs_map) = self.found_path_attrs.as_mut() {
-                match found_attrs_map.entry(module_id) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        let existing_path = entry.get().clone();
-                        // *** NEW LOGGING CALL ***
+            match self.found_path_attrs.entry(module_id) {
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    let existing_path = entry.get().clone();
+                    // *** NEW LOGGING CALL ***
                     self.log_resolve_duplicate(module_id, &existing_path, &resolved);
                     return Err(ModuleTreeError::DuplicatePathAttribute {
                         module_id,
                         existing_path,
                         conflicting_path: resolved,
-                        });
-                    }
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        Self::log_resolve_insert(module_id, &resolved);
-                        entry.insert(resolved);
-                    }
-                };
-            } else {
-                // This should ideally not happen if initialized correctly
-                log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "found_path_attrs was None during resolve_pending_path_attrs for module {}", module_id);
-                return Err(ModuleTreeError::InternalState("found_path_attrs was None unexpectedly".to_string()));
-            }
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    Self::log_resolve_insert(module_id, &resolved);
+                    entry.insert(resolved);
+                }
+            };
         }
 
         // *** NEW LOGGING CALL ***
@@ -1618,8 +1604,7 @@ where
     // ... other methods ...
 
     pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
-        // Use flat_map to chain the Option and the HashMap lookup
-        self.found_path_attrs.as_ref().and_then(|map| map.get(&module_id))
+        self.found_path_attrs.get(&module_id)
     }
 
     #[allow(dead_code)]
@@ -1938,14 +1923,13 @@ where
         let base_dir = self.find_declaring_file_dir(module_id)?;
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
+
     pub(crate) fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        // Take the HashMap out of the Option, process it, then put it back (or leave None if taken)
-        if let Some(found_attrs) = self.found_path_attrs.take() {
-            // Process the taken HashMap
-            let results: Result<Vec<Relation>, ModuleTreeError> = found_attrs.iter().map(
-                |(decl_module_id, resolved_path)|
-              {
-                let ctx = PathProcessingContext {
+        let mut internal_relations = Vec::new();
+        let mut external_path_files: Vec<(ModuleNodeId, PathBuf)> = Vec::new();
+
+        for (decl_module_id, resolved_path) in self.found_path_attrs.iter() {
+            let ctx = PathProcessingContext {
                 module_id: *decl_module_id,
                 module_name: "?", // Temporary placeholder
                 attr_value: None,
@@ -1996,7 +1980,7 @@ where
 
                     )));
                     }
-                    Ok(relation)
+                    internal_relations.push(relation);
                 }
                 None => {
                     // 3. Handle case where the target file node wasn't found.
@@ -2027,18 +2011,12 @@ where
 
                     // Check if the resolved path is outside the src directory
                     if !resolved_path.starts_with(src_dir) {
-                        // External path target not found - Log a warning and return it
+                        // External path target not found - Log a warning.
+                        // This is not an error that will result in an invalid state, only a
+                        // slightly pruned one. Unavoidable without having complete access to the
+                        // user's filesystem, which we don't want for security reasons.
                         self.log_path_attr_external_not_found(*decl_module_id, resolved_path);
-                        // Return the Warning variant. The caller (build_module_tree)
-                        // might decide how to handle this (e.g., log and continue).
-                        // For now, the try_fold will stop on the first Err.
-                        return Err(ModuleTreeError::Warning(format!(
-                            "Target of #[path] for module {} ('{}') points outside src directory ('{}'). Resolved path: {}",
-                            decl_module_node.name,
-                            decl_module_id,
-                            src_dir.display(),
-                            resolved_path.display()
-                        )));
+                        external_path_files.push((*decl_module_id, resolved_path.clone()))
                     } else {
                         // Path is inside src, but module node not found - this is an error
                         self.log_module_error(
@@ -2048,45 +2026,18 @@ where
                                 resolved_path.display(),
                             ),
                         );
-                        Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
+                        return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
                             "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
                             resolved_path.display(),
                             decl_module_node.id,
                             &decl_module_node,
-                        )))
+                        )));
                     }
-                }
-                }
-
-            })
-            // Filter out warnings before collecting into Result<Vec<_>>
-            .filter(|result| !matches!(result, Err(ModuleTreeError::Warning(_))))
-            .collect(); // Collect into Result<Vec<Relation>, ModuleTreeError>
-
-            // Put the original map back if no fatal error occurred during iteration
-            // Note: If a fatal error occurred, found_path_attrs remains None
-            self.found_path_attrs = Some(found_attrs);
-
-            // Handle the collected results
-            match results {
-                Ok(relations_to_add) => {
-                    // Add all successfully created relations
-                    for relation in relations_to_add {
-                        // Use add_relation to update indices correctly
-                        self.add_relation(relation.into());
-                    }
-                    Ok(())
-                }
-                Err(fatal_error) => {
-                    // A non-warning error occurred, propagate it
-                    Err(fatal_error)
                 }
             }
-        } else {
-            // found_path_attrs was already None, nothing to process
-            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "process_path_attributes called when found_path_attrs was None.");
-            Ok(())
         }
+        self.add_relations_batch(&internal_relations);
+        Ok(())
     }
 
     /// Updates the `path_index` to use canonical paths for modules affected by `#[path]` attributes.
@@ -2106,13 +2057,10 @@ where
     /// *contained within* the modules affected by `#[path]`.
     pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
         self.log_update_path_index_entry_exit(true);
-
-        // Get the keys from the inner HashMap if it exists
-        let decl_ids_with_path_attrs: Vec<ModuleNodeId> = self
-            .found_path_attrs // Option<HashMap>
-            .as_ref() // Option<&HashMap>
-            .map(|map| map.keys().copied().collect()) // Option<Vec<ModuleNodeId>>
-            .unwrap_or_default(); // Vec<ModuleNodeId> (empty if None)
+        // Collect keys to avoid borrowing issues while modifying the map inside the loop.
+        // We iterate based on the declarations found to have path attributes.
+        let decl_ids_with_path_attrs: Vec<ModuleNodeId> =
+            self.found_path_attrs.keys().copied().collect();
 
         if decl_ids_with_path_attrs.is_empty() {
             self.log_update_path_index_status(None);
