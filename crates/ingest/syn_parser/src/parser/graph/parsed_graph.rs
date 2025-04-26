@@ -1,5 +1,5 @@
-use crate::resolve::module_tree::ModuleTreeError;
-use std::path::PathBuf;
+use crate::{discovery::DependencyMap as _, resolve::module_tree::ModuleTreeError};
+use std::{collections::HashSet, path::PathBuf};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
@@ -16,10 +16,51 @@ pub struct ParsedCodeGraph {
     // TODO: Replace filepath above with CrateContext once I'm ready to refactor other
     // examples/tests
     //  - Option for now
-    pub crate_context: Option<CrateContext>,
+    crate_context: Option<CrateContext>,
 }
 
 impl ParsedCodeGraph {
+    /// Returns a set of dependency names declared in the crate's Cargo.toml.
+    ///
+    /// Returns an empty set if the crate context (including dependency information)
+    /// is not available.
+    pub fn dependency_names(&self) -> HashSet<String> {
+        self.crate_context
+            .as_ref()
+            .map(|ctx| {
+                // Using the DependencyMap trait's names() method:
+                ctx.dependencies()
+                    .names()
+                    .cloned()
+                    .collect::<HashSet<String>>()
+                // Alternatively, if accessing the inner map directly:
+                // ctx.dependencies.0.keys().cloned().collect::<HashSet<String>>()
+            })
+            .unwrap_or_default() // Return empty HashSet if crate_context is None
+    }
+
+    /// Returns an iterator over the dependency names declared in the crate's Cargo.toml.
+    ///
+    /// Returns an empty iterator if the crate context (including dependency information)
+    /// is not available. This avoids cloning the names or collecting into a new structure.
+    ///
+    /// # Example
+    /// ```
+    /// # use syn_parser::parser::ParsedCodeGraph; // Adjust path
+    /// # use std::collections::HashMap;
+    /// # let graph: ParsedCodeGraph = /* ... initialize ... */;
+    /// for dep_name in graph.iter_dependency_names() {
+    ///     println!("Dependency: {}", dep_name);
+    /// }
+    /// ```
+    pub fn iter_dependency_names(&self) -> impl Iterator<Item = &str> + '_ {
+        self.crate_context
+            .as_ref()
+            .map(|ctx| ctx.dependencies().names().map(|s| s.as_str())) // Map &String -> &str
+            .into_iter() // Convert Option<impl Iterator> -> impl Iterator<Item = impl Iterator>
+            .flatten() // Flatten the outer iterator
+    }
+
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, Box<SynParserError>> {
         let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
         for graph in graphs {
@@ -144,6 +185,10 @@ impl ParsedCodeGraph {
                 }
             }
         }
+    }
+
+    pub fn crate_context(&self) -> Option<&CrateContext> {
+        self.crate_context.as_ref()
     }
 }
 

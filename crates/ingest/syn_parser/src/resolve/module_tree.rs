@@ -475,7 +475,6 @@ impl ModuleTree {
         Ok(())
     }
 
-
     fn add_reexport_checked(
         &mut self,
         public_reexport_path: NodePath,
@@ -1219,18 +1218,8 @@ impl ModuleTree {
         &mut self,
         graph: &ParsedCodeGraph, // Keep graph for potential future use in logging or resolution
     ) -> Result<(), ModuleTreeError> {
-        let mut new_relations: Vec<TreeRelation> = Vec::new();
         let pending = self.pending_exports.clone();
 
-        //  How could we use an iterator here to simplify the if/else/match chain
-        //
-        // pending.iter()
-        //     .map(|ex|
-        //     self.resolve_single_export(ex, graph).inspect_err(|e| {
-        //             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Failed to resolve pending export {:?}: {}", ex, e);
-        //     }))
-        //     .filter(|result| result.as_ref().is_ok_and(|(rel, ex_path)| rel.source.into_node().is_some()))
-        //     .try_fold(Vec::new(), |acc, result| acc.push(result));
         for export in pending {
             // Call the helper function to resolve this single export
             match self.resolve_single_export(&export, graph) {
@@ -1252,9 +1241,8 @@ impl ModuleTree {
                     // Update the reexport_index: public_path -> target_node_id
                     self.add_reexport_checked(public_reexport_path, target_node_id)?;
 
-                    self.add_relation(relation.into());
+                    self.add_relation_checked(relation.into())?;
                     // If index update succeeded, add relation to the batch
-                    new_relations.push(relation.into());
                 }
                 Err(e) => {
                     // Decide error handling: Propagate first error or collect all?

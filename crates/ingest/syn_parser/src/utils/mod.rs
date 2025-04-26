@@ -6,5 +6,6 @@ pub(crate) mod utility_macros;
 pub(crate) use logging::LOG_TARGET_PATH_CFGS;
 
 pub(crate) use logging::{
-    AccLogCtx, LogStyle, LogStyleDebug, LOG_TARGET_BUILD, LOG_TARGET_PATH_ATTR, LOG_TARGET_VIS,
+    AccLogCtx, LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_PATH_ATTR,
+    LOG_TARGET_VIS,
 };

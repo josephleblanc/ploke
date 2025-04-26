@@ -261,7 +261,161 @@ impl DependencySpec {
 
 /// Represents the `[dependencies]` section.
 #[derive(Deserialize, Debug, Clone, Default)]
-pub struct Dependencies(HashMap<String, DependencySpec>);
+pub struct Dependencies(pub HashMap<String, DependencySpec>); // Made inner map public for direct access if needed
+
+pub trait DependencyMap {
+    // Associated type for the inner map (optional, but can be useful)
+    // type InnerMap = HashMap<String, DependencySpec>;
+
+    fn inner_map(&self) -> &HashMap<String, DependencySpec>;
+    // `DevDependencies` and `Dependencies` AI?
+    /// Returns a reference to the dependency specification for the given crate name, if it exists.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
+    /// # let mut map = HashMap::new();
+    /// # map.insert("serde".to_string(), DependencySpec::Version("1.0".to_string()));
+    /// # let deps = Dependencies(map);
+    /// if let Some(spec) = deps.get("serde") {
+    ///     // ... use spec ...
+    /// }
+    /// ```
+    fn get(&self, crate_name: &str) -> Option<&DependencySpec> {
+        self.inner_map().get(crate_name)
+    }
+
+    /// Returns `true` if the dependencies map contains the specified crate name.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
+    /// # let deps = Dependencies(HashMap::new());
+    /// if deps.contains_crate("serde") {
+    ///     // ...
+    /// }
+    /// ```
+    fn contains_crate(&self, crate_name: &str) -> bool {
+        self.inner_map().contains_key(crate_name)
+    }
+
+    /// Returns an iterator over the dependency names (crate names).
+    /// This is equivalent to iterating over the keys of the underlying map.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
+    /// # let deps = Dependencies(HashMap::new());
+    /// for crate_name in deps.names() {
+    ///     println!("Dependency: {}", crate_name);
+    /// }
+    /// ```
+    fn names(&self) -> impl Iterator<Item = &String> {
+        self.inner_map().keys()
+    }
+
+    /// Returns an iterator over the dependency specifications.
+    /// This is equivalent to iterating over the values of the underlying map.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
+    /// # let deps = Dependencies(HashMap::new());
+    /// for spec in deps.specs() {
+    ///     // ... inspect spec ...
+    /// }
+    /// ```
+    fn specs(&self) -> impl Iterator<Item = &DependencySpec> {
+        self.inner_map().values()
+    }
+
+    /// Returns an iterator over the (crate name, dependency specification) pairs.
+    /// This is equivalent to iterating over the items of the underlying map.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::collections::HashMap;
+    /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
+    /// # let deps = Dependencies(HashMap::new());
+    /// for (name, spec) in deps.iter() {
+    ///     println!("Dep: {}, Spec: {:?}", name, spec);
+    /// }
+    /// ```
+    fn iter(&self) -> impl Iterator<Item = (&String, &DependencySpec)> {
+        self.inner_map().iter()
+    }
+
+    /// Returns the number of dependencies listed.
+    fn len(&self) -> usize {
+        self.inner_map().len()
+    }
+
+    /// Returns `true` if there are no dependencies listed.
+    fn is_empty(&self) -> bool {
+        self.inner_map().is_empty()
+    }
+
+    // --- Potential Future Additions (Consider if needed) ---
+
+    // /// Returns an iterator over dependencies specified by a local path.
+    fn path_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
+        self.inner_map()
+            .iter()
+            .filter_map(|(name, spec)| spec.path().map(|p| (name, p)))
+    }
+
+    // /// Returns an iterator over dependencies specified by a git repository.
+    fn git_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
+        self.inner_map()
+            .iter()
+            .filter_map(|(name, spec)| spec.git().map(|g| (name, g)))
+    }
+}
+
+// --- Optional Trait Implementations ---
+
+// Allow iterating directly over the Dependencies struct
+impl<'a> IntoIterator for &'a Dependencies {
+    type Item = (&'a String, &'a DependencySpec);
+    type IntoIter = std::collections::hash_map::Iter<'a, String, DependencySpec>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+// Allow getting the inner map if direct HashMap methods are needed
+impl AsRef<HashMap<String, DependencySpec>> for Dependencies {
+    fn as_ref(&self) -> &HashMap<String, DependencySpec> {
+        &self.0
+    }
+}
+// Allow getting the inner map if direct HashMap methods are needed
+impl AsRef<HashMap<String, DependencySpec>> for DevDependencies {
+    fn as_ref(&self) -> &HashMap<String, DependencySpec> {
+        &self.0
+    }
+}
+
+// 2. Implement the Trait for Dependencies
+impl DependencyMap for Dependencies {
+    fn inner_map(&self) -> &HashMap<String, DependencySpec> {
+        &self.0 // Access the inner HashMap
+    }
+    // Default implementations from the trait are automatically inherited
+}
+
+// 3. Implement the Trait for DevDependencies
+impl DependencyMap for DevDependencies {
+    fn inner_map(&self) -> &HashMap<String, DependencySpec> {
+        &self.0 // Access the inner HashMap
+    }
+    // Default implementations from the trait are automatically inherited
+}
 
 /// Represents the `[dev-dependencies]` section.
 #[derive(Deserialize, Debug, Clone, Default)]
@@ -282,6 +436,24 @@ struct CargoManifest {
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
 
+impl CargoManifest {
+    fn package(&self) -> &PackageInfo {
+        &self.package
+    }
+
+    pub fn features(&self, feature_name: &str) -> Option<&Vec<String>> {
+        self.features.get(feature_name)
+    }
+
+    fn dependencies(&self) -> &Dependencies {
+        &self.dependencies
+    }
+
+    fn dev_dependencies(&self) -> &DevDependencies {
+        &self.dev_dependencies
+    }
+}
+
 /// Context information gathered for a single crate during discovery.
 ///
 /// This struct automatically implements `Send + Sync` because all its members
@@ -300,14 +472,31 @@ pub struct CrateContext {
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
     /// Parsed features from Cargo.toml.
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
+    #[allow(unused_variables, reason = "Useful later for resolving features")]
     features: Features,
     /// Parsed dependencies from Cargo.toml.
     #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     dependencies: Dependencies,
     /// Parsed dev-dependencies from Cargo.toml.
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
+    #[allow(
+        unused_variables,
+        reason = "Useful later for resolving dev dependencies"
+    )]
     dev_dependencies: DevDependencies,
+}
+
+impl CrateContext {
+    pub fn features(&self) -> &Features {
+        &self.features
+    }
+
+    pub fn dependencies(&self) -> &Dependencies {
+        &self.dependencies
+    }
+
+    pub fn dev_dependencies(&self) -> &DevDependencies {
+        &self.dev_dependencies
+    }
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
