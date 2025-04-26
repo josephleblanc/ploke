@@ -21,7 +21,9 @@ mod export_tests {
     use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
         paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{assert_relation_exists, run_phases_and_collect}, // Added assert_relation_exists
+        uuid_ids_utils::{
+            assert_relation_exists, find_inline_module_by_path, run_phases_and_collect,
+        }, // Use find_inline_module_by_path
     };
 
     // Helper to merge ParsedCodeGraphs and build/process the ModuleTree
@@ -59,8 +61,10 @@ mod export_tests {
         module_path: &[&str],
         visible_name: &str,
     ) -> NodeId {
-        // Use find_module_node_by_path which takes &CodeGraph, so access graph.graph
-        let module_node = find_module_node_by_path(&graph.graph, module_path)
+        // Use find_inline_module_by_path which takes &CodeGraph, so access graph.graph
+        // Convert module_path: &[&str] to Vec<String> for the helper
+        let module_path_vec: Vec<String> = module_path.iter().map(|s| s.to_string()).collect();
+        let module_node = find_inline_module_by_path(&graph.graph, &module_path_vec)
             .unwrap_or_else(|| panic!("Module not found for path: {:?}", module_path));
         module_node // ModuleNode is from the CodeGraph inside ParsedCodeGraph
             .imports
