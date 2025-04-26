@@ -21,9 +21,7 @@ mod export_tests {
     use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
         paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{
-            assert_relation_exists, find_module_node_by_path, run_phases_and_collect,
-        }, // Added assert_relation_exists import
+        uuid_ids_utils::run_phases_and_collect,
     };
 
     // Helper to merge ParsedCodeGraphs and build/process the ModuleTree
@@ -50,6 +48,20 @@ mod export_tests {
         module_tree.process_export_rels(&merged_parsed_graph)?; // Pass the merged ParsedCodeGraph
 
         Ok((merged_parsed_graph, module_tree)) // Return merged graph and tree
+    }
+
+    pub fn assert_relation_exists(
+        graph: &ParsedCodeGraph,
+        source: GraphId,
+        target: GraphId,
+        kind: TreeRelation,
+        message: &str,
+    ) {
+        let found = graph
+            .relations()
+            .iter()
+            .any(|r| r.matches_source_target_kind(source, target, kind.relation()));
+        assert!(found, "{}", message);
     }
 
     // Helper to find the NodeId of an ImportNode based on its visible name and containing module path
@@ -158,7 +170,7 @@ mod export_tests {
                 GraphId::Node(target_deep_func_id),
                 RelationKind::ReExports,
                 "Relation for renamed_deep_func re-export",
-                 // Removed duplicate argument
+                // Removed duplicate argument
             );
             assert_eq!(
                 tree_for_deep.reexport_index().get(&expected_renamed_path),
@@ -201,7 +213,7 @@ mod export_tests {
             GraphId::Node(original_item_a_id),
             RelationKind::ReExports,
             "Relation for item_c -> item_a",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
 
         // Assert the reexport_index maps the public path to the original item
@@ -242,7 +254,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for final_renamed_item -> multi_rename_item",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&expected_public_path),
@@ -280,7 +292,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for item_via_a -> branch_item",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&path_a),
@@ -298,7 +310,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for item_via_b -> branch_item",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&path_b),
@@ -347,7 +359,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for reexport_super -> item_in_relative",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
         // Check reexport_index - NOTE: This path might differ depending on SPP logic vs. canonical path logic
         // For now, let's assume the index uses the path where the re-export makes it visible.
@@ -397,7 +409,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for reexport_self -> item_in_inner",
-             // Removed duplicate argument
+            // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&expected_public_path),
