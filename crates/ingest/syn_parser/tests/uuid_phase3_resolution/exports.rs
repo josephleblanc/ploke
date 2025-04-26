@@ -4,7 +4,7 @@
 #[cfg(test)]
 mod export_tests {
     use ploke_core::NodeId; // Removed unused PROJECT_NAMESPACE_UUID
-    // Removed unused HashMap import
+                            // Removed unused HashMap import
     use syn_parser::{
         error::SynParserError,
         parser::{
@@ -18,11 +18,12 @@ mod export_tests {
     // Removed unused Uuid import
 
     // Corrected imports for helper functions from common::paranoid and common::uuid_ids_utils
+    use crate::common::paranoid::find_function_node_paranoid;
+    use crate::common::uuid_ids_utils::find_module_node_by_path;
     use crate::common::{
-        paranoid::{find_function_node_paranoid, find_import_node_paranoid}, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{assert_relation_exists, find_module_node_by_path, run_phases_and_collect},
+        paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
+        uuid_ids_utils::{assert_relation_exists, run_phases_and_collect},
     };
-
 
     // Helper to build the module tree and process exports
     // NOTE: This helper builds the ModuleTree from the *first* ParsedCodeGraph before merging,
@@ -369,7 +370,7 @@ mod export_tests {
         // Target: `glob_item_cfg_a` (re-exported via glob from `glob_target`)
         // We expect this re-export *not* to be processed because of the CFG.
         let target_item_id = find_function_node_paranoid(
-            &graph, // Pass the merged graph
+            &graph,                    // Pass the merged graph
             &["crate", "glob_target"], // Original location
             "glob_item_cfg_a",
             // PROJECT_NAMESPACE_UUID, // Removed unused UUID
