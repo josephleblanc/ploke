@@ -2047,7 +2047,8 @@ impl ModuleTree {
                 }
             }
         }
-        self.add_relations_batch(&internal_relations);
+        self.external_path_attrs.extend(external_path_files);
+        self.add_relations_batch(&internal_relations)?;
         Ok(())
     }
 
@@ -2089,9 +2090,14 @@ impl ModuleTree {
                 Ok(id) => id,
                 Err(e) => {
                     self.log_update_path_index_target_error(decl_mod_id, &e);
-                    // Decide whether to continue or return error. Continuing might leave index inconsistent.
-                    // Let's return error for now to be safe.
-                    return Err(e);
+                    if self.external_path_attrs.contains_key(decl_mod_id) {
+                        // AI: log warning here. This is an a warning, but not invalid state.
+                    } else {
+                        // AI: However, if we have checked the known files pointing externally and
+                        // still don't know the source, then it is an error and we should abort.
+                        // Indicates an inconsistent graph. AI!
+                        return Err(e);
+                    }
                 }
             };
             self.log_update_path_index_found_target(decl_mod_id, def_mod_id);
