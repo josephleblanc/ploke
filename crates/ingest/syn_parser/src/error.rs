@@ -253,6 +253,9 @@ impl From<ModuleTreeError> for SynParserError {
             }
             // Handle the InternalState variant
             ModuleTreeError::InternalState(msg) => SynParserError::InternalState(msg),
+            // Handle the Warning variant - convert to InternalState for now,
+            // or create a dedicated SynParserError::Warning if needed later.
+            ModuleTreeError::Warning(msg) => SynParserError::InternalState(format!("ModuleTree Warning: {}", msg)),
         }
     }
 }

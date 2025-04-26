@@ -277,6 +277,8 @@ pub enum ModuleTreeError {
     InvalidStatePendingExportsMissing { module_id: NodeId },
     #[error("Internal state error: {0}")]
     InternalState(String),
+    #[error("Warning: {0}")] // New variant for non-fatal issues
+    Warning(String),
 }
 
 impl ModuleTreeError {
@@ -1948,12 +1950,20 @@ impl ModuleTree {
 
                     // Check if the resolved path is outside the src directory
                     if !resolved_path.starts_with(src_dir) {
-                        // External path target not found - Log a warning and continue
+                        // External path target not found - Log a warning and return it
                         self.log_path_attr_external_not_found(*decl_module_id, resolved_path);
-                            // Implement this error type AI!
-                            Err(ModuleTreeError::Warning(format!( "Target of \#[path = \"...\" outside src directory. src directory is: {}", src_dir.as_os_str()) ))
-                        // continue; // Skip to the next path attribute
+                        // Return the Warning variant. The caller (build_module_tree)
+                        // might decide how to handle this (e.g., log and continue).
+                        // For now, the try_fold will stop on the first Err.
+                        return Err(ModuleTreeError::Warning(format!(
+                            "Target of #[path] for module {} ('{}') points outside src directory ('{}'). Resolved path: {}",
+                            decl_module_node.name,
+                            decl_module_id,
+                            src_dir.display(),
+                            resolved_path.display()
+                        )));
                     } else {
+                        // Path is inside src, but module node not found - this is an error
                         self.log_module_error(
                             *decl_module_id,
                             &format!(
@@ -2024,14 +2034,6 @@ impl ModuleTree {
 
             // 2. Get paths (convert Vec<String> to NodePath)
             // We need the nodes temporarily to get their paths, but avoid cloning them.
-            // AI: No, you didn't understand. I want you to do something like this:
-            // self.log_update_path_index_paths(decl_mod_id, def_mod_id);
-            //
-            // Then, inside of  log_update_path_index_paths itself, find the modules, e.g.
-            // let canonical_path = {
-            //     let decl_mod = self.get_module_checked(&decl_mod_id)?;
-            //     NodePath::try_from(decl_mod.path.clone())? // Clone path Vec, not whole node
-            // };
             let canonical_path = {
                 let decl_mod = self.get_module_checked(&decl_mod_id)?;
                 NodePath::try_from(decl_mod.path.clone())? // Clone path Vec, not whole node
