@@ -19,6 +19,9 @@ pub struct Relation {
     pub kind: RelationKind,
 }
 
+// AI: Add helpful convenience implemnetations here. They should facilitate comparing relations,
+// including source/target nodes. AI!
+
 // Different kinds of relations
 // TODO: These relations really need to be refactored. We are not taking advantage of type safety
 // very well here, and the RelationKind can currently be between any two nodes of any type or
