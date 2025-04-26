@@ -319,6 +319,7 @@ impl NodePath {
 
     /// Creates a new `NodePath` without checking if the segments are empty.
     /// Use with caution, only when the input is guaranteed to be non-empty.
+    // AI: Make this panic when used incorrectly AI!
     pub fn new_unchecked(segments: Vec<String>) -> Self {
         Self(segments)
     }
