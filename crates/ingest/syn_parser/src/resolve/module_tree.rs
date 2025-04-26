@@ -297,6 +297,35 @@ pub enum ModuleTreeError {
     Warning(String),
 }
 
+// Add near other public structs/enums related to ModuleTree resolution
+#[derive(Debug, Clone, PartialEq, Eq)] // Eq requires NodeId and PathBuf to be Eq
+pub struct ResolvedItemInfo {
+    /// The shortest public path found within the current crate structure
+    /// leading to the item (or its re-export declaration).
+    pub path: Vec<String>,
+    /// The nature of the item found at the end of the path.
+    pub target_kind: ResolvedTargetKind,
+    /// The NodeId of the item found at the end of the path
+    /// (e.g., the definition ID for InternalDefinition, the ImportNode ID for ExternalReExport).
+    pub target_id: NodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedTargetKind {
+    /// The path leads to an item defined within the current crate.
+    InternalDefinition,
+    /// The path leads to a re-export (`pub use`) statement that points to an item
+    /// defined in an external crate (dependency).
+    ExternalReExport {
+        /// The NodeId of the `ImportNode` representing the `pub use` statement.
+        import_node_id: NodeId,
+        /// The path of the item within the external crate (e.g., ["log", "debug"]).
+        external_path: Vec<String>,
+    },
+    // Add other kinds later if needed (e.g., Ambiguous, Private)
+}
+
+
 impl ModuleTreeError {
     pub(crate) fn no_relations_found(g_node: &dyn GraphNode) -> Self {
         Self::NoRelationsFound(
@@ -896,8 +925,8 @@ impl ModuleTree {
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
-        graph: &ParsedCodeGraph, // Still need graph for node details (visibility, name)
-    ) -> Result<Vec<String>, ModuleTreeError> {
+        graph: &ParsedCodeGraph, // Need graph for node details and dependency check
+    ) -> Result<ResolvedItemInfo, ModuleTreeError> { // Changed return type
         // --- 1. Initial Setup ---
 
         use ploke_core::ItemKind;
@@ -928,7 +957,11 @@ impl ModuleTree {
                 if let Some(module_node) = item_node.as_module() {
                     if module_node.id() == *self.root.as_inner() {
                         // Special case: asking for the path to the root module itself
-                        return Ok(vec!["crate".to_string()]);
+                        return Ok(ResolvedItemInfo {
+                            path: vec!["crate".to_string()],
+                            target_kind: ResolvedTargetKind::InternalDefinition, // Root is internal
+                            target_id: item_id,
+                        });
                     }
                 }
                 // Otherwise, it's an error or uncontained item
@@ -951,13 +984,43 @@ impl ModuleTree {
                 // Reached the crate root! Construct the final path.
                 self.log_spp_found_root(current_mod_id, &path_to_item);
                 let mut final_path = vec!["crate".to_string()];
-                // The path_to_item is currently [item, mod, parent_mod, ...]
-                // We need to reverse it.
+                // The path_to_item is currently [item_name, mod_name, parent_mod_name, ...]
+                // We need to reverse it and prepend "crate".
                 final_path.extend(path_to_item.into_iter().rev());
-                // NOTE: Popping item's own identitity name for now to conform to same test
-                // structure as old version. Re-evaluate this strategy later.
-                final_path.pop();
-                return Ok(final_path);
+
+                // --- Determine Target Kind using map_or_else ---
+                let final_node = graph.find_node_unique(item_id)?; // Use original item_id
+
+                let target_kind = final_node.as_import().map_or_else(
+                    // If it's NOT an import node
+                    || ResolvedTargetKind::InternalDefinition,
+                    // If it IS an import node
+                    |import_node| {
+                        import_node.source_path().first().map_or_else(
+                            // If import node has empty source path (unlikely)
+                            || ResolvedTargetKind::InternalDefinition,
+                            // If import node has source path, check first segment
+                            |first_segment| {
+                                if graph.iter_dependency_names().any(|dep| dep == first_segment) || import_node.is_extern_crate() {
+                                    ResolvedTargetKind::ExternalReExport {
+                                        import_node_id: import_node.id(),
+                                        external_path: import_node.source_path().to_vec(),
+                                    }
+                                } else {
+                                    // Re-export of an internal item
+                                    ResolvedTargetKind::InternalDefinition
+                                }
+                            }
+                        )
+                    }
+                );
+                // --- End Determine Target Kind ---
+
+                return Ok(ResolvedItemInfo {
+                    path: final_path,
+                    target_kind,
+                    target_id: item_id, // The ID of the item we were searching for
+                });
             }
 
             // --- 4. Explore Upwards (Containing Module) ---
