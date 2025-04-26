@@ -32,10 +32,12 @@ use crate::{
 
 #[cfg(test)]
 pub mod test_interface {
+    use std::collections::HashMap;
+
     use ploke_core::NodeId;
 
-    use super::{ModuleTree, ModuleTreeError};
-    use crate::parser::ParsedCodeGraph;
+    use super::{ModuleTree, ModuleTreeError, TreeRelation};
+    use crate::parser::{nodes::NodePath, ParsedCodeGraph};
 
     impl ModuleTree {
         pub fn test_shortest_public_path(
@@ -139,7 +141,7 @@ impl PendingExport {
     pub(crate) fn from_export(export: ImportNode, containing_module_id: NodeId) -> Self {
         // Make crate-visible if needed internally
         PendingExport {
-            containing_mod_id: ModuleNodeId::new(export.id),
+            containing_mod_id: ModuleNodeId::new(containing_module_id),
             export_node: export,
         }
     }
@@ -397,6 +399,10 @@ impl ModuleTree {
                 })
                 .collect()
         })
+    }
+
+    pub fn reexport_index(&self) -> &HashMap<NodePath, NodeId> {
+        &self.reexport_index
     }
 
     /// Finds relations pointing to `target_id` that satisfy the `relation_filter` closure.
@@ -1162,10 +1168,7 @@ impl ModuleTree {
     // or
 
     #[cfg(not(feature = "reexport"))]
-    pub(crate) fn process_export_rels(
-        &mut self,
-        graph: &ParsedCodeGraph,
-    ) -> Result<(), ModuleTreeError> {
+    pub fn process_export_rels(&mut self, graph: &ParsedCodeGraph) -> Result<(), ModuleTreeError> {
         // Take ownership of the pending exports Vec, leaving None in its place.
         let pending = match self.pending_exports.take() {
             Some(p) => p,
@@ -1251,7 +1254,7 @@ impl ModuleTree {
     /// Returns an error if a re-export target cannot be resolved or if conflicting
     /// re-exports are found at the same public path.
     #[cfg(feature = "reexport")]
-    pub(crate) fn process_export_rels(
+    pub fn process_export_rels(
         &mut self,
         graph: &ParsedCodeGraph, // Keep graph for potential future use in logging or resolution
     ) -> Result<(), ModuleTreeError> {
@@ -1292,7 +1295,7 @@ impl ModuleTree {
                 Err(e) => {
                     // Decide error handling: Propagate first error or collect all?
                     // Propagating first error for now.
-                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Failed to resolve pending export {:?}: {}", export, e);
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Failed to resolve pending export {:#?}: {}", export, e);
                     return Err(e);
                 }
             } // End match resolve_single_export
@@ -1317,7 +1320,12 @@ impl ModuleTree {
     ) -> Result<(Relation, NodePath), ModuleTreeError> {
         let source_mod_id = export.containing_mod_id();
         let export_node = export.export_node();
-        let target_path_segments = &export_node.source_path;
+        let target_path = if let Some(renamed_path) = export_node.as_renamed_path() {
+            renamed_path
+        } else {
+            export_node.source_path().to_vec()
+        };
+        let target_path_segments = target_path;
 
         if target_path_segments.is_empty() {
             return Err(ModuleTreeError::NodePathValidation(Box::new(
@@ -1343,11 +1351,11 @@ impl ModuleTree {
             return Err(ModuleTreeError::UnresolvedReExportTarget {
                 // Or a new specific error variant
                 import_node_id: Some(export_node.id),
-                path: NodePath::try_from(target_path_segments.clone())?, // Convert Vec<String> to NodePath for error
+                path: NodePath::try_from(target_path_segments.to_vec())?, // Convert Vec<String> to NodePath for error
             });
         } else if first_segment == "crate" {
             // Case 2: Absolute path from crate root
-            let target_path = NodePath::try_from(target_path_segments.clone())?;
+            let target_path = NodePath::try_from(target_path_segments.to_vec())?;
             target_node_id = self
                 .path_index
                 .get(&target_path)
@@ -1363,7 +1371,7 @@ impl ModuleTree {
             // Placeholder for the complex part:
             target_node_id = self.resolve_path_relative_to(
                 source_mod_id,
-                target_path_segments,
+                &target_path_segments,
                 graph, // Pass graph access
             )?;
         }
@@ -1392,6 +1400,7 @@ impl ModuleTree {
         path_segments: &[String],
         graph: &ParsedCodeGraph, // Need graph access
     ) -> Result<NodeId, ModuleTreeError> {
+        // Implement this function
         // TODO: Implement detailed resolution logic:
         // 1. Handle `self::` prefix if present (adjust base_module_id, remove prefix).
         // 2. Handle `super::` prefix if present (find parent, adjust base_module_id, remove prefix). Error if no parent.

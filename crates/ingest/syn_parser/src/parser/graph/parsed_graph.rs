@@ -20,6 +20,15 @@ pub struct ParsedCodeGraph {
 }
 
 impl ParsedCodeGraph {
+    pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
+        Self {
+            file_path,
+            crate_namespace,
+            graph,
+            crate_context: None,
+        }
+    }
+
     /// Returns a set of dependency names declared in the crate's Cargo.toml.
     ///
     /// Returns an empty set if the crate context (including dependency information)

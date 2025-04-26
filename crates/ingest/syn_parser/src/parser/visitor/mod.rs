@@ -201,12 +201,11 @@ pub fn analyze_file_phase2(
         }
     }
 
-    Ok(ParsedCodeGraph {
-        graph: state.code_graph,
+    Ok(ParsedCodeGraph::new(
         file_path,
         crate_namespace,
-        crate_context: None,
-    })
+        state.code_graph,
+    ))
 }
 
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator

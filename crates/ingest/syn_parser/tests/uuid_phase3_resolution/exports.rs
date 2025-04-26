@@ -5,6 +5,7 @@
 mod export_tests {
     use ploke_core::NodeId; // Removed unused PROJECT_NAMESPACE_UUID
                             // Removed unused HashMap import
+    use syn_parser::resolve::module_tree::ModuleTree;
     use syn_parser::{
         error::SynParserError,
         parser::{
@@ -13,18 +14,29 @@ mod export_tests {
             relations::{Relation, RelationKind},
             CodeGraph, // Keep CodeGraph
         },
-        resolve::module_tree::{ModuleTree, TreeRelation},
+        resolve::module_tree::TreeRelation,
     };
     // Removed unused Uuid import
 
     // Corrected imports for helper functions from common::paranoid and common::uuid_ids_utils
     use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
-        paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{
-            assert_relation_exists, find_inline_module_by_path, run_phases_and_collect,
-        }, // Use find_inline_module_by_path
+        uuid_ids_utils::{find_inline_module_by_path, run_phases_and_collect}, // Use find_inline_module_by_path
     };
+
+    pub fn assert_tree_relation_exists(
+        graph: &ModuleTree,
+        source: GraphId,
+        target: GraphId,
+        kind: RelationKind,
+        message: &str,
+    ) {
+        let found = graph.tree_relations().iter().any(|r| {
+            r.relation()
+                .matches_source_target_kind(source, target, kind)
+        });
+        assert!(found, "{}", message);
+    }
 
     // Helper to merge ParsedCodeGraphs and build/process the ModuleTree
     fn build_tree_and_process_exports(
@@ -52,7 +64,7 @@ mod export_tests {
         Ok((merged_parsed_graph, module_tree)) // Return merged graph and tree
     }
 
-    // Removed local definition of assert_relation_exists - using imported version
+    // Removed local definition of assert_tree_relation_exists - using imported version
 
     // Helper to find the NodeId of an ImportNode based on its visible name and containing module path
     // Takes ParsedCodeGraph now
@@ -82,6 +94,10 @@ mod export_tests {
     #[test]
     #[cfg(feature = "reexport")] // Only run when the feature is enabled
     fn test_path_resolution_exports() -> Result<(), SynParserError> {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
         let fixture_name = "fixture_path_resolution";
         // Get IDs before building the tree/merging for paranoid helpers
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
@@ -110,8 +126,8 @@ mod export_tests {
             find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "local_func");
         let expected_public_path = NodePath::try_from(vec!["crate".into(), "local_func".into()])?;
 
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(import_node_id),
             GraphId::Node(target_func_id),
             RelationKind::ReExports,
@@ -156,8 +172,8 @@ mod export_tests {
             let expected_renamed_path =
                 NodePath::try_from(vec!["crate".into(), "renamed_deep_func".into()])?;
 
-            assert_relation_exists(
-                &tree_for_deep.tree_relations(), // Pass tree relations directly
+            assert_tree_relation_exists(
+                &tree_for_deep, // Pass tree relations directly
                 GraphId::Node(import_renamed_id),
                 GraphId::Node(target_deep_func_id),
                 RelationKind::ReExports,
@@ -199,8 +215,8 @@ mod export_tests {
         let expected_public_path = NodePath::try_from(vec!["crate".into(), "item_c".into()])?;
 
         // Assert the ReExports relation links the final import to the original item
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(final_import_id),
             GraphId::Node(original_item_a_id),
             RelationKind::ReExports,
@@ -240,8 +256,8 @@ mod export_tests {
         let expected_public_path =
             NodePath::try_from(vec!["crate".into(), "final_renamed_item".into()])?;
 
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(final_import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -278,8 +294,8 @@ mod export_tests {
         let import_a_id =
             find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "item_via_a");
         let path_a = NodePath::try_from(vec!["crate".into(), "item_via_a".into()])?;
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(import_a_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -296,8 +312,8 @@ mod export_tests {
         let import_b_id =
             find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "item_via_b");
         let path_b = NodePath::try_from(vec!["crate".into(), "item_via_b".into()])?;
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(import_b_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -345,8 +361,8 @@ mod export_tests {
             "reexport_super".into(), // Assuming it's public via the module path
         ])?;
 
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -395,8 +411,8 @@ mod export_tests {
             "reexport_self".into(),
         ])?;
 
-        assert_relation_exists(
-            &tree.tree_relations(), // Pass tree relations directly
+        assert_tree_relation_exists(
+            &tree, // Pass tree relations directly
             GraphId::Node(import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
