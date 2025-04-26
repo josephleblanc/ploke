@@ -338,10 +338,7 @@ fn test_spp_glob_reexport_public_submodule() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
-            "crate".to_string(),
-            "pub_sub_with_restricted".to_string(),
-        ],
+        path: vec!["crate".to_string(), "pub_sub_with_restricted".to_string()],
         target_kind: ResolvedTargetKind::InternalDefinition,
         target_id: item_id,
     });
