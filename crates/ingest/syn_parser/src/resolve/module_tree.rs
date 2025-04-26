@@ -532,6 +532,7 @@ impl ModuleTree {
                     .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
             );
         } else {
+            // AI: Add an error here, this is an invalid state. AI!
             // This case should ideally not happen if initialized correctly and only taken once.
             // Log an error or panic if pending_exports is None when it shouldn't be.
             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Attempted to add exports, but pending_exports was None in module {}", module.id());
