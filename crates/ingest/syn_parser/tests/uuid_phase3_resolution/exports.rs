@@ -106,7 +106,7 @@ mod export_tests {
         let expected_public_path = NodePath::try_from(vec!["crate".into(), "local_func".into()])?;
 
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(import_node_id),
             GraphId::Node(target_func_id),
             RelationKind::ReExports,
@@ -152,7 +152,7 @@ mod export_tests {
                 NodePath::try_from(vec!["crate".into(), "renamed_deep_func".into()])?;
 
             assert_relation_exists(
-                &merged_parsed_graph_for_deep.graph, // Pass inner CodeGraph
+                &tree_for_deep.tree_relations(), // Pass tree relations directly
                 GraphId::Node(import_renamed_id),
                 GraphId::Node(target_deep_func_id),
                 RelationKind::ReExports,
@@ -195,7 +195,7 @@ mod export_tests {
 
         // Assert the ReExports relation links the final import to the original item
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(final_import_id),
             GraphId::Node(original_item_a_id),
             RelationKind::ReExports,
@@ -236,7 +236,7 @@ mod export_tests {
             NodePath::try_from(vec!["crate".into(), "final_renamed_item".into()])?;
 
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(final_import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -274,7 +274,7 @@ mod export_tests {
             find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "item_via_a");
         let path_a = NodePath::try_from(vec!["crate".into(), "item_via_a".into()])?;
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(import_a_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -292,7 +292,7 @@ mod export_tests {
             find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "item_via_b");
         let path_b = NodePath::try_from(vec!["crate".into(), "item_via_b".into()])?;
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(import_b_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -341,7 +341,7 @@ mod export_tests {
         ])?;
 
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
@@ -391,7 +391,7 @@ mod export_tests {
         ])?;
 
         assert_relation_exists(
-            &merged_parsed_graph.graph, // Pass inner CodeGraph
+            &tree.tree_relations(), // Pass tree relations directly
             GraphId::Node(import_id),
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
