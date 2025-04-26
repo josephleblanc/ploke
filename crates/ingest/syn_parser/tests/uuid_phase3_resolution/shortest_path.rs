@@ -64,6 +64,7 @@ use crate::common::build_tree_for_tests;
 use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
+// AI: Go ahead and fix the errors in this file AI!
 #[test]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
