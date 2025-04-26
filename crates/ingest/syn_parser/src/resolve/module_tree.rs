@@ -76,6 +76,7 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
+    // AI: Let's turn `found_path_attr` into an `Option<HashMap<ModuleNodeId, PathBuf>>` AI!
     found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
     // Option for `take`
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
@@ -351,6 +352,7 @@ impl ModuleTree {
             decl_index: HashMap::new(),
             tree_relations: vec![],
             reexport_index: HashMap::new(),
+            // AI: update type
             found_path_attrs: HashMap::new(),
             pending_path_attrs: Some(Vec::new()),
             relations_by_source: HashMap::new(),
@@ -492,6 +494,70 @@ impl ModuleTree {
 
         Ok(())
     }
+/// Extends the module tree with multiple relations efficiently.
+///
+/// This method takes an iterator yielding `Relation` items and adds them to the
+/// tree's internal storage. It updates the `tree_relations` vector and both
+/// index HashMaps (`relations_by_source` and `relations_by_target`).
+///
+/// This is generally more efficient than calling `add_relation` repeatedly in a loop,
+/// especially for large numbers of relations, as it reserves capacity for the
+/// `tree_relations` vector upfront if the iterator provides a size hint.
+///
+/// Note: This method performs *unchecked* insertion, meaning it does not verify
+/// if the source or target nodes of the relations exist within the `modules` map.
+/// Use `add_relation_checked` if such checks are required for individual relations.
+///
+/// # Arguments
+/// * `relations_iter`: An iterator that yields `Relation` items to be added.
+pub(crate) fn extend_relations<I>(&mut self, relations_iter: I)
+where
+    I: IntoIterator<Item = Relation>,
+{
+    let relations_iter = relations_iter.into_iter(); // Ensure we have an iterator
+
+    // Get the starting index for the new relations
+    let mut current_index = self.tree_relations.len();
+
+    // Reserve capacity in the main vector if the iterator provides a hint
+    let (lower_bound, upper_bound) = relations_iter.size_hint();
+    let reserve_amount = upper_bound.unwrap_or(lower_bound);
+    if reserve_amount > 0 {
+        self.tree_relations.reserve(reserve_amount);
+        // Note: Reserving capacity for HashMaps is more complex as it depends on
+        // the number of *new* keys, not just the total number of relations.
+        // We'll let the HashMaps resize as needed for simplicity here.
+    }
+
+    // Iterate through the provided relations
+    for relation in relations_iter {
+        // Convert to TreeRelation (cheap wrapper)
+        let tr = TreeRelation::new(relation);
+        let source_id = tr.relation().source;
+        let target_id = tr.relation().target;
+
+        // Update the source index HashMap
+        // entry().or_default() gets the Vec<usize> for the source_id,
+        // creating it if it doesn't exist, then pushes the current_index.
+        self.relations_by_source
+            .entry(source_id)
+            .or_default()
+            .push(current_index);
+
+        // Update the target index HashMap similarly
+        self.relations_by_target
+            .entry(target_id)
+            .or_default()
+            .push(current_index);
+
+        // Add the relation to the main vector
+        self.tree_relations.push(tr);
+
+        // Increment the index for the next relation
+        current_index += 1;
+    }
+}
+
 
     fn add_reexport_checked(
         &mut self,
@@ -711,6 +777,7 @@ impl ModuleTree {
 
             // Remove the old PathLogCtx logging block as it's replaced by the step-by-step logs
 
+            // AI: Update for Option
             match self.found_path_attrs.entry(module_id) {
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     let existing_path = entry.get().clone();
@@ -1545,6 +1612,7 @@ impl ModuleTree {
     // ... other methods ...
 
     pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
+        // AI: Update for Option
         self.found_path_attrs.get(&module_id)
     }
 
@@ -1865,8 +1933,9 @@ impl ModuleTree {
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
     pub(crate) fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        self.found_path_attrs.iter().try_fold(Vec::new(), 
-            |acc, (decl_module_id, resolved_path)|
+        // AI: I'm adding `take()` here assuming the Option
+        self.found_path_attrs.take().iter().map( 
+            |(decl_module_id, resolved_path)|
           {
             let ctx = PathProcessingContext {
                 module_id: *decl_module_id,
@@ -1981,9 +2050,9 @@ impl ModuleTree {
                 }
             }
 
-        });
-            
-                // self.add_relation_checked(relation.into())?;
+        })
+            .filter(|result| !result.as_ref().is_err_and(|e| matches!(e, ModuleTreeError::Warning(_))))
+        ;
         Ok(())
     }
 
@@ -2006,6 +2075,8 @@ impl ModuleTree {
         self.log_update_path_index_entry_exit(true);
         // Collect keys to avoid borrowing issues while modifying the map inside the loop.
         // We iterate based on the declarations found to have path attributes.
+        // AI: I'll make sure the `Option` on `found_path_attrs` is `Some` by the time this
+        // function runs. Don't worry about that part, just update this for an `Option`
         let decl_ids_with_path_attrs: Vec<ModuleNodeId> =
             self.found_path_attrs.keys().copied().collect();
 
