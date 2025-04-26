@@ -1939,11 +1939,13 @@ where
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
     pub(crate) fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        // AI: I'm adding `take()` here assuming the Option
-        self.found_path_attrs.take().iter().map( 
-            |(decl_module_id, resolved_path)|
-          {
-            let ctx = PathProcessingContext {
+        // Take the HashMap out of the Option, process it, then put it back (or leave None if taken)
+        if let Some(found_attrs) = self.found_path_attrs.take() {
+            // Process the taken HashMap
+            let results: Result<Vec<Relation>, ModuleTreeError> = found_attrs.iter().map(
+                |(decl_module_id, resolved_path)|
+              {
+                let ctx = PathProcessingContext {
                 module_id: *decl_module_id,
                 module_name: "?", // Temporary placeholder
                 attr_value: None,
