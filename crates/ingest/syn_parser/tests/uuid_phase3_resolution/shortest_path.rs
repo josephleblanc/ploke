@@ -57,7 +57,7 @@
 use ploke_core::NodeId;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess as _;
-use syn_parser::resolve::module_tree::ModuleTreeError;
+use syn_parser::resolve::module_tree::{ModuleTreeError, ResolvedItemInfo, ResolvedTargetKind};
 // Removed unused SynParserError import
 
 use crate::common::build_tree_for_tests;
