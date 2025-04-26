@@ -3,33 +3,53 @@
 
 #[cfg(test)]
 mod export_tests {
-    use ploke_core::{NodeId, PROJECT_NAMESPACE_UUID};
-    use std::collections::HashMap;
+    use ploke_core::NodeId; // Removed unused PROJECT_NAMESPACE_UUID
+    // Removed unused HashMap import
     use syn_parser::{
         error::SynParserError,
         parser::{
             graph::{GraphAccess, ParsedCodeGraph},
             nodes::{GraphId, ModuleNode, NodePath},
             relations::{Relation, RelationKind},
-            CodeGraph,
+            CodeGraph, // Keep CodeGraph
         },
         resolve::module_tree::ModuleTree,
     };
-    use uuid::Uuid;
+    // Removed unused Uuid import
 
-    use crate::common::uuid_ids_utils::{
-        assert_relation_exists, find_function_node_paranoid, find_import_node_paranoid,
-        find_module_node_by_path, find_struct_node_paranoid, run_phases_and_collect,
+    // Corrected imports for helper functions from common::paranoid and common::uuid_ids_utils
+    use crate::common::{
+        paranoid::{find_function_node_paranoid, find_import_node_paranoid}, // Removed find_struct_node_paranoid as unused in this file
+        uuid_ids_utils::{assert_relation_exists, find_module_node_by_path, run_phases_and_collect},
     };
 
+
     // Helper to build the module tree and process exports
+    // NOTE: This helper builds the ModuleTree from the *first* ParsedCodeGraph before merging,
+    // because build_module_tree is currently defined on ParsedCodeGraph, not the merged CodeGraph.
+    // Assertions later in the tests run against the fully merged CodeGraph's relations.
+    // This is a workaround to allow tests to compile without modifying the location of build_module_tree.
     fn build_tree_and_process_exports(
         fixture_name: &str,
     ) -> Result<(CodeGraph, ModuleTree), SynParserError> {
-        let graphs = run_phases_and_collect(fixture_name);
-        let merged_graph = CodeGraph::merge_new(graphs.into_iter().map(|g| g.graph).collect())?;
-        let mut module_tree = merged_graph.build_module_tree()?;
-        module_tree.process_export_rels(&merged_graph)?; // Process the exports
+        let mut parsed_graphs = run_phases_and_collect(fixture_name);
+
+        // Build tree from the first graph (if available) before merging
+        let mut module_tree = parsed_graphs
+            .first()
+            .ok_or(SynParserError::InternalState(format!(
+                "No parsed graphs found for fixture: {}",
+                fixture_name
+            )))?
+            .build_module_tree()?;
+
+        // Merge all graphs
+        let merged_graph =
+            CodeGraph::merge_new(parsed_graphs.into_iter().map(|g| g.graph).collect())
+                .map_err(|boxed_err| *boxed_err)?; // Unbox error
+
+        // Process exports using the tree built from the first graph and the merged graph data
+        module_tree.process_export_rels(&merged_graph)?;
         Ok((merged_graph, module_tree))
     }
 
@@ -61,10 +81,10 @@ mod export_tests {
 
         // 1. Test `pub use local_mod::local_func;`
         let target_func_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "local_mod"],
             "local_func",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
         let import_node_id = find_import_node_id_by_name(&graph, &["crate"], "local_func");
@@ -104,10 +124,10 @@ mod export_tests {
 
         // 3. Test `pub use local_mod::nested::deep_func as renamed_deep_func;`
         let target_deep_func_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "local_mod", "nested"],
             "deep_func",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
         let import_renamed_id =
@@ -139,10 +159,10 @@ mod export_tests {
 
         // Target: `item_c` which is a re-export of `chain_a::item_a`
         let original_item_a_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "chain_a"],
             "item_a",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
 
@@ -177,10 +197,10 @@ mod export_tests {
 
         // Target: `final_renamed_item` -> `rename_step2::renamed2` -> `rename_step1::renamed1` -> `rename_source::multi_rename_item`
         let original_item_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "rename_source"],
             "multi_rename_item",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
         let final_import_id = find_import_node_id_by_name(&graph, &["crate"], "final_renamed_item");
@@ -211,10 +231,10 @@ mod export_tests {
 
         // Target: `branch_item` re-exported as `item_via_a` and `item_via_b`
         let original_item_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "branch_source"],
             "branch_item",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
 
@@ -263,10 +283,10 @@ mod export_tests {
 
         // Target: `relative::inner::reexport_super` -> `super::item_in_relative` -> `relative::item_in_relative`
         let original_item_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "relative"],
             "item_in_relative",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
         // The ImportNode is inside `relative::inner` and named `reexport_super`
@@ -307,10 +327,10 @@ mod export_tests {
 
         // Target: `relative::reexport_self` -> `self::inner::item_in_inner` -> `relative::inner::item_in_inner`
         let original_item_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "relative", "inner"],
             "item_in_inner",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
         // The ImportNode is inside `relative` and named `reexport_self`
@@ -349,10 +369,10 @@ mod export_tests {
         // Target: `glob_item_cfg_a` (re-exported via glob from `glob_target`)
         // We expect this re-export *not* to be processed because of the CFG.
         let target_item_id = find_function_node_paranoid(
-            &graph,
+            &graph, // Pass the merged graph
             &["crate", "glob_target"], // Original location
             "glob_item_cfg_a",
-            PROJECT_NAMESPACE_UUID,
+            // PROJECT_NAMESPACE_UUID, // Removed unused UUID
         )
         .id;
 
