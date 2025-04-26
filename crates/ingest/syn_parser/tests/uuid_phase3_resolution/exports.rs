@@ -13,17 +13,32 @@ mod export_tests {
             relations::{Relation, RelationKind},
             CodeGraph, // Keep CodeGraph
         },
-        resolve::module_tree::ModuleTree,
+        resolve::module_tree::{ModuleTree, TreeRelation},
     };
     // Removed unused Uuid import
 
     // Corrected imports for helper functions from common::paranoid and common::uuid_ids_utils
-    use crate::common::paranoid::find_function_node_paranoid;
-    use crate::common::uuid_ids_utils::find_module_node_by_path;
+    use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
         paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{assert_relation_exists, run_phases_and_collect},
+        uuid_ids_utils::run_phases_and_collect,
     };
+    // Core assertion helper - Takes a slice of TreeRelation now
+    pub fn assert_relation_exists(
+        relations: &[TreeRelation], // Changed from &CodeGraph
+        source: GraphId,
+        target: GraphId,
+        kind: RelationKind,
+        message: &str,
+    ) {
+        let found = relations // Iterate over the provided slice
+            .iter()
+            .any(|tr| {
+                let r = tr.relation(); // Get the inner Relation
+                r.source == source && r.target == target && r.kind == kind
+            });
+        assert!(found, "{}", message);
+    }
 
     // Helper to merge ParsedCodeGraphs and build/process the ModuleTree
     fn build_tree_and_process_exports(
