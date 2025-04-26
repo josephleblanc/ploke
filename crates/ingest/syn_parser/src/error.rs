@@ -245,6 +245,7 @@ impl From<ModuleTreeError> for SynParserError {
                 import_node_id,
                 path,
             }),
+            // AI: Add error handling here for new error type from ModuleTreeError AI!
         }
     }
 }
