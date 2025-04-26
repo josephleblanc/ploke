@@ -1970,9 +1970,6 @@ impl ModuleTree {
         Ok(())
     }
 
-    // Add this function to the impl ModuleTree block in
-    // crates/ingest/syn_parser/src/resolve/module_tree.rs
-
     /// Updates the `path_index` to use canonical paths for modules affected by `#[path]` attributes.
     ///
     /// This function iterates through modules that had a `#[path]` attribute (identified via
@@ -1988,6 +1985,18 @@ impl ModuleTree {
     /// This function assumes it's called after `process_path_attributes` has run and created
     /// the necessary `CustomPath` relations. It does *not* yet handle updating paths for items
     /// *contained within* the modules affected by `#[path]`.
+    // AI: Improve the logging below to follow a color style and approach to capturing information
+    // similar to the other logging methods in this file. Use the `logging.rs` methods where
+    // possible for consistency, or add new methods that can be used generally there as well.
+    // Whenever possible, choose shorter function signatures and take a reference to relevant
+    // modules. Where this is not possible, accept the NodeId/ModuleId/GraphId etc and lookup the
+    // node inside the debugging method. We always want to print the name with debugging
+    // statements, nice this is not very helpful for manually checking the target fixture for what
+    // item is causing issues: "Definition module for declaration S:1772c914..ef0d5b2b ..."
+    // Prefer messages like this, with colors as defined in LogStyle and LogStyleDebug:
+    // [DEBUG mod_tree_build] Insert alias_module (S:e65432c3..c97d9e10) | Inline | Inherited
+    // [DEBUG mod_tree_build] Processing module for tree: real_file (S:cac6fed9..1bbb2625) | Visibility: Inherited
+    // AI!
     pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
         log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Entering update_path_index_for_custom_paths...");
         // Collect keys to avoid borrowing issues while modifying the map inside the loop.
@@ -2035,15 +2044,11 @@ impl ModuleTree {
             // Use the original_path (derived from file system) as the key to remove.
             if let Some(removed_id) = self.path_index.remove(&original_path) {
                 if removed_id != *def_mod_id.as_inner() {
-                    // This indicates a major inconsistency if the removed ID doesn't match
-                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}", removed_id, original_path, def_mod_id);
-                    // This suggests the path_index was corrupted earlier.
-                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}", original_path, def_mod_id, removed_id)));
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}. This indicates a major inconsistency if the removed ID doesn't match", removed_id, original_path, def_mod_id);
+                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_id, removed_id)));
                 }
                 log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed old path index entry: {} -> {}", original_path, def_mod_id);
             } else {
-                // This might happen if the file-based module wasn't indexed correctly initially.
-                // It *should* have been indexed under its original path in add_module.
                 log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "  Original path {} not found in path_index for removal (Def Mod ID: {}). This might indicate an earlier indexing issue.", original_path, def_mod_id);
             }
 
@@ -2054,10 +2059,14 @@ impl ModuleTree {
                 .path_index
                 .insert(canonical_path.clone(), def_mod_inner_id)
             {
-                // This *shouldn't* normally happen if canonical paths are unique for non-declaration items.
+                //
                 // If it does, it means another non-declaration item was already indexed at the declaration's path.
                 if existing_id != def_mod_inner_id {
-                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}", canonical_path, def_mod_id, existing_id);
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}\n{} {}",
+                        canonical_path, def_mod_id, existing_id,
+                        "This shouldn't normally happen if canonical paths are unique for non-declaration items.",
+                        "If it does, it means another non-declaration item was already indexed at the declaration's path.",
+                    );
                     // This implies a non-unique canonical path was generated or indexed incorrectly.
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
