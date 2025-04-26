@@ -1,40 +1,11 @@
+use crate::resolve::module_tree::ModuleTreeError;
 use std::path::PathBuf;
 
-use super::CodeGraph;
+use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
-use crate::discovery::CrateContext;
-use crate::error::SynParserError;
-use crate::parser::nodes::*;
-use crate::parser::relations::RelationKind;
-use crate::resolve::module_tree;
-use crate::resolve::module_tree::ModuleTree;
-use crate::resolve::module_tree::ModuleTreeError;
-use crate::utils::LogStyle;
-use ploke_core::{NodeId, TypeId, TypeKind};
-use serde::Deserialize;
-use uuid::Uuid;
-
-use crate::parser::visibility::VisibilityResult;
-use crate::parser::{
-    nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
-    relations::Relation,
-    types::TypeNode,
-};
+use super::*;
 
 #[derive(Debug, Deserialize, Clone)]
-// AI: ParsedCodeGraph here. I want to be able to use all the methods from CodeGraph, but I don't
-// know how I should implement this functionality. The most straightforward way seems to be using
-// Deref, but I'm not sure that is really a clean approach. Another option would be to use a trait
-// and move all the methods from the `CodeGraph` into the trait as default methods? Maybe then have
-// a method that each struct would need to implement to get a reference or mutable reference to the
-// underlying `CodeGraph`? I'm really not sure how to handle this.
-//
-// The main reason to do this is because I need more context than is immediately available to
-// `CodeGraph` for the `shortest_public_path` and later, similar methods. It is awkward to manage
-// things like `crate_context` between these items, and it is not ideal to need to write `.graph`
-// after almost every use of the `ParsedCodeGraph`.
-//
-// AI?
 pub struct ParsedCodeGraph {
     /// The absolute path of the file that was parsed.
     pub file_path: PathBuf,
@@ -46,4 +17,223 @@ pub struct ParsedCodeGraph {
     // examples/tests
     //  - Option for now
     pub crate_context: Option<CrateContext>,
+}
+
+impl ParsedCodeGraph {
+    pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, Box<SynParserError>> {
+        let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
+        for graph in graphs {
+            new_graph.append_all(graph)?;
+        }
+
+        Ok(new_graph)
+    }
+
+    pub fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
+        self.graph.functions.append(&mut other.graph.functions);
+        self.graph
+            .defined_types
+            .append(&mut other.graph.defined_types);
+        self.graph.type_graph.append(&mut other.graph.type_graph);
+        self.graph.impls.append(&mut other.graph.impls);
+        self.graph.traits.append(&mut other.graph.traits);
+        self.graph.relations.append(&mut other.graph.relations);
+        self.graph.modules.append(&mut other.graph.modules);
+        self.graph.values.append(&mut other.graph.values);
+        self.graph.macros.append(&mut other.graph.macros);
+        self.graph
+            .use_statements
+            .append(&mut other.graph.use_statements);
+        Ok(())
+    }
+    //  We already have the following `Relation`s from parsing that will be useful here:
+    //
+    // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
+    // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
+    // NOTE: all `use` and `pub use` included in ModuleImports, not distinguished by relation
+    //
+    // The following are necessary to define during module tree construction:
+    // (Must be constructed in this order)
+    //
+    // ModuleNode Delc---------ResolvesToDefinition--> ModuleNode definition
+    // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
+    // ImportNode--------------ReExport--------------> NodeId of reexported item
+    //  Some Notes:
+    //  ModuleImports - Note: Some duplication of concerns here, ModuleNode also has field for
+    //  `imports` with all the nodes it imports - not just the ids, the full node. I think we were
+    //  experimenting with trying to use nested data structures insted of parsing relations.
+    //      - Note: Includes both `pub use` and `use` reexports/imports
+    pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
+        let root_module = self.get_root_module_checked()?;
+        let mut tree = ModuleTree::new_from_root(root_module)?;
+        // tree.process_export_rels(self)?; // abort parsing for invalid re-export nodes.
+        // 1: Register all modules with their containment info
+        for module in self.modules() {
+            log_tree_build(module);
+            // Populates:
+            //  - imports/reexports.
+            //  - module declaration index
+            //  - path_index for reverse lookup
+            //  - checks for duplicate paths/ids, causes early return on error.
+            tree.add_module(module.clone())?;
+        }
+
+        // 2: Copies all relations, stores them as TreeRelation for type safety
+        //      - Notably, includes `Contains` relations between parent definition module and all
+        //      child elements, e.g. other module declarations. Includes file--contains-->items.
+        //      - Does not include inter-file links, due to parallel parsing with no cross-channel
+        //      communication.
+        tree.add_relations_batch(self.relations())?;
+
+        // 3: Build syntactic links
+        //      - Creates `Relation::ResolvesToDefinition` link from
+        //          module declaration --ResolvesToDefinition--> file-based module
+        //      - Does not process `#[path = "..."]` attributes (see 4 below)
+        if let Err(module_tree_error) = tree.link_mods_syntactic(self.modules()) {
+            match module_tree_error {
+                // Warn on this specific error, but it is safe to continue. Indicates file-level
+                // module is not linked to the module tree through a parent.
+                ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
+                    self.handle_unlinked_modules(unlinked_infos);
+                }
+                // All other erros fatal, meaning abort resolution but do not panic.
+                _ => return Err(SynParserError::from(module_tree_error)),
+            }
+        }
+
+        // 4: Process `#[path]` attributes, form `CustomPath` links
+        //  - module declaration (with `#[path]`) --CustomPath--> file-based module
+        tree.resolve_pending_path_attrs()?;
+        tree.process_path_attributes()?;
+
+        // 5: Process re-export relationships beween `pub use` statements and the **modules** they
+        //    are re-exporting (does not cover other items like structs, functions, etc)
+        //    - should be reexport --ReExports--> item definition
+        //    - (currently bugged)
+        //    All errors here indicate we should abort, handle these in caller:
+        //      ModuleTreeError::NodePathValidation(Box::new(e))
+        //      ModuleTreeError::ConflictingReExportPath
+        //  WARNING: Bug in process_export_rels, see method for more info
+        #[cfg(not(feature = "reexport"))]
+        tree.process_export_rels(self)?;
+        #[cfg(feature = "reexport")]
+        tree.process_export_rels(self)?;
+
+        // By the time we are finished, we should have all the necessary relations to form the path
+        // of all definined items by ModuleTree's shortest_public_path method.
+        //  - Contains: Module --> contained items
+        //  - Imports:
+        Ok(tree)
+    }
+
+    #[allow(clippy::boxed_local, clippy::box_collection)]
+    fn handle_unlinked_modules(&self, unlinked_infos: Box<Vec<module_tree::UnlinkedModuleInfo>>) {
+        if !unlinked_infos.is_empty() {
+            debug!(
+                "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
+                unlinked_infos.len()
+            );
+            for info in unlinked_infos.iter() {
+                // Iterate over the Boxed Vec
+                debug!("  - Path: {}, ID: {}", info.definition_path, info.module_id);
+                // Optionally include the absolute file path
+                if let Some(module_node) = self.get_module(info.module_id) {
+                    if let Some(file_path) = module_node.file_path() {
+                        debug!("    File: {}", file_path.display());
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl GraphAccess for ParsedCodeGraph {
+    fn functions(&self) -> &[FunctionNode] {
+        &self.graph.functions
+    }
+
+    fn defined_types(&self) -> &[TypeDefNode] {
+        &self.graph.defined_types
+    }
+
+    fn type_graph(&self) -> &[TypeNode] {
+        &self.graph.type_graph
+    }
+
+    fn impls(&self) -> &[ImplNode] {
+        &self.graph.impls
+    }
+
+    fn traits(&self) -> &[TraitNode] {
+        &self.graph.traits
+    }
+
+    fn relations(&self) -> &[Relation] {
+        &self.graph.relations
+    }
+
+    fn modules(&self) -> &[ModuleNode] {
+        &self.graph.modules
+    }
+
+    fn values(&self) -> &[ValueNode] {
+        &self.graph.values
+    }
+
+    fn macros(&self) -> &[MacroNode] {
+        &self.graph.macros
+    }
+
+    fn use_statements(&self) -> &[ImportNode] {
+        &self.graph.use_statements
+    }
+
+    fn functions_mut(&mut self) -> &mut Vec<FunctionNode> {
+        &mut self.graph.functions
+    }
+
+    fn defined_types_mut(&mut self) -> &mut Vec<TypeDefNode> {
+        &mut self.graph.defined_types
+    }
+
+    fn type_graph_mut(&mut self) -> &mut Vec<TypeNode> {
+        &mut self.graph.type_graph
+    }
+
+    fn impls_mut(&mut self) -> &mut Vec<ImplNode> {
+        &mut self.graph.impls
+    }
+
+    fn traits_mut(&mut self) -> &mut Vec<TraitNode> {
+        &mut self.graph.traits
+    }
+
+    fn relations_mut(&mut self) -> &mut Vec<Relation> {
+        &mut self.graph.relations
+    }
+
+    fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {
+        &mut self.graph.modules
+    }
+
+    fn values_mut(&mut self) -> &mut Vec<ValueNode> {
+        &mut self.graph.values
+    }
+
+    fn macros_mut(&mut self) -> &mut Vec<MacroNode> {
+        &mut self.graph.macros
+    }
+
+    fn use_statements_mut(&mut self) -> &mut Vec<ImportNode> {
+        &mut self.graph.use_statements
+    }
+}
+
+fn log_tree_build(module: &ModuleNode) {
+    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({}) | Visibility: {}",
+        "Processing module for tree:".blue(),
+        module.name.yellow(),
+        module.id.to_string().magenta(),
+        format!("{:?}", module.visibility).cyan()
+    );
 }

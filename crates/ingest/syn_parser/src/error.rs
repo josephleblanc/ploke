@@ -238,6 +238,13 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::NoRelationsFound(id, msg) => {
                 SynParserError::ModuletreeRelationNotFound(id, msg)
             }
+            ModuleTreeError::UnresolvedReExportTarget {
+                import_node_id,
+                path,
+            } => SynParserError::ModuleTreeError(ModuleTreeError::UnresolvedReExportTarget {
+                import_node_id,
+                path,
+            }),
         }
     }
 }

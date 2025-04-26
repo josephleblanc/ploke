@@ -56,13 +56,12 @@
 // Removed unused ploke_core::NodeId import
 use ploke_core::NodeId;
 use syn_parser::error::SynParserError;
-use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
-use syn_parser::CodeGraph; // Removed unused SynParserError import
+use syn_parser::parser::graph::GraphAccess as _;
+use syn_parser::resolve::module_tree::ModuleTreeError;
+// Removed unused SynParserError import
 
 use crate::common::build_tree_for_tests;
-use crate::common::resolution::find_item_id_in_module_by_name; // Import new helper
-use crate::common::uuid_ids_utils::run_phases_and_collect;
-
+use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
 #[test]
@@ -72,7 +71,7 @@ fn test_spp_public_item_in_root() {
 
     // Find the public function `main_pub_func` in the crate root
     let main_pub_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| f.name == "main_pub_func")
         .expect("Could not find main_pub_func")
@@ -99,7 +98,7 @@ fn test_spp_public_item_in_public_mod() {
 
     // Find the public function `top_pub_func` in `top_pub_mod`
     let top_pub_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| {
             f.name == "top_pub_func" && graph.get_item_module_path(f.id) == ["crate", "top_pub_mod"]
@@ -128,7 +127,7 @@ fn test_spp_public_item_in_nested_public_mod() {
 
     // Find the public function `nested_pub_func` in `top_pub_mod::nested_pub`
     let nested_pub_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| {
             f.name == "nested_pub_func"
@@ -166,7 +165,7 @@ fn test_spp_private_item_in_public_mod() {
 
     // Find the private function `top_pub_priv_func` in `top_pub_mod`
     let top_pub_priv_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| {
             f.name == "top_pub_priv_func"
@@ -195,7 +194,7 @@ fn test_spp_item_in_private_mod() {
     // Find the public function `nested_pub_func` in `top_priv_mod::nested_pub_in_priv`
     // Even though the function is pub, its containing module `top_priv_mod` is private.
     let nested_pub_in_priv_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| {
             f.name == "nested_pub_func"
@@ -236,7 +235,7 @@ fn test_spp_reexported_item_finds_original_path() {
     // Find the *original* public function `top_pub_func` in `top_pub_mod`.
     // This function is re-exported as `reexported_func` in the crate root.
     let original_func_id = graph
-        .functions
+        .functions()
         .iter()
         .find(|f| {
             f.name == "top_pub_func" && graph.get_item_module_path(f.id) == ["crate", "top_pub_mod"]
@@ -262,7 +261,7 @@ fn test_spp_reexported_item_finds_original_path() {
 
     // We can also verify that the re-export itself exists as an ImportNode
     let reexport_node = graph
-        .use_statements
+        .use_statements()
         .iter()
         .find(|imp| imp.visible_name == "reexported_func")
         .expect("Could not find reexport ImportNode");
@@ -299,7 +298,7 @@ macro_rules! assert_spp {
             let module_path_vec: Vec<String> =
                 $module_path.iter().map(|s| s.to_string()).collect();
 
-            let item_id = find_item_id_in_module_by_name(&graph, &module_path_vec, $item_name)
+            let item_id = find_item_id_in_module_by_name(&graph.graph, &module_path_vec, $item_name)
                 .unwrap_or_else(|e| {
                     panic!(
                         "Failed to find item '{}' in module {:?}: {:?}",
@@ -338,7 +337,7 @@ macro_rules! assert_spp {
                 $module_path.iter().map(|s| s.to_string()).collect();
 
             let item_id_result =
-                find_item_id_in_module_by_name(&graph, &module_path_vec, $item_name);
+                find_item_id_in_module_by_name(&graph.graph, &module_path_vec, $item_name);
 
             // Handle case where item itself might not be found (e.g., private item)
             let item_id = match item_id_result {
@@ -470,7 +469,7 @@ fn test_spp_reexport_cfg_gated_inactive() {
 
     // Find the original item
     let module_path_vec = vec!["crate".to_string(), "local_mod".to_string()]; // Create Vec<String>
-    let item_id = find_item_id_in_module_by_name(&graph, &module_path_vec, "local_func")
+    let item_id = find_item_id_in_module_by_name(&graph.graph, &module_path_vec, "local_func")
         .expect("Failed to find original local_func");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
@@ -496,7 +495,7 @@ fn test_spp_reexport_external_dep() {
     // Finding external items by name isn't directly supported by find_item_id_in_module_by_name.
     // We need to find the ImportNode for the re-export.
     let reexport_import_node = graph
-        .use_statements
+        .use_statements()
         .iter()
         .find(|imp| imp.visible_name == "log_debug_reexport")
         .expect("Could not find re-export ImportNode for log_debug_reexport");

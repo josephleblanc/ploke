@@ -61,31 +61,21 @@
 //! ---
 
 use ploke_core::ItemKind;
-use syn_parser::discovery::CrateContext;
+use syn_parser::parser::ParsedCodeGraph;
 // Added ItemKind
 use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
-use syn_parser::CodeGraph;
 
 use crate::common::resolution::*;
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 // Helper to build the tree for edge case tests
-fn build_tree_for_edge_cases() -> (CodeGraph, ModuleTree) {
+fn build_tree_for_edge_cases() -> (ParsedCodeGraph, ModuleTree) {
     // NOTE: cfg features being enabled currently remove all possibility of testing remaining items
     // due to presence of duplicates in test fixture `fixture_spp_edge_cases_no_cfg`. Development
     // on cfg-capable mod tree happening on git branch feature/mod_tree_cfg
     let fixture_name = "fixture_spp_edge_cases_no_cfg";
     let results = run_phases_and_collect(fixture_name);
-    let mut contexts: Vec<CrateContext> = Vec::new();
-    let mut graphs: Vec<CodeGraph> = Vec::new();
-    for parsed_graph in results {
-        graphs.push(parsed_graph.graph);
-        if let Some(ctx) = parsed_graph.crate_context {
-            // dirty, placeholder
-            contexts.push(ctx);
-        }
-    }
-    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
+    let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
     let tree = merged_graph
         .build_module_tree() // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
@@ -536,6 +526,10 @@ fn test_spp_branching_reexport() {
     //     Target: `item_via_a` or `item_via_b` (re-exports of `branch_item`)
     //     Expected: Ok(["crate"])
     //     Anticipated Status: FAIL (SPP doesn't handle re-exports or shortest path selection yet)
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let (graph, tree) = build_tree_for_edge_cases();
     let item_id = find_item_id_by_path_name_kind_checked(
         &graph,

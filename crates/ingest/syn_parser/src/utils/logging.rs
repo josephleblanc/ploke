@@ -3,6 +3,8 @@ pub(crate) const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target
 pub(crate) const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
 pub(crate) const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
 pub(crate) const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
+pub(crate) const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
+pub(crate) const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
 
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
@@ -388,7 +390,7 @@ pub trait LogDataStructure {
         let step_str = step.log_name();
 
         // Reordered format, removed padding
-        debug!(target: LOG_TARGET_PATH_ATTR, "{: <12} {: <20} {} | {}",
+        log::trace!(target: LOG_TARGET_PATH_ATTR, "{: <12} {: <20} {} | {}",
             status_indicator,
             step_str,
             id_str,

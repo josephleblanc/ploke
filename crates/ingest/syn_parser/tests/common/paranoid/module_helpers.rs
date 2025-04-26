@@ -4,8 +4,8 @@
 
 use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
-use syn_parser::parser::nodes::*;
-use syn_parser::parser::visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}; // Import calculate_cfg_hash_bytes
+use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
+use syn_parser::parser::{nodes::*, ParsedCodeGraph};
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the ModuleNode
 /// representing a *declaration* (`mod name;`) within that graph, performs paranoid checks,

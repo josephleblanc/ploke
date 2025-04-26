@@ -1,12 +1,12 @@
 use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::{NodeId, TypeId};
 use syn_parser::discovery::run_discovery_phase;
-use syn_parser::parser::graph::CodeGraph;
+use syn_parser::parser::graph::{CodeGraph, GraphAccess as _};
 use syn_parser::parser::relations::RelationKind;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 // Removed `use syn_parser::parser::visitor::ParsedCodeGraph;` - import directly in tests
-use syn_parser::parser::{analyze_files_parallel, nodes::*, visitor::ParsedCodeGraph}; // Import ParsedCodeGraph here if needed internally
+use syn_parser::parser::{analyze_files_parallel, nodes::*, ParsedCodeGraph}; // Import ParsedCodeGraph here if needed internally
 
 /// Helper function to run Phase 1 & 2 and collect results
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {

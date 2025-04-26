@@ -86,9 +86,9 @@ edition = "2021"
         "Discovery should still succeed, got: {:?}",
         result.err()
     );
-    let output = result.unwrap();
+    let _output = result.unwrap();
 
-    let module_file_path = src_dir.join("module.rs");
+    let _module_file_path = src_dir.join("module.rs");
 
     Ok(())
 }

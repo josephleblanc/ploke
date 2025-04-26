@@ -1,10 +1,9 @@
-use ploke_core::PROJECT_NAMESPACE_UUID; // Import the constant
+use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt; // Import fmt for Display trait
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Arc; // Import Arc
 use thiserror::Error;
@@ -75,14 +74,17 @@ struct PackageInfo {
 }
 
 impl PackageInfo {
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     fn new(name: String, version: String) -> Self {
         Self { name, version }
     }
 
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     fn name(&self) -> &str {
         &self.name
     }
 
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     fn version(&self) -> &str {
         &self.version
     }
@@ -298,10 +300,13 @@ pub struct CrateContext {
     /// List of all `.rs` files found within the crate's source directories.
     pub files: Vec<PathBuf>,
     /// Parsed features from Cargo.toml.
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     features: Features,
     /// Parsed dependencies from Cargo.toml.
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     dependencies: Dependencies,
     /// Parsed dev-dependencies from Cargo.toml.
+    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
     dev_dependencies: DevDependencies,
 }
 

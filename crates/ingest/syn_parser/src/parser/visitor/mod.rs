@@ -1,6 +1,5 @@
 use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
-use serde::{Deserialize, Serialize};
 use std::hash::Hasher;
 use syn::visit::Visit;
 mod attribute_processing;
@@ -11,10 +10,7 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::{
-    discovery::CrateContext,
-    parser::{graph::CodeGraph, nodes::GraphId},
-};
+use crate::parser::nodes::GraphId;
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -65,7 +61,7 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
     } else {
         // Fallback or error handling if strip_prefix fails
         // For now, just return ["crate"] as a basic fallback
-        eprintln!(
+        log::debug!(
             "Warning: Could not strip prefix '{}' from '{}'. Falling back to ['crate'].",
             crate_src_dir.display(),
             file_path.display()
@@ -221,7 +217,7 @@ pub fn analyze_files_parallel(
 ) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
     // Adjust error type if needed
 
-    println!(
+    log::debug!(
         // Temporary debug print
         "Starting Phase 2 Parallel Parse for {} crates...",
         discovery_output.crate_contexts.len()

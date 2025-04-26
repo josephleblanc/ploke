@@ -10,7 +10,7 @@ mod phase2_id_tests {
             analyze_files_parallel,
             graph::CodeGraph,
             nodes::TypeDefNode,
-            visitor::ParsedCodeGraph, // Import StructNode, TypeDefNode
+            ParsedCodeGraph, // Import StructNode, TypeDefNode
         },
     };
     // Import the helper function

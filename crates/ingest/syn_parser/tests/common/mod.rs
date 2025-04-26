@@ -3,9 +3,9 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
-use syn_parser::parser::graph::CodeGraph;
+use syn_parser::parser::graph::{CodeGraph, GraphAccess};
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
-use syn_parser::parser::{nodes::*, ExtractSpan};
+use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
 use thiserror::Error;
 
 pub mod debug_printers;
@@ -14,7 +14,7 @@ pub mod resolution; // Add resolution module
 
 use {
     std::path::PathBuf, syn_parser::discovery::run_discovery_phase,
-    syn_parser::parser::analyze_files_parallel, syn_parser::parser::visitor::ParsedCodeGraph,
+    syn_parser::parser::analyze_files_parallel,
 };
 
 use ploke_common::{fixtures_crates_dir, fixtures_dir};
@@ -76,7 +76,7 @@ pub fn assert_fixture<T>(condition: bool, message: &str, ok_value: T) -> Result<
 /// Finds the NodeId of an ImportNode representing a re-export based on its visible name
 /// within a specific module.
 pub fn find_reexport_import_node_by_name(
-    graph: &CodeGraph,
+    graph: &ParsedCodeGraph,
     module_path: &[String],
     visible_name: &str,
 ) -> Result<NodeId, SynParserError> {
@@ -85,7 +85,7 @@ pub fn find_reexport_import_node_by_name(
 
     // Search through all use statements in the graph
     graph
-        .use_statements
+        .use_statements()
         .iter()
         .find(|imp| {
             // Check if the import has the correct visible name

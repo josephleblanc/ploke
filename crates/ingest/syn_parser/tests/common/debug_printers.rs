@@ -2,7 +2,7 @@ use std::path::Path;
 
 use colored::Colorize;
 use ploke_core::NodeId;
-use syn_parser::parser::{graph::CodeGraph, nodes::{GraphNode, ImportKind, ModuleDef}, types::VisibilityKind};
+use syn_parser::parser::{graph::{CodeGraph, GraphAccess as _}, nodes::{GraphNode, ImportKind, ModuleDef}, types::VisibilityKind, ParsedCodeGraph};
 
 pub fn find_import_id(
     graph: &CodeGraph,
@@ -139,7 +139,7 @@ MODULE CONTAINING VALUENODE: {:#?}
 
 
 pub fn print_module_tree(
-    graph: &CodeGraph,
+    graph: &ParsedCodeGraph,
     module_id: NodeId,
     prefix: &str,
     is_last: bool,

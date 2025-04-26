@@ -30,8 +30,8 @@ pub enum RelationKind {
     //-----------------------------------------------------------------------
     // e.g. `pub use some_dep::a::b::ReExportedStruct`--ReExport-->ReExportedStruct defn
     // (currently only targets module in module_tree.rs)
-    // ImportNode--------------ReExport--------------> NodeId of reexported item
-    ReExport,
+    // ImportNode--------------ReExports-------------> NodeId of reexported item
+    ReExports,
     // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
     CustomPath,
     /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
@@ -125,7 +125,7 @@ impl TryInto<ScopeKind> for RelationKind {
             Self::Uses => Ok(ScopeKind::CanUse),
             Self::ValueType => Ok(ScopeKind::CanUse),
             Self::ModuleImports => Ok(ScopeKind::CanUse),
-            Self::ReExport => Ok(ScopeKind::CanUse),
+            Self::ReExports => Ok(ScopeKind::CanUse),
             Self::FunctionParameter => Ok(ScopeKind::RequiresParent),
             Self::FunctionReturn => Ok(ScopeKind::RequiresParent),
             Self::StructField => Ok(ScopeKind::RequiresParent),

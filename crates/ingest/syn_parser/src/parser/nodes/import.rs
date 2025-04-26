@@ -79,7 +79,10 @@ pub struct ImportNode {
     /// Source code span (byte offsets) of the import statement
     pub span: (usize, usize),
 
-    /// Full path segments in original order (e.g. ["std", "collections", "HashMap"])
+    /// Full path segments in original order (e.g. ["std", "collections", "HashMap"]) of the item
+    /// being imported.
+    /// e.g. for the import statement `use std::collections::HashMap;`
+    // Note that this is NOT the path to the import declaration itself.
     pub source_path: Vec<String>,
 
     /// Type of import (regular use, extern crate, etc.)

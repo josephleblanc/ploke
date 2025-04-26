@@ -1,3 +1,4 @@
+use crate::parser::graph::GraphAccess;
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use ploke_core::NodeId;
@@ -11,7 +12,6 @@ use std::{
 use std::collections::VecDeque;
 
 use crate::{
-    discovery::CrateContext,
     error::SynParserError,
     parser::{
         nodes::{
@@ -20,7 +20,7 @@ use crate::{
         },
         relations::{Relation, RelationKind},
         types::VisibilityKind,
-        CodeGraph,
+        ParsedCodeGraph,
     },
     utils::{
         logging::{LogDataStructure, PathProcessingContext},
@@ -33,13 +33,13 @@ pub mod test_interface {
     use ploke_core::NodeId;
 
     use super::{ModuleTree, ModuleTreeError};
-    use crate::CodeGraph;
+    use crate::parser::ParsedCodeGraph;
 
     impl ModuleTree {
         pub fn test_shortest_public_path(
             &self,
             item_id: NodeId,
-            graph: &CodeGraph,
+            graph: &ParsedCodeGraph,
         ) -> Result<Vec<String>, ModuleTreeError> {
             self.shortest_public_path(item_id, graph)
         }
@@ -91,6 +91,7 @@ pub struct ModuleTree {
 /// ```
 /// The module represented by the file `path/to/file.rs`, here containing `HiddenStruct`, will have
 /// its `ModuleNode { path: .. }` field resolved to ``
+#[allow(dead_code)]
 struct ResolvedModule {
     original_path: NodePath,     // The declared path (e.g. "path::to::file")
     filesystem_path: PathBuf,    // The resolved path from #[path] attribute
@@ -131,6 +132,7 @@ pub struct PendingExport {
 }
 
 impl PendingExport {
+    #[allow(unused_variables)]
     pub(crate) fn from_export(export: ImportNode, containing_module_id: NodeId) -> Self {
         // Make crate-visible if needed internally
         PendingExport {
@@ -259,6 +261,11 @@ pub enum ModuleTreeError {
 
     #[error("No relations found for node {0}: {1}")]
     NoRelationsFound(NodeId, String),
+    #[error("Could not resolve target for re-export '{path}'. Import Node ID: {import_node_id}")]
+    UnresolvedReExportTarget {
+        import_node_id: NodeId,
+        path: NodePath, // The original path that failed to resolve
+    },
 }
 
 impl ModuleTreeError {
@@ -711,7 +718,7 @@ impl ModuleTree {
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
-        graph: &CodeGraph, // Still need graph for node details (visibility, name)
+        graph: &ParsedCodeGraph, // Still need graph for node details (visibility, name)
     ) -> Result<Vec<String>, ModuleTreeError> {
         // --- 1. Initial Setup ---
 
@@ -817,7 +824,7 @@ impl ModuleTree {
         queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
         visited: &mut HashSet<ModuleNodeId>,
         // NOTE: Unused variable `graph`. Why is it here?
-        graph: &CodeGraph,
+        graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
 
@@ -895,7 +902,7 @@ impl ModuleTree {
         path_to_item: &[String],
         queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
         visited: &mut HashSet<ModuleNodeId>,
-        graph: &CodeGraph,
+        graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
         self.log_bfs_path(
@@ -907,7 +914,7 @@ impl ModuleTree {
         // Need reverse ReExport lookup: target = target_id -> source = import_node_id
         let reexport_relations = self
             .get_relations_to(&target_id.to_graph_id(), |tr| {
-                tr.relation().kind == RelationKind::ReExport
+                tr.relation().kind == RelationKind::ReExports
             })
             .ok_or_else(|| {
                 // WARNING:
@@ -977,6 +984,7 @@ impl ModuleTree {
 
     // Helper needed for visibility check upwards (simplified version of ModuleTree::is_accessible)
     // Checks if `target_id` (decl or inline mod) is accessible *from* `potential_parent_id`
+    #[allow(unused_variables)]
     fn is_accessible_from(
         &self,
         potential_parent_id: ModuleNodeId,
@@ -1001,10 +1009,10 @@ impl ModuleTree {
     pub fn resolve_visibility<T: GraphNode>(
         &self,
         node: &T,
-        graph: &CodeGraph,
+        graph: &ParsedCodeGraph,
     ) -> Result<VisibilityKind, ModuleTreeError> {
         let parent_module_vis = graph
-            .modules
+            .modules()
             .iter()
             .find(|m| m.items().is_some_and(|m| m.contains(&node.id())))
             .map(|m| m.visibility())
@@ -1027,7 +1035,7 @@ impl ModuleTree {
         while visited.insert(current_id) {
             // Check if current_id re-exports our target
             if let Some(_reexport_rel) = self.tree_relations.iter().find(|tr| {
-                tr.relation().kind == RelationKind::ReExport
+                tr.relation().kind == RelationKind::ReExports
                     && tr.relation().source == GraphId::Node(current_id)
                     && tr.relation().target == GraphId::Node(target_id)
             }) {
@@ -1036,7 +1044,7 @@ impl ModuleTree {
 
             // Move to next re-export in chain
             if let Some(next_rel) = self.tree_relations.iter().find(|tr| {
-                tr.relation().kind == RelationKind::ReExport
+                tr.relation().kind == RelationKind::ReExports
                     && tr.relation().target == GraphId::Node(current_id)
             }) {
                 current_id = next_rel.relation().source.try_into()?;
@@ -1049,27 +1057,31 @@ impl ModuleTree {
     }
 
     // TODO: Make a parallellized version with rayon
-    // fn process_export_rels(&self, graph: &CodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
+    // fn process_export_rels(&self, graph: &ParsedCodeGraph) -> Result<Vec<TreeRelation>, ModuleTreeError> {
     //     todo!()
     // }
+    //
     // or
-    pub(crate) fn process_export_rels(&mut self, graph: &CodeGraph) -> Result<(), ModuleTreeError> {
+
+    #[cfg(not(feature = "reexport"))]
+    pub(crate) fn process_export_rels(
+        &mut self,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
         let mut new_relations: Vec<TreeRelation> = Vec::new();
         for export in &self.pending_exports {
-            // WARNING: Bug here, source_mod_id is incorrectly the same id for the ExportNode, NOT
-            // the parent module. Even worse, this isn't actually supposed to form a `ReExport`
-            // relation to its own parent module, it is supposed to form a link to the module/item
-            // the rexport is making public.
+            // get the target node:
             let source_mod_id = export.containing_mod_id();
             let export_node = export.export_node();
 
             // Create relation
             let relation = Relation {
                 // WARNING:
-                // Bug, currently forms relation with self.
+                // Bug, currently forms relation with it's containing module, NOT the target that
+                // the `ImportNode` is actually re-exporting.
                 source: GraphId::Node(*source_mod_id.as_inner()),
                 target: GraphId::Node(export_node.id),
-                kind: RelationKind::ReExport,
+                kind: RelationKind::ReExports,
             };
             self.log_relation(relation, None);
 
@@ -1080,8 +1092,6 @@ impl ModuleTree {
                 // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
                 if export_node.is_renamed() {
                     // if renamed, use visible_name for path extension
-                    // WARNING: Be careful when generating resolved ID not to use this `path` for
-                    // NodeId of defining module.
                     // TODO: Keep a list of renamed modules specifically to track possible
                     // collisions.
                     reexport_path.push(export_node.visible_name.clone());
@@ -1093,14 +1103,18 @@ impl ModuleTree {
                 let node_path = NodePath::try_from(reexport_path)
                     .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
+                let debug_node_path = node_path.clone();
+
                 // Check for duplicate re-exports at the same path
-                match self.reexport_index.entry(node_path.clone()) {
+                match self.reexport_index.entry(node_path) {
                     std::collections::hash_map::Entry::Occupied(entry) => {
+                        // NOTE: Could filter for cfg here, to make graph cfg aware in a
+                        // relatively easy way.
                         let existing_id = *entry.get();
                         if existing_id != export_node.id {
                             // Found a different NodeId already registered for this exact path.
                             return Err(ModuleTreeError::ConflictingReExportPath {
-                                path: node_path, // Use the cloned path
+                                path: debug_node_path, // Use the cloned path
                                 existing_id,
                                 conflicting_id: export_node.id,
                             });
@@ -1121,10 +1135,99 @@ impl ModuleTree {
         Ok(())
     }
 
+    pub(crate) fn handle_export_rel_processing(&mut self, graph: &ParsedCodeGraph) {}
+    /// Processes pending re-exports (`pub use`) to:
+    /// 1. Create `RelationKind::ReExports` between the `ImportNode` and the actual item being  re-exported.
+    /// 2. Populate the `reexport_index` mapping the new public path to the ID of the re-exported item.
+    ///
+    /// Relies on `path_index` and `decl_index` being populated correctly beforehand.
+    /// Returns an error if a re-export target cannot be resolved or if conflicting re-exports are found.
+    #[cfg(feature = "reexport")]
+    pub(crate) fn process_export_rels(
+        &mut self,
+        graph: &ParsedCodeGraph,
+    ) -> Result<(), ModuleTreeError> {
+        let mut new_relations: Vec<TreeRelation> = Vec::new();
+        // Clone pending_exports to avoid borrowing issues while modifying self.reexport_index
+        let pending = self.pending_exports.clone();
+
+        for export in pending {
+            let source_mod_id = export.containing_mod_id();
+            let export_node = export.export_node(); // Borrow from the cloned export
+
+            // 1. Convert the original source path of the item being re-exported
+            let target_original_path = NodePath::try_from(export_node.source_path.clone())
+                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+
+            // 2. Find the NodeId of the actual item being re-exported using the indices
+            let target_node_id = self
+                .path_index
+                .get(&target_original_path) // Check regular items first
+                .or_else(|| self.decl_index.get(&target_original_path)) // Then check declarations
+                .copied() // Convert &NodeId to NodeId
+                .ok_or_else(|| {
+                    // Target not found in either index
+                    ModuleTreeError::UnresolvedReExportTarget {
+                        import_node_id: export_node.id,
+                        path: target_original_path.clone(), // Clone path for the error
+                    }
+                })?;
+
+            // 3. Create the ReExports relation: ImportNode -> Actual Target Item
+            let relation = Relation {
+                source: GraphId::Node(export_node.id), // Source is the ImportNode itself
+                target: GraphId::Node(target_node_id), // Target is the resolved item
+                kind: RelationKind::ReExports,
+            };
+            // Log the correctly formed relation
+            self.log_relation(relation, Some("ReExport Target Resolved"));
+            new_relations.push(relation.into());
+
+            // 4. Construct the new public path created by this re-export
+            let containing_module = self.get_module_checked(&source_mod_id)?;
+            let mut public_path_vec = containing_module.defn_path().clone();
+            public_path_vec.push(export_node.visible_name.clone()); // Use visible_name for 'as' renames
+
+            let public_reexport_path = NodePath::try_from(public_path_vec)
+                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+
+            // 5. Update the reexport_index: public_path -> target_node_id
+            match self.reexport_index.entry(public_reexport_path.clone()) {
+                // Clone path for error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    let existing_target_id = *entry.get();
+                    if existing_target_id != target_node_id {
+                        // Found a *different* item already re-exported at this exact public path.
+                        return Err(ModuleTreeError::ConflictingReExportPath {
+                            path: public_reexport_path, // Use the cloned path
+                            existing_id: existing_target_id,
+                            conflicting_id: target_node_id, // The item we just resolved
+                        });
+                    }
+                    // If it's the same target ID, do nothing (idempotent)
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Path is free, insert the mapping: public_path -> actual_target_id
+                    entry.insert(target_node_id);
+                }
+            }
+        } // End loop through pending_exports
+
+        // Add all newly created relations to the tree's main relation store
+        for new_tr in new_relations {
+            self.add_relation(new_tr);
+        }
+
+        Ok(())
+    }
+
+    // ... other methods ...
+
     pub fn resolve_custom_path(&self, module_id: ModuleNodeId) -> Option<&PathBuf> {
         self.found_path_attrs.get(&module_id)
     }
 
+    #[allow(dead_code)]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
         self.pending_exports
             .iter()
@@ -1132,6 +1235,7 @@ impl ModuleTree {
             .and_then(|exp| exp.export_node().source_path.last().cloned())
     }
 
+    #[allow(dead_code)]
     fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {
         let child_module_node =
             self.modules
@@ -1143,6 +1247,7 @@ impl ModuleTree {
     }
 
     /// Finds the NodeId of the definition module corresponding to a declaration module ID.
+    #[allow(dead_code)]
     fn find_definition_for_declaration(&self, decl_id: ModuleNodeId) -> Option<ModuleNodeId> {
         self.tree_relations.iter().find_map(|tr| {
             let rel = tr.relation();

@@ -1,9 +1,10 @@
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
 use ploke_core::NodeId;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::{
-    discovery::CrateContext,
     error::SynParserError,
     parser::{
         graph::CodeGraph,
@@ -14,18 +15,9 @@ use syn_parser::{
 
 use super::uuid_ids_utils::run_phases_and_collect;
 
-pub fn build_tree_for_tests(fixture_name: &str) -> (CodeGraph, ModuleTree) {
+pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree) {
     let results = run_phases_and_collect(fixture_name);
-    let mut contexts: Vec<CrateContext> = Vec::new();
-    let mut graphs: Vec<CodeGraph> = Vec::new();
-    for parsed_graph in results {
-        graphs.push(parsed_graph.graph);
-        if let Some(ctx) = parsed_graph.crate_context {
-            // dirty, placeholder
-            contexts.push(ctx);
-        }
-    }
-    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
+    let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
     let tree = merged_graph
         .build_module_tree() // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
@@ -150,7 +142,7 @@ pub fn find_item_id_in_module_by_name(
 /// * `Err(SynParserError::NotFound)` if no item matching all criteria is found.
 /// * `Err(SynParserError::DuplicateNode)` if multiple items matching the criteria are found.
 pub fn find_item_id_by_path_name_kind_checked(
-    graph: &CodeGraph,
+    graph: &ParsedCodeGraph,
     module_defn_path: &[&str],
     item_name: &str,
     item_kind: ploke_core::ItemKind,
@@ -165,7 +157,7 @@ pub fn find_item_id_by_path_name_kind_checked(
 
     // 2. Get IDs of all nodes contained within the module
     let contained_ids: Vec<NodeId> = graph
-        .relations
+        .relations()
         .iter()
         .filter(|rel| rel.source == GraphId::Node(module_id) && rel.kind == RelationKind::Contains)
         .filter_map(|rel| match rel.target {

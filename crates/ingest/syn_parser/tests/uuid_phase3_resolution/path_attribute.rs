@@ -3,10 +3,8 @@
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 use colored::*; // Import colored for terminal colors
 use log::debug;
-use syn_parser::discovery::CrateContext;
-// Import the debug macro
-use syn_parser::parser::graph::CodeGraph;
 use syn_parser::parser::nodes::ModuleDef;
+use syn_parser::parser::ParsedCodeGraph;
 
 const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
 
@@ -20,18 +18,10 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "{}", "Starting test_path_attribute_handling".green());
     let fixture_name = "fixture_path_resolution";
     let results = run_phases_and_collect(fixture_name);
-    let mut contexts: Vec<CrateContext> = Vec::new();
-    let mut graphs: Vec<CodeGraph> = Vec::new();
-    for parsed_graph in results {
-        graphs.push(parsed_graph.graph);
-        if let Some(ctx) = parsed_graph.crate_context {
-            // dirty, placeholder
-            contexts.push(ctx);
-        }
-    }
-    let merged_graph = CodeGraph::merge_new(graphs).expect("Failed to merge graphs");
-    debug!(target: LOG_TARGET_GRAPH_FIND, "Merged graph contains {} modules.", merged_graph.modules.len());
-    for module in &merged_graph.modules {
+
+    let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
+    debug!(target: LOG_TARGET_GRAPH_FIND, "Merged graph contains {} modules.", merged_graph.graph.modules.len());
+    for module in &merged_graph.graph.modules {
         debug!(target: LOG_TARGET_GRAPH_FIND,
             "  - Module: {} ({}), Path: {:?}, Defn Path: {:?}, IsDecl: {}, IsFile: {}, FilePath: {:?}",
             module.name.yellow(),
@@ -44,7 +34,7 @@ fn test_path_attribute_handling() {
         );
     }
 
-    let module_tree_result = merged_graph.build_module_tree(contexts.first());
+    let module_tree_result = merged_graph.build_module_tree();
     debug!(target: LOG_TARGET_GRAPH_FIND, "Module tree built successfully: {:?}", module_tree_result.is_ok());
     let module_tree = module_tree_result.expect("Module tree build failed unexpectedly");
 
@@ -53,6 +43,7 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "Searching for declaration of 'logical_path_mod'...");
     // 1a. Find the module node declared as `logical_path_mod` in lib.rs
     let logical_mod_decl = merged_graph
+        .graph
         .modules
         .iter()
         .find(|m| {
@@ -74,6 +65,7 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "Searching for definition node 'actual_file'...");
     // 2a. Find the module node *defined* by the file `renamed_path/actual_file.rs`
     let actual_file_defn = merged_graph
+        .graph
         .modules
         .iter()
         .find(|m| {
@@ -123,6 +115,7 @@ fn test_path_attribute_handling() {
     debug!(target: LOG_TARGET_GRAPH_FIND, "Searching for declaration of 'common_import_mod'...");
     // 1a. Find the declaration node
     let common_mod_decl = merged_graph
+        .graph
         .modules
         .iter()
         .find(|m| {

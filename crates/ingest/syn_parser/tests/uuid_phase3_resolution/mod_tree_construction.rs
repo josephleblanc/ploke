@@ -18,14 +18,12 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use syn_parser::parser::graph::GraphAccess as _;
 use syn_parser::parser::nodes::{GraphId, ModuleNodeId};
 use syn_parser::parser::relations::{Relation, RelationKind};
-use syn_parser::resolve::module_tree::ModuleTree;
-use syn_parser::CodeGraph;
 
 use crate::common::build_tree_for_tests;
 // Removed unused imports for helpers moved to CodeGraph
-use crate::common::uuid_ids_utils::run_phases_and_collect;
 
 /// **Covers:** Basic sanity check. Ensures that the number of `ModuleNode`s stored
 /// in the `ModuleTree`'s internal map (`tree.modules()`) matches the total number
@@ -42,7 +40,7 @@ fn test_module_tree_module_count() {
     // Assert that the number of modules in the tree's map equals the number in the merged graph
     assert_eq!(
         tree.modules().len(),
-        graph.modules.len(),
+        graph.graph.modules.len(),
         "ModuleTree should contain all modules from the merged graph"
     );
 }

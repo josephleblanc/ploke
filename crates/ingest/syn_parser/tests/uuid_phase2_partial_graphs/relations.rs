@@ -9,7 +9,7 @@ mod phase2_relation_tests {
             analyze_files_parallel,
             nodes::GraphId,
             relations::{Relation, RelationKind},
-            visitor::ParsedCodeGraph,
+            ParsedCodeGraph,
         },
     };
 

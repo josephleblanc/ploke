@@ -6,11 +6,11 @@ use ploke_core::{NodeId, TrackingHash, TypeId};
 use syn_parser::parser::nodes::GraphId;
 use syn_parser::parser::nodes::ValueKind;
 use syn_parser::parser::types::VisibilityKind;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{GraphNode, ValueNode},
     relations::RelationKind,
-    visitor::ParsedCodeGraph,
 };
 
 // Test Plan for ValueNode (const/static) in Phase 2 (uuid_ids)

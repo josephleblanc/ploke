@@ -2,7 +2,8 @@ use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::{
     nodes::*,
-    visitor::{calculate_cfg_hash_bytes, ParsedCodeGraph}, // Import calculate_cfg_hash_bytes
+    visitor::calculate_cfg_hash_bytes,
+    ParsedCodeGraph, // Import calculate_cfg_hash_bytes
 };
 
 /// Finds the specific ParsedCodeGraph for the target file, then finds the TypeAliasNode
