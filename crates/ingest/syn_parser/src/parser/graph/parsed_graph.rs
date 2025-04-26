@@ -116,10 +116,9 @@ impl ParsedCodeGraph {
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
-        // tree.process_export_rels(self)?; // abort parsing for invalid re-export nodes.
         // 1: Register all modules with their containment info
         for module in self.modules() {
-            log_tree_build(module);
+            log_build_tree_processing_module(module);
             // Populates:
             //  - imports/reexports.
             //  - module declaration index
@@ -283,10 +282,11 @@ impl GraphAccess for ParsedCodeGraph {
     }
 }
 
-fn log_tree_build(module: &ModuleNode) {
+/// Logs the start of processing a module during module tree building.
+fn log_build_tree_processing_module(module: &ModuleNode) {
     debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({}) | Visibility: {}",
-        "Processing module for tree:".blue(),
-        module.name.yellow(),
+        "Processing module for tree:".log_header(),
+        module.name.log_name(),
         module.id.to_string().magenta(),
         format!("{:?}", module.visibility).cyan()
     );

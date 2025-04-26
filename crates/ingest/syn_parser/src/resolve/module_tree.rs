@@ -832,7 +832,7 @@ impl ModuleTree {
         if !item_node.visibility().is_pub() {
             // If the item's own visibility isn't Public, it can never be reached
             // via a public path from the crate root.
-            self.log_bfs_step(item_node, "Item not public, terminating early"); // Optional log
+            self.log_spp_item_not_public(item_node);
             return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id));
         }
         if item_node.kind_matches(ItemKind::ExternCrate) {
@@ -841,17 +841,14 @@ impl ModuleTree {
         let item_gid = &GraphId::Node(item_node.id());
         let item_name = item_node.name().to_string();
 
-        self.log_bfs_step(item_node, "Starting item");
+        self.log_spp_start(item_node);
 
         // Find the direct parent module ID using the index
         let initial_parent_relations = self
             .get_relations_to(item_gid, |tr| tr.relation().kind == RelationKind::Contains)
             .ok_or_else(|| ModuleTreeError::no_relations_found(item_node))?;
         let parent_mod_id = match initial_parent_relations.first() {
-            Some(tr) => {
-                self.log_bfs_step(item_node, "Try finding parent");
-                ModuleNodeId::new(tr.relation().source.try_into()?)
-            } // O(1)+O(k) lookup
+            Some(tr) => ModuleNodeId::new(tr.relation().source.try_into()?), // O(1)+O(k) lookup
             None => {
                 // Item isn't contained in any module? Maybe it's the root module itself?
                 if let Some(module_node) = item_node.as_module() {
@@ -875,9 +872,10 @@ impl ModuleTree {
         // --- 2. BFS Loop ---
         while let Some((current_mod_id, path_to_item)) = queue.pop_front() {
             // --- 3. Check for Goal ---
-            self.log_bfs_path(current_mod_id.into_inner(), &path_to_item, "Check if root");
+            self.log_spp_check_root(current_mod_id, &path_to_item);
             if current_mod_id == self.root {
                 // Reached the crate root! Construct the final path.
+                self.log_spp_found_root(current_mod_id, &path_to_item);
                 let mut final_path = vec!["crate".to_string()];
                 // The path_to_item is currently [item, mod, parent_mod, ...]
                 // We need to reverse it.
@@ -889,8 +887,7 @@ impl ModuleTree {
             }
 
             // --- 4. Explore Upwards (Containing Module) ---
-
-            self.log_bfs_path(current_mod_id.into_inner(), &path_to_item, "Explore Up");
+            self.log_spp_explore_containment(current_mod_id, &path_to_item);
             self.explore_up_via_containment(
                 current_mod_id,
                 &path_to_item,
@@ -928,12 +925,12 @@ impl ModuleTree {
         queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
         visited: &mut HashSet<ModuleNodeId>,
         // NOTE: Unused variable `graph`. Why is it here?
-        graph: &ParsedCodeGraph,
+        graph: &ParsedCodeGraph, // NOTE: Unused variable `graph`. Why is it here?
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
 
         let current_mod_node = self.get_module_checked(&current_mod_id)?; // O(1)
-        self.log_bfs_step(current_mod_node, "Start explore up");
+        self.log_spp_containment_start(current_mod_node);
         // Determine the ID and visibility source (declaration or definition)
         let (effective_source_id, visibility_source_node) = if current_mod_node.is_file_based()
             && current_mod_id != self.root
@@ -947,19 +944,20 @@ impl ModuleTree {
                     )
                 })
                 .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
-            self.log_bfs_step(current_mod_node, "Check Vis Source");
+            self.log_spp_containment_vis_source(current_mod_node);
             if let Some(decl_rel) = decl_relations.first() {
                 let decl_id = ModuleNodeId::new(decl_rel.relation().source.try_into()?);
                 // Visibility comes from the declaration node
+                self.log_spp_containment_vis_source_decl(decl_id);
                 (decl_id, self.get_module_checked(&decl_id)?)
             } else {
                 // Unlinked file-based module, treat as private/inaccessible upwards
                 // Or log a warning and use the definition itself? Let's treat as inaccessible.
-                log::warn!(target: LOG_TARGET_VIS, "SPP: Could not find declaration for file-based module {}, treating as inaccessible upwards.", current_mod_id);
+                self.log_spp_containment_unlinked(current_mod_id);
                 return Ok(()); // Cannot proceed upwards via containment
             }
         } else {
-            self.log_bfs_step(current_mod_node, "Inline/root, use self");
+            self.log_spp_containment_vis_source_inline(current_mod_node);
             // Inline module or root, use itself
             (current_mod_id, current_mod_node)
         };
@@ -975,10 +973,9 @@ impl ModuleTree {
 
             // Check visibility: Is the declaration/inline module visible FROM the parent?
             // We need the parent module node to check its scope if visibility is restricted
-            // NOTE: Why is this unused? Why did we get it?
             let parent_mod_node = self.get_module_checked(&parent_mod_id)?;
 
-            self.log_bfs_step(parent_mod_node, "Checking Parent");
+            self.log_spp_containment_check_parent(parent_mod_node);
             if self.is_accessible_from(parent_mod_id, effective_source_id) {
                 // Need is_accessible_from helper
                 if visited.insert(parent_mod_id) {
@@ -986,14 +983,21 @@ impl ModuleTree {
                     let mut new_path = path_to_item.to_vec();
                     // Prepend the name used to declare/define the current module
                     new_path.push(visibility_source_node.name().to_string());
+                    self.log_spp_containment_queue_parent(parent_mod_id, &new_path);
                     queue.push_back((parent_mod_id, new_path));
+                } else {
+                    self.log_spp_containment_parent_visited(parent_mod_id);
                 }
             } else {
-                log::trace!(target: LOG_TARGET_VIS, "SPP: Module {} ({}) not accessible from parent {}, pruning containment path.", visibility_source_node.name(), effective_source_id, parent_mod_id);
+                self.log_spp_containment_parent_inaccessible(
+                    visibility_source_node,
+                    effective_source_id,
+                    parent_mod_id,
+                );
             }
         } else if effective_source_id != self.root {
             // Should only happen if root has no parent relation, otherwise inconsistent tree
-            log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No parent found for non-root module {} via containment.", effective_source_id);
+            self.log_spp_containment_no_parent(effective_source_id);
         }
         Ok(())
     }
@@ -1009,11 +1013,7 @@ impl ModuleTree {
         graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
-        self.log_bfs_path(
-            target_id.into_inner(),
-            path_to_item,
-            "Start Re-export Explore",
-        );
+        self.log_spp_reexport_start(target_id, path_to_item);
         // Find ImportNodes that re-export the target_id
         // Need reverse ReExport lookup: target = target_id -> source = import_node_id
         let reexport_relations = self
@@ -1034,21 +1034,21 @@ impl ModuleTree {
                 // O(1) <--- not actually true, refactor graph method `get_import_checked`
                 Ok(node) => node,
                 Err(_) => {
-                    log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id);
+                    self.log_spp_reexport_missing_import_node(import_node_id);
                     continue; // Skip this relation
                 }
             };
             // Check for extern crate, return error that needs to be handled by caller.
             // This should only happen for items that are not defined in the target parsed crate.
             if import_node.is_extern_crate() {
+                self.log_spp_reexport_is_external(import_node);
                 return Err(ModuleTreeError::ExternalItemNotResolved(import_node_id));
             }
-            self.log_bfs_step(import_node, "Get import node");
+            self.log_spp_reexport_get_import_node(import_node);
 
             // Check if the re-export itself is public (`pub use`, `pub(crate) use`, etc.)
             if !import_node.is_public_use() {
-                self.log_bfs_step(import_node, "!is_reexport");
-                // Use the existing helper
+                self.log_spp_reexport_not_public(import_node);
                 continue; // Skip private `use` statements
             }
 
@@ -1071,16 +1071,16 @@ impl ModuleTree {
                 // So, we only need to check if we've visited this module before.
 
                 if visited.insert(reexporting_mod_id) {
-                    self.log_bfs_path(import_node_id, path_to_item, "Get path to item");
                     let mut new_path = path_to_item.to_vec();
                     // Prepend the name the item is re-exported AS
                     new_path.push(import_node.visible_name.clone());
-
-                    self.log_bfs_step(import_node, "Push Import to queue");
+                    self.log_spp_reexport_queue_module(import_node, reexporting_mod_id, &new_path);
                     queue.push_back((reexporting_mod_id, new_path));
+                } else {
+                    self.log_spp_reexport_module_visited(reexporting_mod_id);
                 }
             } else {
-                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id);
+                self.log_spp_reexport_no_container(import_node_id);
             }
         }
         Ok(())
@@ -1347,7 +1347,7 @@ impl ModuleTree {
             && !segments_to_resolve.is_empty() // Ensure there's a segment to check
             && graph.iter_dependency_names().any(|dep_name| dep_name == segments_to_resolve[0])
         {
-            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve);
+            self.log_resolve_single_export_external(segments_to_resolve);
             // Return specific error for external re-exports that SPP might handle later
             return Err(ModuleTreeError::ExternalItemNotResolved(export_node.id));
         }
@@ -1358,21 +1358,7 @@ impl ModuleTree {
                 segments_to_resolve,
                 graph, // Pass graph access
             )
-            .map_err(|e| {
-                // If resolution fails, wrap the error, providing the original path context
-                match e {
-                    // Preserve existing UnresolvedReExportTarget if it came from the helper
-                    ModuleTreeError::UnresolvedReExportTarget { .. } => e,
-                    // Otherwise, create a new UnresolvedReExportTarget with the correct path
-                    _ => ModuleTreeError::UnresolvedReExportTarget {
-                        import_node_id: Some(export_node.id),
-                        // Use the original full path for the error message
-                        path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_else(
-                            |_| NodePath::new_unchecked(vec!["<invalid>".to_string()]),
-                        ), // Handle potential error in path conversion for error reporting
-                    },
-                }
-            })?;
+            .map_err(|e| self.wrap_resolution_error(e, export_node.id, target_path_segments))?;
 
         // --- If target_node_id was found ---
         let relation = Relation {
@@ -1729,7 +1715,7 @@ impl ModuleTree {
                         .map(|decl_node| decl_node.visibility())
                         .unwrap_or_else(|| {
                             // Should not happen if tree is consistent, but default to Inherited if decl node missing
-                            log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id, target_defn_id);
+                            self.log_access_missing_decl_node(decl_id, target_defn_id);
                             VisibilityKind::Inherited // Default to Inherited if decl node missing
                         })
                 }
@@ -1785,13 +1771,9 @@ impl ModuleTree {
                 // Check if the source module is a descendant of the restriction module
                 let mut current_ancestor = self.get_parent_module_id(source);
                 while let Some(ancestor_id) = current_ancestor {
-                    // Keep this specific debug log inside the loop for ancestor tracing
-                    debug!(target: LOG_TARGET_VIS, "  {} Checking ancestor: {} ({}) against restriction: {} ({})",
-                        "->".dimmed(), // Indentation marker
-                        self.modules.get(&ancestor_id).map(|m| m.name.as_str()).unwrap_or("?").yellow(), // Ancestor name yellow
-                        ancestor_id.to_string().magenta(), // Ancestor ID magenta
-                        self.modules.get(&restriction_module_id).map(|m| m.name.as_str()).unwrap_or("?").blue(), // Restriction name blue
-                        restriction_module_id.to_string().magenta() // Restriction ID magenta
+                    self.log_access_restricted_check_ancestor(
+                        ancestor_id,
+                        restriction_module_id,
                     );
                     if ancestor_id == restriction_module_id {
                         self.log_access(&log_ctx, "Restricted Visibility (Ancestor Match)", true);
@@ -1849,8 +1831,7 @@ impl ModuleTree {
             // If not file-based and not the root, move up to the parent.
             // Return error if the parent link is missing (inconsistent tree).
             current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
-                // Log this specific case for debugging?
-                log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id);
+                self.log_find_decl_dir_missing_parent(current_id);
                 ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner())
                 // Re-use existing error
             })?;
@@ -1975,17 +1956,7 @@ impl ModuleTree {
                     // Check if the resolved path is outside the src directory
                     if !resolved_path.starts_with(src_dir) {
                         // External path target not found - Log a warning and continue
-                        log::warn!(
-                            target: LOG_TARGET_PATH_ATTR,
-                            "{} {} | {}",
-                            "External Path".yellow().bold(), // Use yellow for warning
-                            format!("({})", decl_module_id).log_id(),
-                            format!(
-                                "Target file outside src dir not found: {}",
-                                resolved_path.display()
-                            )
-                            .log_vis()
-                        );
+                        self.log_path_attr_external_not_found(*decl_module_id, resolved_path);
                         continue; // Skip to the next path attribute
                     } else {
                         self.log_module_error(
@@ -2074,6 +2045,193 @@ impl ModuleTree {
             search_in_module_id.to_string().log_id()
         );
     }
+
+    // --- Logging Helpers for Shortest Public Path (SPP) ---
+
+    fn log_spp_start(&self, item_node: &dyn GraphNode) {
+        self.log_bfs_step(item_node, "Starting SPP");
+    }
+
+    fn log_spp_item_not_public(&self, item_node: &dyn GraphNode) {
+        self.log_bfs_step(item_node, "Item not public, terminating early");
+    }
+
+    fn log_spp_check_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Check if root");
+    }
+
+    fn log_spp_found_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Found root!");
+    }
+
+    fn log_spp_explore_containment(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Explore Up (Containment)");
+    }
+
+    fn log_spp_explore_reexports(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Explore Up (Re-exports)");
+    }
+
+    // --- Logging Helpers for explore_up_via_containment ---
+
+    fn log_spp_containment_start(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Start explore up");
+    }
+
+    fn log_spp_containment_vis_source(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Check Vis Source");
+    }
+
+    fn log_spp_containment_vis_source_decl(&self, decl_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_VIS, "  {} Visibility source is Declaration: {}", "->".log_comment(), decl_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_unlinked(&self, current_mod_id: ModuleNodeId) {
+        log::warn!(target: LOG_TARGET_VIS, "SPP: Could not find declaration for file-based module {}, treating as inaccessible upwards.", current_mod_id);
+    }
+
+    fn log_spp_containment_vis_source_inline(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Inline/root, use self");
+    }
+
+    fn log_spp_containment_check_parent(&self, parent_mod_node: &ModuleNode) {
+        self.log_bfs_step(parent_mod_node, "Checking Parent");
+    }
+
+    fn log_spp_containment_queue_parent(&self, parent_mod_id: ModuleNodeId, new_path: &[String]) {
+        self.log_bfs_path(parent_mod_id.into_inner(), new_path, "Queueing Parent");
+    }
+
+    fn log_spp_containment_parent_visited(&self, parent_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_BFS, "  {} Parent {} already visited.", "->".log_comment(), parent_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_parent_inaccessible(
+        &self,
+        visibility_source_node: &ModuleNode,
+        effective_source_id: ModuleNodeId,
+        parent_mod_id: ModuleNodeId,
+    ) {
+        log::trace!(target: LOG_TARGET_VIS, "SPP: Module {} ({}) not accessible from parent {}, pruning containment path.", visibility_source_node.name().log_name(), effective_source_id.to_string().log_id(), parent_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_no_parent(&self, effective_source_id: ModuleNodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No parent found for non-root module {} via containment.", effective_source_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for explore_up_via_reexports ---
+
+    fn log_spp_reexport_start(&self, target_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(
+            target_id.into_inner(),
+            path_to_item,
+            "Start Re-export Explore",
+        );
+    }
+
+    fn log_spp_reexport_missing_import_node(&self, import_node_id: NodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id.to_string().log_id());
+    }
+
+    fn log_spp_reexport_is_external(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "Is External Crate");
+    }
+
+    fn log_spp_reexport_get_import_node(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "Get import node");
+    }
+
+    fn log_spp_reexport_not_public(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "!is_public_use");
+    }
+
+    fn log_spp_reexport_queue_module(
+        &self,
+        import_node: &ImportNode,
+        reexporting_mod_id: ModuleNodeId,
+        new_path: &[String],
+    ) {
+        self.log_bfs_step(import_node, "Queueing Re-exporting Module");
+        self.log_bfs_path(reexporting_mod_id.into_inner(), new_path, "  New Path");
+    }
+
+    fn log_spp_reexport_module_visited(&self, reexporting_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_BFS, "  {} Re-exporting module {} already visited.", "->".log_comment(), reexporting_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_reexport_no_container(&self, import_node_id: NodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for is_accessible ---
+
+    fn log_access_missing_decl_node(&self, decl_id: NodeId, target_defn_id: NodeId) {
+        log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id.to_string().log_id(), target_defn_id.to_string().log_id());
+    }
+
+    fn log_access_restricted_check_ancestor(
+        &self,
+        ancestor_id: ModuleNodeId,
+        restriction_module_id: ModuleNodeId,
+    ) {
+        debug!(target: LOG_TARGET_VIS, "  {} Checking ancestor: {} ({}) against restriction: {} ({})",
+            "->".dimmed(), // Indentation marker
+            self.modules.get(&ancestor_id).map(|m| m.name.as_str()).unwrap_or("?").yellow(), // Ancestor name yellow
+            ancestor_id.to_string().magenta(), // Ancestor ID magenta
+            self.modules.get(&restriction_module_id).map(|m| m.name.as_str()).unwrap_or("?").blue(), // Restriction name blue
+            restriction_module_id.to_string().magenta() // Restriction ID magenta
+        );
+    }
+
+    // --- Logging Helpers for find_declaring_file_dir ---
+
+    fn log_find_decl_dir_missing_parent(&self, current_id: ModuleNodeId) {
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for process_path_attributes ---
+
+    fn log_path_attr_external_not_found(&self, decl_module_id: ModuleNodeId, resolved_path: &PathBuf) {
+         log::warn!(
+            target: LOG_TARGET_PATH_ATTR,
+            "{} {} | {}",
+            "External Path".yellow().bold(), // Use yellow for warning
+            format!("({})", decl_module_id).log_id(),
+            format!(
+                "Target file outside src dir not found: {}",
+                resolved_path.display()
+            )
+            .log_vis()
+        );
+    }
+
+    // --- Logging Helpers for resolve_single_export ---
+
+    fn log_resolve_single_export_external(&self, segments_to_resolve: &[String]) {
+         log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve.log_path_debug());
+    }
+
+    /// Wraps a resolution error from `resolve_path_relative_to` into `UnresolvedReExportTarget`.
+    fn wrap_resolution_error(
+        &self,
+        error: ModuleTreeError,
+        export_node_id: NodeId,
+        original_path_segments: &[String],
+    ) -> ModuleTreeError {
+        match error {
+            // Preserve existing UnresolvedReExportTarget if it came from the helper
+            ModuleTreeError::UnresolvedReExportTarget { .. } => error,
+            // Otherwise, create a new UnresolvedReExportTarget with the correct path
+            _ => ModuleTreeError::UnresolvedReExportTarget {
+                import_node_id: Some(export_node_id),
+                // Use the original full path for the error message
+                path: NodePath::try_from(original_path_segments.to_vec()).unwrap_or_else(|_| {
+                    NodePath::new_unchecked(vec!["<invalid path conversion>".to_string()])
+                }), // Handle potential error in path conversion for error reporting
+            },
+        }
+    }
+
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
