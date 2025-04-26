@@ -1416,11 +1416,17 @@ impl ModuleTree {
 
     #[allow(dead_code)]
     fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
-        // AI: Update for using `Option` AI!
         self.pending_exports
-            .iter()
-            .find(|exp| exp.containing_mod_id() == module_id && exp.export_node().id == item_id)
-            .and_then(|exp| exp.export_node().source_path.last().cloned())
+            .as_deref() // Get Option<&[PendingExport]>
+            .and_then(|exports| {
+                // Iterate over the slice if Some
+                exports
+                    .iter()
+                    .find(|exp| {
+                        exp.containing_mod_id() == module_id && exp.export_node().id == item_id
+                    })
+                    .and_then(|exp| exp.export_node().source_path.last().cloned())
+            })
     }
 
     #[allow(dead_code)]
