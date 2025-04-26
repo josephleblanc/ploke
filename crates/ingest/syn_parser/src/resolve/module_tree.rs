@@ -2027,13 +2027,20 @@ impl ModuleTree {
             // The definition's path is the original file-system derived path.
             let original_path = NodePath::try_from(def_mod.path)?;
 
+            // AI: The following breaks due to borrowing rules. Instead of cloning, use a lookup
+            // of the modules by using `self` methods inside of the `log_update_path_index_paths`
+            // method using the Ids. AI!
             self.log_update_path_index_paths(&decl_mod, &def_mod, &canonical_path, &original_path);
 
             // 4. Remove the old path index entry for the definition module
             // Use the original_path (derived from file system) as the key to remove.
             if let Some(removed_id) = self.path_index.remove(&original_path) {
                 if removed_id != *def_mod_id.as_inner() {
-                    self.log_update_path_index_remove_inconsistency(removed_id, &original_path, def_mod_id);
+                    self.log_update_path_index_remove_inconsistency(
+                        removed_id,
+                        &original_path,
+                        def_mod_id,
+                    );
                     return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_id, removed_id)));
                 }
                 self.log_update_path_index_remove(&original_path, def_mod_id);
@@ -2049,7 +2056,11 @@ impl ModuleTree {
                 .insert(canonical_path.clone(), def_mod_inner_id)
             {
                 if existing_id != def_mod_inner_id {
-                    self.log_update_path_index_insert_conflict(&canonical_path, def_mod_id, existing_id);
+                    self.log_update_path_index_insert_conflict(
+                        &canonical_path,
+                        def_mod_id,
+                        existing_id,
+                    );
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
                         existing_id,
@@ -2384,24 +2395,36 @@ impl ModuleTree {
                 );
             }
             None => {
-                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No path attributes found, skipping index update.",
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No path attributes found, skipping index update.",
                     "Update Path Index:".log_header()
                 );
             }
         }
     }
 
-     fn log_update_path_index_processing(&self, decl_mod_id: ModuleNodeId) {
-         let decl_mod_name = self.modules.get(&decl_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
-         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({})",
+    fn log_update_path_index_processing(&self, decl_mod_id: ModuleNodeId) {
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {} ({})",
             "Processing:".log_step(),
             decl_mod_name.log_name(),
             decl_mod_id.to_string().log_id()
         );
     }
 
-    fn log_update_path_index_target_error(&self, decl_mod_id: ModuleNodeId, error: &ModuleTreeError) {
-        let decl_mod_name = self.modules.get(&decl_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
+    fn log_update_path_index_target_error(
+        &self,
+        decl_mod_id: ModuleNodeId,
+        error: &ModuleTreeError,
+    ) {
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Failed to find CustomPath target for {} ({}): {:?}. Skipping index update.",
             "Error:".log_error(),
             decl_mod_name.log_name(),
@@ -2410,10 +2433,22 @@ impl ModuleTree {
         );
     }
 
-    fn log_update_path_index_found_target(&self, decl_mod_id: ModuleNodeId, def_mod_id: ModuleNodeId) {
-        let decl_mod_name = self.modules.get(&decl_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
-        let def_mod_name = self.modules.get(&def_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
-         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found target: {} ({}) for decl {} ({})",
+    fn log_update_path_index_found_target(
+        &self,
+        decl_mod_id: ModuleNodeId,
+        def_mod_id: ModuleNodeId,
+    ) {
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        let def_mod_name = self
+            .modules
+            .get(&def_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found target: {} ({}) for decl {} ({})",
             "->".log_comment(),
             def_mod_name.log_name(),
             def_mod_id.to_string().log_id(),
@@ -2443,11 +2478,7 @@ impl ModuleTree {
         );
     }
 
-    fn log_update_path_index_remove(
-        &self,
-        original_path: &NodePath,
-        def_mod_id: ModuleNodeId,
-    ) {
+    fn log_update_path_index_remove(&self, original_path: &NodePath, def_mod_id: ModuleNodeId) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Removed old path index entry: {} -> {}",
             "✓".log_green(),
             original_path.to_string().log_path(),
@@ -2461,7 +2492,7 @@ impl ModuleTree {
         original_path: &NodePath,
         expected_def_mod_id: ModuleNodeId,
     ) {
-         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}. This indicates a major inconsistency if the removed ID doesn't match",
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}. This indicates a major inconsistency if the removed ID doesn't match",
             "Error:".log_error(),
             removed_id.to_string().log_id(),
             original_path.to_string().log_path(),
@@ -2481,24 +2512,16 @@ impl ModuleTree {
         );
     }
 
-    fn log_update_path_index_insert(
-        &self,
-        canonical_path: &NodePath,
-        def_mod_id: ModuleNodeId,
-    ) {
-         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Inserted new path index entry: {} -> {}",
+    fn log_update_path_index_insert(&self, canonical_path: &NodePath, def_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Inserted new path index entry: {} -> {}",
             "✓".log_green(),
             canonical_path.to_string().log_path(),
             def_mod_id.to_string().log_id()
         );
     }
 
-     fn log_update_path_index_reinsert(
-        &self,
-        canonical_path: &NodePath,
-        def_mod_id: ModuleNodeId,
-    ) {
-         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Re-inserted path index entry (idempotent): {} -> {}",
+    fn log_update_path_index_reinsert(&self, canonical_path: &NodePath, def_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Re-inserted path index entry (idempotent): {} -> {}",
             "Info:".log_comment(),
             canonical_path.to_string().log_path(),
             def_mod_id.to_string().log_id()
@@ -2519,7 +2542,6 @@ impl ModuleTree {
             "This implies a non-unique canonical path was generated or indexed incorrectly.".log_comment()
         );
     }
-
 
     // Removed unused get_module_path_vec and get_root_path methods
 }
