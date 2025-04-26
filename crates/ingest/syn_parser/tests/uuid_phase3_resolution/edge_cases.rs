@@ -107,7 +107,11 @@ fn test_spp_multi_step_3() {
     .expect("Failed to find original item_a");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolution leads here
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -132,7 +136,11 @@ fn test_spp_multi_step_4_shortest() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     // Expected is the path via item_c (length 1), not item_alt_d (length 1)
-    let expected_result = Ok(vec!["crate".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()], // Shortest path
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -156,7 +164,11 @@ fn test_spp_inline_path_shadowing() {
     .expect("Failed to find inline shadow_me");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "inline_path_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "inline_path_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -186,7 +198,11 @@ fn test_spp_inline_path_item_access() -> Result<(), Box<dyn std::error::Error>> 
     .expect("Failed to find item_only_in_inline_target");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "inline_path_mod".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "inline_path_mod".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -212,7 +228,11 @@ fn test_spp_one_file_multi_mod_public() {
     .expect("Failed to find item_in_shared_target");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "logical_mod_1".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "logical_mod_1".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -260,7 +280,11 @@ fn test_spp_glob_reexport_public() {
     .expect("Failed to find glob_public_item");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming glob re-export resolved
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -285,7 +309,11 @@ fn test_spp_glob_reexport_path_submodule() {
     .expect("Failed to find item_in_glob_sub_path");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string(), "glob_sub_path".to_string()]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string(), "glob_sub_path".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
@@ -309,10 +337,14 @@ fn test_spp_glob_reexport_public_submodule() {
     .expect("Failed to find public_item_here");
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec![
-        "crate".to_string(),
-        "pub_sub_with_restricted".to_string(),
-    ]);
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec![
+            "crate".to_string(),
+            "pub_sub_with_restricted".to_string(),
+        ],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
