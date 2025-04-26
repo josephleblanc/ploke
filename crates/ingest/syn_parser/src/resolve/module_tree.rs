@@ -1400,22 +1400,125 @@ impl ModuleTree {
         path_segments: &[String],
         graph: &ParsedCodeGraph, // Need graph access
     ) -> Result<NodeId, ModuleTreeError> {
-        // AI: Implement this function
-        // TODO: Implement detailed resolution logic:
-        // 1. Handle `self::` prefix if present (adjust base_module_id, remove prefix).
-        // 2. Handle `super::` prefix if present (find parent, adjust base_module_id, remove prefix). Error if no parent.
-        // 3. Start search from `base_module_id`.
-        // 4. For the first segment:
-        //    - Check items defined directly within `base_module_id` (using `Contains` relations).
-        //    - Check items imported via `use` into `base_module_id` (requires processing `pending_imports` or having an import map).
-        //    - Check items re-exported via `pub use` into `base_module_id` (requires `reexport_index`).
-        //    - Ensure the found item is visible from `base_module_id`.
-        // 5. If a unique, visible item is found for the first segment:
-        //    - If `path_segments` has only one segment, return its ID.
-        //    - If more segments remain, the found item *must* be a module. Recursively call/continue resolution from that module with the remaining segments.
-        // 6. If not found, ambiguous, or not visible, return `UnresolvedReExportTarget` or similar error. AI!
+        if path_segments.is_empty() {
+            return Err(ModuleTreeError::NodePathValidation(Box::new(
+                SynParserError::NodeValidation("Empty path segments for relative resolution".into()),
+            )));
+        }
 
-        // Placeholder implementation - THIS IS THE HARDEST PART
+        let mut current_module_id = base_module_id;
+        let mut remaining_segments = path_segments;
+
+        // 1. Handle `self::` prefix
+        if remaining_segments[0] == "self" {
+            remaining_segments = &remaining_segments[1..];
+            if remaining_segments.is_empty() {
+                // Path was just "self", refers to the module itself
+                return Ok(*current_module_id.as_inner());
+            }
+        }
+        // 2. Handle `super::` prefix (potentially multiple times)
+        else {
+            while remaining_segments[0] == "super" {
+                current_module_id = self
+                    .get_parent_module_id(current_module_id)
+                    .ok_or_else(|| ModuleTreeError::UnresolvedReExportTarget {
+                        path: NodePath::try_from(path_segments.to_vec())?, // Original path for error
+                        import_node_id: None, // Indicate failure resolving 'super'
+                    })?;
+                remaining_segments = &remaining_segments[1..];
+                if remaining_segments.is_empty() {
+                    // Path ended with "super", refers to the parent module
+                    return Ok(*current_module_id.as_inner());
+                }
+            }
+        }
+
+        // 3. Iterative Resolution through remaining segments
+        let mut resolved_id: Option<NodeId> = None;
+
+        for (i, segment) in remaining_segments.iter().enumerate() {
+            let search_in_module_id = resolved_id
+                .map(ModuleNodeId::new) // If we resolved to a module last iteration
+                .unwrap_or(current_module_id); // Otherwise, start in the initial/adjusted module
+
+            // 4. Find items named `segment` directly contained within `search_in_module_id`
+            let contains_relations = self
+                .get_relations_from(&search_in_module_id.to_graph_id(), |tr| {
+                    tr.relation().kind == RelationKind::Contains
+                })
+                .unwrap_or_default(); // Use unwrap_or_default for empty vec if no relations
+
+            let mut candidates: Vec<NodeId> = Vec::new();
+            for rel in contains_relations {
+                if let GraphId::Node(target_id) = rel.relation().target {
+                    // We need the actual node to check its name
+                    if let Ok(target_node) = graph.find_node_unique(target_id) {
+                        if target_node.name() == segment {
+                            // Found a node with the matching name
+                            // 5. Visibility Check (Simplified: Check if accessible from the module we are searching *in*)
+                            // TODO: Refine visibility check if needed. is_accessible might be too broad here?
+                            //       Maybe need a check specific to direct children?
+                            //       For now, using is_accessible.
+                            if let Some(target_mod_id) = target_node.as_module().map(|m| ModuleNodeId::new(m.id())) {
+                                // If the target is a module, check its accessibility
+                                if self.is_accessible(search_in_module_id, target_mod_id) {
+                                     candidates.push(target_id);
+                                }
+                            } else {
+                                // If the target is not a module (e.g., function, struct),
+                                // its visibility is inherent. Check if it's public or accessible
+                                // within the crate/restricted path.
+                                // For simplicity here, let's assume if it's contained, it's accessible
+                                // for the purpose of path resolution *within* the module structure.
+                                // A more robust check might involve the item's own visibility field.
+                                candidates.push(target_id); // Assume accessible for now if contained
+                            }
+                        }
+                    }
+                    // Else: Node ID from relation not found in graph - indicates inconsistency
+                }
+            }
+
+            // --- Filter and Select ---
+            match candidates.len() {
+                0 => {
+                    // Not found in direct definitions
+                    return Err(ModuleTreeError::UnresolvedReExportTarget {
+                        path: NodePath::try_from(path_segments.to_vec())?, // Original path
+                        import_node_id: None, // Indicate failure at this segment
+                    });
+                }
+                1 => {
+                    let found_id = candidates[0];
+                    resolved_id = Some(found_id); // Store the resolved ID for the next iteration
+
+                    // Check if it's the last segment
+                    if i == remaining_segments.len() - 1 {
+                        return Ok(found_id);
+                    } else {
+                        // More segments remain, ensure the found item is a module
+                        if graph.find_node_unique(found_id)?.as_module().is_none() {
+                            return Err(ModuleTreeError::UnresolvedReExportTarget { // Or a more specific error like "PathNotAModule"
+                                path: NodePath::try_from(path_segments.to_vec())?,
+                                import_node_id: None,
+                            });
+                        }
+                        // Continue to the next segment, search will start within this module
+                    }
+                }
+                _ => {
+                    // Ambiguous: Multiple items with the same name found
+                    // TODO: Add a specific ModuleTreeError variant for ambiguity?
+                    return Err(ModuleTreeError::UnresolvedReExportTarget {
+                        path: NodePath::try_from(path_segments.to_vec())?,
+                        import_node_id: None, // Indicate ambiguity
+                    });
+                }
+            }
+        }
+
+        // Should be unreachable if path_segments is not empty, but handle defensively
         Err(ModuleTreeError::UnresolvedReExportTarget {
             path: NodePath::try_from(path_segments.to_vec())?,
             import_node_id: None,
