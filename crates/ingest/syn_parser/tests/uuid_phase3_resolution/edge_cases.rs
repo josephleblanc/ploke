@@ -539,11 +539,13 @@ fn test_spp_branching_reexport() {
     )
     .expect("Failed to find branch_item");
 
-    // AI: We need to update these tests to use the new return type of `shortest_public_path`
-    // Just make sure you don't delete the numbered comments.
-    // Try to just handle this case first. AI!
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(vec!["crate".to_string()]); // Expect shortest path
+    // Expect the shortest path (directly at crate root) and internal definition kind
+    let expected_result = Ok(ResolvedItemInfo {
+        path: vec!["crate".to_string()],
+        target_kind: ResolvedTargetKind::InternalDefinition,
+        target_id: item_id,
+    });
 
     assert_eq!(
         spp_result, expected_result,
