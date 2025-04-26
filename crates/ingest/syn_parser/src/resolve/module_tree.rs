@@ -898,11 +898,7 @@ impl ModuleTree {
                // When should this return error for invalid graph state?
 
             // --- 5. Explore Sideways/Upwards (Re-exports) ---
-            self.log_bfs_path(
-                current_mod_id.into_inner(),
-                &path_to_item,
-                "Explore Re-exports",
-            );
+            self.log_spp_explore_reexports(current_mod_id, &path_to_item);
             self.explore_up_via_reexports(
                 current_mod_id,
                 &path_to_item,
