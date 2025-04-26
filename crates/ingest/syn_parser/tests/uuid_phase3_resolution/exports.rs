@@ -39,9 +39,7 @@ mod export_tests {
             ))
         })?;
         for graph in parsed_graphs {
-            merged_parsed_graph
-                .append_all(graph)
-                .map_err(|e| *e)?; // Unbox error from append_all
+            merged_parsed_graph.append_all(graph).map_err(|e| *e)?; // Unbox error from append_all
         }
 
         // Build tree from the fully merged ParsedCodeGraph
@@ -232,11 +230,8 @@ mod export_tests {
 
         let (merged_parsed_graph, tree) = build_tree_and_process_exports(fixture_name)?;
 
-        let final_import_id = find_import_node_id_by_name(
-            &merged_parsed_graph,
-            &["crate"],
-            "final_renamed_item",
-        );
+        let final_import_id =
+            find_import_node_id_by_name(&merged_parsed_graph, &["crate"], "final_renamed_item");
         let expected_public_path =
             NodePath::try_from(vec!["crate".into(), "final_renamed_item".into()])?;
 
@@ -383,8 +378,11 @@ mod export_tests {
         let (merged_parsed_graph, tree) = build_tree_and_process_exports(fixture_name)?;
 
         // The ImportNode is inside `relative` and named `reexport_self`
-        let import_id =
-            find_import_node_id_by_name(&merged_parsed_graph, &["crate", "relative"], "reexport_self");
+        let import_id = find_import_node_id_by_name(
+            &merged_parsed_graph,
+            &["crate", "relative"],
+            "reexport_self",
+        );
         // The public path is where the item is defined/re-exported publicly
         let expected_public_path = NodePath::try_from(vec![
             "crate".into(),
