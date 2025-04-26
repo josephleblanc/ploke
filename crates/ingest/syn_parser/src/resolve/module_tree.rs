@@ -1863,7 +1863,9 @@ impl ModuleTree {
         Ok(Self::resolve_relative_path(&base_dir, path))
     }
     pub(crate) fn process_path_attributes(&mut self) -> Result<(), ModuleTreeError> {
-        for (decl_module_id, resolved_path) in self.found_path_attrs.iter() {
+        self.found_path_attrs.iter().try_fold(Vec::new(), 
+            |acc, (decl_module_id, resolved_path)|
+          {
             let ctx = PathProcessingContext {
                 module_id: *decl_module_id,
                 module_name: "?", // Temporary placeholder
@@ -1915,7 +1917,7 @@ impl ModuleTree {
 
                     )));
                     }
-                    self.tree_relations.push(relation.into());
+                    Ok(relation)
                 }
                 None => {
                     // 3. Handle case where the target file node wasn't found.
@@ -1948,7 +1950,9 @@ impl ModuleTree {
                     if !resolved_path.starts_with(src_dir) {
                         // External path target not found - Log a warning and continue
                         self.log_path_attr_external_not_found(*decl_module_id, resolved_path);
-                        continue; // Skip to the next path attribute
+                            // Implement this error type AI!
+                            Err(ModuleTreeError::Warning(format!( "Target of \#[path = \"...\" outside src directory. src directory is: {}", src_dir.as_os_str()) ))
+                        // continue; // Skip to the next path attribute
                     } else {
                         self.log_module_error(
                             *decl_module_id,
@@ -1957,16 +1961,19 @@ impl ModuleTree {
                                 resolved_path.display(),
                             ),
                         );
-                        return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
+                        Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
                             "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
                             resolved_path.display(),
                             decl_module_node.id,
                             &decl_module_node,
-                        )));
+                        )))
                     }
                 }
             }
-        }
+
+        });
+            
+                // self.add_relation_checked(relation.into())?;
         Ok(())
     }
 
@@ -2017,6 +2024,14 @@ impl ModuleTree {
 
             // 2. Get paths (convert Vec<String> to NodePath)
             // We need the nodes temporarily to get their paths, but avoid cloning them.
+            // AI: No, you didn't understand. I want you to do something like this:
+            // self.log_update_path_index_paths(decl_mod_id, def_mod_id);
+            //
+            // Then, inside of  log_update_path_index_paths itself, find the modules, e.g.
+            // let canonical_path = {
+            //     let decl_mod = self.get_module_checked(&decl_mod_id)?;
+            //     NodePath::try_from(decl_mod.path.clone())? // Clone path Vec, not whole node
+            // };
             let canonical_path = {
                 let decl_mod = self.get_module_checked(&decl_mod_id)?;
                 NodePath::try_from(decl_mod.path.clone())? // Clone path Vec, not whole node
@@ -2027,7 +2042,12 @@ impl ModuleTree {
             };
 
             // 3. Log using IDs
-            self.log_update_path_index_paths(decl_mod_id, def_mod_id, &canonical_path, &original_path);
+            self.log_update_path_index_paths(
+                decl_mod_id,
+                def_mod_id,
+                &canonical_path,
+                &original_path,
+            );
 
             // 4. Remove the old path index entry for the definition module
             // Use the original_path (derived from file system) as the key to remove.
@@ -2462,8 +2482,16 @@ impl ModuleTree {
         original_path: &NodePath,
     ) {
         // Lookup names using IDs
-        let decl_mod_name = self.modules.get(&decl_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
-        let def_mod_name = self.modules.get(&def_mod_id).map(|m| m.name.as_str()).unwrap_or("?");
+        let decl_mod_name = self
+            .modules
+            .get(&decl_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
+        let def_mod_name = self
+            .modules
+            .get(&def_mod_id)
+            .map(|m| m.name.as_str())
+            .unwrap_or("?");
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Decl Mod: {} ({}) -> Canonical Path: {}",
             "->".log_comment(),
