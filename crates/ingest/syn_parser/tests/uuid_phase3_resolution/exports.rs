@@ -21,7 +21,7 @@ mod export_tests {
     use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
         paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::run_phases_and_collect,
+        uuid_ids_utils::{find_module_node_by_path, run_phases_and_collect}, // Re-added find_module_node_by_path
     };
     // Core assertion helper - Takes a slice of TreeRelation now
     pub fn assert_relation_exists(
