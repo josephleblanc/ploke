@@ -1331,7 +1331,7 @@ impl ModuleTree {
         }
 
         let first_segment = &target_path_segments[0];
-        let target_node_id: NodeId; // We need to find this
+        // We need to find this
 
         // --- Delegate ALL path resolution to resolve_path_relative_to ---
         let (base_module_id, segments_to_resolve) = if first_segment == "crate" {
@@ -1347,13 +1347,12 @@ impl ModuleTree {
             && !segments_to_resolve.is_empty() // Ensure there's a segment to check
             && graph.iter_dependency_names().any(|dep_name| dep_name == segments_to_resolve[0])
         {
-             log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve);
-             // Return specific error for external re-exports that SPP might handle later
-             return Err(ModuleTreeError::ExternalItemNotResolved(export_node.id));
+            log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve);
+            // Return specific error for external re-exports that SPP might handle later
+            return Err(ModuleTreeError::ExternalItemNotResolved(export_node.id));
         }
 
-
-        target_node_id = self
+        let target_node_id: NodeId = self
             .resolve_path_relative_to(
                 base_module_id,
                 segments_to_resolve,
@@ -1368,11 +1367,12 @@ impl ModuleTree {
                     _ => ModuleTreeError::UnresolvedReExportTarget {
                         import_node_id: Some(export_node.id),
                         // Use the original full path for the error message
-                        path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_else(|_| NodePath::new_unchecked(vec!["<invalid>".to_string()])), // Handle potential error in path conversion for error reporting
+                        path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_else(
+                            |_| NodePath::new_unchecked(vec!["<invalid>".to_string()]),
+                        ), // Handle potential error in path conversion for error reporting
                     },
                 }
             })?;
-
 
         // --- If target_node_id was found ---
         let relation = Relation {
@@ -1380,6 +1380,7 @@ impl ModuleTree {
             target: GraphId::Node(target_node_id), // Target is the resolved item
             kind: RelationKind::ReExports,
         };
+        self.log_relation(relation, Some("resolve_single_export created relation"));
 
         // Construct the public path using the visible_name
         let containing_module = self.get_module_checked(&source_mod_id)?;
