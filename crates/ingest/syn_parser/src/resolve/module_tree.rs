@@ -58,8 +58,9 @@ pub struct ModuleTree {
     modules: HashMap<ModuleNodeId, ModuleNode>,
     /// Temporary storage for unresolved imports (e.g. `use` statements)
     pending_imports: Vec<PendingImport>,
-    /// Temporary storage for unresolved exports (e.g. `pub use` statements)
-    pending_exports: Vec<PendingExport>,
+    /// Temporary storage for unresolved exports (e.g. `pub use` statements).
+    /// Wrapped in Option to allow taking ownership without cloning in `process_export_rels`.
+    pending_exports: Option<Vec<PendingExport>>,
     /// Reverse path indexing to find NodeId on a given path
     /// HashMap appropriate for many -> few possible mapping
     /// Contains all `NodeId` items except module declarations due to
@@ -318,8 +319,11 @@ impl ModuleTree {
     }
 
     /// Returns a slice of the pending public re-exports collected during tree construction.
+    /// Returns an empty slice if the internal Option is None.
     pub fn pending_exports(&self) -> &[PendingExport] {
-        &self.pending_exports
+        self.pending_exports
+            .as_deref() // Converts Option<Vec<T>> to Option<&[T]>
+            .unwrap_or(&[]) // Returns &[] if None
     }
 
     pub fn new_from_root(root: &ModuleNode) -> Result<Self, ModuleTreeError> {
@@ -332,7 +336,7 @@ impl ModuleTree {
             root_file: root_file.to_path_buf(),
             modules: HashMap::new(),
             pending_imports: vec![],
-            pending_exports: vec![],
+            pending_exports: Some(vec![]), // Initialize with Some(empty_vec)
             path_index: HashMap::new(),
             decl_index: HashMap::new(),
             tree_relations: vec![],
@@ -519,13 +523,32 @@ impl ModuleTree {
                 .map(|imp| PendingImport::from_import(imp.clone(), module.id())),
         );
 
-        // Add all re-exports
+        // Add all re-exports to the Vec inside the Option
+        if let Some(exports) = self.pending_exports.as_mut() {
+            exports.extend(
+                imports
+                    .iter()
+                    .filter(|imp| imp.is_local_reexport())
+                    .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
+            );
+        } else {
+            // This case should ideally not happen if initialized correctly and only taken once.
+            // Log an error or panic if pending_exports is None when it shouldn't be.
+            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Attempted to add exports, but pending_exports was None in module {}", module.id());
+            // Optionally re-initialize: self.pending_exports = Some(vec![new_export]);
+            // Or return an error if this state is invalid.
+            // For now, just log and skip adding.
+        }
+
+        // Original code for reference:
+        /*
         self.pending_exports.extend(
             imports
                 .iter()
                 .filter(|imp| imp.is_local_reexport())
                 .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
         );
+        */
 
         // Use map_err for explicit conversion from SynParserError to ModuleTreeError
         let node_path = NodePath::try_from(module.defn_path().clone())
@@ -1139,10 +1162,20 @@ impl ModuleTree {
         &mut self,
         graph: &ParsedCodeGraph,
     ) -> Result<(), ModuleTreeError> {
+        // Take ownership of the pending exports Vec, leaving None in its place.
+        let pending = match self.pending_exports.take() {
+            Some(p) => p,
+            None => {
+                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "process_export_rels called when pending_exports was already None.");
+                return Ok(()); // Nothing to process
+            }
+        };
+
         let mut new_relations: Vec<TreeRelation> = Vec::new();
-        for export in &self.pending_exports {
+        for export in pending {
+            // Iterate over the owned Vec
             // get the target node:
-            let source_mod_id = export.containing_mod_id();
+            let source_mod_id = export.containing_mod_id(); // Use owned export
             let export_node = export.export_node();
 
             // Create relation
@@ -1218,9 +1251,17 @@ impl ModuleTree {
         &mut self,
         graph: &ParsedCodeGraph, // Keep graph for potential future use in logging or resolution
     ) -> Result<(), ModuleTreeError> {
-        let pending = self.pending_exports.clone();
+        // Take ownership of the pending exports Vec, leaving None in its place.
+        let pending = match self.pending_exports.take() {
+            Some(p) => p,
+            None => {
+                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "process_export_rels called when pending_exports was already None.");
+                return Ok(()); // Nothing to process
+            }
+        };
 
         for export in pending {
+            // Iterate over the owned Vec
             // Call the helper function to resolve this single export
             match self.resolve_single_export(&export, graph) {
                 Ok((relation, public_reexport_path)) => {
