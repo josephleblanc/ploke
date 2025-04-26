@@ -938,9 +938,8 @@ impl ModuleTree {
             self.log_spp_item_not_public(item_node);
             return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id));
         }
-        if item_node.kind_matches(ItemKind::ExternCrate) {
-            return Err(ModuleTreeError::ExternalItemNotResolved(item_node.id()));
-        }
+        // Removed early check for ExternCrate here.
+        // It's handled later when determining ResolvedTargetKind.
         let item_gid = &GraphId::Node(item_node.id());
         let item_name = item_node.name().to_string();
 
