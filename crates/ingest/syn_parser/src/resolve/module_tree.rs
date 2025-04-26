@@ -1452,14 +1452,36 @@ impl ModuleTree {
                 .unwrap_or_default(); // Use unwrap_or_default for empty vec if no relations
 
             let mut candidates: Vec<NodeId> = Vec::new();
-            for rel in contains_relations {
+            // --- DIAGNOSTIC LOGGING START ---
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                "{} {} in module {} ({} relations found)",
+                "Resolving segment:".log_header(),
+                segment.log_name(),
+                search_in_module_id.to_string().log_id(),
+                contains_relations.len().to_string().log_id()
+            );
+            for rel in &contains_relations { // Iterate by reference
                 if let GraphId::Node(target_id) = rel.relation().target {
-                    // We need the actual node to check its name
-                    if let Ok(target_node) = graph.find_node_unique(target_id) {
-                        if target_node.name() == segment {
-                            // Found a node with the matching name
-                            // 5. Visibility Check (Simplified: Check if accessible from the module we are searching *in*)
-                            // TODO: Refine visibility check if needed. is_accessible might be too broad here?
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                        "  {} Relation Target ID: {}",
+                        "->".log_comment(),
+                        target_id.to_string().log_id()
+                    );
+                    match graph.find_node_unique(target_id) {
+                        Ok(target_node) => {
+                            let name_matches = target_node.name() == segment;
+                            debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                                "    {} Found Node: '{}' ({}), Name matches '{}': {}",
+                                "✓".log_green(),
+                                target_node.name().log_name(),
+                                target_node.kind().log_vis_debug(),
+                                segment.log_name(),
+                                name_matches.to_string().log_vis()
+                            );
+                            if name_matches {
+                                // Original visibility check logic follows...
+                                // 5. Visibility Check (Simplified: Check if accessible from the module we are searching *in*)
+                                // TODO: Refine visibility check if needed. is_accessible might be too broad here?
                             //       Maybe need a check specific to direct children?
                             //       For now, using is_accessible.
                             if let Some(target_mod_id) =
@@ -1472,22 +1494,45 @@ impl ModuleTree {
                             } else {
                                 // If the target is not a module (e.g., function, struct),
                                 // its visibility is inherent. Check if it's public or accessible
-                                // within the crate/restricted path.
-                                // For simplicity here, let's assume if it's contained, it's accessible
-                                // for the purpose of path resolution *within* the module structure.
-                                // A more robust check might involve the item's own visibility field.
-                                candidates.push(target_id); // Assume accessible for now if contained
+                                    // within the crate/restricted path.
+                                    // For simplicity here, let's assume if it's contained, it's accessible
+                                    // for the purpose of path resolution *within* the module structure.
+                                    // A more robust check might involve the item's own visibility field.
+                                    candidates.push(target_id); // Assume accessible for now if contained
+                                }
                             }
                         }
+                        Err(e) => {
+                            debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                                "    {} Error finding node for ID {}: {:?}",
+                                "✗".log_error(),
+                                target_id.to_string().log_id(),
+                                e.to_string().log_error()
+                            );
+                        }
                     }
-                    // Else: Node ID from relation not found in graph - indicates inconsistency
+                    // Else: Relation target was not a GraphId::Node
+                } else {
+                     debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                        "  {} Relation Target was not GraphId::Node: {:?}",
+                        "->".log_comment(),
+                        rel.relation().target.log_id_debug()
+                    );
                 }
             }
+            // --- DIAGNOSTIC LOGGING END ---
+
 
             // --- Filter and Select ---
             match candidates.len() {
                 0 => {
                     // Not found in direct definitions
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+                        "{} No candidates found for segment '{}' in module {}. Returning error.",
+                        "Resolution Failed:".log_error(),
+                        segment.log_name(),
+                        search_in_module_id.to_string().log_id()
+                    );
                     return Err(ModuleTreeError::UnresolvedReExportTarget {
                         path: NodePath::try_from(path_segments.to_vec())?, // Original path
                         import_node_id: None, // Indicate failure at this segment
