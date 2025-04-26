@@ -24,11 +24,14 @@ impl Relation {
     pub fn matches_source(&self, source_id: GraphId) -> bool {
         self.source == source_id
     }
+    // AI: Add methods to compare for source NodeId/TypeId AI!
 
     /// Checks if the relation's target matches the given `GraphId`.
     pub fn matches_target(&self, target_id: GraphId) -> bool {
         self.target == target_id
     }
+
+    // AI: Add methods to compare for source NodeId/TypeId AI!
 
     /// Checks if the relation's source and kind match the given values.
     pub fn matches_source_and_kind(&self, source_id: GraphId, kind: RelationKind) -> bool {
