@@ -1400,7 +1400,7 @@ impl ModuleTree {
         path_segments: &[String],
         graph: &ParsedCodeGraph, // Need graph access
     ) -> Result<NodeId, ModuleTreeError> {
-        // Implement this function
+        // AI: Implement this function
         // TODO: Implement detailed resolution logic:
         // 1. Handle `self::` prefix if present (adjust base_module_id, remove prefix).
         // 2. Handle `super::` prefix if present (find parent, adjust base_module_id, remove prefix). Error if no parent.
@@ -1413,7 +1413,7 @@ impl ModuleTree {
         // 5. If a unique, visible item is found for the first segment:
         //    - If `path_segments` has only one segment, return its ID.
         //    - If more segments remain, the found item *must* be a module. Recursively call/continue resolution from that module with the remaining segments.
-        // 6. If not found, ambiguous, or not visible, return `UnresolvedReExportTarget` or similar error.
+        // 6. If not found, ambiguous, or not visible, return `UnresolvedReExportTarget` or similar error. AI!
 
         // Placeholder implementation - THIS IS THE HARDEST PART
         Err(ModuleTreeError::UnresolvedReExportTarget {
