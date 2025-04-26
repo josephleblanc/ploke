@@ -50,19 +50,7 @@ mod export_tests {
         Ok((merged_parsed_graph, module_tree)) // Return merged graph and tree
     }
 
-    pub fn assert_relation_exists(
-        graph: &ParsedCodeGraph,
-        source: GraphId,
-        target: GraphId,
-        kind: TreeRelation,
-        message: &str,
-    ) {
-        let found = graph
-            .relations()
-            .iter()
-            .any(|r| r.matches_source_target_kind(source, target, kind.relation()));
-        assert!(found, "{}", message);
-    }
+    // Removed local definition of assert_relation_exists - using imported version
 
     // Helper to find the NodeId of an ImportNode based on its visible name and containing module path
     // Takes ParsedCodeGraph now
