@@ -101,6 +101,8 @@ impl RelationKind {
     pub fn is_use(self) -> bool {
         matches!(self.try_into(), Ok(ScopeKind::CanUse))
     }
+    // AI: Implement some helpful methods for comparing `RelationKind` here.
+    // Don't do anything to change core logic or remove code AI!
 }
 
 /// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
