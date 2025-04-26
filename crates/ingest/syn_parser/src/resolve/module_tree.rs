@@ -1452,31 +1452,18 @@ impl ModuleTree {
                 .unwrap_or_default(); // Use unwrap_or_default for empty vec if no relations
 
             let mut candidates: Vec<NodeId> = Vec::new();
-            // --- DIAGNOSTIC LOGGING START ---
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD,
-                "{} {} in module {} ({} relations found)",
-                "Resolving segment:".log_header(),
-                segment.log_name(),
-                search_in_module_id.to_string().log_id(),
-                contains_relations.len().to_string().log_id()
-            );
+            self.log_resolve_segment_start(segment, search_in_module_id, contains_relations.len());
+
             for rel in &contains_relations { // Iterate by reference
                 if let GraphId::Node(target_id) = rel.relation().target {
-                    debug!(target: LOG_TARGET_MOD_TREE_BUILD,
-                        "  {} Relation Target ID: {}",
-                        "->".log_comment(),
-                        target_id.to_string().log_id()
-                    );
+                    self.log_resolve_segment_relation(target_id);
                     match graph.find_node_unique(target_id) {
                         Ok(target_node) => {
                             let name_matches = target_node.name() == segment;
-                            debug!(target: LOG_TARGET_MOD_TREE_BUILD,
-                                "    {} Found Node: '{}' ({}), Name matches '{}': {}",
-                                "✓".log_green(),
-                                target_node.name().log_name(),
-                                target_node.kind().log_vis_debug(),
-                                segment.log_name(),
-                                name_matches.to_string().log_vis()
+                            self.log_resolve_segment_found_node(
+                                target_node,
+                                segment,
+                                name_matches,
                             );
                             if name_matches {
                                 // Original visibility check logic follows...
@@ -2019,6 +2006,73 @@ impl ModuleTree {
             }
         }
         Ok(())
+    }
+
+    // --- Private Logging Helpers for resolve_path_relative_to ---
+
+    fn log_resolve_segment_start(
+        &self,
+        segment: &str,
+        search_in_module_id: ModuleNodeId,
+        relation_count: usize,
+    ) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "{} {} in module {} ({} relations found)",
+            "Resolving segment:".log_header(),
+            segment.log_name(),
+            search_in_module_id.to_string().log_id(),
+            relation_count.to_string().log_id()
+        );
+    }
+
+    fn log_resolve_segment_relation(&self, target_id: NodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "  {} Relation Target ID: {}",
+            "->".log_comment(),
+            target_id.to_string().log_id()
+        );
+    }
+
+    fn log_resolve_segment_found_node(
+        &self,
+        target_node: &dyn GraphNode,
+        segment: &str,
+        name_matches: bool,
+    ) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "    {} Found Node: '{}' ({}), Name matches '{}': {}",
+            "✓".log_green(),
+            target_node.name().log_name(),
+            target_node.kind().log_vis_debug(),
+            segment.log_name(),
+            name_matches.to_string().log_vis()
+        );
+    }
+
+    fn log_resolve_segment_node_error(&self, target_id: NodeId, error: &SynParserError) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "    {} Error finding node for ID {}: {:?}",
+            "✗".log_error(),
+            target_id.to_string().log_id(),
+            error.to_string().log_error() // Use Display impl of the error
+        );
+    }
+
+    fn log_resolve_segment_target_not_node(&self, target: GraphId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "  {} Relation Target was not GraphId::Node: {:?}",
+            "->".log_comment(),
+            target.log_id_debug()
+        );
+    }
+
+    fn log_resolve_segment_failed(&self, segment: &str, search_in_module_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "{} No candidates found for segment '{}' in module {}. Returning error.",
+            "Resolution Failed:".log_error(),
+            segment.log_name(),
+            search_in_module_id.to_string().log_id()
+        );
     }
 
     // Removed unused get_module_path_vec and get_root_path methods
