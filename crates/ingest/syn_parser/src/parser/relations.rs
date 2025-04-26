@@ -24,14 +24,31 @@ impl Relation {
     pub fn matches_source(&self, source_id: GraphId) -> bool {
         self.source == source_id
     }
-    // AI: Add methods to compare for source NodeId/TypeId AI!
+
+    /// Checks if the relation's source is a `Node` and matches the given `NodeId`.
+    pub fn matches_source_node(&self, node_id: ploke_core::NodeId) -> bool {
+        matches!(self.source, GraphId::Node(id) if id == node_id)
+    }
+
+    /// Checks if the relation's source is a `Type` and matches the given `TypeId`.
+    pub fn matches_source_type(&self, type_id: ploke_core::TypeId) -> bool {
+        matches!(self.source, GraphId::Type(id) if id == type_id)
+    }
 
     /// Checks if the relation's target matches the given `GraphId`.
     pub fn matches_target(&self, target_id: GraphId) -> bool {
         self.target == target_id
     }
 
-    // AI: Add methods to compare for source NodeId/TypeId AI!
+    /// Checks if the relation's target is a `Node` and matches the given `NodeId`.
+    pub fn matches_target_node(&self, node_id: ploke_core::NodeId) -> bool {
+        matches!(self.target, GraphId::Node(id) if id == node_id)
+    }
+
+    /// Checks if the relation's target is a `Type` and matches the given `TypeId`.
+    pub fn matches_target_type(&self, type_id: ploke_core::TypeId) -> bool {
+        matches!(self.target, GraphId::Type(id) if id == type_id)
+    }
 
     /// Checks if the relation's source and kind match the given values.
     pub fn matches_source_and_kind(&self, source_id: GraphId, kind: RelationKind) -> bool {
