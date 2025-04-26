@@ -63,7 +63,9 @@
 use ploke_core::ItemKind;
 use syn_parser::parser::ParsedCodeGraph;
 // Added ItemKind
-use syn_parser::resolve::module_tree::{ModuleTree, ModuleTreeError};
+use syn_parser::resolve::module_tree::{
+    ModuleTree, ModuleTreeError, ResolvedItemInfo, ResolvedTargetKind,
+};
 
 use crate::common::resolution::*;
 use crate::common::uuid_ids_utils::run_phases_and_collect;
