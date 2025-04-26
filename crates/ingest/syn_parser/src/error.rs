@@ -245,7 +245,12 @@ impl From<ModuleTreeError> for SynParserError {
                 import_node_id,
                 path,
             }),
-            // AI: Add error handling here for new error type from ModuleTreeError AI!
+            ModuleTreeError::InvalidStatePendingExportsMissing { module_id } => {
+                SynParserError::InternalState(format!(
+                    "Invalid internal state: pending_exports was None when adding module {}",
+                    module_id
+                ))
+            }
         }
     }
 }
