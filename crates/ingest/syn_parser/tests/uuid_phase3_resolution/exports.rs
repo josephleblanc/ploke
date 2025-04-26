@@ -21,24 +21,10 @@ mod export_tests {
     use crate::common::uuid_ids_utils::find_function_node_paranoid;
     use crate::common::{
         paranoid::find_import_node_paranoid, // Removed find_struct_node_paranoid as unused in this file
-        uuid_ids_utils::{find_module_node_by_path, run_phases_and_collect}, // Re-added find_module_node_by_path
+        uuid_ids_utils::{
+            assert_relation_exists, find_module_node_by_path, run_phases_and_collect,
+        }, // Added assert_relation_exists import
     };
-    // Core assertion helper - Takes a slice of TreeRelation now
-    pub fn assert_relation_exists(
-        relations: &[TreeRelation], // Changed from &CodeGraph
-        source: GraphId,
-        target: GraphId,
-        kind: RelationKind,
-        message: &str,
-    ) {
-        let found = relations // Iterate over the provided slice
-            .iter()
-            .any(|tr| {
-                let r = tr.relation(); // Get the inner Relation
-                r.source == source && r.target == target && r.kind == kind
-            });
-        assert!(found, "{}", message);
-    }
 
     // Helper to merge ParsedCodeGraphs and build/process the ModuleTree
     fn build_tree_and_process_exports(
@@ -126,7 +112,7 @@ mod export_tests {
             GraphId::Node(target_func_id),
             RelationKind::ReExports,
             "Relation for local_func re-export",
-            &tree.tree_relations(), // Pass tree relations
+            // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&expected_public_path),
@@ -172,7 +158,7 @@ mod export_tests {
                 GraphId::Node(target_deep_func_id),
                 RelationKind::ReExports,
                 "Relation for renamed_deep_func re-export",
-                &tree_for_deep.tree_relations(),
+                 // Removed duplicate argument
             );
             assert_eq!(
                 tree_for_deep.reexport_index().get(&expected_renamed_path),
@@ -215,7 +201,7 @@ mod export_tests {
             GraphId::Node(original_item_a_id),
             RelationKind::ReExports,
             "Relation for item_c -> item_a",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
 
         // Assert the reexport_index maps the public path to the original item
@@ -256,7 +242,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for final_renamed_item -> multi_rename_item",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&expected_public_path),
@@ -294,7 +280,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for item_via_a -> branch_item",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&path_a),
@@ -312,7 +298,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for item_via_b -> branch_item",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&path_b),
@@ -361,7 +347,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for reexport_super -> item_in_relative",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
         // Check reexport_index - NOTE: This path might differ depending on SPP logic vs. canonical path logic
         // For now, let's assume the index uses the path where the re-export makes it visible.
@@ -411,7 +397,7 @@ mod export_tests {
             GraphId::Node(original_item_id),
             RelationKind::ReExports,
             "Relation for reexport_self -> item_in_inner",
-            &tree.tree_relations(),
+             // Removed duplicate argument
         );
         assert_eq!(
             tree.reexport_index().get(&expected_public_path),
