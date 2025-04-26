@@ -68,7 +68,9 @@ pub struct ModuleTree {
     /// Contains all `NodeId` items except module declarations due to
     /// path collision with defining module.
     path_index: HashMap<NodePath, NodeId>,
-    // AI: Add doc comments.
+    /// Maps declaration module IDs with `#[path]` attributes pointing outside the crate's
+    /// `src` directory to the resolved absolute external path. These paths do not have
+    /// corresponding `ModuleNode` definitions within the analyzed crate context.
     external_path_attrs: HashMap<ModuleNodeId, PathBuf>,
     /// Separate HashMap for module declarations.
     /// Reverse lookup, but can't be in the same HashMap as the modules that define them, since
@@ -78,14 +80,23 @@ pub struct ModuleTree {
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
     reexport_index: HashMap<NodePath, NodeId>,
-    // AI: Add doc-comments
+    /// Stores resolved absolute paths for modules declared with `#[path]` attributes
+    /// that point to files *within* the crate's `src` directory.
+    /// Key: ID of the declaration module (`mod foo;`).
+    /// Value: Resolved absolute `PathBuf` of the target file.
     found_path_attrs: HashMap<ModuleNodeId, PathBuf>,
-    // AI: Add doc-comments
-    // Option for `take`
+    /// Temporarily stores the IDs of module declarations that have a `#[path]` attribute.
+    /// Used during the initial tree building phase before paths are fully resolved.
+    /// Wrapped in `Option` to allow taking ownership via `take()` during processing.
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 
-    // AI: Add doc-comments
+    /// Index mapping a source `GraphId` (Node or Type) to a list of indices
+    /// into the `tree_relations` vector where that ID appears as the source.
+    /// Used for efficient lookup of outgoing relations.
     relations_by_source: HashMap<GraphId, Vec<usize>>,
+    /// Index mapping a target `GraphId` (Node or Type) to a list of indices
+    /// into the `tree_relations` vector where that ID appears as the target.
+    /// Used for efficient lookup of incoming relations.
     relations_by_target: HashMap<GraphId, Vec<usize>>,
 }
 
@@ -357,8 +368,8 @@ impl ModuleTree {
             tree_relations: vec![],
             reexport_index: HashMap::new(),
             found_path_attrs: HashMap::new(),
+            external_path_attrs: HashMap::new(), // Initialize the new field
             pending_path_attrs: Some(Vec::new()),
-            // AI: update with new field AI!
             relations_by_source: HashMap::new(),
             relations_by_target: HashMap::new(),
         })
