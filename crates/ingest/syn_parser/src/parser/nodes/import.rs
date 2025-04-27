@@ -107,6 +107,15 @@ impl ImportNode {
         &self.source_path
     }
 
+    // AI: We need to update this doc-comment as well. It was the source of some errors previously.
+    // As you can see from the method itself, this distinguishes all elements that are made
+    // available to a module and could possibly be the target of other `use` statements. It was
+    // previously simply named `is_reexport`, but the LLM assistant got confused in its usage and
+    // led to a bug that took some time to track down.
+    //
+    // Ok, go ahead and edit the doc-comment to indicate this is any kind of re-export, with either
+    // restricted, crate restricted, or unrestricted public reexport. Rename the method to
+    // `is_any_reexport` AI!
     /// Checks if this import node represents a public or restricted re-export (`pub use`).
     ///
     /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
