@@ -634,33 +634,31 @@ impl ModuleTree {
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
     }
 
-    // AI: What are the rust best practices for doc-comment formatting? Is it standard to use
-    // indenting and the markdown-style you've used below or is there another standard way? I'm
-    // getting clippy warnings here. Just repond to my question for now, don't change the comment
-    // yet. AI?
     /// Adds a `ModuleNode` to the `ModuleTree`, updating internal state and indices.
     ///
     /// This function performs several key actions during the initial phase of building the module tree:
-    /// 1.  **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap, keyed by its `ModuleNodeId`.
-    /// 2.  **Indexes Paths:**
-    ///     *   Adds the module's definition path (`NodePath`) to the appropriate index
-    ///     (`path_index` for definitions, `decl_index` for declarations).
-    ///     *   Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a
-    ///     conflict is found.
-    ///     *   Note: The path->Id indexes for definitions and declarations must be kept separate
-    ///     because a module's declaration, e.g. `mod module_a;` and the file-based module this
-    ///     declaration points to, e.g. `project/src/module_a.rs` or directory, e.g.
-    ///     `project/src/module_a/mod.rs`, have the same canonical path `crate::module_a`.
-    /// 3.  **Separates Imports/Exports:**
-    ///     *   Filters the module's `imports` (`use` statements).
-    ///     *   Adds private imports (`use some::item;` or `extern crate ...;`) identified by
-    ///     `is_inherited_use()` to `pending_imports`.
-    ///     *   Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by
-    ///     `is_any_reexport()` to `pending_exports`.
-    /// 4.  **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to
-    ///     `pending_path_attrs` for later resolution.
-    /// 5.  **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module
-    ///     with the same ID already exists in the `modules` map.
+    ///
+    /// 1. **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap,
+    ///    keyed by its `ModuleNodeId`.
+    /// 2. **Indexes Paths:**
+    ///    * Adds the module's definition path (`NodePath`) to the appropriate index
+    ///      (`path_index` for definitions, `decl_index` for declarations).
+    ///    * Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a
+    ///      conflict is found.
+    ///    * Note: The path->Id indexes for definitions and declarations must be kept separate
+    ///      because a module's declaration, e.g. `mod module_a;` and the file-based module this
+    ///      declaration points to, e.g. `project/src/module_a.rs` or directory, e.g.
+    ///      `project/src/module_a/mod.rs`, have the same canonical path `crate::module_a`.
+    /// 3. **Separates Imports/Exports:**
+    ///    * Filters the module's `imports` (`use` statements).
+    ///    * Adds private imports (`use some::item;` or `extern crate ...;`) identified by
+    ///      `is_inherited_use()` to `pending_imports`.
+    ///    * Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by
+    ///      `is_any_reexport()` to `pending_exports`.
+    /// 4. **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to
+    ///    `pending_path_attrs` for later resolution.
+    /// 5. **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module
+    ///    with the same ID already exists in the `modules` map.
     ///
     /// # Arguments
     /// * `module`: The `ModuleNode` to add to the tree. The function takes ownership.
