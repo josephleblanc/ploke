@@ -274,7 +274,7 @@ pub enum ModuleTreeError {
     #[error("Duplicate module definitions found for path attribute target: {0}")]
     DuplicateDefinition(String), // Store detailed message
     #[error("Module definition not found for path attribute target: {0}")]
-    ModuleDefinitionNotFound(String), // Store detailed message
+    ModuleKindinitionNotFound(String), // Store detailed message
 
     // --- NEW VARIANT ---
     #[error("Shortest public path resolution failed for external item re-export: {0}")]
@@ -634,19 +634,33 @@ impl ModuleTree {
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
     }
 
+    // AI: What are the rust best practices for doc-comment formatting? Is it standard to use
+    // indenting and the markdown-style you've used below or is there another standard way? I'm
+    // getting clippy warnings here. Just repond to my question for now, don't change the comment
+    // yet. AI?
     /// Adds a `ModuleNode` to the `ModuleTree`, updating internal state and indices.
     ///
     /// This function performs several key actions during the initial phase of building the module tree:
     /// 1.  **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap, keyed by its `ModuleNodeId`.
     /// 2.  **Indexes Paths:**
-    ///     *   Adds the module's definition path (`NodePath`) to the appropriate index (`path_index` for definitions, `decl_index` for declarations).
-    ///     *   Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a conflict is found.
+    ///     *   Adds the module's definition path (`NodePath`) to the appropriate index
+    ///     (`path_index` for definitions, `decl_index` for declarations).
+    ///     *   Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a
+    ///     conflict is found.
+    ///     *   Note: The path->Id indexes for definitions and declarations must be kept separate
+    ///     because a module's declaration, e.g. `mod module_a;` and the file-based module this
+    ///     declaration points to, e.g. `project/src/module_a.rs` or directory, e.g.
+    ///     `project/src/module_a/mod.rs`, have the same canonical path `crate::module_a`.
     /// 3.  **Separates Imports/Exports:**
     ///     *   Filters the module's `imports` (`use` statements).
-    ///     *   Adds private imports (`use some::item;` or `extern crate ...;`) identified by `is_inherited_use()` to `pending_imports`.
-    ///     *   Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by `is_any_reexport()` to `pending_exports`.
-    /// 4.  **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to `pending_path_attrs` for later resolution.
-    /// 5.  **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module with the same ID already exists in the `modules` map.
+    ///     *   Adds private imports (`use some::item;` or `extern crate ...;`) identified by
+    ///     `is_inherited_use()` to `pending_imports`.
+    ///     *   Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by
+    ///     `is_any_reexport()` to `pending_exports`.
+    /// 4.  **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to
+    ///     `pending_path_attrs` for later resolution.
+    /// 5.  **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module
+    ///     with the same ID already exists in the `modules` map.
     ///
     /// # Arguments
     /// * `module`: The `ModuleNode` to add to the tree. The function takes ownership.
@@ -690,7 +704,10 @@ impl ModuleTree {
         let node_path = NodePath::try_from(module.defn_path().clone())
             .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
         let conflicting_id = module.id(); // ID of the module we are trying to add
-                                          // Use entry API for clarity and efficiency
+
+        // Separate declaration and definition path->Id indexes.
+        // Indexes for declaration vs definition (inline or filebased) must be kept separate to
+        // avoid collision, as module definitions and declarations have the same canonical path.
         if module.is_declaration() {
             match self.decl_index.entry(node_path.clone()) {
                 // Clone node_path for the error case
@@ -727,22 +744,24 @@ impl ModuleTree {
             }
         }
 
-        // insert module to tree
+        // Assign new Id wrapper for modules for better type-safety
         let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
         self.log_module_insert(&module, module_id);
 
         // Store path attribute if present
+        // Index `#[path = "dir/to/file.rs"]` for later processing in `resolve_pending_path_attrs`
+        // and `process_path_attributes`
         if module.has_path_attr() {
-            // *** NEW LOGGING CALL ***
             self.log_add_pending_path(module_id, &module.name);
-            // *** END NEW ***
             self.pending_path_attrs
                 .as_mut()
                 .expect("Invariant: pending_path_attrs should always be Some before take()")
                 .push(module_id); // clarity. This should be invariant, however.
         }
 
-        let dup_node = self.modules.insert(module_id, module); // module is moved here
+        // Finally, if no error have been encountered, we insert all modules of any kind to a
+        // shared index of ModuleId->ModuleNode for lookup later.
+        let dup_node = self.modules.insert(module_id, module);
         if let Some(dup) = dup_node {
             self.log_duplicate(&dup);
             return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
@@ -2122,7 +2141,7 @@ impl ModuleTree {
                                 resolved_path.display(),
                             ),
                         );
-                        return Err(ModuleTreeError::ModuleDefinitionNotFound(format!(
+                        return Err(ModuleTreeError::ModuleKindinitionNotFound(format!(
                             "Module definition for path attribute target '{}' not found for declaration {}:\n{:#?}",
                             resolved_path.display(),
                             decl_module_node.id,
@@ -2278,8 +2297,8 @@ impl ModuleTree {
          })
          .ok_or_else(|| {
              log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "CustomPath relation target not found for declaration module {}", decl_mod_id);
-             // Use a more specific error if available, otherwise adapt ModuleDefinitionNotFound
-             ModuleTreeError::ModuleDefinitionNotFound(format!(
+             // Use a more specific error if available, otherwise adapt ModuleKindinitionNotFound
+             ModuleTreeError::ModuleKindinitionNotFound(format!(
                  "Definition module for declaration {} (via CustomPath relation) not found",
                  decl_mod_id
              ))
