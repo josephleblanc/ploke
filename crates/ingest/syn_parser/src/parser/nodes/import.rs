@@ -111,7 +111,8 @@ impl ImportNode {
     ///
     /// A re-export makes an imported item visible outside the current module scope,
     /// as if it were defined within that module (respecting the specified visibility).
-    /// This is achieved through `use` statements with explicit `pub` visibility.
+    /// This is achieved through `use` statements with explicit `pub` visibility, `pub(crate)`
+    /// visibility, or `pub(in path)` visibility.
     ///
     /// Returns `true` if the import kind is `UseStatement` and its visibility is
     /// `Public`, `Crate`, or `Restricted`.
@@ -169,6 +170,7 @@ impl ImportNode {
     }
 
     pub fn as_renamed_path(&self) -> Option<Vec<String>> {
+        // AI: Add doc comments
         if self.original_name.is_some() {
             let mut path = self.source_path.clone();
             path.pop();
@@ -180,6 +182,7 @@ impl ImportNode {
     }
 
     pub fn is_renamed(&self) -> bool {
+        // AI: Add doc comments AI!
         self.original_name.is_some()
     }
 }
@@ -215,7 +218,6 @@ impl GraphNode for ImportNode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
-    // ImportNode,                   // Placeholder or potentially for future import types
     ExternCrate, // Represents an `extern crate foo;` or `extern crate foo as Bar;` statement
     UseStatement(VisibilityKind), // Represents a `use` statement, capturing its visibility
 }
