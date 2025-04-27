@@ -169,11 +169,17 @@ impl ImportNode {
         matches!(self.kind, ImportKind::ExternCrate)
     }
 
+    /// If this import was renamed (`use ... as ...`), returns the path segments
+    /// ending with the `visible_name` (the name after `as`).
+    ///
+    /// For example, for `use std::collections::HashMap as Map;`, this would return
+    /// `Some(["std", "collections", "Map"])`.
+    ///
+    /// Returns `None` if the import was not renamed.
     pub fn as_renamed_path(&self) -> Option<Vec<String>> {
-        // AI: Add doc comments
         if self.original_name.is_some() {
             let mut path = self.source_path.clone();
-            path.pop();
+            path.pop(); // Remove the original name segment
             path.push(self.visible_name.clone());
             Some(path)
         } else {
@@ -181,8 +187,11 @@ impl ImportNode {
         }
     }
 
+    /// Checks if this import statement uses the `as` keyword to rename the imported item.
+    ///
+    /// Returns `true` if `original_name` is `Some`, indicating a rename occurred.
+    /// Returns `false` otherwise.
     pub fn is_renamed(&self) -> bool {
-        // AI: Add doc comments AI!
         self.original_name.is_some()
     }
 }
