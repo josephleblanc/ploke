@@ -62,14 +62,27 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     /// for any node (e.g., path determination error, I/O error).
     ///
     /// TODO: Implement the actual iteration and resolution logic.
-    /// TODO: Consider making this return an iterator instead of collecting into a HashMap.
-    // AI: Let's go with returning an iterator instead of returning a `HashMap`. That way we can
-    // still collect into a `HashMap` if we want to, or possibly zip() or otherwise interoperate
-    // with another iterator later. AI!
-    pub fn resolve_all(&self) -> Result<HashMap<NodeId, CanonId>, IdConversionError> {
-        let mut resolved_ids = HashMap::new();
-
+    pub fn resolve_all(
+        &self,
+    ) -> impl Iterator<Item = Result<(NodeId, CanonId), IdConversionError>> + '_ {
         // --- Placeholder Logic ---
+        // The actual implementation will involve chaining iterators over different node types.
+        // Example structure:
+        // self.graph.functions().iter().map(|func_node| {
+        //     let synthetic_id = func_node.id;
+        //     self.resolve_single_node(synthetic_id, func_node) // Helper returns Result<(NodeId, CanonId), Error>
+        // })
+        // .chain(self.graph.defined_types().iter().map(|type_def_node| {
+        //     let synthetic_id = type_def_node.id();
+        //     self.resolve_single_node(synthetic_id, type_def_node)
+        // }))
+        // .chain(...) // for other node types (modules, impls, traits, values, macros, imports)
+
+        // For now, return an empty iterator that satisfies the type signature.
+        std::iter::empty()
+
+        // --- Original Placeholder Logic (for reference during implementation) ---
+        // let mut resolved_ids = HashMap::new();
         // Iterate through self.graph.functions(), self.graph.defined_types(), etc.
         // For each node:
         // 1. Get its synthetic NodeId.
@@ -90,13 +103,22 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         //     resolved_ids.insert(synthetic_id, canon_id);
         // }
         // ... repeat for other node types ...
-
         // --- End Placeholder ---
-
-        Ok(resolved_ids)
     }
 
-    // Placeholder for a helper function (might live in ModuleTree or here)
+    // Placeholder for a helper function to resolve a single node
+    // fn resolve_single_node(
+    //     &self,
+    //     synthetic_id: NodeId,
+    //     node: &dyn GraphNode, // Need access to the node itself
+    // ) -> Result<(NodeId, CanonId), IdConversionError> {
+    //     let canonical_path = self.determine_canonical_path(synthetic_id)?; // Placeholder
+    //     let id_info = IdInfo { /* ... populate ... */ };
+    //     let canon_id = CanonId::generate_resolved(self.namespace, id_info)?;
+    //     Ok((synthetic_id, canon_id))
+    // }
+
+    // Placeholder for a helper function to determine canonical path (might live in ModuleTree or here)
     // fn determine_canonical_path(&self, node_id: NodeId) -> Result<Vec<String>, IdConversionError> {
     //     // ... logic to find containing module and build path ...
     //     Ok(vec!["crate".to_string(), "some_mod".to_string(), "item_name".to_string()]) // Dummy path
