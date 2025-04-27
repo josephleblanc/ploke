@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use std::{alloc::Global, collections::HashMap};
 
-use ploke_core::{CanonId, IdConversionError, IdInfo, NodeId, PubPathId, ResolvedIds, TrackingHash, TypeId};
+use ploke_core::{
+    CanonId, IdConversionError, IdInfo, NodeId, PubPathId, ResolvedIds, TrackingHash, TypeId,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -35,11 +37,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     /// * `namespace` - The UUID namespace of the crate being processed.
     /// * `module_tree` - A reference to the constructed `ModuleTree`.
     /// * `graph` - A reference to the `ParsedCodeGraph`.
-    pub fn new(
-        namespace: Uuid,
-        module_tree: &'a ModuleTree,
-        graph: &'b ParsedCodeGraph,
-    ) -> Self {
+    pub fn new(namespace: Uuid, module_tree: &'a ModuleTree, graph: &'b ParsedCodeGraph) -> Self {
         Self {
             namespace,
             module_tree,
@@ -65,6 +63,9 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     ///
     /// TODO: Implement the actual iteration and resolution logic.
     /// TODO: Consider making this return an iterator instead of collecting into a HashMap.
+    // AI: Let's go with returning an iterator instead of returning a `HashMap`. That way we can
+    // still collect into a `HashMap` if we want to, or possibly zip() or otherwise interoperate
+    // with another iterator later. AI!
     pub fn resolve_all(&self) -> Result<HashMap<NodeId, CanonId>, IdConversionError> {
         let mut resolved_ids = HashMap::new();
 
