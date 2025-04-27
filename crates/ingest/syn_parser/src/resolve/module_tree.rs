@@ -643,10 +643,8 @@ impl ModuleTree {
     ///     *   Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a conflict is found.
     /// 3.  **Separates Imports/Exports:**
     ///     *   Filters the module's `imports` (`use` statements).
-    ///     *   Adds private imports (`use some::item;`) to `pending_imports`.
-    ///     // AI: Does the following point need to be updated given our discussion on
-    ///     `is_any_reexport`? AI!
-    ///     *   Adds public re-exports (`pub use some::item;`) to `pending_exports`.
+    ///     *   Adds private imports (`use some::item;` or `extern crate ...;`) identified by `is_inherited_use()` to `pending_imports`.
+    ///     *   Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by `is_any_reexport()` to `pending_exports`.
     /// 4.  **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to `pending_path_attrs` for later resolution.
     /// 5.  **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module with the same ID already exists in the `modules` map.
     ///
