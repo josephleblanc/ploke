@@ -36,7 +36,7 @@ pub mod test_interface {
 
     use ploke_core::NodeId;
 
-    use super::{ModuleTree, ModuleTreeError, TreeRelation};
+    use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo, TreeRelation};
     use crate::parser::{nodes::NodePath, ParsedCodeGraph};
 
     impl ModuleTree {
@@ -44,7 +44,7 @@ pub mod test_interface {
             &self,
             item_id: NodeId,
             graph: &ParsedCodeGraph,
-        ) -> Result<Vec<String>, ModuleTreeError> {
+        ) -> Result<ResolvedItemInfo, ModuleTreeError> {
             self.shortest_public_path(item_id, graph)
         }
     }
@@ -324,7 +324,6 @@ pub enum ResolvedTargetKind {
     },
     // Add other kinds later if needed (e.g., Ambiguous, Private)
 }
-
 
 impl ModuleTreeError {
     pub(crate) fn no_relations_found(g_node: &dyn GraphNode) -> Self {
@@ -926,7 +925,8 @@ impl ModuleTree {
         &self,
         item_id: NodeId,
         graph: &ParsedCodeGraph, // Need graph for node details and dependency check
-    ) -> Result<ResolvedItemInfo, ModuleTreeError> { // Changed return type
+    ) -> Result<ResolvedItemInfo, ModuleTreeError> {
+        // Changed return type
         // --- 1. Initial Setup ---
 
         use ploke_core::ItemKind;
@@ -1000,7 +1000,11 @@ impl ModuleTree {
                             || ResolvedTargetKind::InternalDefinition,
                             // If import node has source path, check first segment
                             |first_segment| {
-                                if graph.iter_dependency_names().any(|dep| dep == first_segment) || import_node.is_extern_crate() {
+                                if graph
+                                    .iter_dependency_names()
+                                    .any(|dep| dep == first_segment)
+                                    || import_node.is_extern_crate()
+                                {
                                     ResolvedTargetKind::ExternalReExport {
                                         import_node_id: import_node.id(),
                                         external_path: import_node.source_path().to_vec(),
@@ -1009,10 +1013,11 @@ impl ModuleTree {
                                     // Re-export of an internal item
                                     ResolvedTargetKind::InternalDefinition
                                 }
-                            }
+                            },
                         )
-                    }
+                    },
                 );
+
                 // --- End Determine Target Kind ---
 
                 return Ok(ResolvedItemInfo {
@@ -1041,8 +1046,8 @@ impl ModuleTree {
                 &mut queue,
                 &mut visited,
                 graph,
-            )?; // Need to handle errors
-                // When should this return error for invalid graph state?
+            ); // Need to handle errors
+               // When should this return error for invalid graph state?
         } // End while loop
 
         // --- 6. Not Found ---
@@ -2732,7 +2737,6 @@ impl ModuleTree {
             decl_mod_id.to_string().log_id()
         );
     }
-
 
     // Removed unused get_module_path_vec and get_root_path methods
 }

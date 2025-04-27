@@ -83,6 +83,9 @@ pub enum RelationKind {
     // e.g. `pub use some_dep::a::b::ReExportedStruct`--ReExport-->ReExportedStruct defn
     // (currently only targets module in module_tree.rs)
     // ImportNode--------------ReExports-------------> NodeId of reexported item
+    // The NodeId of the ReExported item might be another re-export.
+    // We need a new Relation to represent that connection, but it will be in a different set of
+    // logical relations, whereas all of these relations are meant to be syntactically accurate.
     ReExports,
     // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
     CustomPath,

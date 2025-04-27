@@ -31,6 +31,10 @@ use crate::common::build_tree_for_tests;
 /// `ModuleTree::add_module` was called for every module without losing any.
 #[test]
 fn test_module_tree_module_count() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);
@@ -149,10 +153,6 @@ fn test_module_tree_path_index_correctness() {
 /// the population of the `decl_index`.
 #[test]
 fn test_module_tree_resolves_to_definition_relation() {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .try_init();
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);

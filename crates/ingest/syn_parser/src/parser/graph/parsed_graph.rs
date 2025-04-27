@@ -113,6 +113,10 @@ impl ParsedCodeGraph {
     //  `imports` with all the nodes it imports - not just the ids, the full node. I think we were
     //  experimenting with trying to use nested data structures insted of parsing relations.
     //      - Note: Includes both `pub use` and `use` reexports/imports
+    //
+    //  - The NodeId of the ReExported item might be another re-export.
+    // We need a new Relation to represent that connection, but it will be in a different set of
+    // logical relations, whereas all of these relations are meant to be syntactically accurate.
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
@@ -152,17 +156,27 @@ impl ParsedCodeGraph {
 
         // 4: Process `#[path]` attributes, form `CustomPath` links
         //  - module declaration (with `#[path]`) --CustomPath--> file-based module
+        //  - must run in this order:
+        //      - resolve_pending_path_attrs
+        //      - process_path_attributes
+        //  - NOTE: consider moving these into a single method to remove the possibility of running
+        //      them in the incorrect order.
         tree.resolve_pending_path_attrs()?;
         tree.process_path_attributes()?;
 
-        // 5: Process re-export relationships beween `pub use` statements and the **modules** they
+        // 5: Update tree.path_index using `CustomPath` relations to determine the canonical path
+        //    of file-based modules with module declarations that have the `#[path]` attribute.
+        //    NOTE: Decide on a best way to store and propogate the original mappings from
+        //    file-system derived NodePath to canonical NodePath for use in processing incremental
+        //    updates later. See method comments for more info.
+        tree.update_path_index_for_custom_paths()?;
+
+        // 6: Process re-export relationships beween `pub use` statements and the **modules** they
         //    are re-exporting (does not cover other items like structs, functions, etc)
         //    - should be reexport --ReExports--> item definition
-        //    - (currently bugged)
         //    All errors here indicate we should abort, handle these in caller:
         //      ModuleTreeError::NodePathValidation(Box::new(e))
         //      ModuleTreeError::ConflictingReExportPath
-        //  WARNING: Bug in process_export_rels, see method for more info
         #[cfg(not(feature = "reexport"))]
         tree.process_export_rels(self)?;
         #[cfg(feature = "reexport")]
