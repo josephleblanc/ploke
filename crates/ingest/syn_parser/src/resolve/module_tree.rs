@@ -634,8 +634,30 @@ impl ModuleTree {
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
     }
 
-    // AI: Let's add some documentation that describes what this function does. Provide a
-    // doc-comment for this function and put it here, then I'll review it and edit as needed. AI!
+    /// Adds a `ModuleNode` to the `ModuleTree`, updating internal state and indices.
+    ///
+    /// This function performs several key actions during the initial phase of building the module tree:
+    /// 1.  **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap, keyed by its `ModuleNodeId`.
+    /// 2.  **Indexes Paths:**
+    ///     *   Adds the module's definition path (`NodePath`) to the appropriate index (`path_index` for definitions, `decl_index` for declarations).
+    ///     *   Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a conflict is found.
+    /// 3.  **Separates Imports/Exports:**
+    ///     *   Filters the module's `imports` (`use` statements).
+    ///     *   Adds private imports (`use some::item;`) to `pending_imports`.
+    ///     *   Adds public re-exports (`pub use some::item;`) to `pending_exports`.
+    /// 4.  **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to `pending_path_attrs` for later resolution.
+    /// 5.  **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module with the same ID already exists in the `modules` map.
+    ///
+    /// # Arguments
+    /// * `module`: The `ModuleNode` to add to the tree. The function takes ownership.
+    ///
+    /// # Returns
+    /// * `Ok(())` on successful addition and indexing.
+    /// * `Err(ModuleTreeError)` if:
+    ///     *   The module's path conflicts with an existing entry (`DuplicatePath`).
+    ///     *   A module with the same ID already exists (`DuplicateModuleId`).
+    ///     *   The module's path is invalid (`NodePathValidation`).
+    ///     *   An internal state error occurs (e.g., `InvalidStatePendingExportsMissing`).
     pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
         let imports = module.imports.clone();
         // Add all private imports
