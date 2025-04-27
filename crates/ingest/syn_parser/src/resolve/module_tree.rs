@@ -674,7 +674,7 @@ impl ModuleTree {
             exports.extend(
                 imports
                     .iter()
-                    .filter(|imp| imp.is_local_reexport())
+                    .filter(|imp| imp.is_any_reexport()) // Updated method name
                     .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
             );
         } else {

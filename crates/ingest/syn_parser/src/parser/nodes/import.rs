@@ -107,26 +107,18 @@ impl ImportNode {
         &self.source_path
     }
 
-    // AI: We need to update this doc-comment as well. It was the source of some errors previously.
-    // As you can see from the method itself, this distinguishes all elements that are made
-    // available to a module and could possibly be the target of other `use` statements. It was
-    // previously simply named `is_reexport`, but the LLM assistant got confused in its usage and
-    // led to a bug that took some time to track down.
-    //
-    // Ok, go ahead and edit the doc-comment to indicate this is any kind of re-export, with either
-    // restricted, crate restricted, or unrestricted public reexport. Rename the method to
-    // `is_any_reexport` AI!
-    /// Checks if this import node represents a public or restricted re-export (`pub use`).
+    /// Checks if this import node represents any kind of re-export.
     ///
-    /// Returns `true` if the import kind is `UseStatement` and its visibility is `Public`.
-    /// Returns `false` otherwise (including for `extern crate` or non-public `use` statements).
-    /// Checks if this import node represents a re-export, meaning it makes an imported item
-    /// visible outside the current module scope via a `use` statement with explicit `pub` visibility.
+    /// A re-export makes an imported item visible outside the current module scope,
+    /// as if it were defined within that module (respecting the specified visibility).
+    /// This is achieved through `use` statements with explicit `pub` visibility.
     ///
-    /// This includes `pub use`, `pub(crate) use`, and `pub(in path) use`.
-    /// It returns `false` for `extern crate` statements and `use` statements with
-    /// inherited (private) visibility.
-    pub fn is_local_reexport(&self) -> bool {
+    /// Returns `true` if the import kind is `UseStatement` and its visibility is
+    /// `Public`, `Crate`, or `Restricted`.
+    /// Returns `false` for `extern crate` statements and `use` statements with
+    /// inherited (private) visibility, as these do not make the item visible externally
+    /// via this specific import statement.
+    pub fn is_any_reexport(&self) -> bool {
         matches!(
             self.kind,
             ImportKind::UseStatement(
