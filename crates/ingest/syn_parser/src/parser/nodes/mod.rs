@@ -279,6 +279,8 @@ impl TryInto<TypeId> for GraphId {
     }
 }
 
+// AI: Implement `From<NodeId>` for `GraphId` AI!
+
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
 pub enum NodeError {
