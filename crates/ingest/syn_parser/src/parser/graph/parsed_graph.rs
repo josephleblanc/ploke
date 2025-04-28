@@ -117,6 +117,7 @@ impl ParsedCodeGraph {
     //  - The NodeId of the ReExported item might be another re-export.
     // We need a new Relation to represent that connection, but it will be in a different set of
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
+    // Changed back to &self as graph is immutable again.
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
@@ -186,10 +187,17 @@ impl ParsedCodeGraph {
         //    All errors here indicate we should abort, handle these in caller:
         //      ModuleTreeError::NodePathValidation(Box::new(e))
         //      ModuleTreeError::ConflictingReExportPath
-        // tree.process_export_rels(self)?;
+        // tree.process_export_rels(self)?; // Re-exports processed after ID resolution
+
+        // 6. Prune unlinked file modules from the ModuleTree state
+        let pruned_data = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
+        if !pruned_data.pruned_module_ids.is_empty() {
+             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules and {} associated items from ModuleTree.", pruned_data.pruned_module_ids.len(), pruned_data.pruned_item_ids.len());
+             // TODO: Decide if/how to use pruned_data later (e.g., for diagnostics, incremental updates)
+        }
 
         // By the time we are finished, we should have all the necessary relations to form the path
-        // of all definined items by ModuleTree's shortest_public_path method.
+        // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items
         //  - Imports:
         Ok(tree)
