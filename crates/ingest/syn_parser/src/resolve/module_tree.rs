@@ -5,8 +5,7 @@ use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    ops::Deref,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 #[allow(unused_imports)]
@@ -694,7 +693,6 @@ impl ModuleTree {
     pub fn get_containing_mod_checked(
         &self,
         target_id: &GraphId,
-        kind: RelationKind,
     ) -> Result<TreeRelation, ModuleTreeError> {
         let node_id = (*target_id).try_into()?;
         let contains_relation = self
@@ -705,7 +703,7 @@ impl ModuleTree {
                     self.tree_relations
                         .get(index)
                         // filter() on Option returns Some only if the closure is true.
-                        .filter(|&relation| relation.relation().kind == kind)
+                        .filter(|&relation| relation.relation().kind == RelationKind::Contains)
                 });
                 let first = relations
                     .next()
@@ -876,6 +874,106 @@ impl ModuleTree {
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
     }
 
+    /// Finds the absolute file path of the file-based module containing the given node ID.
+    ///
+    /// This traverses upwards from the node's immediate parent module. If the parent
+    /// is inline, it continues searching upwards until a file-based module is found.
+    ///
+    /// # Arguments
+    /// * `node_id` - The ID of the node (function, struct, inline module, etc.) whose
+    ///   defining file path is needed.
+    ///
+    /// # Returns
+    /// `Ok(PathBuf)` containing the absolute path of the defining file, or
+    /// `Err(ModuleTreeError)` if the parent module cannot be found, the module
+    /// is missing from the tree, or the root module is unexpectedly not file-based.
+    pub fn find_defining_file_path_ref(&self, node_id: NodeId) -> Result<&Path, ModuleTreeError> {
+        let graph_id = GraphId::Node(node_id);
+
+        // 1. Find the immediate parent module ID
+        let parent_relations = self
+            .get_relations_to(&graph_id, |tr| tr.relation().kind == RelationKind::Contains)
+            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error
+
+        let mut current_mod_id = parent_relations
+            .first()
+            .and_then(|tr| tr.relation().source.try_into().ok()) // Convert GraphId to NodeId
+            .map(ModuleNodeId::new)
+            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if conversion fails
+
+        // 2. Traverse upwards until a file-based module is found
+        loop {
+            let module_node = self
+                .modules
+                .get(&current_mod_id)
+                .ok_or(ModuleTreeError::ModuleNotFound(current_mod_id))?; // Error if module missing
+
+            // 3. Check if the current module is file-based
+            if let Some(file_path) = module_node.file_path() {
+                // Found the defining file
+                return Ok(file_path);
+            }
+
+            // 4. If inline, find *its* parent module ID
+            let inline_parent_relations = self
+                .get_relations_to(&current_mod_id.to_graph_id(), |tr| {
+                    tr.relation().kind == RelationKind::Contains
+                })
+                .ok_or_else(|| {
+                    ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
+                })?; // Error if inline has no parent
+
+            current_mod_id = inline_parent_relations
+                .first()
+                .and_then(|tr| tr.relation().source.try_into().ok())
+                .map(ModuleNodeId::new)
+                .ok_or_else(|| {
+                    ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
+                })?; // Error if parent conversion fails
+
+            // Basic cycle prevention / safety break (shouldn't be needed if tree is valid)
+            if current_mod_id == self.root && !self.get_module_checked(&self.root)?.is_file_based()
+            {
+                return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
+            }
+        }
+    }
+
+    const RECURSIVE_LIMIT: u8 = 32;
+    // AI: I think I prefer this version for now. Add some logging here please
+    pub fn find_defining_file_path_ref_v2(
+        &self,
+        node_id: NodeId,
+        recurse_count: u8,
+    ) -> Result<&Path, ModuleTreeError> {
+        if node_id == *self.root().as_inner() {
+            return Ok(&self.root_file);
+        }
+        let node_gid = node_id.into();
+        let container_mod_gid = self
+            .get_containing_mod_checked(&node_gid)
+            .map(|r| r.relation().target)?;
+        let container_mod_id = container_mod_gid.try_into()?;
+        let file_mod = self.get_module_checked(&container_mod_id)?;
+        match file_mod.file_path() {
+            Some(fp) => Ok(fp),
+            None => {
+                if file_mod.is_file_based() {
+                    return Err(ModuleTreeError::ContainingModuleNotFound(file_mod.id()));
+                } else if recurse_count >= Self::RECURSIVE_LIMIT {
+                    // AI: generate a new error type to report recursion.
+                } else {
+                    recurse_count += 1;
+                    self.find_defining_file_path_ref_v2(
+                        container_mod_id.into_inner(),
+                        recurse_count,
+                    )
+                }
+            }
+        }
+        // AI: Add an internal state error here too
+    } //AI!
+
     pub fn resolve_pending_path_attrs(&mut self) -> Result<(), ModuleTreeError> {
         self.log_resolve_entry_exit(true); // Log entry
 
@@ -897,6 +995,7 @@ impl ModuleTree {
                                // respected.
             }
         };
+
         for module_id in module_ids {
             // Log which ID we are starting to process
             self.log_resolve_step(module_id, "Processing ID", &module_id.to_string(), false);
@@ -1205,7 +1304,7 @@ impl ModuleTree {
                     public_name,           // Name at the end of the path
                     resolved_id,           // ID of definition or import node
                     target_kind,           // Kind of resolved target
-                    definition_name,  // Original name if renamed internally
+                    definition_name,       // Original name if renamed internally
                 });
             }
 
