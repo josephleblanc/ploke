@@ -2396,7 +2396,7 @@ impl ModuleTree {
     /// # Returns
     /// A `Result` containing `PrunedData` which lists the IDs of the pruned modules and items,
     /// or a `ModuleTreeError` if an issue occurs during processing.
-    fn prune_unlinked_file_modules(&mut self) -> Result<PrunedData, ModuleTreeError> {
+    pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PrunedData, ModuleTreeError> { // Added pub(crate)
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
 
         let mut prunable_module_ids: HashSet<ModuleNodeId> = HashSet::new();
@@ -2490,8 +2490,8 @@ impl ModuleTree {
 
         // 5. Prepare return data (Do not prune ParsedCodeGraph here)
         let pruned_data = PrunedData {
-            pruned_module_ids, // Move collected sets
-            pruned_item_ids,
+            pruned_module_ids: prunable_module_ids, // Corrected variable name
+            pruned_item_ids: prunable_item_ids,     // Corrected variable name
         };
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules and {} total items.", "End".log_header(), pruned_data.pruned_module_ids.len(), pruned_data.pruned_item_ids.len());
