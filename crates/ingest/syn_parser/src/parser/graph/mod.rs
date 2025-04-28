@@ -5,7 +5,7 @@ use crate::utils::logging::LOG_TARGET_GRAPH_FIND;
 
 pub use code_graph::CodeGraph;
 use colored::Colorize;
-use log::debug;
+use log::{debug, trace};
 pub use parsed_graph::ParsedCodeGraph;
 
 use crate::discovery::CrateContext;
@@ -14,7 +14,7 @@ use crate::parser::nodes::*;
 use crate::parser::relations::RelationKind;
 use crate::resolve::module_tree;
 use crate::resolve::module_tree::ModuleTree;
-use crate::utils::LogStyle;
+use crate::utils::{LogStyle, LogStyleDebug};
 use ploke_core::{NodeId, TypeId, TypeKind};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -494,6 +494,14 @@ pub trait GraphAccess {
             .iter()
             .filter(move |n| n.id == item_id)
             .map(|n| n as &dyn GraphNode)
+            .inspect(|n| {
+        trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}", 
+            item_id.to_string().log_id(),
+            n.name().log_name(),
+            n.kind().log_spring_green_debug(),
+            n.visibility().log_vis_debug(),
+        );
+            })
             .chain(self.defined_types().iter().filter_map(move |n| match n {
                 TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
                 TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
@@ -542,6 +550,7 @@ pub trait GraphAccess {
         // Check for uniqueness using the iterator
         let first = matches_iter.next();
         let second = matches_iter.next();
+
 
         match (first, second) {
             (Some(node), None) => Ok(node), // Exactly one match found

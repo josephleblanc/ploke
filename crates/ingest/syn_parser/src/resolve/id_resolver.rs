@@ -99,11 +99,30 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             .path_index()
             .iter() // Iterate over (NodePath, NodeId) from path_index
             .filter_map(|(np, mod_id)| {
+
+                debug!(target: LOG_TARGET, "path_index filter_map: <name unknown> ({}) | NodePath: {}",
+                    mod_id.to_string().log_id(),
+                    np.to_string().log_path()
+                );
                 // Get the ModuleNode for the ID
                 self.module_tree
                     .modules()
                     .get(&ModuleNodeId::new(*mod_id))
-                    .map(|module| (np, module)) // Keep NodePath and ModuleNode
+                    .inspect(|opt| {
+                debug!(target: LOG_TARGET, "  getting: {} ({}) | Option is_some(), name: {:#?}",
+                    mod_id.to_string().log_id(),
+                    np.to_string().log_path(),
+                    opt.name(),
+                );
+                    })
+                    .map(|module| (np, module)).inspect(| (np, module)| {
+                debug!(target: LOG_TARGET, "Filtering empty modules: {} ({}) | NodePath: {}",
+                    module.name().log_name(),
+                    module.id().to_string().log_id(),
+                    np.to_string().log_path()
+                );
+                    }
+                    ) // Keep NodePath and ModuleNode
             })
             .flat_map(move |(np, module)| {
                 // Log which module we are processing items for
@@ -118,6 +137,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             })
             .map(move |(np, item_id)| {
                 // Find the actual GraphNode for the item ID
+                debug!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());  
                 self.graph.find_node_unique(item_id).map(|n| (np, n))
             })
             // At this point, items are Result<(&NodePath, &dyn GraphNode), SynParserError>
