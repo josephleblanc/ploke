@@ -435,11 +435,22 @@ mod ids {
         ) -> Result<Self, IdConversionError>;
     }
 
-    // AI: IdInfo here:
+    /// Contains the necessary information to generate a resolved ID (`CanonId` or `PubPathId`).
+    ///
+    /// This struct bundles context required for deterministic ID generation after
+    /// name resolution (Phase 3).
+    #[derive(Debug, Clone, Copy)] // Add derives for convenience if needed elsewhere
     pub struct IdInfo<'a> {
+        /// Absolute path to the source file containing the item's definition.
+        /// Canonicalized for `CanonId`, original path for `PubPathId`.
         file_path: &'a Path,
+        /// The logical path segments used for this ID type (canonical or shortest public).
+        /// e.g., `["crate", "module", "Item"]`.
         logical_item_path: &'a [String],
-        cfgs: &'a [String], // placeholder &str type, needs design attention
+        /// Conditional compilation flags (`cfg`) active for this item.
+        /// Required to distinguish identical items under different `cfg`s.
+        cfgs: &'a [String],
+        /// The kind of the code item (e.g., Function, Struct).
         item_kind: ItemKind,
     }
 

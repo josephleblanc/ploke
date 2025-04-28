@@ -317,8 +317,8 @@ pub struct PruningResult {
 #[derive(Debug, Clone, PartialEq, Eq)] // Eq requires NodeId and PathBuf to be Eq
 pub struct ResolvedItemInfo {
     /// The shortest public module path leading to the item's accessibility point.
-    /// Example: `["crate", "some_mod"]` for `crate::some_mod::MyItem`.
-    pub path: Vec<String>,
+    /// Example: `NodePath(["crate", "some_mod"])` for `crate::some_mod::MyItem`.
+    pub path: NodePath, // Changed from Vec<String>
 
     /// The name under which the item is publicly accessible at the end of `path`.
     /// This is the name to use in code (e.g., `MyItem`, `RenamedItem`).
@@ -1088,7 +1088,8 @@ impl ModuleTree {
                     if module_node.id() == *self.root.as_inner() {
                         // Special case: asking for the path to the root module itself
                         return Ok(ResolvedItemInfo {
-                            path: vec!["crate".to_string()],
+                            // Use new_unchecked as ["crate"] is never empty
+                            path: NodePath::new_unchecked(vec!["crate".to_string()]),
                             public_name: "crate".to_string(), // Root module's public name
                             resolved_id: item_id,
                             target_kind: ResolvedTargetKind::InternalDefinition {
@@ -1197,11 +1198,13 @@ impl ModuleTree {
                     };
 
                 // --- Construct Final Result ---
+                // Use new_unchecked as final_path always starts with "crate"
+                let final_node_path = NodePath::new_unchecked(final_path);
                 return Ok(ResolvedItemInfo {
-                    path: final_path, // Module path
-                    public_name,      // Name at the end of the path
-                    resolved_id,      // ID of definition or import node
-                    target_kind,      // Kind of resolved target
+                    path: final_node_path, // Module path as NodePath
+                    public_name,           // Name at the end of the path
+                    resolved_id,           // ID of definition or import node
+                    target_kind,           // Kind of resolved target
                     definition_name,  // Original name if renamed internally
                 });
             }

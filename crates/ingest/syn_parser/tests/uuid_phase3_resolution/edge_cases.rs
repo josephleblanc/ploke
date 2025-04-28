@@ -117,8 +117,8 @@ fn test_spp_multi_step_3() {
 
     // Expected result based on the refined ResolvedItemInfo structure
     let expected_result = Ok(ResolvedItemInfo {
-        // Where is it publicly accessible?
-        path: vec!["crate".to_string()],
+        // Where is it publicly accessible? Use new_unchecked as ["crate"] is never empty
+        path: NodePath::new_unchecked(vec!["crate".to_string()]),
         // What name do I use there?
         public_name: "item_c".to_string(),
         // What is the ID of the thing ultimately found? (The definition)
