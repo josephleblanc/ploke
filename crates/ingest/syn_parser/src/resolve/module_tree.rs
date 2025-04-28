@@ -1017,10 +1017,10 @@ impl ModuleTree {
                 if file_mod.is_file_based() {
                     // This case seems contradictory (None path but is_file_based true)
                     log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Inconsistent state: Module {} ({}) has no file_path but is_file_based is true.", "✗".log_error(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
-                    return Err(ModuleTreeError::InternalState(format!(
+                    Err(ModuleTreeError::InternalState(format!(
                         "Module {} has no file path but is file-based",
                         container_mod_id
-                    )));
+                    )))
                 } else if recurse_count >= Self::RECURSIVE_LIMIT {
                     log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursion limit ({}) reached for node {}", "✗".log_error(), Self::RECURSIVE_LIMIT, node_id.to_string().log_id());
                     Err(ModuleTreeError::RecursionLimitExceeded {
