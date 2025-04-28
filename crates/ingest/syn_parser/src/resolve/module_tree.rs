@@ -300,6 +300,18 @@ pub enum ModuleTreeError {
     Warning(String),
 }
 
+
+/// Holds the IDs of modules and items pruned from the ModuleTree.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct PrunedData {
+    /// IDs of the ModuleNodes that were pruned because they were unlinked file modules.
+    pub pruned_module_ids: HashSet<ModuleNodeId>,
+    /// IDs of all items (including the modules themselves and items they contained)
+    /// that were associated with the pruned modules.
+    pub pruned_item_ids: HashSet<NodeId>,
+}
+
+
 // Add near other public structs/enums related to ModuleTree resolution
 #[derive(Debug, Clone, PartialEq, Eq)] // Eq requires NodeId and PathBuf to be Eq
 pub struct ResolvedItemInfo {
