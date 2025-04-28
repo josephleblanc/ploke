@@ -430,15 +430,11 @@ assert_spp!(
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "local_func".to_string(), // Re-exported at root with original name
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: None,
-    })
+    }
 );
 
 // 2. Re-export of Nested Item
@@ -461,15 +457,11 @@ assert_spp!(
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP (access via `renamed_deep_func`)
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "renamed_deep_func".to_string(), // Access via the renamed export
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: Some("deep_func".to_string()), // Renamed
-    })
+    }
 );
 
 // 4. Re-export of Module - Test access to an item *within* the re-exported module
@@ -481,18 +473,11 @@ assert_spp!(
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP (via re-exported module)
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec![
-            "crate".to_string(),
-            "reexported_nested_mod".to_string()
-        ]),
+    Ok {
+        path: vec!["crate".to_string(), "reexported_nested_mod".to_string()],
         public_name: "deep_func".to_string(), // Accessed with original name inside re-exported mod
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: None,
-    })
+    }
 );
 
 // 5. Re-export from `#[path]` Module
@@ -502,15 +487,11 @@ assert_spp!(
     &["crate", "logical_path_mod"], // Original module path (logical)
     // REMOVED Current SPP
     // Final Expected SPP
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "item_in_actual_file".to_string(), // Re-exported at root with original name
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: None,
-    })
+    }
 );
 
 // 6. Re-export of Generic Struct
@@ -520,15 +501,11 @@ assert_spp!(
     &["crate", "generics"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "PublicGenStruct".to_string(), // Access via renamed export
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: Some("GenStruct".to_string()), // Renamed
-    })
+    }
 );
 
 // 7. Re-export of Generic Trait
@@ -538,15 +515,11 @@ assert_spp!(
     &["crate", "generics"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "PublicGenTrait".to_string(), // Access via renamed export
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: Some("GenTrait".to_string()), // Renamed
-    })
+    }
 );
 
 // 8. Re-export within Inline Module
@@ -556,15 +529,11 @@ assert_spp!(
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP (path to re-exporting module)
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string(), "inline_mod".to_string()]),
+    Ok {
+        path: vec!["crate".to_string(), "inline_mod".to_string()],
         public_name: "deep_reexport_inline".to_string(), // Access via renamed export in inline_mod
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: Some("deep_func".to_string()), // Renamed
-    })
+    }
 );
 
 // 9. Re-export within Nested Module
@@ -574,19 +543,11 @@ assert_spp!(
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
     // Final Expected SPP (path to re-exporting module)
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec![
-            "crate".to_string(),
-            "local_mod".to_string(),
-            "nested".to_string(),
-        ]),
+    Ok {
+        path: vec!["crate".to_string(), "local_mod".to_string(), "nested".to_string()],
         public_name: "parent_local_func_reexport".to_string(), // Access via renamed export in nested
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: Some("local_func".to_string()), // Renamed
-    })
+    }
 );
 
 // 10. Re-export Gated by `#[cfg]`
@@ -670,15 +631,11 @@ assert_spp!(
     &["crate"],     // Original module path (defined at root)
     // REMOVED Current SPP
     // Final Expected SPP
-    Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec!["crate".to_string()]),
+    Ok {
+        path: vec!["crate".to_string()],
         public_name: "simple_macro".to_string(), // Re-exported at root with original name
-        resolved_id: item_id,
-        target_kind: ResolvedTargetKind::InternalDefinition {
-            definition_id: item_id
-        },
         definition_name: None,
-    })
+    }
 );
 
 // 13. Item in `pub(crate)` Module
