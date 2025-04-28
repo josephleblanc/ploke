@@ -185,22 +185,18 @@ fn test_spp_inline_path_shadowing() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: NodePath::new_unchecked(vec![
-            "crate".to_string(),
-            "inline_path_mod".to_string(),
-            "shadow_me".to_string(),
-        ]),
+        // The module path where the item is publicly accessible
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "inline_path_mod".to_string()]),
+        // The name to use at that path
+        public_name: "shadow_me".to_string(),
+        // The ID of the actual item definition
+        resolved_id: item_id,
+        // It's an internal definition
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
-        // AI: Ok, I've done most of the search/replace possible. Now we might need to actually go
-        // through these and update them based on the tests where necessary.
-        // First I'd like you to just fix this one case that I have partly filled out with the
-        // missing fields to make sure you understand. Then you can try suggesting a search/replace
-        // that might work. AI!
-        public_name: todo!(),
-        resolved_id: todo!(),
-        definition_name: todo!(),
+        // Public name matches definition name
+        definition_name: None,
     });
 
     assert_eq!(
