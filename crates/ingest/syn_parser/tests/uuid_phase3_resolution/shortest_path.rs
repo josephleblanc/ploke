@@ -84,9 +84,8 @@ fn test_spp_public_item_in_root() {
 
     // Expected path: Ok(["crate"]) (path to the containing module)
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "main_pub_func".to_owned()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: main_pub_func_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "main_pub_func".to_owned()]),
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: main_pub_func_id},
     });
 
     assert_eq!(
@@ -122,8 +121,7 @@ fn test_spp_public_item_in_public_mod() {
             "top_pub_mod".to_string(),
             "top_pub_func".to_string(),
         ],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: top_pub_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: top_pub_func_id},
     });
 
     assert_eq!(
@@ -160,8 +158,7 @@ fn test_spp_public_item_in_nested_public_mod() {
             "top_pub_mod".to_string(),
             "nested_pub".to_string(),
         ],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: nested_pub_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: nested_pub_func_id},
     });
 
     assert_eq!(
@@ -266,14 +263,13 @@ fn test_spp_reexported_item_finds_original_path() {
     // The current implementation finds the path to the module containing the
     // item's definition, it does not yet account for shorter paths via re-exports.
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: original_func_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "top_pub_mod".to_string()]),
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: original_func_id},
     });
 
     // NOTE: This assertion checks the *current* behavior.
     // Once shortest_public_path handles re-exports correctly, this test *should fail*,
-    // and the expected_result should become Ok(ResolvedItemInfo { path: vec!["crate".to_string()], ... }).
+    // and the expected_result should become Ok(ResolvedItemInfo { path: NodePath::new_unchecked(vec!["crate".to_string()]), ... }).
     assert_eq!(
         spp, expected_result,
         "EXPECTED BEHAVIOR (PRE-REEXPORT): SPP for re-exported item resolves to original module path. This test WILL FAIL once re-exports are handled."
@@ -500,9 +496,8 @@ fn test_spp_reexport_cfg_gated_inactive() {
 
     // Since feature_b is inactive, the re-export doesn't exist. SPP finds the original path.
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "local_mod".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: item_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "local_mod".to_string()]),
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id},
     });
     assert_eq!(
         spp_result, expected_result,
