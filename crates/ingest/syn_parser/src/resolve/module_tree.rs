@@ -2549,7 +2549,7 @@ impl ModuleTree {
         };
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules, {} total items, and {} relations.", "End".log_header(), result_data.pruned_module_ids.len(), result_data.pruned_item_ids.len(), result_data.pruned_relations.len());
-        Ok(pruned_data)
+        Ok(result_data) // Corrected variable name
     }
 
 
