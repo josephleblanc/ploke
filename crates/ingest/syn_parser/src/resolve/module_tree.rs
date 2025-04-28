@@ -316,28 +316,42 @@ pub struct PruningResult {
 // Add near other public structs/enums related to ModuleTree resolution
 #[derive(Debug, Clone, PartialEq, Eq)] // Eq requires NodeId and PathBuf to be Eq
 pub struct ResolvedItemInfo {
-    /// The shortest public path found within the current crate structure
-    /// leading to the item (or its re-export declaration).
+    /// The shortest public module path leading to the item's accessibility point.
+    /// Example: `["crate", "some_mod"]` for `crate::some_mod::MyItem`.
     pub path: Vec<String>,
-    /// The nature of the item found at the end of the path.
+
+    /// The name under which the item is publicly accessible at the end of `path`.
+    /// This is the name to use in code (e.g., `MyItem`, `RenamedItem`).
+    /// Example: `"MyItem"` or `"RenamedItem"`
+    pub public_name: String,
+
+    /// The NodeId of the item ultimately resolved to by the public path.
+    /// For internal items, this is the ID of the definition node (e.g., FunctionNode, StructNode).
+    /// For external items, this is the ID of the `ImportNode` representing the `pub use`.
+    pub resolved_id: NodeId,
+
+    /// Provides context about the nature of the `resolved_id`.
     pub target_kind: ResolvedTargetKind,
-    /// The NodeId of the item found at the end of the path
-    /// (e.g., the definition ID for InternalDefinition, the ImportNode ID for ExternalReExport).
-    pub target_id: NodeId,
-    /// Original name (path ident) if the item has been renamed. `None` otherwise.
-    pub original_name: Option<String>,
+
+    /// The original name of the item at its definition site, if it's an internal definition
+    /// and its `public_name` is different due to renaming via re-exports.
+    /// `None` if the public name matches the definition name, or if the target is external.
+    pub definition_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTargetKind {
-    /// The path leads to an item defined within the current crate.
-    InternalDefinition,
-    /// The path leads to a re-export (`pub use`) statement that points to an item
-    /// defined in an external crate (dependency).
+    /// The `resolved_id` points to an item defined within the current crate.
+    InternalDefinition {
+        /// The NodeId of the actual definition node (e.g., FunctionNode, StructNode).
+        /// This will always match the outer `resolved_id` in this variant.
+        definition_id: NodeId,
+    },
+    /// The `resolved_id` points to an `ImportNode` that re-exports an item
+    /// from an external crate.
     ExternalReExport {
-        /// The NodeId of the `ImportNode` representing the `pub use` statement.
-        import_node_id: NodeId,
         /// The path of the item within the external crate (e.g., ["log", "debug"]).
+        /// The public name in the external crate is the last segment.
         external_path: Vec<String>,
     },
     // Add other kinds later if needed (e.g., Ambiguous, Private)
@@ -1075,9 +1089,12 @@ impl ModuleTree {
                         // Special case: asking for the path to the root module itself
                         return Ok(ResolvedItemInfo {
                             path: vec!["crate".to_string()],
-                            target_kind: ResolvedTargetKind::InternalDefinition, // Root is internal
-                            target_id: item_id,
-                            original_name: None,
+                            public_name: "crate".to_string(), // Root module's public name
+                            resolved_id: item_id,
+                            target_kind: ResolvedTargetKind::InternalDefinition {
+                                definition_id: item_id,
+                            },
+                            definition_name: None, // Root name is 'crate'
                         });
                     }
                 }
@@ -1105,44 +1122,83 @@ impl ModuleTree {
                 // We need to reverse it and prepend "crate".
                 final_path.extend(path_to_item.into_iter().rev());
 
-                // --- Determine Target Kind using map_or_else ---
-                let final_node = graph.find_node_unique(item_id)?; // Use original item_id
+                // --- Determine Public Name, Resolved ID, Target Kind, and Definition Name ---
+                let public_name = final_path.last().cloned().unwrap_or_default(); // Get the last segment as public name
 
-                let target_kind = final_node.as_import().map_or_else(
-                    // If it's NOT an import node
-                    || ResolvedTargetKind::InternalDefinition,
-                    // If it IS an import node
-                    |import_node| {
-                        import_node.source_path().first().map_or_else(
-                            // If import node has empty source path (unlikely)
-                            || ResolvedTargetKind::InternalDefinition,
-                            // If import node has source path, check first segment
-                            |first_segment| {
-                                if graph
-                                    .iter_dependency_names()
-                                    .any(|dep| dep == first_segment)
-                                    || import_node.is_extern_crate()
-                                {
+                // The BFS started with the original item's definition ID.
+                // If the path involves re-exports, the final `resolved_id` should still be the definition ID
+                // for internal items. For external items, it should be the ImportNode ID.
+                // We need to trace back or determine this based on the path/re-export info.
+                // For now, assume SPP correctly resolves through internal re-exports.
+
+                // Let's refine the target_kind determination:
+                let (resolved_id, target_kind) =
+                    match graph.find_node_unique(item_id)?.as_import() {
+                        // If the original item_id points to an ImportNode (meaning it was a re-export)
+                        Some(import_node) => {
+                            // Check if it's an external re-export
+                            if import_node.is_extern_crate()
+                                || import_node.source_path().first().map_or(false, |seg| {
+                                    graph.iter_dependency_names().any(|dep| dep == seg)
+                                })
+                            {
+                                // External: resolved_id is the ImportNode's ID
+                                (
+                                    import_node.id(),
                                     ResolvedTargetKind::ExternalReExport {
-                                        import_node_id: import_node.id(),
                                         external_path: import_node.source_path().to_vec(),
-                                    }
-                                } else {
-                                    // Re-export of an internal item
-                                    ResolvedTargetKind::InternalDefinition
-                                }
+                                    },
+                                )
+                            } else {
+                                // Internal re-export: SPP should have resolved *through* this.
+                                // The resolved_id should be the ultimate definition ID.
+                                // We need to find the target of the ReExports relation from this import_node.
+                                let reexport_target_id = self
+                                    .get_relations_from(&import_node.id().into(), |tr| {
+                                        tr.relation().kind == RelationKind::ReExports
+                                    })
+                                    .and_then(|rels| rels.first().map(|tr| tr.relation().target))
+                                    .and_then(|gid| gid.try_into().ok())
+                                    .unwrap_or(item_id); // Fallback to original item_id if lookup fails
+
+                                (
+                                    reexport_target_id,
+                                    ResolvedTargetKind::InternalDefinition {
+                                        definition_id: reexport_target_id,
+                                    },
+                                )
+                            }
+                        }
+                        // If the original item_id points to a definition node
+                        None => (
+                            item_id, // resolved_id is the definition ID
+                            ResolvedTargetKind::InternalDefinition {
+                                definition_id: item_id,
                             },
-                        )
-                    },
-                );
+                        ),
+                    };
 
-                // --- End Determine Target Kind ---
+                // Determine definition_name
+                let definition_name = if let ResolvedTargetKind::InternalDefinition {
+                    definition_id,
+                } = target_kind
+                {
+                    graph
+                        .find_node_unique(definition_id)?
+                        .name()
+                        .ne(&public_name)
+                        .then(|| graph.find_node_unique(definition_id).unwrap().name().to_string())
+                } else {
+                    None // Not an internal definition
+                };
 
+                // --- Construct Final Result ---
                 return Ok(ResolvedItemInfo {
-                    path: final_path,
-                    target_kind,
-                    target_id: item_id, // The ID of the item we were searching for
-                    original_name: None,
+                    path: final_path, // Module path
+                    public_name,      // Name at the end of the path
+                    resolved_id,      // ID of definition or import node
+                    target_kind,      // Kind of resolved target
+                    definition_name,  // Original name if renamed internally
                 });
             }
 
