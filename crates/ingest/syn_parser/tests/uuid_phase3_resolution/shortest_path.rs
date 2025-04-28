@@ -532,7 +532,7 @@ assert_spp!(
     Ok {
         path: vec!["crate".to_string(), "inline_mod".to_string()],
         public_name: "deep_reexport_inline".to_string(), // Access via renamed export in inline_mod
-        definition_name: Some("deep_func".to_string()), // Renamed
+        definition_name: Some("deep_func".to_string()),  // Renamed
     }
 );
 
@@ -544,9 +544,13 @@ assert_spp!(
     // REMOVED Current SPP
     // Final Expected SPP (path to re-exporting module)
     Ok {
-        path: vec!["crate".to_string(), "local_mod".to_string(), "nested".to_string()],
+        path: vec![
+            "crate".to_string(),
+            "local_mod".to_string(),
+            "nested".to_string()
+        ],
         public_name: "parent_local_func_reexport".to_string(), // Access via renamed export in nested
-        definition_name: Some("local_func".to_string()), // Renamed
+        definition_name: Some("local_func".to_string()),       // Renamed
     }
 );
 
