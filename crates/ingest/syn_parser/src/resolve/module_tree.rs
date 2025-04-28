@@ -2915,43 +2915,115 @@ impl ModuleTree {
         );
     }
 
-    // AI: Please provide the code requested in the following comments. Be sure to follow our
-    // color themes (which you can see in `logging.rs`). Since these logging functions will only
-    // run as closures when an error occurs we don't need to be shy about doing lookups. The goal
-    // is to provide well-structured contextual information for when we encounter an error and need
-    // to debug. These will only be run once, when our program is in an invalid state, or will be
-    // copied/pasted into key locations for extremely targeted debugging. They may be verbose.
-    pub fn log_relation_verbose(rel: Relation) {
-        // AI: log source/target with `self.log_node_id()`
+    /// Logs detailed information about a relation for debugging purposes.
+    /// This function is intended for verbose debugging and may perform lookups.
+    pub fn log_relation_verbose(&self, rel: Relation) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Relation Details:", "Verbose Log:".log_header());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", format!("{:?}", rel.kind).log_name());
 
-        todo!()
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Source:");
+        self.log_graph_id_verbose(rel.source); // Use helper for GraphId
+
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Target:");
+        self.log_graph_id_verbose(rel.target); // Use helper for GraphId
     }
 
-    pub(crate) fn log_node_id_verbose(&self, node_id: NodeId) {
-        if let Some(module) = self
-            .modules()
-            .get(&ModuleNodeId::new(node_id))
-            .and_then(|m| m.as_module())
-        {
-            // AI: Add a lot of information about the module.
-            // AI: Try to find the target node in all of `ModuleTree`'s indexes, e.g.
-            // - pending_imports
-            // - pending_exports
-
-            if let Some(relations_from) = self.get_all_relations_from(&GraphId::Node(node_id)) {
-            } else {
-                // AI: log an error here
-                // Print relations here, using good debugging style.
-                // Where possible (if relation is a ModuleNode or ImportNode), find the target's name and print that as well.
-                if let Some(relations_to) = self.get_all_relations_to(&GraphId::Node(node_id)) {
-                    // Same thing here, print relations to all nodes and names of modules/imports wherever possible.
-                } else {
-                    // AI: log an error here
-                }
+    /// Logs detailed information about a GraphId (Node or Type) for debugging.
+    fn log_graph_id_verbose(&self, graph_id: GraphId) {
+        match graph_id {
+            GraphId::Node(node_id) => self.log_node_id_verbose(node_id),
+            GraphId::Type(type_id) => {
+                // Limited info available for TypeId within ModuleTree
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", type_id.to_string().log_id(), "Type".log_spring_green());
             }
         }
     }
-    // AI!
+
+    /// Logs detailed information about a NodeId for debugging purposes.
+    /// This function is intended for verbose debugging and may perform lookups within the ModuleTree.
+    pub(crate) fn log_node_id_verbose(&self, node_id: NodeId) {
+        let mod_id = ModuleNodeId::new(node_id);
+        let graph_id = GraphId::Node(node_id);
+
+        if let Some(module) = self.modules.get(&mod_id) {
+            // Log ModuleNode details
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Module".log_spring_green());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Name: {}", module.name.log_name());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Path: {}", module.path.join("::").log_path());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Visibility: {}", format!("{:?}", module.visibility).log_vis());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Kind: {}", crate::utils::logging::get_module_def_kind_str(module).log_orange());
+            if let Some(fp) = module.file_path() {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      File Path: {}", fp.display().to_string().log_path());
+            }
+            if let Some(span) = module.inline_span() {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Inline Span: {:?}", span);
+            }
+            if let Some(span) = module.declaration_span() {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Decl Span: {:?}", span);
+            }
+            if !module.cfgs.is_empty() {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      CFGs: {}", module.cfgs.join(", ").log_magenta());
+            }
+        } else {
+            // Node is not a module found in self.modules
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Node (Non-Module or Not Found)".log_comment());
+        }
+
+        // Check pending imports/exports
+        let is_in_pending_import = self.pending_imports.iter().any(|p| p.import_node().id == node_id);
+        if is_in_pending_import {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
+        }
+        if let Some(exports) = self.pending_exports.as_deref() {
+             let is_in_pending_export = exports.iter().any(|p| p.export_node().id == node_id);
+             if is_in_pending_export {
+                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
+             }
+        }
+
+
+        // Log relations FROM this node
+        if let Some(relations_from) = self.get_all_relations_from(&graph_id) {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
+            for rel_ref in relations_from {
+                let target_id_str = match rel_ref.relation().target {
+                     GraphId::Node(id) => id.to_string().log_id(),
+                     GraphId::Type(id) => format!("Type({})", id).log_id(),
+                };
+                // Try to get target name if it's a module
+                let target_name = match rel_ref.relation().target {
+                    GraphId::Node(id) => self.modules.get(&ModuleNodeId::new(id)).map(|m| m.name.as_str()),
+                    _ => None,
+                };
+                let target_display = target_name.map(|n| n.log_name().to_string()).unwrap_or_else(|| target_id_str.to_string());
+
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), target_display);
+            }
+        } else {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
+        }
+
+        // Log relations TO this node
+        if let Some(relations_to) = self.get_all_relations_to(&graph_id) {
+             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
+            for rel_ref in relations_to {
+                let source_id_str = match rel_ref.relation().source {
+                     GraphId::Node(id) => id.to_string().log_id(),
+                     GraphId::Type(id) => format!("Type({})", id).log_id(),
+                };
+                 // Try to get source name if it's a module
+                let source_name = match rel_ref.relation().source {
+                    GraphId::Node(id) => self.modules.get(&ModuleNodeId::new(id)).map(|m| m.name.as_str()),
+                    _ => None,
+                };
+                let source_display = source_name.map(|n| n.log_name().to_string()).unwrap_or_else(|| source_id_str.to_string());
+
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), source_display);
+            }
+        } else {
+             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
+        }
+    }
 }
 
 // Extension trait for Path normalization
