@@ -37,28 +37,28 @@
  ploke/
  ├── Cargo.toml                     # Workspace configuration
  ├── crates/
- │   ├── core/                 󱃜    # Core types and traits (NodeId ..)
+ │   ├── core/                 󱃜    # Core types and traits (NodeId..)
  │   ├── error/                󱃜    # Cross-crate error types
  │   ├── ingest/                    # Core processing Pipeline
- │   │   ├── syn_parser/       🚀   # core traversal + parsing logic....syn
- │   │   ├── ploke-lsp/        💤   # LSP data processing
- │   │   ├── ploke-embed/      💤   # Vector embeddings.................cozo
- │   │   └── ploke-graph/      💤   # AST ➔ CozoDB transformations......cozo
- │   ├── io/                   💤   # Input/Output pipeline
- │   │   ├── watcher/          💤   # watches for events (ide, file, lsp)
- │   │   └── writer/           💤   # write code, message ide, commands
- │   ├── ploke-db/             💤   # Query processing & ranking........cozo
- │   ├── context/              💤   # aggregate data for llm
- │   ├── llm/                  💤   # Local LLM integration
- │   ├── prompt/               💤   # prompt engineering
- │   ├── ui/                   💤   # CLI/GUI entrypoints...............egui
- │   └── analyze/              🚀   # Static analysis of parsed data
+ │   │   ├── syn_parser/       󰆧    # AST traversal + parsing (Rayon)
+ │   │   ├── ploke-lsp/        󰚩    # LSP data processing (Tokio)
+ │   │   ├── ploke-embed/      󰚩    # Vector embeddings (Rayon)
+ │   │   └── ploke-graph/      󰆧    # AST ➔ CozoDB (Rayon)
+ │   ├── io/                   󰚩    # Input/Output pipeline (Tokio)
+ │   │   ├── watcher/          󰚩    # File watching (Tokio)
+ │   │   └── writer/           󰚩    # Code writing (Tokio)
+ │   ├── ploke-db/             󰚩    # Query processing (Tokio)
+ │   ├── context/              󰚩    # LLM context (Tokio)
+ │   ├── llm/                  󰚩    # Local LLM integration (Tokio)
+ │   ├── prompt/               󰚩    # Prompt engineering (Tokio)
+ │   ├── ui/                   󰚩    # CLI/GUI (Tokio/EGUI)
+ │   └── analyze/              󰆧    # Static analysis (Rayon)
  ├── examples/                      # Documentation examples
  └── benches/                       # Performance benchmarks
 
- 💤 Asynchronous (tokio)
- 🚀 Multithreaded (rayon)
- 🚀 <--> flume <--> 💤
+ 󰚩    Asynchronous (tokio)
+ 󰆧    Multithreaded (rayon)
+ Rayon Domain (󰆧 ) ↔ Flume Channel ↔ Tokio Domain (󰚩 )
  󱃜  Send + Sync (Not tied to tokio or rayon runtime)
  ```
 
@@ -69,23 +69,23 @@
  Current flow notes:
 ```mermaid
 flowchart TD
- watcher[File Watcher] --> parser
-    ui[UI] --> parser[Parser]
-    parser -->|flume| embed[Embeddings]
-    parser -->|flume| graphT[Graph Transformer]
-    embed -->|write| db[(Database)]
-    graphT -->|write| db
-    db -->|read| analyze[Analyzer]
+    watcher["File Watcher<br>󰚩 Tokio"] --> parser
+    ui["UI<br>󰚩 Tokio"] --> parser["Parser<br>󰆧 Rayon"]
+    parser -->|flume| embed["Embeddings<br>󰆧 Rayon"]
+    parser -->|flume| grraphT["Graph Transformer<br>󰆧 Rayon"]
+    embed -->|write| db["Database<br>󰚩 Tokio"]
+    grraphT -->|write| db
+    db -->|read| analyze["Analyzer<br>󰆧 Rayon"]
     analyze -->|write| db
-    db -->|Query Results| context[Context Builder]
-    lsp --> context
-    ui --> prompt
-    context --> llm[LLM]
+    db -->|Query Results| context["Context Builder<br>󰚩 Tokio"]
+    lsp["LSP<br>󰚩 Tokio"] --> context
+    ui --> prompt["Prompt<br>󰚩 Tokio"]
+    context --> llm["LLM<br>󰚩 Tokio"]
     llm --> ui
-    prompt[Prompt<br>Engineering] --> db
-    ploke_graph -->|Schema Management| db
+    prompt --> db
+    ploke_grraph["Schema<br>󱃜 Thread-safe"] -->|Schema| db
 ```
-
+<!--Note: The word "graph" is a keyword for mermaid and should not be used inside the mermaid diagram code block-->
 
 ### 4.3 Implementation Status
 
@@ -96,7 +96,7 @@ flowchart TD
 | channel | ✅ Implemented | Flume-based communication between components |
 | parallel processing | ✅ Implemented | Rayon-based parallel file processing |
 | embed | 🚧 Planned | Vector embeddings for code snippets |
-| graph | 🚧 Planned | Transformation of AST to graph database format |
+| graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
 | database | 🚧 Planned | CozoDB integration for hybrid vector-graph storage |
 | watcher | 🚧 Planned | File system watcher for code changes |
 | writer | 🚧 Planned | Code generation and modification |
@@ -174,32 +174,35 @@ flowchart TD
 ### 5.2 ploke-db Component
 
 **Responsibilities**:
-- Provides high-level query interface to CozoDB
-- Manages query building and optimization
-- Handles result ranking and filtering
-- Maintains query performance characteristics
+- Provides text-oriented query interface to CozoDB
+- Manages efficient retrieval of code snippets with location metadata
+- Handles hybrid (graph + vector) searches
+- Optimizes for bulk text context retrieval
 
-**Implementation Plan**:
+**Key Design Principles**:
+1. **Text-First Output**: All results returned as strings with source locations
+2. **Location Awareness**: Tracks and queries by source spans
+3. **Change Detection**: Supports incremental updates via span tracking
+
+**Implementation Focus**:
 ```rust
-// Example query builder interface
-pub struct QueryBuilder {
-    base_query: String,
-    filters: Vec<String>,
-    limits: Option<usize>
+pub struct CodeSnippet {
+    pub text: String,
+    pub file_path: PathBuf,
+    pub span: (usize, usize), // byte offsets
+    pub surrounding_context: String,
+    pub metadata: HashMap<String, String>,
 }
 
-impl QueryBuilder {
-    /// Create new query for specific node type
-    pub fn new(node_type: NodeType) -> Self;
+impl Database {
+    /// Retrieve snippets matching semantic query
+    pub fn semantic_search(&self, query: &str) -> Vec<CodeSnippet>;
     
-    /// Add relationship filter
-    pub fn with_relation(self, kind: RelationKind) -> Self;
+    /// Find all usages of a type (as text)
+    pub fn find_type_usages(&self, type_name: &str) -> Vec<CodeSnippet>;
     
-    /// Add semantic search constraint
-    pub fn with_semantic_search(self, query: &str) -> Self;
-    
-    /// Finalize query into executable CozoScript
-    pub fn build(self) -> String;
+    /// Get snippets by source location
+    pub fn get_by_location(&self, file: &Path, span: (usize, usize)) -> Option<CodeSnippet>;
 }
 ```
 
@@ -211,11 +214,25 @@ impl QueryBuilder {
 - Handles schema versioning/migrations
 - Provides embedding interface abstraction
 
+**Current Implementation**:
+- Comprehensive schema covering all major Rust code elements
+- Efficient transformation of syn_parser types to database relations
+- Support for functions, structs, enums, traits, impls, modules, types, values and macros
+- Detailed type system representation
+
 **Key Features**:
 - Complete schema definition for code elements
-- Efficient bulk insertion operations
+- Efficient bulk insertion operations  
 - Schema migration support
 - Integration with embedding services
+- Thread-safe transformation pipeline
+
+**Remaining Work**:
+- Improved generic parameter handling
+- Enhanced attribute processing
+- Better import/export relationship tracking
+- Advanced type feature support
+(See current_progress/ploke_graph_coverage.md for details)
 
 ### 5.4 Serialization Component
 
@@ -273,39 +290,49 @@ pub fn save_to_ron(code_graph: &CodeGraph, output_path: &Path) -> std::io::Resul
 
 ## 7. Concurrency Model
 
-### Understanding Tokio vs Rayon
+### Clear Separation of Concerns:
 
-**Understanding the Conflict**
+- **I/O Domain** (󰚩 Tokio/async):
+  - File watching
+  - Database operations
+  - Network requests
+  - UI interactions
+  - Uses non-blocking I/O
 
-- **Tokio** is an asynchronous runtime for I/O-bound tasks. It excels at handling many concurrent operations that spend time waiting (file I/O, network requests, etc.).
+- **Compute Domain** (󰆧 Rayon/parallel):
+  - Code parsing
+  - AST processing
+  - Graph transformations
+  - Vector embeddings
+  - CPU-bound workloads
 
-- **Rayon** is designed for CPU-bound parallelism. It provides work-stealing thread pools that efficiently distribute computational work across available cores.
+- **Core Data Structures** (󱃜 Thread-safe):
+  - `Send + Sync` types
+  - Runtime-agnostic (`parking_lot` or stdlib sync primitives)
+  - `DashMap` for concurrent collections
 
-The conflict concerns come from their different concurrency models:
-- Tokio uses async/await (non-blocking concurrency)
-- Rayon uses threads (parallel execution)
+### Crossing Boundaries:
 
-### Divided Architecture
+1. **Flume Channels**:
+   - Unbounded or bounded as needed
+   - All messages are `Send + Sync`
+   - Example flow:
+     ```
+     Tokio Domain → Flume → Rayon Domain → Flume → Tokio Domain
+     ```
 
-Here's how we structure the system:
-
-1. **Clear boundary between I/O and computation domains**
-   - I/O domain: File watching, database operations (Tokio)
-   - Computation domain: Code parsing, analysis (Rayon)
-
-2. **For core data structures**:
-   - Make them `Send + Sync` but don't tie them to either runtime
-   - Use `Arc<RwLock<_>>` from `parking_lot` or standard library (not Tokio's locks)
-   - Consider `dashmap` for concurrent hash maps
-
-3. **Processing pipeline architecture**:
+2. **Processing Pipeline**:
+   ```mermaid
+   flowchart LR
+       A["File Watcher<br>󰚩 Tokio"] -->|flume| B["Parser\n󰆧 Rayon"]
+       B -->|flume| C["DB Writer\n󰚩 Tokio"]
+       C --> D["Database\n󰚩 Tokio"]
    ```
-   File Watcher (Tokio) → Parser Coordinator → Parallel Parsing (Rayon) → Database Writer (Tokio)
-   ```
 
-4. **Channel-based communication**:
-   - Use `flume` to communicate between domains
-   - This allows clean separation between the async and parallel components
+3. **Rules**:
+   - No shared locks across domains
+   - Minimal data copying between domains
+   - Prefer message passing over shared state
 
 ### Concurrency Model Implementation
 
@@ -453,15 +480,15 @@ fn main() {
 
 ## 10. Next Steps
 
-1. **Database Integration**: Implement CozoDB integration for storing and querying the code graph.
+ 1. **Database Integration**: Implement CozoDB integration for storing and querying the code graph.
 
-2. **Embedding Generation**: Develop the embedding component to generate vector representations of code snippets.
+ 2. **Context Builder**: Create the context builder to prepare relevant code snippets for LLM prompts.
 
-3. **File Watcher**: Implement the file watcher component to detect code changes.
+ 3. **File Watcher**: Implement the file watcher component to detect code changes.
 
-4. **Context Builder**: Create the context builder to prepare relevant code snippets for LLM prompts.
+ 4. **Basic UI**: Develop a minimal CLI interface for interacting with the system.
 
-5. **Basic UI**: Develop a minimal CLI interface for interacting with the system.
+ 5. **Embedding Generation**: Develop the embedding component to generate vector representations of code snippets.
 
 ## 11. Decision Records
 <!-- TODO: Document key architectural decisions, alternatives considered, and rationale for choices made -->

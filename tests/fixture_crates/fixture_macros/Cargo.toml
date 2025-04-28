@@ -1,0 +1,10 @@
+[package]
+name = "fixture_macros"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Add proc-macro2 and quote if defining actual proc macros,
+# but for fixture purposes, placeholders are often enough.
+# proc-macro2 = "1.0"
+# quote = "1.0"

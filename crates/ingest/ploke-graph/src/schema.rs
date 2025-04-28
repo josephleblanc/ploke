@@ -11,10 +11,21 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
         :create functions {
             id: Int => 
             name: String,
-            visibility: String,
             return_type_id: Int?,
             docstring: String?,
             body: String?
+        }
+        "#,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
+    db.run_script(
+        r#"
+        :create visibility {
+            node_id: Int =>
+            kind: String,
+            path: [String]?
         }
         "#,
         BTreeMap::new(),
@@ -296,6 +307,13 @@ pub fn create_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error>
     // Create indices for performance
     create_indices(db)?;
 
+    // Create visibility index
+    db.run_script(
+        "::index create visibility:by_kind_path {kind, path, node_id}",
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+
     Ok(())
 }
 
@@ -404,13 +422,31 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         "?[id, kind, type_str] <- [[$id, $kind, $type_str]] :put types",
         type_params,
         cozo::ScriptMutability::Mutable,
-    )?;
+    )
+    .expect("failed to put sample type");
+
+    // First insert visibility (must come before function)
+    let visibility_params = BTreeMap::from([
+        ("node_id".to_string(), DataValue::from(1)),
+        ("kind".to_string(), DataValue::from("public")),
+        ("path".to_string(), DataValue::Null),
+    ]);
+    db.run_script(
+        "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+        visibility_params,
+        cozo::ScriptMutability::Mutable,
+    )
+    .expect("failed to put sample visibility");
 
     // Insert a sample function
+    // TODO: Delete comment when finished refactoring visibility:
+    // pre-refactor git tag: vis_refactor
+    // refactoring test on function to use new model of visibility
     let function_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(1)),
         ("name".to_string(), DataValue::from("sample_function")),
-        ("visibility".to_string(), DataValue::from("Public")),
+        // ("visibility_kind".to_string(), DataValue::from("public")),
+        // ("visibility_path".to_string(), DataValue::Null),
         ("return_type_id".to_string(), DataValue::from(1)),
         (
             "docstring".to_string(),
@@ -419,11 +455,27 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
         ("body".to_string(), DataValue::from("println!(\"Hello\");")),
     ]);
 
+    // TODO: Delete comment when finished refactoring visibility: git tag
+    // pre-refactor git tag: vis_refactor
+    // refactoring test on function to use new model of visibility
+    // Saving old fields here
+    // $visibility_kind,
+    // $visibility_path,
+    // "?[id, name, visibility_kind, visibility_path, return_type_id, docstring, body] <-
     db.run_script(
-        "?[id, name, visibility, return_type_id, docstring, body] <- [[$id, $name, $visibility, $return_type_id, $docstring, $body]] :put functions",
+        "?[id, name, return_type_id, docstring, body] <- 
+            [[
+                $id, 
+                $name, 
+                $return_type_id, 
+                $docstring, 
+                $body
+            ]] 
+            :put functions",
         function_params,
         cozo::ScriptMutability::Mutable,
-    )?;
+    )
+    .expect("failed to put sample visibility");
 
     // Insert a function parameter
     let param_params = BTreeMap::from([
@@ -445,7 +497,7 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
     let struct_params = BTreeMap::from([
         ("id".to_string(), DataValue::from(2)),
         ("name".to_string(), DataValue::from("SampleStruct")),
-        ("visibility".to_string(), DataValue::from("Public")),
+        ("visibility".to_string(), DataValue::from("public")),
         ("docstring".to_string(), DataValue::from("A sample struct")),
     ]);
 
@@ -473,12 +525,17 @@ pub fn insert_sample_data(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::E
 
 /// Queries the database to verify the schema is working correctly
 pub fn verify_schema(db: &cozo::Db<cozo::MemStorage>) -> Result<(), cozo::Error> {
-    let function_query = "?[id, name, visibility] := *functions[id, name, visibility, _, _, _]";
+    // TODO: Delete comment when finished refactoring visibility: git tag
+    // pre-refactor git tag: vis_refactor
+    // refactoring test on function to use new model of visibility
+    // Saving old fields here
+    // let function_query = "?[id, name, visibility] := *functions[id, name, visibility, _, _, _]";
+    let function_query = "?[id, name] := *functions[id, name, _, _, _]";
     let struct_query = "?[id, name, visibility] := *structs[id, name, visibility, _]";
     let relations_query = "?[source_id, target_id, kind] := *relations[source_id, target_id, kind]";
     let joined_query = r#"
         ?[fn_name, struct_name] := 
-            *functions[fn_id, fn_name, _, _, _, _],
+            *functions[fn_id, fn_name, _, _, _],
             *relations[fn_id, struct_id, "References"],
             *structs[struct_id, struct_name, _, _]
         "#;

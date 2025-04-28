@@ -1,0 +1,16 @@
+[package]
+name = "fixture_spp_edge_cases"
+version = "0.1.0"
+edition = "2021"
+
+# Added features to suppress unexpected_cfgs warnings
+[features]
+default = []
+cfg_a = []
+cfg_b = []
+cfg_c = []
+cfg_conflict = []
+glob_feat_a = []
+
+
+[dependencies]

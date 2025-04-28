@@ -1,0 +1,16 @@
+[package]
+name = "fixture_conflation"
+version = "0.1.0"
+edition = "2021"
+description = "Test fixture specifically designed to expose TypeId conflation issues, especially with generics (T), Self types, and mutually exclusive #[cfg(feature = \"...\")] / #[cfg(not(feature = \"...\"))] attributes across different scopes and files."
+
+[features]
+# Define features used for #[cfg] testing in the fixture code.
+# feature_a is default to ensure some cfg'd code is always present.
+default = ["feature_a"]
+feature_a = []
+# feature_b was removed to focus testing on cfg/cfg(not()) pairs,
+# avoiding the complexity of testing simultaneous conflicting features.
+
+[dependencies]
+# No dependencies needed for this fixture

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Message types for parser communication
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ParserMessage {
     /// Request to parse a file
     ParseFile(PathBuf),
@@ -19,6 +20,8 @@ pub fn create_parser_channel() -> (Sender<ParserMessage>, Receiver<ParserMessage
 }
 
 /// Creates a bounded channel pair for parser communication with specified capacity
-pub fn create_bounded_parser_channel(capacity: usize) -> (Sender<ParserMessage>, Receiver<ParserMessage>) {
+pub fn create_bounded_parser_channel(
+    capacity: usize,
+) -> (Sender<ParserMessage>, Receiver<ParserMessage>) {
     flume::bounded(capacity)
 }

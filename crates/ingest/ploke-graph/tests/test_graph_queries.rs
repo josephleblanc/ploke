@@ -213,7 +213,7 @@ fn test_find_type_usages() {
     // Query to find all functions that use a specific type
     let query = r#"
         ?[fn_name, type_str] := 
-            *functions[fn_id, fn_name, _, _, _, _],
+            *functions[fn_id, fn_name, _, _, _],
             *function_params[fn_id, _, _, type_id, _, _],
             *types[type_id, _, type_str]
     "#;

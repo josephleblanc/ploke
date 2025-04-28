@@ -1,4 +1,5 @@
 pub mod schema;
+pub mod traits;
 pub mod transform;
 
 #[cfg(test)]
