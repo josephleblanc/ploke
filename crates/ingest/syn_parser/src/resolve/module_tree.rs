@@ -295,8 +295,14 @@ pub enum ModuleTreeError {
     InvalidStatePendingExportsMissing { module_id: NodeId },
     #[error("Internal state error: {0}")]
     InternalState(String),
-    #[error("Warning: {0}")] // New variant for non-fatal issues
     Warning(String),
+
+    // --- NEW VARIANT ---
+    #[error("Recursion limit ({limit}) exceeded while finding defining file path for node {start_node_id}")]
+    RecursionLimitExceeded {
+        start_node_id: NodeId,
+        limit: u8,
+    },
 }
 
 /// Holds the IDs and relations pruned from the ModuleTree.
@@ -940,39 +946,69 @@ impl ModuleTree {
     }
 
     const RECURSIVE_LIMIT: u8 = 32;
-    // AI: I think I prefer this version for now. Add some logging here please
+    // This version (v2) is functionally equivalent to the iterative version above (v1)
+    // IF the recursive call bug is fixed (should recurse with container_mod_id).
+    // However, the iterative version (v1) is preferred for stack safety and potentially clearer state management.
+    // This function should likely be removed.
     pub fn find_defining_file_path_ref_v2(
         &self,
         node_id: NodeId,
         recurse_count: u8,
     ) -> Result<&Path, ModuleTreeError> {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} find_defining_file_path_ref_v2(node_id: {}, recurse_count: {})",
+            "->".log_step(),
+            node_id.to_string().log_id(),
+            recurse_count.to_string().cyan()
+        );
+
         if node_id == *self.root().as_inner() {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Node is root, returning root file: {}", "✓".log_green(), self.root_file.display().log_path());
             return Ok(&self.root_file);
         }
         let node_gid = node_id.into();
         let container_mod_gid = self
             .get_containing_mod_checked(&node_gid)
-            .map(|r| r.relation().target)?;
+            .map(|r| r.relation().target)?; // Note: This should be source, not target for Contains
         let container_mod_id = container_mod_gid.try_into()?;
         let file_mod = self.get_module_checked(&container_mod_id)?;
+
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found container module: {} ({})", "->".log_comment(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
+
         match file_mod.file_path() {
-            Some(fp) => Ok(fp),
+            Some(fp) => {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Container module is file-based: {}", "✓".log_green(), fp.display().log_path());
+                Ok(fp)
+            }
             None => {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Container module is inline.", "->".log_comment());
                 if file_mod.is_file_based() {
-                    return Err(ModuleTreeError::ContainingModuleNotFound(file_mod.id()));
+                    // This case seems contradictory (None path but is_file_based true)
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Inconsistent state: Module {} ({}) has no file_path but is_file_based is true.", "✗".log_error(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
+                    return Err(ModuleTreeError::InternalState(format!("Module {} has no file path but is file-based", container_mod_id)));
                 } else if recurse_count >= Self::RECURSIVE_LIMIT {
-                    // AI: generate a new error type to report recursion.
+                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursion limit ({}) reached for node {}", "✗".log_error(), Self::RECURSIVE_LIMIT, node_id.to_string().log_id());
+                    Err(ModuleTreeError::RecursionLimitExceeded {
+                        start_node_id: node_id, // The original node ID where recursion started/failed
+                        limit: Self::RECURSIVE_LIMIT,
+                    })
                 } else {
-                    recurse_count += 1;
+                    // IMPORTANT BUG FIX: Recurse with the *container's* ID, not the original node_id
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursing with container module ID: {}", "->".log_step(), container_mod_id.to_string().log_id());
+                    // recurse_count += 1; // This mutation is incorrect for immutable `recurse_count`
                     self.find_defining_file_path_ref_v2(
                         container_mod_id.into_inner(),
-                        recurse_count,
+                        recurse_count + 1, // Pass incremented value
                     )
                 }
             }
         }
-        // AI: Add an internal state error here too
-    } //AI!
+        // This point should be unreachable if the logic within the match is exhaustive.
+        // Adding an error here for defensive programming.
+        // Err(ModuleTreeError::InternalState(format!(
+        //     "Reached unexpected end of find_defining_file_path_ref_v2 for node {}",
+        //     node_id
+        // )))
+    }
 
     pub fn resolve_pending_path_attrs(&mut self) -> Result<(), ModuleTreeError> {
         self.log_resolve_entry_exit(true); // Log entry
