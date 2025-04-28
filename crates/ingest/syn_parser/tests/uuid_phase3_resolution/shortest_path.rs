@@ -84,7 +84,7 @@ fn test_spp_public_item_in_root() {
 
     // Expected path: Ok(["crate"]) (path to the containing module)
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string()],
+        path: vec!["crate".to_string(), "main_pub_func".to_owned()],
         target_kind: ResolvedTargetKind::InternalDefinition,
         target_id: main_pub_func_id,
     });
@@ -115,9 +115,13 @@ fn test_spp_public_item_in_public_mod() {
     // Pass the graph as required by the new signature
     let spp = tree.shortest_public_path(top_pub_func_id, &graph);
 
-    // Expected path: Ok(["crate", "top_pub_mod"])
+    // Expected path: Ok(["crate", "top_pub_mod", "top_pub_mod"])
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
+        path: vec![
+            "crate".to_string(),
+            "top_pub_mod".to_string(),
+            "top_pub_func".to_string(),
+        ],
         target_kind: ResolvedTargetKind::InternalDefinition,
         target_id: top_pub_func_id,
     });

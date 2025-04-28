@@ -1,15 +1,16 @@
+use std::path::Path;
+
 use log::debug; // Import debug macro
 use ploke_core::{CanonId, IdInfo, NodeId, ResolvedId};
 use uuid::Uuid;
 
 use crate::{
     error::SynParserError,
-    parser::nodes::GraphNode, // Import GraphNode trait for logging
     parser::{
         graph::{GraphAccess, ParsedCodeGraph},
-        nodes::{ModuleNodeId, NodePath}, // Removed duplicate GraphNode import
-    },
-    resolve::module_tree::ModuleTree,
+        nodes::{GraphNode, ModuleNodeId, NodePath},
+    }, // Import GraphNode trait for logging
+    resolve::module_tree::{ModuleTree, ModuleTreeError},
     utils::{LogStyle, LogStyleDebug}, // Import logging traits
 };
 
@@ -55,6 +56,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         &self,
         node_path: &NodePath,
         graph_node: &dyn GraphNode,
+        file_path: &Path,
     ) -> std::result::Result<ploke_core::CanonId, ploke_core::IdConversionError> {
         // Log the attempt to resolve this specific node
         debug!(target: LOG_TARGET, "  {} Resolving node: {} ({}) at path: {}",
@@ -64,10 +66,11 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             node_path.to_string().log_path()
         );
 
+        //
         let result = CanonId::generate_resolved(
             self.namespace(),
             IdInfo::new(
-                &self.graph.file_path,   // file_path,
+                file_path,
                 node_path.as_segments(), // logical_item_path,
                 graph_node.cfgs(),       // cfgs,
                 graph_node.kind(),       // item_kind
@@ -137,16 +140,27 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             })
             .map(move |(np, item_id)| {
                 // Find the actual GraphNode for the item ID
-                debug!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());  
-                self.graph.find_node_unique(item_id).map(|n| (np, n))
+                debug!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());
+                // Chain the fallible operations using and_then and map_err
+                self.graph.find_node_unique(item_id) // -> Result<&dyn GraphNode, SynParserError>
+                    .and_then(|node| { // If find_node_unique is Ok, proceed
+                        debug!(target: LOG_TARGET, "    Found node: {}", node.name().log_name());
+                        self.module_tree.find_defining_file_path_ref(item_id) // -> Result<&Path, ModuleTreeError>
+                            .map_err(SynParserError::from) // Convert ModuleTreeError to SynParserError if Err
+                            .map(|fp| { // If find_defining_file_path_ref is Ok
+                                debug!(target: LOG_TARGET, "    Found defining path: {}", fp.display().to_string().log_path());
+                                // Combine np (cloned), node, and fp into the final Ok tuple
+                                (np, node, fp)
+                            })
+                    }) // Result of the chain is Result<(NodePath, &dyn GraphNode, &Path),  SynParserError>
             })
             // At this point, items are Result<(&NodePath, &dyn GraphNode), SynParserError>
             .map(|find_result| {
                 // find_result is Result<(&NodePath, &dyn GraphNode), SynParserError>
                 match find_result {
-                    Ok((np, node)) => {
+                    Ok((np, node, fp)) => {
                         // If find succeeded, try to resolve the node.
-                        let resolve_result = self.resolve_single_node(np, node);
+                        let resolve_result = self.resolve_single_node(np, node, fp);
                         match resolve_result {
                             Ok(canon_id) => {
                                 debug!(target: LOG_TARGET, "    {} Resolved {} -> {}",

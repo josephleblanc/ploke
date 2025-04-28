@@ -192,8 +192,8 @@ impl ParsedCodeGraph {
         // 6. Prune unlinked file modules from the ModuleTree state
         let pruning_result = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
         if !pruning_result.pruned_module_ids.is_empty() {
-             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.", pruning_result.pruned_module_ids.len(), pruning_result.pruned_item_ids.len(), pruning_result.pruned_relations.len());
-             // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.", pruning_result.pruned_module_ids.len(), pruning_result.pruned_item_ids.len(), pruning_result.pruned_relations.len());
+            // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
         }
 
         // By the time we are finished, we should have all the necessary relations to form the path

@@ -259,8 +259,30 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::Warning(msg) => {
                 SynParserError::InternalState(format!("ModuleTree Warning: {}", msg))
             }
-            ModuleTreeError::DuplicateContains(tree_relation) => todo!(),
-            ModuleTreeError::NoRelationsFoundForId(node_id) => todo!(),
+            ModuleTreeError::DuplicateContains(tree_relation) => {
+                // Indicates an internal inconsistency in the graph structure.
+                SynParserError::InternalState(format!(
+                    "Duplicate Contains relation found: {:?}",
+                    tree_relation
+                ))
+            }
+            ModuleTreeError::NoRelationsFoundForId(node_id) => {
+                // Indicates an item expected to have relations (like containment) was found without any.
+                SynParserError::InternalState(format!(
+                    "No relations found for NodeId {} during ModuleTree processing.",
+                    node_id
+                ))
+            }
+            ModuleTreeError::RecursionLimitExceeded {
+                start_node_id,
+                limit,
+            } => {
+                // Indicates a safety limit was hit, likely due to cycles or extreme depth.
+                SynParserError::InternalState(format!(
+                    "Recursion limit ({}) exceeded starting from node {}",
+                    limit, start_node_id
+                ))
+            }
         }
     }
 }

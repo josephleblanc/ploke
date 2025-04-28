@@ -61,6 +61,7 @@
 //! ---
 
 use ploke_core::ItemKind;
+use syn_parser::parser::nodes::NodePath;
 use syn_parser::parser::ParsedCodeGraph;
 // Added ItemKind
 use syn_parser::resolve::module_tree::{

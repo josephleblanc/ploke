@@ -88,14 +88,21 @@ mod chain_a {
 }
 mod chain_b {
     pub use crate::chain_a::item_a as item_b; // 2-step pub
-                                              // REMOVED INVALID RE-EXPORT: pub use crate::chain_a::crate_item_a;
+
+    // REMOVED INVALID RE-EXPORT: pub use crate::chain_a::crate_item_a;
 }
+
 mod chain_c {
     pub use crate::chain_b::item_b as item_c; // 3-step pub
 }
 // Re-export at root
+// Even with `mod chain_a` as non-public by default, it's public items are visible in `chain_a`'s
+// containing context.
+// Another way to say this is:
+//  - A module's immediate public children are public to a module's immediate parent and siblings.
 pub use chain_c::item_c; // Final public name for item_a
-                         // crate_item_a is NOT publicly re-exported
+
+// crate_item_a is NOT publicly re-exported
 
 // Alternative path (longer)
 mod chain_alt_b {
