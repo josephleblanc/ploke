@@ -45,9 +45,9 @@ mod a {
         public_func_in_private_mod(); // correct
     }
     fn temp_test_func() {
-        use crate::a::b::public_func;
+        
         // use crate::a::c::private_func; // E0603 Error, private function
-        use crate::a::d::public_func_in_private_mod;
+        
     }
 }
 pub fn test_pub_in_priv() {
@@ -115,7 +115,7 @@ mod unrelated_with_long_import {
     // use super::super::outer::outer_function; // Incorrect, too many leading `super` keywords
     // use super::crate; // Incorrect No `crate` found in root.
     // use super::unrelated_with_long_import::some_func; // Incorrect, defined multiple times.
-    use super::unrelated_with_long_import; // Correct (but useless?)
+     // Correct (but useless?)
     pub fn some_func() {}
 }
 

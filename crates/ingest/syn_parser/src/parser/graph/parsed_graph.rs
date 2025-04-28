@@ -136,7 +136,8 @@ impl ParsedCodeGraph {
         //      child elements, e.g. other module declarations. Includes file--contains-->items.
         //      - Does not include inter-file links, due to parallel parsing with no cross-channel
         //      communication.
-        tree.add_relations_batch(self.relations())?;
+        //      TODO: Add validation step for relations before adding them.
+        tree.extend_relations(self.relations().iter().copied());
 
         // 3: Build syntactic links
         //      - Creates `Relation::ResolvesToDefinition` link from
@@ -144,8 +145,11 @@ impl ParsedCodeGraph {
         //      - Does not process `#[path = "..."]` attributes (see 4 below)
         if let Err(module_tree_error) = tree.link_mods_syntactic(self.modules()) {
             match module_tree_error {
-                // Warn on this specific error, but it is safe to continue. Indicates file-level
-                // module is not linked to the module tree through a parent.
+                // Warn on this specific error, but it is safe to continue.
+                // Indicates file-level module is not linked to the module tree through a parent.
+                // The unlinked file-level module will either be processed by `#[path]` processing
+                // below, or we return an error that the graph is inconsistend due to orphaned
+                // module definitions.
                 ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
                     self.handle_unlinked_modules(unlinked_infos);
                 }
@@ -171,16 +175,18 @@ impl ParsedCodeGraph {
         //    updates later. See method comments for more info.
         tree.update_path_index_for_custom_paths()?;
 
+        // WARNING: This logic has moved. We are now creating ReExports after the ModuleTree is
+        // built and we have resolved Ids to Cannonical Ids. Delete this code once we have
+        // implementation of reexport in a new place.
+        //
+        // Old Code for reference:
         // 6: Process re-export relationships beween `pub use` statements and the **modules** they
         //    are re-exporting (does not cover other items like structs, functions, etc)
         //    - should be reexport --ReExports--> item definition
         //    All errors here indicate we should abort, handle these in caller:
         //      ModuleTreeError::NodePathValidation(Box::new(e))
         //      ModuleTreeError::ConflictingReExportPath
-        #[cfg(not(feature = "reexport"))]
-        tree.process_export_rels(self)?;
-        #[cfg(feature = "reexport")]
-        tree.process_export_rels(self)?;
+        // tree.process_export_rels(self)?;
 
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all definined items by ModuleTree's shortest_public_path method.

@@ -17,7 +17,7 @@ mod sibling_outer {
 pub fn sibling_outer_function() {
     // sibling_inner_function(); // Incorrect, out of scope
     // sibling_outer::sibling_inner_function(); // Incorrect, private
-    use sibling_outer; // Correct use statement, as public function from same file in same context
+     // Correct use statement, as public function from same file in same context
                        // as `sibling_outer`
     println!("Outer function");
 }
@@ -33,7 +33,7 @@ pub mod third_sibling {
 }
 
 pub mod fourth_sibling {
-    use super::sibling_outer;
+    
 }
 
 pub fn sibling_test_outer() {

@@ -95,7 +95,10 @@ impl PrivateTrait for SimpleStruct {
 }
 
 // Trait impl for generic struct (generic on impl)
-impl<T> SimpleTrait for GenericStruct<T> where T: Default + Copy + Into<i32> {
+impl<T> SimpleTrait for GenericStruct<T>
+where
+    T: Default + Copy + Into<i32>,
+{
     fn trait_method(&self) -> i32 {
         self.value.into()
     }

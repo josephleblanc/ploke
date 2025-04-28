@@ -1,3 +1,4 @@
+pub mod canon_resolver;
 pub mod edge_cases;
 pub mod exports; // Add the new module for export tests
 pub mod mod_tree;

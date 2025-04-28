@@ -16,4 +16,6 @@ pub(in crate::top_pub_mod) mod path_visible_mod;
 fn top_pub_priv_func() {}
 
 // Function with a name duplicated elsewhere
-pub fn duplicate_name() -> u8 { 2 }
+pub fn duplicate_name() -> u8 {
+    2
+}

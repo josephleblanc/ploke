@@ -24,22 +24,24 @@ impl CodeSnippet {
     /// Create new snippet from database row
     pub fn from_db_row(row: &[cozo::DataValue]) -> Result<Self, Error> {
         // Expected row format: [id, name, visibility, docstring]
-        let name = row.get(1)
+        let name = row
+            .get(1)
             .and_then(|v| v.get_str())
             .ok_or(Error::QueryExecution("Missing name in row".into()))?;
-            
+
         Ok(Self {
             text: name.to_string(),
             file_path: PathBuf::new(), // TODO: Add file path tracking
-            span: (0, 0), // TODO: Add span tracking
-            context: String::new(), // TODO: Add context extraction
+            span: (0, 0),              // TODO: Add span tracking
+            context: String::new(),    // TODO: Add context extraction
             metadata: vec![
                 ("name".into(), name.into()),
-                ("visibility".into(), 
+                (
+                    "visibility".into(),
                     row.get(2)
                         .and_then(|v| v.get_str())
                         .unwrap_or("unknown")
-                        .into()
+                        .into(),
                 ),
             ],
         })

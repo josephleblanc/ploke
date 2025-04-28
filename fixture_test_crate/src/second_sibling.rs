@@ -219,7 +219,7 @@ mod private_module {
 
 // Public module with nested types
 pub mod public_module {
-    use super::*;
+    
 
     /// Struct inside a public module
     pub struct ModuleStruct {
@@ -253,8 +253,8 @@ mod outer {
 
 // Module with re-exports
 mod intermediate {
-    pub use super::outer::middle::inner::deep_function as re_exported_fn;
-    pub use super::outer::middle::inner::deep_function as nested_export_fn;
+    
+    
     pub use super::DefaultTrait;
 
     pub struct ModuleStruct {

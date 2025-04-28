@@ -16,6 +16,10 @@ mod canon_resolver_tests {
     /// Test that `resolve_all` runs to completion without returning any errors.
     #[test]
     fn test_resolve_all_no_errors() {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
         let fixture_name = "file_dir_detection";
         let (graph, tree) = build_tree_for_tests(fixture_name);
         let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
@@ -83,10 +87,7 @@ mod canon_resolver_tests {
             .map(|res| res.expect("resolve_all failed during resolved variant test"))
             .collect();
 
-        assert!(
-            !resolved_ids.is_empty(),
-            "Resolver did not produce any IDs"
-        );
+        assert!(!resolved_ids.is_empty(), "Resolver did not produce any IDs");
 
         for (original_id, canon_id) in resolved_ids {
             assert!(

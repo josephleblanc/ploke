@@ -2,7 +2,12 @@ use std::path::Path;
 
 use colored::Colorize;
 use ploke_core::NodeId;
-use syn_parser::parser::{graph::{CodeGraph, GraphAccess as _}, nodes::{GraphNode, ImportKind, ModuleDef}, types::VisibilityKind, ParsedCodeGraph};
+use syn_parser::parser::{
+    graph::{CodeGraph, GraphAccess as _},
+    nodes::{GraphNode, ImportKind, ModuleKind},
+    types::VisibilityKind,
+    ParsedCodeGraph,
+};
 
 pub fn find_import_id(
     graph: &CodeGraph,
@@ -137,7 +142,6 @@ MODULE CONTAINING VALUENODE: {:#?}
     );
 }
 
-
 pub fn print_module_tree(
     graph: &ParsedCodeGraph,
     module_id: NodeId,
@@ -153,7 +157,7 @@ pub fn print_module_tree(
 
     // Elegant path formatting
     let path_display_matched = match &module.module_def {
-        ModuleDef::FileBased { file_path, .. } => {
+        ModuleKind::FileBased { file_path, .. } => {
             let rel_path = file_path
                 .as_path()
                 .strip_prefix(base_path)
@@ -171,14 +175,14 @@ pub fn print_module_tree(
                 rel_path
             }
         }
-        ModuleDef::Inline { 
+        ModuleKind::Inline { 
             ..
             // items, span 
         } => {
             let vis_printable = format!("{}", module.visibility);
             format!("{} {}", "inline".dimmed(), vis_printable.dimmed())
         }
-        ModuleDef::Declaration {
+        ModuleKind::Declaration {
             ..
             // declaration_span,
             // resolved_definition,
@@ -190,26 +194,31 @@ pub fn print_module_tree(
     print!(" {}", "•".dimmed());
     println!(" {}", path_display_matched);
 
-    // -- print imports -- 
+    // -- print imports --
     for import in &module.imports {
         print!("{}{}", prefix, if is_last { "       " } else { "│      " });
         print!(" -> ");
         match &import.kind {
-            ImportKind::ExternCrate => { print!("extern crate ") },
-            ImportKind::UseStatement(vis_kind) => {
-                match vis_kind {
-                    VisibilityKind::Inherited => { print!("imports ") },
-                    _ => { print!("re-exports {} ", vis_kind) }
+            ImportKind::ExternCrate => {
+                print!("extern crate ")
+            }
+            ImportKind::UseStatement(vis_kind) => match vis_kind {
+                VisibilityKind::Inherited => {
+                    print!("imports ")
+                }
+                _ => {
+                    print!("re-exports {} ", vis_kind)
                 }
             },
         }
         print!("{}", import.source_path.join("::"));
         if import.original_name.is_some() {
-        print!(" as {}", import.visible_name)
-        } else if import.is_glob { print!("::*") }
+            print!(" as {}", import.visible_name)
+        } else if import.is_glob {
+            print!("::*")
+        }
         println!();
     }
-    
 
     // Prepare new prefix for children
     let new_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });

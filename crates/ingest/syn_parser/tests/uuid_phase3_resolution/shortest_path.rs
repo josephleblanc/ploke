@@ -281,7 +281,7 @@ fn test_spp_reexported_item_finds_original_path() {
         .iter()
         .find(|imp| imp.visible_name == "reexported_func")
         .expect("Could not find reexport ImportNode");
-    assert!(reexport_node.is_local_reexport());
+    assert!(reexport_node.is_any_reexport());
     assert_eq!(
         reexport_node.source_path,
         ["crate", "top_pub_mod", "top_pub_func"]

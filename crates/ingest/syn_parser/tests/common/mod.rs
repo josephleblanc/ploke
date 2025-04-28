@@ -93,7 +93,7 @@ pub fn find_reexport_import_node_by_name(
             // Check if this import is contained within the target module
             graph.module_contains_node(module_node.id, imp.id) &&
             // Ensure it's actually a re-export (pub use, pub(crate) use, etc.)
-            imp.is_local_reexport()
+            imp.is_any_reexport()
         })
         .map(|imp| imp.id) // Get the NodeId if found
         .ok_or_else(|| {

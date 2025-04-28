@@ -33,7 +33,7 @@ where
 }
 
 // Function with lifetime parameter
-pub fn lifetime_function<'a>(arg: &'a str) -> &'a str {
+pub fn lifetime_function(arg: &str) -> &str {
     arg
 }
 

@@ -38,7 +38,6 @@ pub struct NestedListStruct {
     next: Option<Box<NestedListStruct>>,
 }
 
-
 // 5. Cyclic dependency through traits (harder to represent directly,
 //    but type references might form cycles in the TypeGraph)
 pub trait Ping {
@@ -56,10 +55,14 @@ pub struct B;
 
 impl Ping for A {
     type Ponger = B; // A refers to B
-    fn ping(&self, ponger: &Self::Ponger) { ponger.pong(self); }
+    fn ping(&self, ponger: &Self::Ponger) {
+        ponger.pong(self);
+    }
 }
 
 impl Pong for B {
     type Pinger = A; // B refers to A
-    fn pong(&self, pinger: &Self::Pinger) { pinger.ping(self); }
+    fn pong(&self, pinger: &Self::Pinger) {
+        pinger.ping(self);
+    }
 }

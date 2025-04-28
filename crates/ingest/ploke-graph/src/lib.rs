@@ -1,6 +1,6 @@
 pub mod schema;
-pub mod transform;
 pub mod traits;
+pub mod transform;
 
 #[cfg(test)]
 mod tests {

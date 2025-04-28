@@ -20,7 +20,7 @@ fn test_basic_function_query() -> Result<(), Error> {
     let result = ploke_db.raw_query(
         r#"?[id, name, visibility, return_type_id, docstring, body] := 
             *functions[id, name, visibility, return_type_id, docstring, body],
-            name = 'sample_function'"#
+            name = 'sample_function'"#,
     )?;
 
     let snippets: Vec<CodeSnippet> = result.into_snippets()?;

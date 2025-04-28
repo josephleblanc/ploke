@@ -3,7 +3,7 @@
 use crate::common::uuid_ids_utils::run_phases_and_collect;
 use colored::*; // Import colored for terminal colors
 use log::debug;
-use syn_parser::parser::nodes::ModuleDef;
+use syn_parser::parser::nodes::ModuleKind;
 use syn_parser::parser::ParsedCodeGraph;
 
 const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
@@ -79,7 +79,7 @@ fn test_path_attribute_handling() {
 
     // 2b. Assert the definition node points to the correct file
     match &actual_file_defn.module_def {
-        ModuleDef::FileBased { file_path, .. } => {
+        ModuleKind::FileBased { file_path, .. } => {
             let expected_suffix = "fixture_path_resolution/src/renamed_path/actual_file.rs";
             assert!(
                 file_path.ends_with(expected_suffix),

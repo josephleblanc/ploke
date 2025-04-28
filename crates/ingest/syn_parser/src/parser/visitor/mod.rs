@@ -99,7 +99,7 @@ pub fn analyze_file_phase2(
     };
     // Removed code_visitor helper imports (combine_cfgs, hash_expression)
 
-    use super::nodes::ModuleDef;
+    use super::nodes::ModuleKind;
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -175,7 +175,7 @@ pub fn analyze_file_phase2(
         path: logical_module_path.clone(), // Use derived path
         span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
         tracking_hash: None, // Root module conceptual, no specific content hash
-        module_def: ModuleDef::FileBased {
+        module_def: ModuleKind::FileBased {
             items: Vec::new(),
             file_path: file_path.clone(),
             file_attrs: extract_file_level_attributes(&file.attrs), // Non-CFG attributes

@@ -498,7 +498,7 @@ In Actual missing from Expected: {:#?}\n",
         .find(|p| p.import_node().source_path.join("::") == "std::collections::HashMap")
         .map(|p| p.import_node())
         .expect("HashMap import not found");
-    assert!(!hashmap_import.is_local_reexport());
+    assert!(!hashmap_import.is_any_reexport());
     assert!(hashmap_import.is_inherited_use()); // Should be inherited visibility or extern crate
 
     let renamed_struct_import = tree

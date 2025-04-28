@@ -1,11 +1,11 @@
-use crate::{parser::graph::GraphAccess, utils::logging::LOG_TARGET_BFS};
+use crate::parser::graph::GraphAccess;
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    default,
+    ops::Deref,
     path::PathBuf,
 };
 
@@ -25,19 +25,17 @@ use crate::{
     },
     utils::{
         logging::{LogDataStructure, PathProcessingContext},
-        AccLogCtx, LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_PATH_ATTR,
-        LOG_TARGET_VIS,
+        AccLogCtx, LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS,
     },
 };
 
 #[cfg(test)]
 pub mod test_interface {
-    use std::collections::HashMap;
 
     use ploke_core::NodeId;
 
-    use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo, TreeRelation};
-    use crate::parser::{nodes::NodePath, ParsedCodeGraph};
+    use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo};
+    use crate::parser::ParsedCodeGraph;
 
     impl ModuleTree {
         pub fn test_shortest_public_path(
@@ -223,6 +221,9 @@ pub enum ModuleTreeError {
     #[error("Duplicate module ID found in module tree for ModuleNode: {0:?}")]
     DuplicateModuleId(Box<ModuleNode>), // Box the large ModuleNode
 
+    #[error("Duplicate Contains relation found: {0:?}")]
+    DuplicateContains(TreeRelation), // Box the large ModuleNode
+
     /// Wraps SynParserError for convenience when using TryFrom<Vec<String>> for NodePath
     #[error("Node path validation error: {0}")]
     NodePathValidation(Box<SynParserError>), // Box the recursive type
@@ -282,6 +283,8 @@ pub enum ModuleTreeError {
 
     #[error("No relations found for node {0}: {1}")]
     NoRelationsFound(NodeId, String),
+    #[error("No relations found for node {0}")]
+    NoRelationsFoundForId(NodeId), // Placeholder, trying out copy-only values
     #[error("Could not resolve target for re-export '{path}'. Import Node ID: {import_node_id:?}")]
     UnresolvedReExportTarget {
         import_node_id: Option<NodeId>,
@@ -349,6 +352,157 @@ impl From<SynParserError> for ModuleTreeError {
 }
 
 impl ModuleTree {
+    /// Adds a `ModuleNode` to the `ModuleTree`, updating internal state and indices.
+    ///
+    /// This function performs several key actions during the initial phase of building the module tree:
+    ///
+    /// 1. **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap,
+    ///    keyed by its `ModuleNodeId`.
+    /// 2. **Indexes Paths:**
+    ///    * Adds the module's definition path (`NodePath`) to the appropriate index
+    ///      (`path_index` for definitions, `decl_index` for declarations).
+    ///    * Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a
+    ///      conflict is found.
+    ///    * Note: The path->Id indexes for definitions and declarations must be kept separate
+    ///      because a module's declaration, e.g. `mod module_a;` and the file-based module this
+    ///      declaration points to, e.g. `project/src/module_a.rs` or directory, e.g.
+    ///      `project/src/module_a/mod.rs`, have the same canonical path `crate::module_a`.
+    /// 3. **Separates Imports/Exports:**
+    ///    * Filters the module's `imports` (`use` statements).
+    ///    * Adds private imports (`use some::item;` or `extern crate ...;`) identified by
+    ///      `is_inherited_use()` to `pending_imports`.
+    ///    * Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by
+    ///      `is_any_reexport()` to `pending_exports`.
+    /// 4. **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to
+    ///    `pending_path_attrs` for later resolution.
+    /// 5. **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module
+    ///    with the same ID already exists in the `modules` map.
+    ///
+    /// # Arguments
+    /// * `module`: The `ModuleNode` to add to the tree. The function takes ownership.
+    ///
+    /// # Returns
+    /// * `Ok(())` on successful addition and indexing.
+    /// * `Err(ModuleTreeError)` if:
+    ///     * The module's path conflicts with an existing entry (`DuplicatePath`).
+    ///     * A module with the same ID already exists (`DuplicateModuleId`).
+    ///     * The module's path is invalid (`NodePathValidation`).
+    ///     * An internal state error occurs (e.g., `InvalidStatePendingExportsMissing`).
+    pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
+        let imports = module.imports.clone();
+        // Add all private imports
+        self.pending_imports.extend(
+            // NOTE: We already have `Relation::ModuleImports` created at parsing time.
+            imports
+                .iter()
+                .filter(|imp| imp.is_inherited_use())
+                .map(|imp| PendingImport::from_import(imp.clone(), module.id())),
+        );
+
+        // Add all re-exports to the Vec inside the Option
+        if let Some(exports) = self.pending_exports.as_mut() {
+            exports.extend(
+                imports
+                    .iter()
+                    .filter(|imp| imp.is_any_reexport()) // Updated method name
+                    .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
+            );
+        } else {
+            // This state is invalid. pending_exports should only be None after process_export_rels
+            // has been called and taken ownership. If we are adding a module, it means
+            // process_export_rels hasn't run yet (or ran unexpectedly early).
+            return Err(ModuleTreeError::InvalidStatePendingExportsMissing {
+                module_id: module.id(),
+            });
+        }
+
+        // Use map_err for explicit conversion from SynParserError to ModuleTreeError
+        let node_path = NodePath::try_from(module.defn_path().clone())
+            .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+        let conflicting_id = module.id(); // ID of the module we are trying to add
+
+        // Separate declaration and definition path->Id indexes.
+        // Indexes for declaration vs definition (inline or filebased) must be kept separate to
+        // avoid collision, as module definitions and declarations have the same canonical path.
+        if module.is_declaration() {
+            match self.decl_index.entry(node_path.clone()) {
+                // Clone node_path for the error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Path already exists
+                    let existing_id = *entry.get();
+                    return Err(ModuleTreeError::DuplicatePath {
+                        path: node_path, // Use the cloned path
+                        existing_id,
+                        conflicting_id,
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Path is free, insert it
+                    entry.insert(conflicting_id);
+                }
+            }
+        } else {
+            match self.path_index.entry(node_path.clone()) {
+                // Clone node_path for the error case
+                std::collections::hash_map::Entry::Occupied(entry) => {
+                    // Path already exists
+                    let existing_id = *entry.get();
+                    return Err(ModuleTreeError::DuplicatePath {
+                        path: node_path, // Use the cloned path
+                        existing_id,
+                        conflicting_id,
+                    });
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    // Path is free, insert it
+                    entry.insert(conflicting_id);
+                }
+            }
+        }
+
+        // Assign new Id wrapper for modules for better type-safety
+        let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
+        self.log_module_insert(&module, module_id);
+
+        // Store path attribute if present
+        // Index `#[path = "dir/to/file.rs"]` for later processing in `resolve_pending_path_attrs`
+        // and `process_path_attributes`
+        if module.has_path_attr() {
+            self.log_add_pending_path(module_id, &module.name);
+            self.pending_path_attrs
+                .as_mut()
+                .expect("Invariant: pending_path_attrs should always be Some before take()")
+                .push(module_id); // clarity. This should be invariant, however.
+        }
+
+        // Finally, if no error have been encountered, we insert all modules of any kind to a
+        // shared index of ModuleId->ModuleNode for lookup later.
+        let dup_node = self.modules.insert(module_id, module);
+        if let Some(dup) = dup_node {
+            self.log_duplicate(&dup);
+            return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
+        }
+
+        Ok(())
+    }
+
+    pub fn add_relations_batch(&mut self, relations: &[Relation]) -> Result<(), ModuleTreeError> {
+        for rel in relations.iter() {
+            self.add_relation((*rel).into());
+        }
+        Ok(())
+    }
+
+    pub fn add_relations_batch_checked(
+        &mut self,
+        relations: &[Relation],
+    ) -> Result<(), ModuleTreeError> {
+        for rel in relations.iter() {
+            self.add_relation_checked((*rel).into())?;
+        }
+        Ok(())
+    }
+
     pub fn root(&self) -> ModuleNodeId {
         self.root
     }
@@ -449,6 +603,21 @@ impl ModuleTree {
                 .collect()
         })
     }
+    pub fn get_iter_relations_from<'a>(
+        &'a self,
+        source_id: &GraphId,
+        kind: &'a RelationKind, // Closure parameter
+    ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
+        self.relations_by_source.get(source_id).map(|indices| {
+            // If source_id not in map, return empty
+            indices.iter().filter_map(|&index| {
+                self.tree_relations
+                    .get(index)
+                    // filter() on Option returns Some only if the closure is true.
+                    .filter(|&relation| relation.relation().kind == *kind)
+            })
+        })
+    }
 
     pub fn reexport_index(&self) -> &HashMap<NodePath, NodeId> {
         &self.reexport_index
@@ -475,6 +644,50 @@ impl ModuleTree {
                 })
                 .collect()
         })
+    }
+
+    pub fn get_iter_relations_to<'a>(
+        &'a self,
+        source_id: &GraphId,
+        kind: &'a RelationKind, // Closure parameter
+    ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
+        self.relations_by_source.get(source_id).map(|indices| {
+            // If source_id not in map, return empty
+            indices.iter().filter_map(|&index| {
+                self.tree_relations
+                    .get(index)
+                    // filter() on Option returns Some only if the closure is true.
+                    .filter(|&relation| relation.relation().kind == *kind)
+            })
+        })
+    }
+
+    pub fn get_containing_mod_checked(
+        &self,
+        target_id: &GraphId,
+        kind: RelationKind,
+    ) -> Result<TreeRelation, ModuleTreeError> {
+        let node_id = (*target_id).try_into()?;
+        let contains_relation = self
+            .relations_by_source
+            .get(target_id)
+            .map(|indicies| {
+                let mut relations = indicies.iter().filter_map(|&index| {
+                    self.tree_relations
+                        .get(index)
+                        // filter() on Option returns Some only if the closure is true.
+                        .filter(|&relation| relation.relation().kind == kind)
+                });
+                let first = relations
+                    .next()
+                    .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id));
+                if let Some(dup) = relations.next() {
+                    return Err(ModuleTreeError::DuplicateContains(*dup));
+                }
+                first
+            })
+            .unwrap_or(Err(ModuleTreeError::NoRelationsFoundForId(node_id)));
+        contains_relation.copied()
     }
 
     /// Adds a relation to the tree without checking if the source/target nodes exist.
@@ -632,140 +845,6 @@ impl ModuleTree {
         self.modules
             .get(&self.root)
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
-    }
-
-    /// Adds a `ModuleNode` to the `ModuleTree`, updating internal state and indices.
-    ///
-    /// This function performs several key actions during the initial phase of building the module tree:
-    ///
-    /// 1. **Stores the Module:** Inserts the provided `ModuleNode` into the `modules` HashMap,
-    ///    keyed by its `ModuleNodeId`.
-    /// 2. **Indexes Paths:**
-    ///    * Adds the module's definition path (`NodePath`) to the appropriate index
-    ///      (`path_index` for definitions, `decl_index` for declarations).
-    ///    * Checks for duplicate paths and returns `ModuleTreeError::DuplicatePath` if a
-    ///      conflict is found.
-    ///    * Note: The path->Id indexes for definitions and declarations must be kept separate
-    ///      because a module's declaration, e.g. `mod module_a;` and the file-based module this
-    ///      declaration points to, e.g. `project/src/module_a.rs` or directory, e.g.
-    ///      `project/src/module_a/mod.rs`, have the same canonical path `crate::module_a`.
-    /// 3. **Separates Imports/Exports:**
-    ///    * Filters the module's `imports` (`use` statements).
-    ///    * Adds private imports (`use some::item;` or `extern crate ...;`) identified by
-    ///      `is_inherited_use()` to `pending_imports`.
-    ///    * Adds all re-exports (`pub use`, `pub(crate) use`, `pub(in path) use`) identified by
-    ///      `is_any_reexport()` to `pending_exports`.
-    /// 4. **Tracks Path Attributes:** If the module has a `#[path]` attribute, its ID is added to
-    ///    `pending_path_attrs` for later resolution.
-    /// 5. **Checks for Duplicate IDs:** Returns `ModuleTreeError::DuplicateModuleId` if a module
-    ///    with the same ID already exists in the `modules` map.
-    ///
-    /// # Arguments
-    /// * `module`: The `ModuleNode` to add to the tree. The function takes ownership.
-    ///
-    /// # Returns
-    /// * `Ok(())` on successful addition and indexing.
-    /// * `Err(ModuleTreeError)` if:
-    ///     *   The module's path conflicts with an existing entry (`DuplicatePath`).
-    ///     *   A module with the same ID already exists (`DuplicateModuleId`).
-    ///     *   The module's path is invalid (`NodePathValidation`).
-    ///     *   An internal state error occurs (e.g., `InvalidStatePendingExportsMissing`).
-    pub fn add_module(&mut self, module: ModuleNode) -> Result<(), ModuleTreeError> {
-        let imports = module.imports.clone();
-        // Add all private imports
-        self.pending_imports.extend(
-            // NOTE: We already have `Relation::ModuleImports` created at parsing time.
-            imports
-                .iter()
-                .filter(|imp| imp.is_inherited_use())
-                .map(|imp| PendingImport::from_import(imp.clone(), module.id())),
-        );
-
-        // Add all re-exports to the Vec inside the Option
-        if let Some(exports) = self.pending_exports.as_mut() {
-            exports.extend(
-                imports
-                    .iter()
-                    .filter(|imp| imp.is_any_reexport()) // Updated method name
-                    .map(|imp| PendingExport::from_export(imp.clone(), module.id())),
-            );
-        } else {
-            // This state is invalid. pending_exports should only be None after process_export_rels
-            // has been called and taken ownership. If we are adding a module, it means
-            // process_export_rels hasn't run yet (or ran unexpectedly early).
-            return Err(ModuleTreeError::InvalidStatePendingExportsMissing {
-                module_id: module.id(),
-            });
-        }
-
-        // Use map_err for explicit conversion from SynParserError to ModuleTreeError
-        let node_path = NodePath::try_from(module.defn_path().clone())
-            .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
-        let conflicting_id = module.id(); // ID of the module we are trying to add
-
-        // Separate declaration and definition path->Id indexes.
-        // Indexes for declaration vs definition (inline or filebased) must be kept separate to
-        // avoid collision, as module definitions and declarations have the same canonical path.
-        if module.is_declaration() {
-            match self.decl_index.entry(node_path.clone()) {
-                // Clone node_path for the error case
-                std::collections::hash_map::Entry::Occupied(entry) => {
-                    // Path already exists
-                    let existing_id = *entry.get();
-                    return Err(ModuleTreeError::DuplicatePath {
-                        path: node_path, // Use the cloned path
-                        existing_id,
-                        conflicting_id,
-                    });
-                }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Path is free, insert it
-                    entry.insert(conflicting_id);
-                }
-            }
-        } else {
-            match self.path_index.entry(node_path.clone()) {
-                // Clone node_path for the error case
-                std::collections::hash_map::Entry::Occupied(entry) => {
-                    // Path already exists
-                    let existing_id = *entry.get();
-                    return Err(ModuleTreeError::DuplicatePath {
-                        path: node_path, // Use the cloned path
-                        existing_id,
-                        conflicting_id,
-                    });
-                }
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    // Path is free, insert it
-                    entry.insert(conflicting_id);
-                }
-            }
-        }
-
-        // Assign new Id wrapper for modules for better type-safety
-        let module_id = ModuleNodeId::new(conflicting_id); // Use the ID we already have
-        self.log_module_insert(&module, module_id);
-
-        // Store path attribute if present
-        // Index `#[path = "dir/to/file.rs"]` for later processing in `resolve_pending_path_attrs`
-        // and `process_path_attributes`
-        if module.has_path_attr() {
-            self.log_add_pending_path(module_id, &module.name);
-            self.pending_path_attrs
-                .as_mut()
-                .expect("Invariant: pending_path_attrs should always be Some before take()")
-                .push(module_id); // clarity. This should be invariant, however.
-        }
-
-        // Finally, if no error have been encountered, we insert all modules of any kind to a
-        // shared index of ModuleId->ModuleNode for lookup later.
-        let dup_node = self.modules.insert(module_id, module);
-        if let Some(dup) = dup_node {
-            self.log_duplicate(&dup);
-            return Err(ModuleTreeError::DuplicateModuleId(Box::new(dup)));
-        }
-
-        Ok(())
     }
 
     pub fn resolve_pending_path_attrs(&mut self) -> Result<(), ModuleTreeError> {
@@ -945,17 +1024,6 @@ impl ModuleTree {
         }
     }
 
-    // TODO: Rename/refactored
-    // This function has a misleading name. Currently it is getting all relations,
-    // not just `RelationKind::Contains`
-    pub fn add_relations_batch(&mut self, relations: &[Relation]) -> Result<(), ModuleTreeError> {
-        for rel in relations.iter() {
-            self.add_relation((*rel).into());
-        }
-
-        Ok(())
-    }
-
     pub fn shortest_public_path(
         &self,
         item_id: NodeId,
@@ -964,7 +1032,6 @@ impl ModuleTree {
         // Changed return type
         // --- 1. Initial Setup ---
 
-        use ploke_core::ItemKind;
         let item_node = graph.find_node_unique(item_id)?; // O(n) lookup, need to refactor
                                                           // find_node_unique
         if !item_node.visibility().is_pub() {
@@ -1096,7 +1163,6 @@ impl ModuleTree {
         path_to_item: &[String],
         queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
         visited: &mut HashSet<ModuleNodeId>,
-        // NOTE: Unused variable `graph`. Why is it here?
         graph: &ParsedCodeGraph, // NOTE: Unused variable `graph`. Why is it here?
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
@@ -1471,8 +1537,6 @@ impl ModuleTree {
                 }
             } // End match resolve_single_export
         } // End loop through pending_exports
-
-        // Add all newly created relations to the tree's main relation store in one go
 
         Ok(())
     }

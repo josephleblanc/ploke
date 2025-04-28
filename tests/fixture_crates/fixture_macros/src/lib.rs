@@ -3,8 +3,12 @@
 // 1. Declarative Macro (macro_rules!) - Exported
 #[macro_export]
 macro_rules! exported_macro {
-    () => { println!("Exported!"); };
-    ($e:expr) => { println!("Expr: {}", $e); };
+    () => {
+        println!("Exported!");
+    };
+    ($e:expr) => {
+        println!("Expr: {}", $e);
+    };
 }
 
 // 2. Declarative Macro (macro_rules!) - Local (not exported)

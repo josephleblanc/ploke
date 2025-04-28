@@ -49,8 +49,6 @@ pub trait GraphAccess {
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
 
-
-
     fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
         self.find_module_by_path(&["crate".to_string()])
             .ok_or(SynParserError::RootModuleNotFound)
@@ -71,14 +69,14 @@ pub trait GraphAccess {
     fn get_child_modules_inline(&self, module_id: NodeId) -> Vec<&ModuleNode> {
         self.get_child_modules(module_id)
             .into_iter()
-            .filter(|m| matches!(m.module_def, ModuleDef::Inline { .. }))
+            .filter(|m| matches!(m.module_def, ModuleKind::Inline { .. }))
             .collect()
     }
 
     fn get_child_modules_decl(&self, module_id: NodeId) -> Vec<&ModuleNode> {
         self.get_child_modules(module_id)
             .into_iter()
-            .filter(|m| matches!(m.module_def, ModuleDef::Declaration { .. }))
+            .filter(|m| matches!(m.module_def, ModuleKind::Declaration { .. }))
             .collect()
     }
 
@@ -93,10 +91,7 @@ pub trait GraphAccess {
     /// - `Ok(&ModuleNode)` if exactly one match is found.
     /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
-    fn find_module_by_path_checked(
-        &self,
-        path: &[String],
-    ) -> Result<&ModuleNode, SynParserError> {
+    fn find_module_by_path_checked(&self, path: &[String]) -> Result<&ModuleNode, SynParserError> {
         let mut matches = self.modules().iter().filter(|m| m.path == path);
         let first = matches.next();
         if matches.next().is_some() {
@@ -109,7 +104,7 @@ pub trait GraphAccess {
     /// Finds a module node by its definition path (e.g., ["crate", "module", "submodule"]),
     /// Finds a module node *definition* (FileBased or Inline) by its definition path,
     /// returning an error if not found or if duplicates exist.
-    /// Excludes ModuleDef::Declaration nodes.
+    /// Excludes ModuleKind::Declaration nodes.
     fn find_module_by_defn_path_checked(
         &self,
         defn_path: &[String],
@@ -554,6 +549,7 @@ pub trait GraphAccess {
             (Some(_), Some(_)) => Err(SynParserError::DuplicateNode(item_id)), // More than one match found
         }
     }
+
 
     fn get_nodes_by_ids(&self, ids: &[NodeId]) -> Vec<&dyn GraphNode> {
         ids.iter().filter_map(|id| self.find_node(*id)).collect()

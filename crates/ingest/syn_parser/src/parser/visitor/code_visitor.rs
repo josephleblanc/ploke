@@ -16,7 +16,7 @@ use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
 
-use crate::parser::nodes::ModuleDef;
+use crate::parser::nodes::ModuleKind;
 use ploke_core::ItemKind; // Import TypeKind
 use ploke_core::{NodeId, TypeId};
 
@@ -281,15 +281,15 @@ impl<'a> CodeVisitor<'a> {
                     .iter_mut()
                     .find(|m| m.id == parent_id)
                 {
-                    // if let ModuleDef::Inline { items, .. } = &mut parent_mod.module_def {
+                    // if let ModuleKind::Inline { items, .. } = &mut parent_mod.module_def {
                     //     items.push(node_id);
                     // }
                     // match for both Inline and FileBased, since either can contain the target
                     // items.
                     match &mut parent_mod.module_def {
-                        ModuleDef::Inline { items, .. } => items.push(node_id),
-                        ModuleDef::FileBased { items, .. } => items.push(node_id),
-                        ModuleDef::Declaration { .. } => (),
+                        ModuleKind::Inline { items, .. } => items.push(node_id),
+                        ModuleKind::FileBased { items, .. } => items.push(node_id),
+                        ModuleKind::Declaration { .. } => (),
                     }
                 }
             }
@@ -1510,12 +1510,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Create module node with proper path tracking
         // Create module node with proper hierarchy tracking
         let module_def = match &module.content {
-            Some(_) => ModuleDef::Inline {
+            Some(_) => ModuleKind::Inline {
                 items: Vec::new(),
                 span,
                 // Inline modules don't store their own CFG here; it's part of the scope.
             },
-            None => ModuleDef::Declaration {
+            None => ModuleKind::Declaration {
                 declaration_span: span,
                 resolved_definition: None, // Resolved during phase 3 resolution
                                            // cfgs removed from here, belongs on ModuleNode

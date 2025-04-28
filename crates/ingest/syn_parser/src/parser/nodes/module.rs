@@ -19,7 +19,7 @@ pub struct ModuleNode {
     pub exports: Vec<NodeId>,
     pub span: (usize, usize),
     pub tracking_hash: Option<TrackingHash>,
-    pub module_def: ModuleDef,
+    pub module_def: ModuleKind,
     pub cfgs: Vec<String>,
 }
 
@@ -38,31 +38,31 @@ impl ModuleNode {
 
     /// Returns true if this is a file-based module
     pub fn is_file_based(&self) -> bool {
-        matches!(self.module_def, ModuleDef::FileBased { .. })
+        matches!(self.module_def, ModuleKind::FileBased { .. })
     }
 
     /// Returns true if this is an inline module
     pub fn is_inline(&self) -> bool {
-        matches!(self.module_def, ModuleDef::Inline { .. })
+        matches!(self.module_def, ModuleKind::Inline { .. })
     }
 
     /// Returns true if this is just a module declaration
     pub fn is_declaration(&self) -> bool {
-        matches!(self.module_def, ModuleDef::Declaration { .. })
+        matches!(self.module_def, ModuleKind::Declaration { .. })
     }
 
     /// Returns the items if this is an inline module, None otherwise
     pub fn items(&self) -> Option<&[NodeId]> {
         match &self.module_def {
-            ModuleDef::Inline { items, .. } => Some(items),
-            ModuleDef::FileBased { items, .. } => Some(items),
-            ModuleDef::Declaration { .. } => None,
+            ModuleKind::Inline { items, .. } => Some(items),
+            ModuleKind::FileBased { items, .. } => Some(items),
+            ModuleKind::Declaration { .. } => None,
         }
     }
 
     /// Returns the file path if this is a file-based module, None otherwise
     pub fn file_path(&self) -> Option<&PathBuf> {
-        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+        if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             Some(file_path)
         } else {
             None
@@ -72,7 +72,7 @@ impl ModuleNode {
     /// Returns the file path relative to a given `Path` if this is a file-based module,
     /// None otherwise.
     pub fn file_path_relative_to(&self, base: &Path) -> Option<&Path> {
-        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+        if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             file_path.strip_prefix(base).ok()
         } else {
             None
@@ -80,7 +80,7 @@ impl ModuleNode {
     }
 
     pub fn file_name(&self) -> Option<&OsStr> {
-        if let ModuleDef::FileBased { file_path, .. } = &self.module_def {
+        if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             file_path.file_name()
         } else {
             None
@@ -89,7 +89,7 @@ impl ModuleNode {
 
     /// Returns the file attributes if this is a file-based module, None otherwise
     pub fn file_attrs(&self) -> Option<&[Attribute]> {
-        if let ModuleDef::FileBased { file_attrs, .. } = &self.module_def {
+        if let ModuleKind::FileBased { file_attrs, .. } = &self.module_def {
             Some(file_attrs)
         } else {
             None
@@ -98,7 +98,7 @@ impl ModuleNode {
 
     /// Returns the file docs if this is a file-based module, None otherwise
     pub fn file_docs(&self) -> Option<&String> {
-        if let ModuleDef::FileBased { file_docs, .. } = &self.module_def {
+        if let ModuleKind::FileBased { file_docs, .. } = &self.module_def {
             // Want to return the reference to the inner type, not Option (using .as_ref())
             file_docs.as_ref()
         } else {
@@ -108,7 +108,7 @@ impl ModuleNode {
 
     /// Returns the span if this is an inline module, None otherwise
     pub fn inline_span(&self) -> Option<(usize, usize)> {
-        if let ModuleDef::Inline { span, .. } = &self.module_def {
+        if let ModuleKind::Inline { span, .. } = &self.module_def {
             Some(*span)
         } else {
             None
@@ -117,7 +117,7 @@ impl ModuleNode {
 
     /// Returns the declaration span if this is a module declaration, None otherwise
     pub fn declaration_span(&self) -> Option<(usize, usize)> {
-        if let ModuleDef::Declaration {
+        if let ModuleKind::Declaration {
             declaration_span, ..
         } = &self.module_def
         {
@@ -129,7 +129,7 @@ impl ModuleNode {
 
     /// Returns the resolved definition if this is a module declaration, None otherwise
     pub fn resolved_definition(&self) -> Option<NodeId> {
-        if let ModuleDef::Declaration {
+        if let ModuleKind::Declaration {
             resolved_definition,
             ..
         } = &self.module_def
@@ -152,13 +152,13 @@ impl ModuleNode {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub enum ModuleDef {
+pub enum ModuleKind {
     /// File-based module (src/module/mod.rs)
     FileBased {
         items: Vec<NodeId>, // Probably temporary while gaining confidence in Relation::Contains
         file_path: PathBuf,
         file_attrs: Vec<Attribute>, // Non-CFG #![...] attributes
-        file_docs: Option<String>,  // //!
+        file_docs: Option<String>,  // e.g. `//! Doc comment`
     },
     /// Inline module (mod name { ... })
     Inline {

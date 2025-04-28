@@ -80,7 +80,10 @@ const COLOR_SPRING_GREEN: Color = Color::TrueColor {
     b: 202,
 }; // #73daca - Teal/Spring Green (Types)
 
-use crate::resolve::module_tree::ModuleTree;
+use crate::{
+    parser::nodes::{ImportNode, NodePath},
+    resolve::module_tree::{ModuleTree, ModuleTreeError},
+};
 pub use colored::Colorize;
 
 use colored::{Color, ColoredString};
@@ -92,7 +95,7 @@ use std::{
 };
 
 use crate::parser::{
-    nodes::{GraphNode, ModuleDef, ModuleNode, ModuleNodeId},
+    nodes::{GraphNode, ModuleKind, ModuleNode, ModuleNodeId},
     relations::Relation,
     types::VisibilityKind,
 };
@@ -448,6 +451,322 @@ pub trait LogDataStructure {
     fn log_path_attr_not_found(module_id: ModuleNodeId) {
         log::error!(target: LOG_TARGET_BUILD, "Inconsistent ModuleTree: Parent not found for module {} processed with path attribute during file dir search.", module_id);
     }
+
+    // --- Private Logging Helpers for resolve_path_relative_to ---
+
+    fn log_resolve_segment_start(
+        &self,
+        segment: &str,
+        search_in_module_id: ModuleNodeId,
+        relation_count: usize,
+    ) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "{} {} in module {} ({} relations found)",
+            "Resolving segment:".log_header(),
+            segment.log_name(),
+            search_in_module_id.to_string().log_id(),
+            relation_count.to_string().log_id()
+        );
+    }
+
+    fn log_resolve_segment_relation(&self, target_id: NodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "  {} Relation Target ID: {}",
+            "->".log_comment(),
+            target_id.to_string().log_id()
+        );
+    }
+
+    fn log_resolve_segment_found_node(
+        &self,
+        target_node: &dyn GraphNode,
+        segment: &str,
+        name_matches: bool,
+    ) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD,
+            "    {} Found Node: '{}' ({}), Name matches '{}': {}",
+            "✓".log_green(),
+            target_node.name().log_name(),
+            target_node.kind().log_vis_debug(),
+            segment.log_name(),
+            name_matches.to_string().log_vis()
+        );
+    }
+
+    // --- Logging Helpers for Shortest Public Path (SPP) ---
+
+    fn log_spp_start(&self, item_node: &dyn GraphNode) {
+        self.log_bfs_step(item_node, "Starting SPP");
+    }
+
+    fn log_spp_item_not_public(&self, item_node: &dyn GraphNode) {
+        self.log_bfs_step(item_node, "Item not public, terminating early");
+    }
+
+    fn log_spp_check_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Check if root");
+    }
+
+    fn log_spp_found_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Found root!");
+    }
+
+    fn log_spp_explore_containment(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(
+            current_mod_id.into_inner(),
+            path_to_item,
+            "Explore Up (Containment)",
+        );
+    }
+
+    fn log_spp_explore_reexports(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(
+            current_mod_id.into_inner(),
+            path_to_item,
+            "Explore Up (Re-exports)",
+        );
+    }
+
+    // --- Logging Helpers for explore_up_via_containment ---
+
+    fn log_spp_containment_start(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Start explore up");
+    }
+
+    fn log_spp_containment_vis_source(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Check Vis Source");
+    }
+
+    fn log_spp_containment_vis_source_decl(&self, decl_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_VIS, "  {} Visibility source is Declaration: {}", "->".log_comment(), decl_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_unlinked(&self, current_mod_id: ModuleNodeId) {
+        log::warn!(target: LOG_TARGET_VIS, "SPP: Could not find declaration for file-based module {}, treating as inaccessible upwards.", current_mod_id);
+    }
+
+    fn log_spp_containment_vis_source_inline(&self, current_mod_node: &ModuleNode) {
+        self.log_bfs_step(current_mod_node, "Inline/root, use self");
+    }
+
+    fn log_spp_containment_check_parent(&self, parent_mod_node: &ModuleNode) {
+        self.log_bfs_step(parent_mod_node, "Checking Parent");
+    }
+
+    fn log_spp_containment_queue_parent(&self, parent_mod_id: ModuleNodeId, new_path: &[String]) {
+        self.log_bfs_path(parent_mod_id.into_inner(), new_path, "Queueing Parent");
+    }
+
+    fn log_spp_containment_parent_visited(&self, parent_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_BFS, "  {} Parent {} already visited.", "->".log_comment(), parent_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_parent_inaccessible(
+        &self,
+        visibility_source_node: &ModuleNode,
+        effective_source_id: ModuleNodeId,
+        parent_mod_id: ModuleNodeId,
+    ) {
+        log::trace!(target: LOG_TARGET_VIS, "SPP: Module {} ({}) not accessible from parent {}, pruning containment path.", visibility_source_node.name().log_name(), effective_source_id.to_string().log_id(), parent_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_containment_no_parent(&self, effective_source_id: ModuleNodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No parent found for non-root module {} via containment.", effective_source_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for explore_up_via_reexports ---
+
+    fn log_spp_reexport_start(&self, target_id: ModuleNodeId, path_to_item: &[String]) {
+        self.log_bfs_path(
+            target_id.into_inner(),
+            path_to_item,
+            "Start Re-export Explore",
+        );
+    }
+
+    fn log_spp_reexport_missing_import_node(&self, import_node_id: NodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id.to_string().log_id());
+    }
+
+    fn log_spp_reexport_is_external(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "Is External Crate");
+    }
+
+    fn log_spp_reexport_get_import_node(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "Get import node");
+    }
+
+    fn log_spp_reexport_not_public(&self, import_node: &ImportNode) {
+        self.log_bfs_step(import_node, "!is_public_use");
+    }
+
+    fn log_spp_reexport_queue_module(
+        &self,
+        import_node: &ImportNode,
+        reexporting_mod_id: ModuleNodeId,
+        new_path: &[String],
+    ) {
+        self.log_bfs_step(import_node, "Queueing Re-exporting Module");
+        self.log_bfs_path(reexporting_mod_id.into_inner(), new_path, "  New Path");
+    }
+
+    fn log_spp_reexport_module_visited(&self, reexporting_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_BFS, "  {} Re-exporting module {} already visited.", "->".log_comment(), reexporting_mod_id.to_string().log_id());
+    }
+
+    fn log_spp_reexport_no_container(&self, import_node_id: NodeId) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for is_accessible ---
+
+    fn log_access_missing_decl_node(&self, decl_id: NodeId, target_defn_id: NodeId) {
+        log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id.to_string().log_id(), target_defn_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for find_declaring_file_dir ---
+
+    fn log_find_decl_dir_missing_parent(&self, current_id: ModuleNodeId) {
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id.to_string().log_id());
+    }
+
+    // --- Logging Helpers for process_path_attributes ---
+
+    fn log_path_attr_external_not_found(
+        &self,
+        decl_module_id: ModuleNodeId,
+        resolved_path: &PathBuf,
+    ) {
+        log::warn!(
+            target: LOG_TARGET_PATH_ATTR,
+            "{} {} | {}",
+            "External Path".yellow().bold(), // Use yellow for warning
+            format!("({})", decl_module_id).log_id(),
+            format!(
+                "Target file outside src dir not found: {}",
+                resolved_path.display()
+            )
+            .log_vis()
+        );
+    }
+
+    // --- Logging Helpers for resolve_single_export ---
+
+    fn log_resolve_single_export_external(&self, segments_to_resolve: &[String]) {
+        log::debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Detected external re-export based on first segment: {:?}", segments_to_resolve.log_path_debug());
+    }
+
+    /// Wraps a resolution error from `resolve_path_relative_to` into `UnresolvedReExportTarget`.
+    fn wrap_resolution_error(
+        &self,
+        error: ModuleTreeError,
+        export_node_id: NodeId,
+        original_path_segments: &[String],
+    ) -> ModuleTreeError {
+        match error {
+            // Preserve existing UnresolvedReExportTarget if it came from the helper
+            ModuleTreeError::UnresolvedReExportTarget { .. } => error,
+            // Otherwise, create a new UnresolvedReExportTarget with the correct path
+            _ => ModuleTreeError::UnresolvedReExportTarget {
+                import_node_id: Some(export_node_id),
+                // Use the original full path for the error message
+                path: NodePath::try_from(original_path_segments.to_vec()).unwrap_or_else(|_| {
+                    NodePath::new_unchecked(vec!["<invalid path conversion>".to_string()])
+                }), // Handle potential error in path conversion for error reporting
+            },
+        }
+    }
+
+    // --- Logging Helpers for update_path_index_for_custom_paths ---
+
+    fn log_update_path_index_entry_exit(&self, is_entry: bool) {
+        let action = if is_entry { "Entering" } else { "Finished" };
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} {}",
+            action.log_header(),
+            "update_path_index_for_custom_paths.".log_name()
+        );
+    }
+
+    fn log_update_path_index_status(&self, count: Option<usize>) {
+        match count {
+            Some(n) => {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Found {} modules with path attributes to process for index update.",
+                    "Update Path Index:".log_header(),
+                    n.to_string().log_id()
+                );
+            }
+            None => {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No path attributes found, skipping index update.",
+                    "Update Path Index:".log_header()
+                );
+            }
+        }
+    }
+
+    fn log_update_path_index_remove(&self, original_path: &NodePath, def_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Removed old path index entry: {} -> {}",
+            "✓".log_green(),
+            original_path.to_string().log_path(),
+            def_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_remove_inconsistency(
+        &self,
+        removed_id: NodeId,
+        original_path: &NodePath,
+        expected_def_mod_id: ModuleNodeId,
+    ) {
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index inconsistency: Removed ID {} for original path {} but expected definition ID {}. This indicates a major inconsistency if the removed ID doesn't match",
+            "Error:".log_error(),
+            removed_id.to_string().log_id(),
+            original_path.to_string().log_path(),
+            expected_def_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_remove_missing(
+        &self,
+        original_path: &NodePath,
+        def_mod_id: ModuleNodeId,
+    ) {
+        log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Original path {} not found in path_index for removal (Def Mod ID: {}). This might indicate an earlier indexing issue.",
+            "Warning:".log_yellow(),
+            original_path.to_string().log_path(),
+            def_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_insert(&self, canonical_path: &NodePath, def_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Inserted new path index entry: {} -> {}",
+            "✓".log_green(),
+            canonical_path.to_string().log_path(),
+            def_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_reinsert(&self, canonical_path: &NodePath, def_mod_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Re-inserted path index entry (idempotent): {} -> {}",
+            "Info:".log_comment(),
+            canonical_path.to_string().log_path(),
+            def_mod_id.to_string().log_id()
+        );
+    }
+
+    fn log_update_path_index_insert_conflict(
+        &self,
+        canonical_path: &NodePath,
+        def_mod_id: ModuleNodeId,
+        existing_id: NodeId,
+    ) {
+        log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}. {}",
+            "Error:".log_error(),
+            canonical_path.to_string().log_path(),
+            def_mod_id.to_string().log_id(),
+            existing_id.to_string().log_id(),
+            "This implies a non-unique canonical path was generated or indexed incorrectly.".log_comment()
+        );
+    }
 }
 
 /// Helper struct to hold context for accessibility logging.
@@ -485,12 +804,12 @@ impl<'a> AccLogCtx<'a> {
     }
 }
 
-/// Helper function to get a string representation of the ModuleDef kind.
+/// Helper function to get a string representation of the ModuleKind kind.
 pub(crate) fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
     match module.module_def {
-        ModuleDef::FileBased { .. } => "File",
-        ModuleDef::Inline { .. } => "Inline",
-        ModuleDef::Declaration { .. } => "Decl",
+        ModuleKind::FileBased { .. } => "File",
+        ModuleKind::Inline { .. } => "Inline",
+        ModuleKind::Declaration { .. } => "Decl",
     }
 }
 

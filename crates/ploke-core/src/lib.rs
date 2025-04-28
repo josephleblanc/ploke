@@ -1,3 +1,10 @@
+// TODO: The exact inputs for generating the `CanonId` and `PubPathId` needs design attention. For
+// now we are defaulting to a more restrictive choice of parameters.
+// - We know the current set of parameters (filepath, path, cfg, typekind) might lead to overly
+// sensitive Ids in terms of requiring more frequent database updates than necessary.
+// - We prefer a correct database first, then we can refine later once this is tested further.
+// - Avoid conflation first, optimize for minimum inputs second.
+
 // Define a stable PROJECT_NAMESPACE UUID.
 // Moved from syn_parser::discovery
 // Generated via `uuidgen`: f7f4a9a0-1b1a-4b0e-9c1a-1a1a1a1a1a1a
@@ -81,6 +88,11 @@ mod ids {
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
                                                    // Removed unused std::io import
 
+    pub struct ResolvedIds {
+        canon: CanonId,
+        short_pub: Option<PubPathId>,
+        tracking_hash: TrackingHash,
+    }
     pub trait IdTrait {
         fn uuid(&self) -> Uuid;
         fn is_resolved(&self) -> bool;
@@ -398,23 +410,68 @@ mod ids {
         ///
         /// # Arguments
         /// * `crate_namespace` - UUID namespace of the defining crate.
-        /// * `file_path` - Absolute path to the source file containing the definition.
-        ///                 For `CanonId`, this will be canonicalized.
-        /// * `logical_item_path` - The specific path used for this ID type
-        ///                         (e.g., canonical path for `CanonId`, shortest public path for `PubPathId`).
-        /// * `item_name` - The simple name of the item (e.g., function name, struct name).
+        /// * `file_path`
+        ///     - Absolute path to the source file containing the definition.
+        ///     - For `CanonId`, not really needed. Need to revisit this point.
+        ///     - Required to distinguish between items with #[path]
+        /// * `logical_item_path`
+        ///     - The specific path used for this ID type
+        ///     - (e.g., canonical path for `CanonId`, shortest public path for `PubPathId`).
+        ///     - e.g. for canonical: `crate::module_a::Item`
+        ///     - e.g. for public path: `my_project::module_a::Item`
+        ///     - Note: if public path had in main.rs, `pub use my_project::module_a::Item`, the
+        ///     shortest public path would be `my_project::Item`, but canonical path would still be
+        ///     `crate::module_a::Item`
         /// * `item_kind` - The kind of item, used to determine Node vs. Type variant.
+        ///     - Note: Might remove this. Needs design attention
+        /// * `cfg`: Required to distinguish identical nodes that have mutually exclusive cfgs
         ///
         /// # Returns
         /// `Ok(Self)` with the generated ID, or `Err(IdConversionError)` if generation fails
         /// (e.g., I/O error during canonicalization).
         fn generate_resolved(
             crate_namespace: Uuid,
-            file_path: &Path,
-            logical_item_path: &[String],
-            item_name: &str,
-            item_kind: ItemKind,
+            id_info: IdInfo,
         ) -> Result<Self, IdConversionError>;
+    }
+
+    pub struct IdInfo<'a> {
+        file_path: &'a Path,
+        logical_item_path: &'a [String],
+        cfgs: &'a [String], // placeholder &str type, needs design attention
+        item_kind: ItemKind,
+    }
+
+    impl<'a> IdInfo<'a> {
+        pub fn new(
+            file_path: &'a Path,
+            logical_item_path: &'a [String],
+            cfgs: &'a [String],
+            item_kind: ItemKind,
+        ) -> Self {
+            Self {
+                file_path,
+                logical_item_path,
+                cfgs,
+                item_kind,
+            }
+        }
+
+        pub fn file_path(&self) -> &Path {
+            self.file_path
+        }
+
+        pub fn logical_item_path(&self) -> &[String] {
+            self.logical_item_path
+        }
+
+        pub fn cfgs(&self) -> &[String] {
+            self.cfgs
+        }
+
+        pub fn item_kind(&self) -> ItemKind {
+            self.item_kind
+        }
     }
 
     /// Unique identifier derived from the canonical path within the defining crate,
@@ -458,14 +515,17 @@ mod ids {
     impl ResolvedId for CanonId {
         fn generate_resolved(
             crate_namespace: Uuid,
-            file_path: &Path,
-            logical_item_path: &[String], // Canonical path for CanonId
-            item_name: &str,
-            item_kind: ItemKind,
+            id_info: IdInfo<'_>,
+            // file_path: &Path,
+            // logical_item_path: &[String], // Canonical path for CanonId
+            // item_name: &str,
+            // item_kind: ItemKind,
+            // replaced fields with `IdInfo`
         ) -> Result<Self, IdConversionError> {
             // Canonicalize the file path
-            let canonical_file_path = file_path.canonicalize().map_err(|e| {
-                IdConversionError::IoError(file_path.display().to_string(), e.to_string())
+
+            let canonical_file_path = id_info.file_path().canonicalize().map_err(|e| {
+                IdConversionError::IoError(id_info.file_path().display().to_string(), e.to_string())
             })?;
             let fp_bytes: &[u8] = canonical_file_path.as_os_str().as_encoded_bytes();
 
@@ -476,9 +536,9 @@ mod ids {
                 .chain(b"::CANON_FILE::")
                 .chain(fp_bytes)
                 .chain(b"::CANON_PATH::")
-                .chain(logical_item_path.join("::").as_bytes())
-                .chain(b"::NAME::")
-                .chain(item_name.as_bytes())
+                .chain(id_info.logical_item_path().join("::").as_bytes())
+                .chain(b"::CANNON_CFG::")
+                .chain(id_info.cfgs().join("::").as_bytes())
                 .copied()
                 .collect();
 
@@ -486,7 +546,7 @@ mod ids {
 
             // Determine Node or Type variant based on ItemKind
             // TODO: Refine ItemKind mapping if necessary (e.g., handle fields/variants differently?)
-            match item_kind {
+            match id_info.item_kind() {
                 ItemKind::Function
                 | ItemKind::Struct
                 | ItemKind::Enum
@@ -548,13 +608,15 @@ mod ids {
     impl ResolvedId for PubPathId {
         fn generate_resolved(
             crate_namespace: Uuid,
-            file_path: &Path,             // Use original file path for SPP
-            logical_item_path: &[String], // Shortest public path for PubPathId
-            item_name: &str,
-            item_kind: ItemKind,
+            id_info: IdInfo<'_>,
+            // file_path: &Path,             // Use original file path for SPP
+            // logical_item_path: &[String], // Shortest public path for PubPathId
+            // item_name: &str,
+            // item_kind: ItemKind,
+            // replaced fields with `IdInfo`
         ) -> Result<Self, IdConversionError> {
             // Use the provided file_path directly, no canonicalization
-            let fp_bytes: &[u8] = file_path.as_os_str().as_encoded_bytes();
+            let fp_bytes: &[u8] = id_info.file_path().as_os_str().as_encoded_bytes();
 
             // Combine components for hashing
             let resolved_data: Vec<u8> = crate_namespace
@@ -563,16 +625,15 @@ mod ids {
                 .chain(b"::ORIG_FILE::") // Indicate original file path used
                 .chain(fp_bytes)
                 .chain(b"::SPP_PATH::") // Indicate shortest public path used
-                .chain(logical_item_path.join("::").as_bytes())
-                .chain(b"::NAME::")
-                .chain(item_name.as_bytes())
+                .chain(id_info.logical_item_path().join("::").as_bytes())
+                .chain(id_info.cfgs().join("::").as_bytes())
                 .copied()
                 .collect();
 
             let resolved_uuid = uuid::Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &resolved_data);
 
             // Determine Node or Type variant based on ItemKind
-            match item_kind {
+            match id_info.item_kind() {
                 ItemKind::Function
                 | ItemKind::Struct
                 | ItemKind::Enum

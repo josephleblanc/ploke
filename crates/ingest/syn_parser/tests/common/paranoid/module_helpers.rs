@@ -36,7 +36,7 @@ pub fn find_declaration_node_paranoid<'a>(
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path; // Use the path from the found graph data
 
-    // 3. Filter candidates by path and ModuleDef::Declaration within the target graph
+    // 3. Filter candidates by path and ModuleKind::Declaration within the target graph
     let candidates: Vec<&ModuleNode> = graph
         .modules
         .iter()
@@ -143,7 +143,7 @@ pub fn find_file_module_node_paranoid<'a>(
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path; // Use the path from the found graph data
 
-    // 3. Filter candidates by path and ModuleDef::FileBased within the target graph
+    // 3. Filter candidates by path and ModuleKind::FileBased within the target graph
     //    In Phase 2, the file-level module node *is* the root node of that file's graph.
     let candidates: Vec<&ModuleNode> = graph
         .modules
@@ -233,7 +233,7 @@ pub fn find_inline_module_node_paranoid<'a>(
     let crate_namespace = target_data.crate_namespace;
     let file_path = &target_data.file_path; // Use the path from the found graph data
 
-    // 3. Filter candidates by path and ModuleDef::Inline within the target graph
+    // 3. Filter candidates by path and ModuleKind::Inline within the target graph
     let candidates: Vec<&ModuleNode> = graph
         .modules
         .iter()

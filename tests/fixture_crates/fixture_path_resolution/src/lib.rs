@@ -9,7 +9,7 @@ use serde::Serialize; // External dep with feature
 use std::fmt::Debug; // For generic bounds
 
 use thiserror::Error; // External dep (workspace = true) // Workspace dep
-use uuid::Uuid; // Import Uuid directly
+ // Import Uuid directly
 
 // === Modules ===
 
@@ -88,8 +88,6 @@ use regex::Regex as PrivateRegexAlias;
 #[cfg(feature = "feature_a")]
 use crate::local_mod::func_using_dep as aliased_func_a;
 
-#[cfg(not(feature = "feature_a"))]
-use crate::inline_mod::inline_func as aliased_func_not_a;
 
 #[cfg(feature = "feature_b")]
 pub use crate::local_mod::local_func as pub_aliased_func_b;
@@ -156,7 +154,7 @@ pub fn root_func() {
 
 // === Generics / Self / Traits ===
 pub mod generics {
-    use super::{IdTrait, NodeId, TypeId}; // Import necessary core types
+    use super::NodeId; // Import necessary core types
     use std::fmt::Debug;
 
     // Generic Struct

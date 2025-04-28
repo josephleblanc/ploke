@@ -43,7 +43,7 @@ pub struct GenericItem<'a, T: Default + Clone, const N: usize> {
 impl<'a, T: Default + Clone + Copy, const N: usize> GenericItem<'a, T, N> {
     // Inherent method with same name as trait method
     pub fn process(&self) -> T {
-        self.data[0].clone()
+        self.data[0]
     }
 
     pub fn new(marker: &'a ()) -> Self {
@@ -54,8 +54,8 @@ impl<'a, T: Default + Clone + Copy, const N: usize> GenericItem<'a, T, N> {
     }
 }
 
-impl<'a, T: Default + Clone + std::fmt::Debug, const N: usize> Processor<T>
-    for GenericItem<'a, T, N>
+impl<T: Default + Clone + std::fmt::Debug, const N: usize> Processor<T>
+    for GenericItem<'_, T, N>
 where
     T: Send, // Extra bound on impl
 {
@@ -162,7 +162,7 @@ define_struct!(MacroGeneratedStruct);
 
 // Complex attributes
 #[cfg_attr(feature = "some_feature", derive(Debug))] // This is fine, parser should handle cfg_attr
-// #[outer_attr::group(#[inner_attr = "value"])] // Commented out: Causes resolution error E0433
+                                                     // #[outer_attr::group(#[inner_attr = "value"])] // Commented out: Causes resolution error E0433
 pub struct ComplexAttributes {
     // #[field_attr(arg = true)] // Commented out: Causes resolution error (cannot find attribute)
     field: i32,
@@ -196,6 +196,6 @@ pub enum EmptyEnum {}
 pub struct UnitStruct;
 
 // Function returning impl Trait with complex bounds
-pub fn complex_impl_return() -> impl BaseTrait + DerivedTrait + Send {
+pub fn complex_impl_return() -> impl DerivedTrait {
     TraitImplStruct
 }

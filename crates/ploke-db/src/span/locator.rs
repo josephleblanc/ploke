@@ -12,12 +12,7 @@ pub struct CodeLocation {
 
 impl CodeLocation {
     /// Create from database values
-    pub fn from_db(
-        file: &str, 
-        start: usize,
-        end: usize,
-        text: &str
-    ) -> Self {
+    pub fn from_db(file: &str, start: usize, end: usize, text: &str) -> Self {
         Self {
             file: PathBuf::from(file),
             span: (start, end),

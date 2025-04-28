@@ -285,7 +285,7 @@ pub fn find_reexport_import_node_by_name_checked(
         match graph.get_import_checked(contained_id) {
             Ok(import_node) => {
                 // Check if it's a re-export and the visible name matches
-                if import_node.is_local_reexport() && import_node.visible_name == visible_name {
+                if import_node.is_any_reexport() && import_node.visible_name == visible_name {
                     matches.push(contained_id);
                 }
                 // Ignore if it's not a re-export or name doesn't match

@@ -1,5 +1,5 @@
 use crate::resolve::module_tree::ModuleTreeError;
-use ploke_core::{NodeId, TypeId};
+use ploke_core::{IdConversionError, NodeId, TypeId};
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
@@ -7,6 +7,10 @@ use crate::parser::nodes::{ModuleNode, NodeError};
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq)] // Removed Eq
 pub enum SynParserError {
+    #[error(transparent)]
+    // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
+    IdConversionError(#[from] IdConversionError),
+
     /// Indicates that a requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
     NotFound(NodeId),
@@ -72,9 +76,9 @@ pub enum SynParserError {
 
     #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
     ModuletreeRelationNotFound(NodeId, String),
-    // Removed ModuleDefinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
+    // Removed ModuleKindinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
-    // ModuleDefinitionNotFound(String), // Store path string representation
+    // ModuleKindinitionNotFound(String), // Store path string representation
     #[error("Relation conversion error: {0}")]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 
@@ -229,7 +233,7 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::DuplicateDefinition(msg) => {
                 SynParserError::InternalState(format!("ModuleTree processing error: {}", msg))
             }
-            ModuleTreeError::ModuleDefinitionNotFound(msg) => {
+            ModuleTreeError::ModuleKindinitionNotFound(msg) => {
                 SynParserError::InternalState(format!("ModuleTree processing error: {}", msg))
             }
             ModuleTreeError::ExternalItemNotResolved(id) => {
@@ -251,11 +255,12 @@ impl From<ModuleTreeError> for SynParserError {
                     module_id
                 ))
             }
-            // Handle the InternalState variant
             ModuleTreeError::InternalState(msg) => SynParserError::InternalState(msg),
-            // Handle the Warning variant - convert to InternalState for now,
-            // or create a dedicated SynParserError::Warning if needed later.
-            ModuleTreeError::Warning(msg) => SynParserError::InternalState(format!("ModuleTree Warning: {}", msg)),
+            ModuleTreeError::Warning(msg) => {
+                SynParserError::InternalState(format!("ModuleTree Warning: {}", msg))
+            }
+            ModuleTreeError::DuplicateContains(tree_relation) => todo!(),
+            ModuleTreeError::NoRelationsFoundForId(node_id) => todo!(),
         }
     }
 }

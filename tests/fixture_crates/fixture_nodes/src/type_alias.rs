@@ -1,4 +1,3 @@
-
 // Basic public alias for a primitive type
 pub type SimpleId = u64;
 
@@ -31,7 +30,10 @@ pub type OldId = String;
 pub type IdAlias = SimpleId;
 
 // Public alias with a where clause
-pub type ComplexGeneric<T> where T: Clone + Send + 'static = Option<T>;
+pub type ComplexGeneric<T>
+where
+    T: Clone + Send + 'static,
+= Option<T>;
 
 // Module to test visibility and path interactions
 mod inner {

@@ -1,17 +1,12 @@
-use std::{alloc::Global, collections::HashMap};
-
-use ploke_core::{CanonId, IdInfo, NodeId, PubPathId, ResolvedIds, TrackingHash, TypeId};
-use uuid::Uuid;
-
-use std::{alloc::Global, collections::HashMap};
-
-use ploke_core::{
-    CanonId, IdConversionError, IdInfo, NodeId, PubPathId, ResolvedIds, TrackingHash, TypeId,
-};
+use ploke_core::{CanonId, IdInfo, NodeId, ResolvedId};
 use uuid::Uuid;
 
 use crate::{
-    parser::{graph::ParsedCodeGraph, nodes::NodePath},
+    error::SynParserError,
+    parser::{
+        graph::{GraphAccess, ParsedCodeGraph},
+        nodes::{GraphNode, ModuleNodeId, NodePath},
+    },
     resolve::module_tree::ModuleTree,
 };
 
@@ -50,6 +45,22 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         self.namespace
     }
 
+    fn resolve_single_node(
+        &self,
+        node_path: &NodePath,
+        graph_node: &dyn GraphNode,
+    ) -> std::result::Result<ploke_core::CanonId, ploke_core::IdConversionError> {
+        CanonId::generate_resolved(
+            self.namespace(),
+            IdInfo::new(
+                &self.graph.file_path,   // file_path,
+                node_path.as_segments(), // logical_item_path,
+                graph_node.cfgs(),       // cfgs,
+                graph_node.kind(),       // item_kind
+            ),
+        )
+    }
+
     /// Resolves all synthetic IDs in the graph to `CanonId`s.
     ///
     /// This method iterates through the nodes in the `ParsedCodeGraph`, determines
@@ -64,7 +75,74 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     /// TODO: Implement the actual iteration and resolution logic.
     pub fn resolve_all(
         &self,
-    ) -> impl Iterator<Item = Result<(NodeId, CanonId), IdConversionError>> + '_ {
+    ) -> impl Iterator<Item = Result<(NodeId, CanonId), SynParserError>> + '_ {
+        // path_index does not contain declarations, so we know all node_ids here are for only
+        // `ModuleNode`s that are either inline or file-based
+        self.module_tree
+            .path_index()
+            .iter()
+            .filter_map(|(np, mod_id)| {
+                let module = self
+                    .module_tree
+                    .modules()
+                    .get(&ModuleNodeId::new(*mod_id))?;
+                Some((np, module))
+            })
+            .filter_map(|(np, module)| module.items().map(|items| (np, module, items)))
+            .flat_map(move |(np, _m, items)| {
+                items
+                    .iter()
+                    .map(move |&item_id| self.graph.find_node_unique(item_id).map(|n| (np, n)))
+                // self.graph.find_node_unique()
+            })
+            // At this point, items are Result<(NodePath, &dyn GraphNode), SynParserError>
+            .map(|find_result| {
+                // find_result is Result<(&NodePath, &dyn GraphNode), SynParserError>
+                match find_result {
+                    Ok((np, node)) => {
+                        // If find succeeded, try to resolve the node.
+                        // self.resolve_single_node returns Result<CanonId, IdConversionError>
+                        self.resolve_single_node(np, node)
+                            .map(|canon_id| (node.id(), canon_id))
+                            // Convert IdConversionError to SynParserError if resolve fails
+                            .map_err(SynParserError::from)
+                    }
+                    Err(syn_err) => {
+                        // If find_node_unique failed, propagate the SynParserError directly.
+                        Err(syn_err)
+                    }
+                }
+            })
+        // .map(|result| {
+        //     result.map(|(np, module, items)| items.iter().map(|item| (np, module, item)))
+        // });
+        // self.graph
+        //     .functions()
+        //     .iter()
+        //     .map(|f| (f.name(), f.id()))
+        //     .chain(self.graph.impls().iter().map(|imp| (imp.name(), imp.id())))
+        //     .map(|(name, id)| {
+        //         let result = self
+        //             .module_tree
+        //             .get_containing_mod_checked(&GraphId::Node(id), RelationKind::Contains);
+        //         result.map(|tr| (name, id, tr))
+        //     }).map(| result | result.map(|(name, id, tr)| {
+        //         let containing_module = tr.relation().source;
+        //         let fileself.module_tree.get_module_checked(containing_module)
+        //     }
+        //
+        //     ) );
+        //
+        // todo!();
+
+        // .graph.functions().iter().map(|f| f);
+
+        // IdInfo::new(
+        //     todo!(), // file_path,
+        //     todo!(), // logical_item_path,
+        //     todo!(), // cfgs,
+        //     todo!(), // item_kind
+
         // --- Placeholder Logic ---
         // The actual implementation will involve chaining iterators over different node types.
         // Example structure:
@@ -79,7 +157,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         // .chain(...) // for other node types (modules, impls, traits, values, macros, imports)
 
         // For now, return an empty iterator that satisfies the type signature.
-        std::iter::empty()
+        // std::iter::empty()
 
         // --- Original Placeholder Logic (for reference during implementation) ---
         // let mut resolved_ids = HashMap::new();

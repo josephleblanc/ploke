@@ -10,8 +10,9 @@ mod type_alias;
 mod union;
 mod value;
 
-use std::borrow::Borrow;
 use std::fmt::Display;
+use std::iter::{Flatten, Map};
+use std::{borrow::Borrow, io::Chain};
 
 use crate::{
     error::SynParserError,
@@ -31,7 +32,7 @@ pub use function::{FunctionNode, ParamData};
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
-pub use module::{ModuleDef, ModuleNode, ModuleNodeId};
+pub use module::{ModuleKind, ModuleNode, ModuleNodeId};
 pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
@@ -331,6 +332,14 @@ impl NodePath {
 
     pub fn as_segments(&self) -> &[String] {
         &self.0
+    }
+
+    pub fn with_name<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a u8> {
+        self.0
+            .iter()
+            .map(|string| string.as_bytes())
+            .flatten()
+            .chain(name.as_bytes())
     }
 
     // Conversion helpers

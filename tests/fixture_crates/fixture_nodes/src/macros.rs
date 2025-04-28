@@ -1,4 +1,3 @@
-
 #![allow(unused_macros)] // Allow unused macros for the fixture
 
 //! Test fixture for parsing macro definitions (`macro_rules!` and procedural).

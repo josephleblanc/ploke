@@ -85,12 +85,9 @@ impl QueryBuilder {
             query.push_str(&format!(" :limit {}", limit));
         }
 
-        self.db.run_script(
-            &query,
-            BTreeMap::new(),
-            cozo::ScriptMutability::Immutable,
-        )
-        .map(QueryResult::from)
-        .map_err(|e| Error::Cozo(e.to_string()))
+        self.db
+            .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map(QueryResult::from)
+            .map_err(|e| Error::Cozo(e.to_string()))
     }
 }

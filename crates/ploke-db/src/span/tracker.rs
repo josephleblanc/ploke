@@ -29,15 +29,13 @@ impl SpanTracker {
         file: PathBuf,
         hash: String,
         timestamp: u64,
-        spans: Vec<(usize, usize)>
+        spans: Vec<(usize, usize)>,
     ) {
-        self.versions.entry(file)
-            .or_default()
-            .push(CodeVersion {
-                hash,
-                timestamp,
-                spans,
-            });
+        self.versions.entry(file).or_default().push(CodeVersion {
+            hash,
+            timestamp,
+            spans,
+        });
     }
 
     /// Get changed spans between versions
@@ -45,7 +43,7 @@ impl SpanTracker {
         &self,
         _file: &PathBuf,
         _old_hash: &str,
-        _new_hash: &str
+        _new_hash: &str,
     ) -> Option<Vec<(usize, usize)>> {
         // TODO: Implement actual diff logic
         None
