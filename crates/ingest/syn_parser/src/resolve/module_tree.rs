@@ -34,7 +34,7 @@ pub mod test_interface {
     use ploke_core::NodeId;
 
     use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo};
-    use crate::parser::ParsedCodeGraph;
+    use crate::parser::{nodes::GraphNode, ParsedCodeGraph};
 
     impl ModuleTree {
         pub fn test_shortest_public_path(
@@ -43,6 +43,10 @@ pub mod test_interface {
             graph: &ParsedCodeGraph,
         ) -> Result<ResolvedItemInfo, ModuleTreeError> {
             self.shortest_public_path(item_id, graph)
+        }
+
+        pub fn test_log_node_id(&self, node_id: NodeId) {
+            self.log_node_id(node_id);
         }
     }
 }
@@ -651,6 +655,16 @@ impl ModuleTree {
         })
     }
 
+    pub fn get_all_relations_from(&self, source_id: &GraphId) -> Option<Vec<&TreeRelation>> {
+        self.relations_by_source.get(source_id).map(|indices| {
+            // If source_id not in map, return empty
+            indices
+                .iter()
+                .filter_map(|&index| self.tree_relations.get(index))
+                .collect()
+        })
+    }
+
     pub fn reexport_index(&self) -> &HashMap<NodePath, NodeId> {
         &self.reexport_index
     }
@@ -677,6 +691,15 @@ impl ModuleTree {
                 .collect()
         })
     }
+    pub fn get_all_relations_to(&self, source_id: &GraphId) -> Option<Vec<&TreeRelation>> {
+        self.relations_by_target.get(source_id).map(|indices| {
+            // If source_id not in map, return empty
+            indices
+                .iter()
+                .filter_map(|&index| self.tree_relations.get(index))
+                .collect()
+        })
+    }
 
     pub fn get_iter_relations_to<'a>(
         &'a self,
@@ -696,23 +719,24 @@ impl ModuleTree {
 
     pub fn get_containing_mod_checked(
         &self,
-        target_id: &GraphId,
+        target: &GraphId, // the child whose container we are searching for
     ) -> Result<TreeRelation, ModuleTreeError> {
-        let node_id = (*target_id).try_into()?;
+        let node_id = (*target).try_into()?;
         let contains_relation = self
-            .relations_by_source
-            .get(target_id)
+            .relations_by_target // relations source -> target
+            .get(target)
             .map(|indicies| {
                 let mut relations = indicies.iter().filter_map(|&index| {
                     self.tree_relations
                         .get(index)
-                        // filter() on Option returns Some only if the closure is true.
                         .filter(|&relation| relation.relation().kind == RelationKind::Contains)
                 });
                 let first = relations
                     .next()
                     .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id));
                 if let Some(dup) = relations.next() {
+                    self.log_relation_verbose(first);
+                    self.log_relation_verbose(dup);
                     return Err(ModuleTreeError::DuplicateContains(*dup));
                 }
                 first
@@ -975,10 +999,10 @@ impl ModuleTree {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Node is root, returning root file: {}", "✓".log_green(), self.root_file.display().log_path_debug());
             return Ok(&self.root_file);
         }
-        let node_gid = node_id.into();
+        let child_node_gid = node_id.into();
         let container_mod_gid = self
-            .get_containing_mod_checked(&node_gid)
-            .map(|r| r.relation().target)?; // Note: This should be source, not target for Contains
+            .get_containing_mod_checked(&child_node_gid)
+            .map(|r| r.relation().source)?; // Note: This should be source, not target for Contains
         let container_mod_id = container_mod_gid.try_into()?;
         let file_mod = self.get_module_checked(&container_mod_id)?;
 
@@ -2653,10 +2677,8 @@ impl ModuleTree {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Recursively finding items contained within unlinked modules...");
         while let Some(current_id) = queue.pop_front() {
             // Find items directly contained by the current node
-            if let Some(contained_relations) = self
-                .get_relations_from(&GraphId::Node(current_id), |tr| {
-                    tr.relation().kind == RelationKind::Contains
-                })
+            if let Some(contained_relations) =
+                self.get_all_relations_from(&GraphId::Node(current_id))
             {
                 for rel in contained_relations {
                     if let GraphId::Node(target_id) = rel.relation().target {
@@ -2892,6 +2914,44 @@ impl ModuleTree {
             decl_mod_id.to_string().log_id()
         );
     }
+
+    // AI: Please provide the code requested in the following comments. Be sure to follow our
+    // color themes (which you can see in `logging.rs`). Since these logging functions will only
+    // run as closures when an error occurs we don't need to be shy about doing lookups. The goal
+    // is to provide well-structured contextual information for when we encounter an error and need
+    // to debug. These will only be run once, when our program is in an invalid state, or will be
+    // copied/pasted into key locations for extremely targeted debugging. They may be verbose.
+    pub fn log_relation_verbose(rel: Relation) {
+        // AI: log source/target with `self.log_node_id()`
+
+        todo!()
+    }
+
+    pub(crate) fn log_node_id_verbose(&self, node_id: NodeId) {
+        if let Some(module) = self
+            .modules()
+            .get(&ModuleNodeId::new(node_id))
+            .and_then(|m| m.as_module())
+        {
+            // AI: Add a lot of information about the module.
+            // AI: Try to find the target node in all of `ModuleTree`'s indexes, e.g.
+            // - pending_imports
+            // - pending_exports
+
+            if let Some(relations_from) = self.get_all_relations_from(&GraphId::Node(node_id)) {
+            } else {
+                // AI: log an error here
+                // Print relations here, using good debugging style.
+                // Where possible (if relation is a ModuleNode or ImportNode), find the target's name and print that as well.
+                if let Some(relations_to) = self.get_all_relations_to(&GraphId::Node(node_id)) {
+                    // Same thing here, print relations to all nodes and names of modules/imports wherever possible.
+                } else {
+                    // AI: log an error here
+                }
+            }
+        }
+    }
+    // AI!
 }
 
 // Extension trait for Path normalization
