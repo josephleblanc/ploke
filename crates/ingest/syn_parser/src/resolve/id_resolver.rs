@@ -7,52 +7,7 @@ use crate::{
     parser::nodes::GraphNode, // Import GraphNode trait for logging
     parser::{
         graph::{GraphAccess, ParsedCodeGraph},
-        nodes::{GraphNode, ModuleNodeId, NodePath},
-    },
-    resolve::module_tree::ModuleTree,
-};
-
-/// Responsible for resolving synthetic `NodeId`s and `TypeId`s generated during
-/// Phase 2 parsing into stable, canonical `CanonId`s based on the fully resolved
-/// module structure and paths determined in Phase 3.
-///
-/// It takes references to the completed `ModuleTree` and the merged `ParsedCodeGraph`
-/// containing all nodes from the crate.
-pub struct CanonIdResolver<'a, 'b> {
-    /// Project namespace of the defining crate, used as namespace for Id generation using v5 hash.
-    namespace: Uuid,
-    /// Reference to the fully resolved module tree.
-    module_tree: &'a ModuleTree,
-    /// Reference to the merged code graph containing all parsed nodes.
-    graph: &'b ParsedCodeGraph,
-}
-
-impl<'a, 'b> CanonIdResolver<'a, 'b> {
-    /// Creates a new `CanonIdResolver`.
-    ///
-    /// # Arguments
-    /// * `namespace` - The UUID namespace of the crate being processed.
-    /// * `module_tree` - A reference to the constructed `ModuleTree`.
-    /// * `graph` - A reference to the `ParsedCodeGraph`.
-    pub fn new(namespace: Uuid, module_tree: &'a ModuleTree, graph: &'b ParsedCodeGraph) -> Self {
-        Self {
-            namespace,
-            module_tree,
-            graph,
-        }
-    }
-
-    /// Returns the crate namespace used by this resolver.
-    pub fn namespace(&self) -> Uuid {
-        self.namespace
-    }
-
-    fn resolve_single_node(
-        &self,
-        node_path: &NodePath,
-    parser::{
-        graph::{GraphAccess, ParsedCodeGraph},
-        nodes::{GraphNode, ModuleNodeId, NodePath},
+        nodes::{ModuleNodeId, NodePath}, // Removed duplicate GraphNode import
     },
     resolve::module_tree::ModuleTree,
     utils::{LogStyle, LogStyleDebug}, // Import logging traits
@@ -117,7 +72,8 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 graph_node.cfgs(),       // cfgs,
                 graph_node.kind(),       // item_kind
             ),
-        )
+        ); // Added semicolon
+        result // Explicitly return the result
     }
 
     /// Resolves all synthetic IDs in the graph to `CanonId`s.
