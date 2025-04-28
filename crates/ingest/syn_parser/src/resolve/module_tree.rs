@@ -999,11 +999,21 @@ impl ModuleTree {
             return Ok(&self.root_file);
         }
         let child_node_gid = node_id.into();
-        let container_mod_gid = self
-            .get_containing_mod_checked(&child_node_gid)
-            .map(|r| r.relation().source)?;
-        let container_mod_id = container_mod_gid.try_into()?;
-        let file_mod = self.get_module_checked(&container_mod_id)?;
+        let container_mod_gid = match self.get_containing_mod_checked(&child_node_gid) {
+            Ok(relation) => Ok(relation.relation().source),
+            Err(e) => {
+                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD,
+                    "    {} Could not find containing module for {} (Error: {}). Propagating error.",
+                    "Warning:".log_yellow(),
+                    node_id.to_string().log_id(),
+                    e.to_string().log_comment()
+                );
+                // If we can't find the container, the tree is inconsistent. Propagate the error.
+                return Err(e); // Return the original error directly
+            }
+        }?;
+        let container_mod_id = container_mod_gid.try_into()?; // Get the ID after the match
+        let file_mod = self.get_module_checked(&container_mod_id)?; // Get the module node using the container ID
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found container module: {} ({})", "->".log_comment(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
 
