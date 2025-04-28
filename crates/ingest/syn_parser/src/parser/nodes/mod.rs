@@ -279,7 +279,11 @@ impl TryInto<TypeId> for GraphId {
     }
 }
 
-// AI: Implement `From<NodeId>` for `GraphId` AI!
+impl From<NodeId> for GraphId {
+    fn from(node_id: NodeId) -> Self {
+        GraphId::Node(node_id)
+    }
+}
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq

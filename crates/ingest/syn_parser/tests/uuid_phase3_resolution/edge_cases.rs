@@ -88,7 +88,6 @@ fn build_tree_for_edge_cases() -> (ParsedCodeGraph, ModuleTree) {
 
 #[test]
 fn test_spp_multi_step_3() {
-    // AI: Accurate description of target item, but the test is not final.
     // 1. Multi-Step Re-export Chain (3-step)
     //    Target: `item_c` (renamed re-export of `chain_a::item_a`)
     //      - item_a renamed item_b with pub re-export
@@ -98,7 +97,7 @@ fn test_spp_multi_step_3() {
     //          - (in `mod chain_b`'s sibling `mod chain_c`)
     //          - in `mod chain_c { pub use chain_b::item_b; }`
     //      - finally in crate root, `pub use chain_c::item_c;`
-    //    Expected: Ok(["crate"])
+    //    Expected: Ok(ResolvedItemInfo { path: ["crate"], public_name: "item_c", resolved_id: item_a_id, target_kind: InternalDefinition { definition_id: item_a_id }, definition_name: Some("item_a") })
     //    Anticipated Status: FAIL (SPP doesn't handle re-exports yet)
 
     let _ = env_logger::builder()
@@ -114,30 +113,22 @@ fn test_spp_multi_step_3() {
     )
     .expect("Failed to find original item_a");
 
-    // AI: I'm trying to think through how we want to represent the returned values from
-    // `shortest_public_path`. I'm leaning toward having the `path` be renamed something like
-    // `parent_path` or something, and then having three fields for the different possible names:
-    // 1. definition_name: The name of the defined item, if item is defined (otherwise None)
-    // 2. exported_as: The name under which the item is reexported on the shortest possible path
-    //    (SPP) used for the public API.
-    //
-    // We will also need to deal with the case of mutliple public paths. First we should probably
-    // just figure out the shortest_public path. Maybe later we add a field for a `Vec<NodePath>`
-    // with alternative paths or something, not important now other than to address the limitation
-    // exists.
-    //
-    // Can you help me think through how we want to represent renamed local and/or dependency items AI?
     let spp_result = tree.shortest_public_path(item_id, &graph);
-    let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolution leads here
-        target_id: item_id,
-        original_name: Some("item_c".to_string()), // placeholder
 
-                                                   // AI: probably a better name
-                                                   // Maybe we need both? A `renamed` field if parsing the target crate, a `original_name` if
-                                                   // parsing a dependency? It is also possible for an external item to be renamed... ugh
-                                                   // renamed: Some("item_c".to_string()), // Item renamed
+    // Expected result based on the refined ResolvedItemInfo structure
+    let expected_result = Ok(ResolvedItemInfo {
+        // Where is it publicly accessible?
+        path: vec!["crate".to_string()],
+        // What name do I use there?
+        public_name: "item_c".to_string(),
+        // What is the ID of the thing ultimately found? (The definition)
+        resolved_id: item_id,
+        // What kind of thing is it? (Internal definition)
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: item_id,
+        },
+        // Was it renamed? (Yes, public 'item_c' != original 'item_a')
+        definition_name: Some("item_a".to_string()),
     });
 
     assert_eq!(
