@@ -2379,6 +2379,126 @@ impl ModuleTree {
          })
     }
 
+
+    /// Removes unlinked file-based modules and their contained items from the tree state.
+    ///
+    /// This should be called after linking (`link_mods_syntactic`) and path attribute
+    /// processing (`process_path_attributes`, `update_path_index_for_custom_paths`)
+    /// are complete.
+    ///
+    /// It identifies file-based modules (excluding the root) that are not targeted by
+    /// either a `ResolvesToDefinition` or `CustomPath` relation. These modules, along
+    /// with the items they contain, are removed from the `ModuleTree`'s state
+    /// (`modules`, `path_index`, `tree_relations`). The relation indices are rebuilt after pruning.
+    ///
+    /// Note: This function currently does *not* modify the underlying `ParsedCodeGraph`.
+    ///
+    /// # Returns
+    /// A `Result` containing `PrunedData` which lists the IDs of the pruned modules and items,
+    /// or a `ModuleTreeError` if an issue occurs during processing.
+    fn prune_unlinked_file_modules(&mut self) -> Result<PrunedData, ModuleTreeError> {
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
+
+        let mut prunable_module_ids: HashSet<ModuleNodeId> = HashSet::new();
+        let root_inner_id = self.root.into_inner(); // Get inner NodeId for comparison
+
+        // 1. Identify prunable module IDs
+        for (mod_id, module_node) in self.modules.iter() {
+            // Skip root and non-file-based modules
+            if module_node.id() == root_inner_id || !module_node.is_file_based() {
+                continue;
+            }
+
+            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to
+            let is_linked = self
+                .get_relations_to(&mod_id.to_graph_id(), |tr| {
+                    matches!(
+                        tr.relation().kind,
+                        RelationKind::ResolvesToDefinition | RelationKind::CustomPath
+                    )
+                })
+                .map_or(false, |rels| !rels.is_empty()); // Linked if the filtered result is not empty
+
+            if !is_linked {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Marking unlinked module for pruning: {} ({})", module_node.name.log_name(), mod_id.to_string().log_id());
+                prunable_module_ids.insert(*mod_id);
+            }
+        }
+
+        if prunable_module_ids.is_empty() {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No unlinked modules found to prune.", "Info".log_comment());
+            return Ok(PrunedData::default()); // Return empty PrunedData
+        }
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} modules to prune.", prunable_module_ids.len().to_string().log_id());
+
+
+        // 2. Collect all item IDs contained within the prunable modules
+        let mut prunable_item_ids = HashSet::new();
+        for mod_id in &prunable_module_ids {
+            if let Some(module_node) = self.modules.get(mod_id) {
+                if let Some(items) = module_node.items() {
+                    for item_id in items {
+                        prunable_item_ids.insert(*item_id);
+                    }
+                }
+                // Also mark the module's own ID as prunable from item perspective
+                prunable_item_ids.insert(module_node.id());
+            }
+        }
+         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} total items (including modules) to prune.", prunable_item_ids.len().to_string().log_id());
+
+
+        // 3. Prune ModuleTree state
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruning ModuleTree structures...");
+        self.modules.retain(|id, _| !prunable_module_ids.contains(id));
+        self.path_index.retain(|_, node_id| !prunable_module_ids.contains(&ModuleNodeId::new(*node_id)));
+        // Also prune decl_index if declarations corresponding to pruned modules exist
+        // (Less common, but possible if a decl existed but its #[path] target was unlinked)
+        self.decl_index.retain(|_, node_id| !prunable_module_ids.contains(&ModuleNodeId::new(*node_id))); // Assuming decl_index stores decl IDs
+
+        // Filter relations
+        let original_relation_count = self.tree_relations.len();
+        self.tree_relations.retain(|tr| {
+            let source_ok = match tr.relation().source {
+                GraphId::Node(id) => !prunable_item_ids.contains(&id),
+                GraphId::Type(_) => true, // Keep type relations for now
+            };
+            let target_ok = match tr.relation().target {
+                 GraphId::Node(id) => !prunable_item_ids.contains(&id),
+                 GraphId::Type(_) => true,
+            };
+            source_ok && target_ok
+        });
+        let removed_relation_count = original_relation_count - self.tree_relations.len();
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed {} relations.", removed_relation_count.to_string().log_id());
+
+
+        // 4. Rebuild relation indices
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Rebuilding relation indices...");
+        self.relations_by_source.clear();
+        self.relations_by_target.clear();
+        for (index, tr) in self.tree_relations.iter().enumerate() {
+             self.relations_by_source
+                .entry(tr.relation().source)
+                .or_default()
+                .push(index);
+            self.relations_by_target
+                .entry(tr.relation().target)
+                .or_default()
+                .push(index);
+        }
+
+        // 5. Prepare return data (Do not prune ParsedCodeGraph here)
+        let pruned_data = PrunedData {
+            pruned_module_ids, // Move collected sets
+            pruned_item_ids,
+        };
+
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules and {} total items.", "End".log_header(), pruned_data.pruned_module_ids.len(), pruned_data.pruned_item_ids.len());
+        Ok(pruned_data)
+    }
+
+
     fn log_access_restricted_check_ancestor(
         &self,
         ancestor_id: ModuleNodeId,

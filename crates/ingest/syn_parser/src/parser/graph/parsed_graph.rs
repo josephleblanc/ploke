@@ -308,6 +308,8 @@ impl GraphAccess for ParsedCodeGraph {
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode> {
         &mut self.graph.use_statements
     }
+
+    // Removed prune_items method to keep ParsedCodeGraph immutable for now.
 }
 
 /// Logs the start of processing a module during module tree building.
