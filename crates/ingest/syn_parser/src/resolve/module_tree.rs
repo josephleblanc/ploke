@@ -1132,65 +1132,69 @@ impl ModuleTree {
                 // For now, assume SPP correctly resolves through internal re-exports.
 
                 // Let's refine the target_kind determination:
-                let (resolved_id, target_kind) =
-                    match graph.find_node_unique(item_id)?.as_import() {
-                        // If the original item_id points to an ImportNode (meaning it was a re-export)
-                        Some(import_node) => {
-                            // Check if it's an external re-export
-                            if import_node.is_extern_crate()
-                                || import_node.source_path().first().map_or(false, |seg| {
-                                    graph.iter_dependency_names().any(|dep| dep == seg)
+                let (resolved_id, target_kind) = match graph.find_node_unique(item_id)?.as_import()
+                {
+                    // If the original item_id points to an ImportNode (meaning it was a re-export)
+                    Some(import_node) => {
+                        // Check if it's an external re-export
+                        if import_node.is_extern_crate()
+                            || import_node.source_path().first().map_or(false, |seg| {
+                                graph.iter_dependency_names().any(|dep| dep == seg)
+                            })
+                        {
+                            // External: resolved_id is the ImportNode's ID
+                            (
+                                import_node.id(),
+                                ResolvedTargetKind::ExternalReExport {
+                                    external_path: import_node.source_path().to_vec(),
+                                },
+                            )
+                        } else {
+                            // Internal re-export: SPP should have resolved *through* this.
+                            // The resolved_id should be the ultimate definition ID.
+                            // We need to find the target of the ReExports relation from this import_node.
+                            let reexport_target_id = self
+                                .get_relations_from(&import_node.id().into(), |tr| {
+                                    tr.relation().kind == RelationKind::ReExports
                                 })
-                            {
-                                // External: resolved_id is the ImportNode's ID
-                                (
-                                    import_node.id(),
-                                    ResolvedTargetKind::ExternalReExport {
-                                        external_path: import_node.source_path().to_vec(),
-                                    },
-                                )
-                            } else {
-                                // Internal re-export: SPP should have resolved *through* this.
-                                // The resolved_id should be the ultimate definition ID.
-                                // We need to find the target of the ReExports relation from this import_node.
-                                let reexport_target_id = self
-                                    .get_relations_from(&import_node.id().into(), |tr| {
-                                        tr.relation().kind == RelationKind::ReExports
-                                    })
-                                    .and_then(|rels| rels.first().map(|tr| tr.relation().target))
-                                    .and_then(|gid| gid.try_into().ok())
-                                    .unwrap_or(item_id); // Fallback to original item_id if lookup fails
+                                .and_then(|rels| rels.first().map(|tr| tr.relation().target))
+                                .and_then(|gid| gid.try_into().ok())
+                                .unwrap_or(item_id); // Fallback to original item_id if lookup fails
 
-                                (
-                                    reexport_target_id,
-                                    ResolvedTargetKind::InternalDefinition {
-                                        definition_id: reexport_target_id,
-                                    },
-                                )
-                            }
+                            (
+                                reexport_target_id,
+                                ResolvedTargetKind::InternalDefinition {
+                                    definition_id: reexport_target_id,
+                                },
+                            )
                         }
-                        // If the original item_id points to a definition node
-                        None => (
-                            item_id, // resolved_id is the definition ID
-                            ResolvedTargetKind::InternalDefinition {
-                                definition_id: item_id,
-                            },
-                        ),
-                    };
+                    }
+                    // If the original item_id points to a definition node
+                    None => (
+                        item_id, // resolved_id is the definition ID
+                        ResolvedTargetKind::InternalDefinition {
+                            definition_id: item_id,
+                        },
+                    ),
+                };
 
                 // Determine definition_name
-                let definition_name = if let ResolvedTargetKind::InternalDefinition {
-                    definition_id,
-                } = target_kind
-                {
-                    graph
-                        .find_node_unique(definition_id)?
-                        .name()
-                        .ne(&public_name)
-                        .then(|| graph.find_node_unique(definition_id).unwrap().name().to_string())
-                } else {
-                    None // Not an internal definition
-                };
+                let definition_name =
+                    if let ResolvedTargetKind::InternalDefinition { definition_id } = target_kind {
+                        graph
+                            .find_node_unique(definition_id)?
+                            .name()
+                            .ne(&public_name)
+                            .then(|| {
+                                graph
+                                    .find_node_unique(definition_id)
+                                    .unwrap()
+                                    .name()
+                                    .to_string()
+                            })
+                    } else {
+                        None // Not an internal definition
+                    };
 
                 // --- Construct Final Result ---
                 return Ok(ResolvedItemInfo {

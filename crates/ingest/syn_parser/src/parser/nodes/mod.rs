@@ -315,6 +315,7 @@ impl Display for NodePath {
 }
 
 impl NodePath {
+    // AI: We probably want the `path` in the `ResolvedItemInfo` to be `NodePath` AI!
     pub fn new(segments: Vec<String>) -> Result<Self, SynParserError> {
         if segments.is_empty() {
             // The `?` operator won't work here directly as we need to construct the error first.

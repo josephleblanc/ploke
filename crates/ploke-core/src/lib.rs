@@ -435,6 +435,7 @@ mod ids {
         ) -> Result<Self, IdConversionError>;
     }
 
+    // AI: IdInfo here:
     pub struct IdInfo<'a> {
         file_path: &'a Path,
         logical_item_path: &'a [String],
