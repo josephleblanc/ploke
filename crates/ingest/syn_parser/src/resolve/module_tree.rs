@@ -300,10 +300,10 @@ pub enum ModuleTreeError {
     Warning(String),
 }
 
-
 /// Holds the IDs and relations pruned from the ModuleTree.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PruningResult { // Renamed struct
+pub struct PruningResult {
+    // Renamed struct
     /// IDs of the top-level file ModuleNodes that were pruned because they were unlinked.
     pub pruned_module_ids: HashSet<ModuleNodeId>,
     /// IDs of all items (including the modules themselves and items they contained)
@@ -312,7 +312,6 @@ pub struct PruningResult { // Renamed struct
     /// The actual TreeRelation instances that were removed from the ModuleTree.
     pub pruned_relations: Vec<TreeRelation>,
 }
-
 
 // Add near other public structs/enums related to ModuleTree resolution
 #[derive(Debug, Clone, PartialEq, Eq)] // Eq requires NodeId and PathBuf to be Eq
@@ -325,6 +324,8 @@ pub struct ResolvedItemInfo {
     /// The NodeId of the item found at the end of the path
     /// (e.g., the definition ID for InternalDefinition, the ImportNode ID for ExternalReExport).
     pub target_id: NodeId,
+    /// Original name (path ident) if the item has been renamed. `None` otherwise.
+    pub original_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1076,6 +1077,7 @@ impl ModuleTree {
                             path: vec!["crate".to_string()],
                             target_kind: ResolvedTargetKind::InternalDefinition, // Root is internal
                             target_id: item_id,
+                            original_name: None,
                         });
                     }
                 }
@@ -1140,6 +1142,7 @@ impl ModuleTree {
                     path: final_path,
                     target_kind,
                     target_id: item_id, // The ID of the item we were searching for
+                    original_name: None,
                 });
             }
 
@@ -2381,7 +2384,6 @@ impl ModuleTree {
          })
     }
 
-
     /// Removes unlinked file-based modules and their contained items from the tree state.
     ///
     /// This should be called after linking (`link_mods_syntactic`) and path attribute
@@ -2399,7 +2401,8 @@ impl ModuleTree {
     /// A `Result` containing `PruningResult` which lists the IDs of the pruned modules,
     /// all contained items, and the relations that were removed, or a `ModuleTreeError`
     /// if an issue occurs during processing.
-    pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> { // Changed return type
+    pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> {
+        // Changed return type
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
 
         // --- Step 1: Initial Identification of Unlinked File Modules ---
@@ -2446,10 +2449,11 @@ impl ModuleTree {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Recursively finding items contained within unlinked modules...");
         while let Some(current_id) = queue.pop_front() {
             // Find items directly contained by the current node
-            if let Some(contained_relations) = self.get_relations_from(
-                &GraphId::Node(current_id),
-                |tr| tr.relation().kind == RelationKind::Contains,
-            ) {
+            if let Some(contained_relations) = self
+                .get_relations_from(&GraphId::Node(current_id), |tr| {
+                    tr.relation().kind == RelationKind::Contains
+                })
+            {
                 for rel in contained_relations {
                     if let GraphId::Node(target_id) = rel.relation().target {
                         // If this target item is newly discovered as prunable...
@@ -2484,24 +2488,26 @@ impl ModuleTree {
         }
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} relations to prune.", relations_to_prune_indices.len());
 
-
         // --- Step 4: Prune ModuleTree state ---
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruning ModuleTree structures...");
         // Prune modules based on the initial set of unlinked module IDs
         let modules_before = self.modules.len();
-        self.modules.retain(|id, _| !initial_prunable_module_ids.contains(id));
+        self.modules
+            .retain(|id, _| !initial_prunable_module_ids.contains(id));
         let modules_after = self.modules.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned modules map: {} -> {} (removed {})", modules_before, modules_after, modules_before - modules_after);
 
         // Prune path_index: Remove entries whose VALUE (NodeId) is in the full prunable item set
         let path_index_before = self.path_index.len();
-        self.path_index.retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
+        self.path_index
+            .retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
         let path_index_after = self.path_index.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned path_index: {} -> {} (removed {})", path_index_before, path_index_after, path_index_before - path_index_after);
 
         // Prune decl_index: Remove entries whose VALUE (NodeId) is in the full prunable item set
         let decl_index_before = self.decl_index.len();
-        self.decl_index.retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
+        self.decl_index
+            .retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
         let decl_index_after = self.decl_index.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned decl_index: {} -> {} (removed {})", decl_index_before, decl_index_after, decl_index_before - decl_index_after);
 
@@ -2521,9 +2527,12 @@ impl ModuleTree {
         });
         let removed_relation_count = original_relation_count - self.tree_relations.len();
         // Sanity check
-        assert_eq!(removed_relation_count, pruned_relations.len(), "Mismatch between counted pruned relations and collected pruned relations");
+        assert_eq!(
+            removed_relation_count,
+            pruned_relations.len(),
+            "Mismatch between counted pruned relations and collected pruned relations"
+        );
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed {} relations involving pruned items.", removed_relation_count);
-
 
         // --- Step 5: Rebuild relation indices ---
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Rebuilding relation indices...");
@@ -2531,7 +2540,7 @@ impl ModuleTree {
         self.relations_by_target.clear();
         // Iterate over the *filtered* tree_relations
         for (index, tr) in self.tree_relations.iter().enumerate() {
-             self.relations_by_source
+            self.relations_by_source
                 .entry(tr.relation().source)
                 .or_default()
                 .push(index);
@@ -2544,14 +2553,13 @@ impl ModuleTree {
         // --- Step 6: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
-            pruned_item_ids: all_prunable_item_ids,     // Return all items that were pruned as a result
-            pruned_relations,                           // Return the actual relations removed
+            pruned_item_ids: all_prunable_item_ids, // Return all items that were pruned as a result
+            pruned_relations,                       // Return the actual relations removed
         };
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules, {} total items, and {} relations.", "End".log_header(), result_data.pruned_module_ids.len(), result_data.pruned_item_ids.len(), result_data.pruned_relations.len());
         Ok(result_data) // Corrected variable name
     }
-
 
     fn log_access_restricted_check_ancestor(
         &self,
