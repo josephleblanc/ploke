@@ -2396,10 +2396,11 @@ impl ModuleTree {
     /// # Returns
     /// A `Result` containing `PrunedData` which lists the IDs of the pruned modules and items,
     /// or a `ModuleTreeError` if an issue occurs during processing.
-    pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PrunedData, ModuleTreeError> { // Added pub(crate)
+    pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PrunedData, ModuleTreeError> {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
 
-        let mut prunable_module_ids: HashSet<ModuleNodeId> = HashSet::new();
+        // --- Step 1: Initial Identification of Unlinked File Modules ---
+        let mut initial_prunable_module_ids: HashSet<ModuleNodeId> = HashSet::new();
         let root_inner_id = self.root.into_inner(); // Get inner NodeId for comparison
 
         // 1. Identify prunable module IDs
@@ -2420,60 +2421,70 @@ impl ModuleTree {
                 .map_or(false, |rels| !rels.is_empty()); // Linked if the filtered result is not empty
 
             if !is_linked {
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Marking unlinked module for pruning: {} ({})", module_node.name.log_name(), mod_id.to_string().log_id());
-                prunable_module_ids.insert(*mod_id);
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Marking initially unlinked module for pruning: {} ({})", module_node.name.log_name(), mod_id.to_string().log_id());
+                initial_prunable_module_ids.insert(*mod_id);
             }
         }
 
-        if prunable_module_ids.is_empty() {
+        if initial_prunable_module_ids.is_empty() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} No unlinked modules found to prune.", "Info".log_comment());
             return Ok(PrunedData::default()); // Return empty PrunedData
         }
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} modules to prune.", prunable_module_ids.len().to_string().log_id());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} initially unlinked modules.", initial_prunable_module_ids.len().to_string().log_id());
 
+        // --- Step 2: Collect All Items Defined Within Unlinked Files ---
+        // Start with the module IDs themselves
+        let mut all_prunable_item_ids: HashSet<NodeId> = initial_prunable_module_ids
+            .iter()
+            .map(|id| id.into_inner())
+            .collect();
 
-        // 2. Collect all item IDs contained within the prunable modules
-        let mut prunable_item_ids = HashSet::new();
-        for mod_id in &prunable_module_ids {
-            if let Some(module_node) = self.modules.get(mod_id) {
-                if let Some(items) = module_node.items() {
-                    for item_id in items {
-                        prunable_item_ids.insert(*item_id);
-                    }
-                }
-                // Also mark the module's own ID as prunable from item perspective
-                prunable_item_ids.insert(module_node.id());
+        for mod_id in &initial_prunable_module_ids {
+            // Get the ModuleNode. It MUST exist here before we prune self.modules.
+            // If it doesn't, the tree state is inconsistent before pruning starts.
+            let module_node = self.modules.get(mod_id).ok_or_else(|| {
+                ModuleTreeError::InternalState(format!(
+                    "Module {} marked for pruning but not found in modules map.",
+                    mod_id
+                ))
+            })?;
+
+            // Add all items syntactically contained within this module file
+            if let Some(items) = module_node.items() {
+                all_prunable_item_ids.extend(items.iter().copied());
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Added {} items from pruned module {} ({})", items.len(), module_node.name.log_name(), mod_id.to_string().log_id());
             }
         }
-         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} total items (including modules) to prune.", prunable_item_ids.len().to_string().log_id());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Collected {} total item IDs (including modules) to prune.", all_prunable_item_ids.len().to_string().log_id());
 
 
-        // 3. Prune ModuleTree state
+        // --- Step 3: Prune ModuleTree state using the collected IDs ---
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruning ModuleTree structures...");
-        self.modules.retain(|id, _| !prunable_module_ids.contains(id));
-        self.path_index.retain(|_, node_id| !prunable_module_ids.contains(&ModuleNodeId::new(*node_id)));
-        // Also prune decl_index if declarations corresponding to pruned modules exist
-        // (Less common, but possible if a decl existed but its #[path] target was unlinked)
-        self.decl_index.retain(|_, node_id| !prunable_module_ids.contains(&ModuleNodeId::new(*node_id))); // Assuming decl_index stores decl IDs
+        // Prune modules based on the initial set of unlinked module IDs
+        self.modules.retain(|id, _| !initial_prunable_module_ids.contains(id));
+        // Prune path_index based on the initial set of unlinked module IDs (values are module def IDs)
+        self.path_index.retain(|_, node_id| !initial_prunable_module_ids.contains(&ModuleNodeId::new(*node_id)));
+        // Prune decl_index based on the full set of prunable items (values are decl IDs)
+        self.decl_index.retain(|_, node_id| !all_prunable_item_ids.contains(node_id));
 
-        // Filter relations
+        // Filter relations based on the complete item set
         let original_relation_count = self.tree_relations.len();
         self.tree_relations.retain(|tr| {
             let source_ok = match tr.relation().source {
-                GraphId::Node(id) => !prunable_item_ids.contains(&id),
+                GraphId::Node(id) => !all_prunable_item_ids.contains(&id),
                 GraphId::Type(_) => true, // Keep type relations for now
             };
             let target_ok = match tr.relation().target {
-                 GraphId::Node(id) => !prunable_item_ids.contains(&id),
-                 GraphId::Type(_) => true,
+                 GraphId::Node(id) => !all_prunable_item_ids.contains(&id),
+                 GraphId::Type(_) => true, // Keep type relations for now
             };
             source_ok && target_ok
         });
         let removed_relation_count = original_relation_count - self.tree_relations.len();
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed {} relations.", removed_relation_count.to_string().log_id());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Removed {} relations involving pruned items.", removed_relation_count.to_string().log_id());
 
 
-        // 4. Rebuild relation indices
+        // --- Step 4: Rebuild relation indices ---
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Rebuilding relation indices...");
         self.relations_by_source.clear();
         self.relations_by_target.clear();
@@ -2488,10 +2499,10 @@ impl ModuleTree {
                 .push(index);
         }
 
-        // 5. Prepare return data (Do not prune ParsedCodeGraph here)
+        // --- Step 5: Prepare return data ---
         let pruned_data = PrunedData {
-            pruned_module_ids: prunable_module_ids, // Corrected variable name
-            pruned_item_ids: prunable_item_ids,     // Corrected variable name
+            pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
+            pruned_item_ids: all_prunable_item_ids,     // Return all items that were pruned as a result
         };
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules and {} total items.", "End".log_header(), pruned_data.pruned_module_ids.len(), pruned_data.pruned_item_ids.len());
