@@ -322,7 +322,9 @@ fn test_spp_glob_reexport_public() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming glob re-export resolved
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: item_id,
+        }, // Assuming glob re-export resolved
         resolved_id: item_id,
         public_name: todo!("Check public name"),
         definition_name: None,
@@ -553,7 +555,9 @@ fn test_spp_relative_reexport_super() {
             "relative".to_string(),
             "inner".to_string(),
         ]),
-        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: original_item_id }, // Assuming re-export resolved
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: original_item_id,
+        }, // Assuming re-export resolved
         resolved_id: original_item_id,
         public_name: todo!("Check public name"),
         definition_name: None,
@@ -588,7 +592,9 @@ fn test_spp_relative_reexport_self() {
     let spp_result = tree.shortest_public_path(original_item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string(), "relative".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: original_item_id }, // Assuming re-export resolved
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: original_item_id,
+        }, // Assuming re-export resolved
         resolved_id: original_item_id,
         public_name: todo!("Check public name"),
         definition_name: None,
@@ -618,7 +624,9 @@ fn test_spp_deep_reexport_chain() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming re-export resolved
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: item_id,
+        }, // Assuming re-export resolved
         resolved_id: item_id,
         public_name: todo!("Check public name"),
         definition_name: None,
@@ -685,7 +693,9 @@ fn test_spp_multiple_renames() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming re-export resolved
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: item_id,
+        }, // Assuming re-export resolved
         resolved_id: item_id,
         public_name: todo!("Check public name"),
         definition_name: None,

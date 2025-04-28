@@ -45,8 +45,8 @@ pub mod test_interface {
             self.shortest_public_path(item_id, graph)
         }
 
-        pub fn test_log_node_id(&self, node_id: NodeId) {
-            self.log_node_id(node_id);
+        pub fn test_log_node_id_verbose(&self, node_id: NodeId) {
+            self.log_node_id_verbose(node_id);
         }
     }
 }
@@ -735,8 +735,8 @@ impl ModuleTree {
                     .next()
                     .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id));
                 if let Some(dup) = relations.next() {
-                    self.log_relation_verbose(first);
-                    self.log_relation_verbose(dup);
+                    self.log_relation_verbose(*first.unwrap().relation());
+                    self.log_relation_verbose(*dup.relation());
                     return Err(ModuleTreeError::DuplicateContains(*dup));
                 }
                 first
@@ -994,7 +994,6 @@ impl ModuleTree {
             node_id.to_string().log_id(),
             recurse_count.to_string().cyan()
         );
-
         if node_id == *self.root().as_inner() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Node is root, returning root file: {}", "✓".log_green(), self.root_file.display().log_path_debug());
             return Ok(&self.root_file);
@@ -1002,7 +1001,7 @@ impl ModuleTree {
         let child_node_gid = node_id.into();
         let container_mod_gid = self
             .get_containing_mod_checked(&child_node_gid)
-            .map(|r| r.relation().source)?; // Note: This should be source, not target for Contains
+            .map(|r| r.relation().source)?;
         let container_mod_id = container_mod_gid.try_into()?;
         let file_mod = self.get_module_checked(&container_mod_id)?;
 
@@ -2970,32 +2969,39 @@ impl ModuleTree {
         }
 
         // Check pending imports/exports
-        let is_in_pending_import = self.pending_imports.iter().any(|p| p.import_node().id == node_id);
+        let is_in_pending_import = self
+            .pending_imports
+            .iter()
+            .any(|p| p.import_node().id == node_id);
         if is_in_pending_import {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
         }
         if let Some(exports) = self.pending_exports.as_deref() {
-             let is_in_pending_export = exports.iter().any(|p| p.export_node().id == node_id);
-             if is_in_pending_export {
-                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
-             }
+            let is_in_pending_export = exports.iter().any(|p| p.export_node().id == node_id);
+            if is_in_pending_export {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
+            }
         }
-
 
         // Log relations FROM this node
         if let Some(relations_from) = self.get_all_relations_from(&graph_id) {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
             for rel_ref in relations_from {
                 let target_id_str = match rel_ref.relation().target {
-                     GraphId::Node(id) => id.to_string().log_id(),
-                     GraphId::Type(id) => format!("Type({})", id).log_id(),
+                    GraphId::Node(id) => id.to_string().log_id(),
+                    GraphId::Type(id) => format!("Type({})", id).log_id(),
                 };
                 // Try to get target name if it's a module
                 let target_name = match rel_ref.relation().target {
-                    GraphId::Node(id) => self.modules.get(&ModuleNodeId::new(id)).map(|m| m.name.as_str()),
+                    GraphId::Node(id) => self
+                        .modules
+                        .get(&ModuleNodeId::new(id))
+                        .map(|m| m.name.as_str()),
                     _ => None,
                 };
-                let target_display = target_name.map(|n| n.log_name().to_string()).unwrap_or_else(|| target_id_str.to_string());
+                let target_display = target_name
+                    .map(|n| n.log_name().to_string())
+                    .unwrap_or_else(|| target_id_str.to_string());
 
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), target_display);
             }
@@ -3005,23 +3011,28 @@ impl ModuleTree {
 
         // Log relations TO this node
         if let Some(relations_to) = self.get_all_relations_to(&graph_id) {
-             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
             for rel_ref in relations_to {
                 let source_id_str = match rel_ref.relation().source {
-                     GraphId::Node(id) => id.to_string().log_id(),
-                     GraphId::Type(id) => format!("Type({})", id).log_id(),
+                    GraphId::Node(id) => id.to_string().log_id(),
+                    GraphId::Type(id) => format!("Type({})", id).log_id(),
                 };
-                 // Try to get source name if it's a module
+                // Try to get source name if it's a module
                 let source_name = match rel_ref.relation().source {
-                    GraphId::Node(id) => self.modules.get(&ModuleNodeId::new(id)).map(|m| m.name.as_str()),
+                    GraphId::Node(id) => self
+                        .modules
+                        .get(&ModuleNodeId::new(id))
+                        .map(|m| m.name.as_str()),
                     _ => None,
                 };
-                let source_display = source_name.map(|n| n.log_name().to_string()).unwrap_or_else(|| source_id_str.to_string());
+                let source_display = source_name
+                    .map(|n| n.log_name().to_string())
+                    .unwrap_or_else(|| source_id_str.to_string());
 
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), source_display);
             }
         } else {
-             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
         }
     }
 }

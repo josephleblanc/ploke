@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use log::debug; // Import debug macro
+use log::{debug, trace}; // Import debug macro
 use ploke_core::{CanonId, IdInfo, NodeId, ResolvedId};
 use uuid::Uuid;
 
@@ -92,9 +92,9 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     pub fn resolve_all(
         &self,
     ) -> impl Iterator<Item = Result<(NodeId, CanonId), SynParserError>> + '_ {
-        debug!(target: LOG_TARGET, "{} Starting CanonId resolution...", "Begin".log_header());
+        trace!(target: LOG_TARGET, "{} Starting CanonId resolution...", "Begin".log_header());
         let path_index_len = self.module_tree.path_index().len();
-        debug!(target: LOG_TARGET, "  Processing {} modules from path_index.", path_index_len.to_string().log_id());
+        trace!(target: LOG_TARGET, "  Processing {} modules from path_index.", path_index_len.to_string().log_id());
 
         // path_index does not contain declarations, so we know all node_ids here are for only
         // `ModuleNode`s that are either inline or file-based
@@ -103,7 +103,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             .iter() // Iterate over (NodePath, NodeId) from path_index
             .filter_map(|(np, mod_id)| {
 
-                debug!(target: LOG_TARGET, "path_index filter_map: <name unknown> ({}) | NodePath: {}",
+                trace!(target: LOG_TARGET, "path_index filter_map: <name unknown> ({}) | NodePath: {}",
                     mod_id.to_string().log_id(),
                     np.to_string().log_path()
                 );
@@ -112,14 +112,14 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                     .modules()
                     .get(&ModuleNodeId::new(*mod_id))
                     .inspect(|opt| {
-                debug!(target: LOG_TARGET, "  getting: {} ({}) | Option is_some(), name: {:#?}",
+                trace!(target: LOG_TARGET, "  getting: {} ({}) | Option is_some(), name: {:#?}",
                     mod_id.to_string().log_id(),
                     np.to_string().log_path(),
                     opt.name(),
                 );
                     })
                     .map(|module| (np, module)).inspect(| (np, module)| {
-                debug!(target: LOG_TARGET, "Filtering empty modules: {} ({}) | NodePath: {}",
+                trace!(target: LOG_TARGET, "Filtering empty modules: {} ({}) | NodePath: {}",
                     module.name().log_name(),
                     module.id().to_string().log_id(),
                     np.to_string().log_path()
@@ -129,7 +129,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             })
             .flat_map(move |(np, module)| {
                 // Log which module we are processing items for
-                debug!(target: LOG_TARGET, "Processing items in module: {} ({})",
+                trace!(target: LOG_TARGET, "Processing items in module: {} ({})",
                     module.name().log_name(),
                     module.id().to_string().log_id()
                 );
@@ -140,15 +140,15 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             })
             .map(move |(np, item_id)| {
                 // Find the actual GraphNode for the item ID
-                debug!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());
+                trace!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());
                 // Chain the fallible operations using and_then and map_err
                 self.graph.find_node_unique(item_id) // -> Result<&dyn GraphNode, SynParserError>
                     .and_then(|node| { // If find_node_unique is Ok, proceed
-                        debug!(target: LOG_TARGET, "    Found node: {}", node.name().log_name());
+                        trace!(target: LOG_TARGET, "    Found node: {}", node.name().log_name());
                         self.module_tree.find_defining_file_path_ref(item_id) // -> Result<&Path, ModuleTreeError>
                             .map_err(SynParserError::from) // Convert ModuleTreeError to SynParserError if Err
                             .map(|fp| { // If find_defining_file_path_ref is Ok
-                                debug!(target: LOG_TARGET, "    Found defining path: {}", fp.display().to_string().log_path());
+                                trace!(target: LOG_TARGET, "    Found defining path: {}", fp.display().to_string().log_path());
                                 // Combine np (cloned), node, and fp into the final Ok tuple
                                 (np, node, fp)
                             })
@@ -163,7 +163,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                         let resolve_result = self.resolve_single_node(np, node, fp);
                         match resolve_result {
                             Ok(canon_id) => {
-                                debug!(target: LOG_TARGET, "    {} Resolved {} -> {}",
+                                trace!(target: LOG_TARGET, "    {} Resolved {} -> {}",
                                     "✓".log_green(),
                                     node.id().to_string().log_id(),
                                     canon_id.to_string().log_id_debug() // Use debug log style for CanonId

@@ -439,14 +439,13 @@ assert_spp!(
 
 // 2. Re-export of Nested Item
 assert_spp!(
-    test_spp_reexport_nested_item_renamed,
+    test_spp_reexport_nested_item, // Corrected test name
     "deep_func",
     &["crate", "local_mod", "nested"],
     Ok {
-        // Use braces and named fields
-        path: vec!["crate".to_string()], // Pass the Vec<String> expression
-        public_name: "renamed_deep_func".to_string(),
-        definition_name: Some("deep_func".to_string()),
+        path: vec!["crate".to_string()],
+        public_name: "deep_func".to_string(), // Corrected: Use original name for non-renamed export
+        definition_name: None,                // Corrected: No rename means None
     }
 );
 
