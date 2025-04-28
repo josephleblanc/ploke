@@ -160,6 +160,9 @@ fn test_spp_multi_step_4_shortest() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -232,6 +235,9 @@ fn test_spp_inline_path_item_access() -> Result<(), Box<dyn std::error::Error>> 
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -263,6 +269,9 @@ fn test_spp_one_file_multi_mod_public() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -313,8 +322,10 @@ fn test_spp_glob_reexport_public() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming glob re-export resolved
-        target_id: item_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming glob re-export resolved
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -345,6 +356,9 @@ fn test_spp_glob_reexport_path_submodule() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -377,6 +391,9 @@ fn test_spp_glob_reexport_public_submodule() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -502,6 +519,9 @@ fn test_spp_shadowing_local() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -528,13 +548,15 @@ fn test_spp_relative_reexport_super() {
 
     let spp_result = tree.shortest_public_path(original_item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
             "crate".to_string(),
             "relative".to_string(),
             "inner".to_string(),
-        ],
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
-        target_id: original_item_id,
+        ]),
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: original_item_id }, // Assuming re-export resolved
+        resolved_id: original_item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -566,8 +588,10 @@ fn test_spp_relative_reexport_self() {
     let spp_result = tree.shortest_public_path(original_item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string(), "relative".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
-        target_id: original_item_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: original_item_id }, // Assuming re-export resolved
+        resolved_id: original_item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -594,8 +618,10 @@ fn test_spp_deep_reexport_chain() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
-        target_id: item_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming re-export resolved
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -630,6 +656,9 @@ fn test_spp_branching_reexport() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -656,8 +685,10 @@ fn test_spp_multiple_renames() {
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
         path: NodePath::new_unchecked(vec!["crate".to_string()]),
-        target_kind: ResolvedTargetKind::InternalDefinition, // Assuming re-export resolved
-        target_id: item_id,
+        target_kind: ResolvedTargetKind::InternalDefinition { definition_id: item_id }, // Assuming re-export resolved
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -687,6 +718,9 @@ fn test_spp_nested_path_level1() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -712,14 +746,17 @@ fn test_spp_nested_path_level2() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
             "crate".to_string(),
             "nested_path_1".to_string(),
             "nested_target_2".to_string(),
-        ],
+        ]),
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -751,6 +788,9 @@ fn test_spp_cfg_exclusive_a() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -782,6 +822,9 @@ fn test_spp_cfg_exclusive_not_a() {
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -809,14 +852,17 @@ fn test_spp_cfg_nested_exclusive_ab() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
             "crate".to_string(),
             "cfg_mod".to_string(),
             "nested_cfg".to_string(),
-        ],
+        ]),
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -844,14 +890,17 @@ fn test_spp_cfg_nested_exclusive_nac() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
             "crate".to_string(),
             "cfg_mod".to_string(),
             "nested_cfg".to_string(),
-        ],
+        ]),
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
@@ -879,14 +928,17 @@ fn test_spp_cfg_conflicting() {
 
     let spp_result = tree.shortest_public_path(item_id, &graph);
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
             "crate".to_string(),
             "conflict_parent".to_string(),
             "conflict_child".to_string(),
-        ],
+        ]),
         target_kind: ResolvedTargetKind::InternalDefinition {
             definition_id: item_id,
         },
+        resolved_id: item_id,
+        public_name: todo!("Check public name"),
+        definition_name: None,
     });
 
     assert_eq!(
