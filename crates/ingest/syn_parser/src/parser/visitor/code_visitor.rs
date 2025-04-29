@@ -302,31 +302,24 @@ impl<'a> CodeVisitor<'a> {
                         ModuleKind::Declaration { .. } => (),
                     }
                 }
-            // Create the relation using NodeId directly
-            self.state.code_graph.relations.push(Relation {
-                source: parent_id, // Use the correctly found parent ID
-                target: node_id,   // Use new item ID directly
-                kind: RelationKind::Contains,
-            });
-            // Removed #[cfg(feature = "verbose_debug")] block
-            // Logging is now handled by debug_mod_stack_push if needed
-            // Keep the debug hook, assuming debug_mod_stack_push is updated
-            // to handle the NodeId enum (e.g., using its Display impl).
-            // Removed #[cfg(feature = "verbose_debug")]
-            self.debug_mod_stack_push(item_name.to_owned(), node_id);
-        } else {
-            // This case should ideally not happen after the root module is created in analyze_file_phase2,
-            // but log a warning just in case.
-            // This block corresponds to parent_module_id being None
-            log::warn!(
-                target: LOG_TARGET_TRACE,
-                "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Contains relation not added.",
-                item_name, item_kind, self.state.current_module_path
-            );
-            // Removed the stray 'else' block below
-        } // <<< Add missing closing brace for the `if let Some(parent_id) = ...` block
-
-        // 3. Return the newly generated NodeId enum
+                // Create the relation using NodeId directly
+                self.state.code_graph.relations.push(Relation {
+                    source: parent_id, // Use the correctly found parent ID
+                    target: node_id,   // Use new item ID directly
+                    kind: RelationKind::Contains,
+                });
+                self.debug_mod_stack_push(item_name.to_owned(), node_id);
+            } else {
+                // This case should ideally not happen after the root module is created in analyze_file_phase2,
+                // but log a warning just in case.
+                // This block corresponds to parent_module_id being None
+                log::warn!(
+                    target: LOG_TARGET_TRACE,
+                    "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Contains relation not added.",
+                    item_name, item_kind, self.state.current_module_path
+                );
+            }
+        }
         node_id
     }
 
@@ -353,7 +346,6 @@ impl<'a> CodeVisitor<'a> {
         );
     }
 } // Added missing closing brace for impl CodeVisitor<'a>
-
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
@@ -596,8 +588,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Add relation between struct and field
             self.state.code_graph.relations.push(Relation {
-                source: struct_id, // Use NodeId directly
-                target: field_id,  // Use NodeId directly
+                source: struct_id,         // Use NodeId directly
+                target: field_id,          // Use NodeId directly
                 kind: RelationKind::Field, // Use consolidated kind
             });
 
@@ -780,8 +772,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             self.state.code_graph.relations.push(Relation {
-                source: union_id, // Use NodeId directly
-                target: field_id, // Use NodeId directly
+                source: union_id,          // Use NodeId directly
+                target: field_id,          // Use NodeId directly
                 kind: RelationKind::Field, // Use consolidated kind
             });
 
@@ -930,8 +922,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         };
                         // Add relation between variant and named field
                         self.state.code_graph.relations.push(Relation {
-                            source: variant_id, // Use NodeId directly
-                            target: field_id,   // Use NodeId directly
+                            source: variant_id,        // Use NodeId directly
+                            target: field_id,          // Use NodeId directly
                             kind: RelationKind::Field, // Use consolidated kind
                         });
 
@@ -977,8 +969,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         };
                         // Add relation between variant and unnamed field
                         self.state.code_graph.relations.push(Relation {
-                            source: variant_id, // Use NodeId directly
-                            target: field_id,   // Use NodeId directly
+                            source: variant_id,        // Use NodeId directly
+                            target: field_id,          // Use NodeId directly
                             kind: RelationKind::Field, // Use consolidated kind
                         });
 
@@ -1685,7 +1677,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         });
 
         // RelationKind::Uses removed. The TypeId generated here was not meaningful.
-        /*
         let type_id = {
             // 1. Construct a representative syn::Type for the external crate.
             //    Using just the crate name as the path is simplest.
