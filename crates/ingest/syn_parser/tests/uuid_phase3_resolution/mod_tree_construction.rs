@@ -54,12 +54,30 @@ fn test_module_tree_module_count() {
 /// *definition* modules (both file-based and inline) map to the correct `NodeId`s.
 /// This tests the logic within `ModuleTree::add_module` that inserts modules into the `path_index`.
 #[test]
+#[cfg(test)]
 fn test_module_tree_path_index_correctness() {
+    let _ = env_logger::builder() // Parse RUST_LOG environment variable
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
+        // Define custom format without timestamp
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                // Example format: [LEVEL TARGET] Message
+                "[{:<5} {}] {}", // Adjust padding as needed
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .try_init(); // Use try_init to avoid panic if already initialized
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
+
+    #[cfg(feature = "validate")]
+    graph.validate_unique_rels();
 
     // --- Find expected NodeIds from the graph FIRST ---
 

@@ -48,6 +48,10 @@ pub mod test_interface {
         pub fn test_log_node_id_verbose(&self, node_id: NodeId) {
             self.log_node_id_verbose(node_id);
         }
+
+        pub fn test_validate_unique_rels(&self) {
+            self.validate_unique_rels();
+        }
     }
 }
 
@@ -723,7 +727,7 @@ impl ModuleTree {
     ) -> Result<TreeRelation, ModuleTreeError> {
         let node_id = (*target).try_into()?;
         let contains_relation = self
-            .relations_by_target // relations source -> target
+            .relations_by_source // relations source -> target
             .get(target)
             .map(|indicies| {
                 let mut relations = indicies.iter().filter_map(|&index| {
@@ -733,10 +737,10 @@ impl ModuleTree {
                 });
                 let first = relations
                     .next()
-                    .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id));
+                    .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id));
                 if let Some(dup) = relations.next() {
-                    self.log_relation_verbose(*first.unwrap().relation());
-                    self.log_relation_verbose(*dup.relation());
+                    self.log_relation(*dup.relation(), None);
+                    // self.log_relation_verbose(*dup.relation());
                     return Err(ModuleTreeError::DuplicateContains(*dup));
                 }
                 first
@@ -924,16 +928,23 @@ impl ModuleTree {
         // 1. Find the immediate parent module ID
         let parent_relations = self
             .get_relations_to(&graph_id, |tr| tr.relation().kind == RelationKind::Contains)
-            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error
 
         let mut current_mod_id = parent_relations
             .first()
             .and_then(|tr| tr.relation().source.try_into().ok()) // Convert GraphId to NodeId
             .map(ModuleNodeId::new)
-            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if conversion fails
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if conversion fails
 
+        let mut cycle_guard = 0;
         // 2. Traverse upwards until a file-based module is found
         loop {
+            if cycle_guard >= 100 {
+                return Err(ModuleTreeError::InternalState(format!(
+                    "Detected cycle/self-loop for {}",
+                    node_id
+                )));
+            }
             let module_node = self
                 .modules
                 .get(&current_mod_id)
@@ -994,26 +1005,39 @@ impl ModuleTree {
             node_id.to_string().log_id(),
             recurse_count.to_string().cyan()
         );
+
+        if recurse_count >= Self::RECURSIVE_LIMIT {
+            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursion limit ({}) reached for node {}", "✗".log_error(), Self::RECURSIVE_LIMIT, node_id.to_string().log_id());
+            return Err(ModuleTreeError::RecursionLimitExceeded {
+                start_node_id: node_id, // The original node ID where recursion started/failed
+                limit: Self::RECURSIVE_LIMIT,
+            });
+        };
         if node_id == *self.root().as_inner() {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Node is root, returning root file: {}", "✓".log_green(), self.root_file.display().log_path_debug());
             return Ok(&self.root_file);
         }
         let child_node_gid = node_id.into();
-        let container_mod_gid = match self.get_containing_mod_checked(&child_node_gid) {
-            Ok(relation) => Ok(relation.relation().source),
-            Err(e) => {
-                log::warn!(target: LOG_TARGET_MOD_TREE_BUILD,
-                    "    {} Could not find containing module for {} (Error: {}). Propagating error.",
-                    "Warning:".log_yellow(),
-                    node_id.to_string().log_id(),
-                    e.to_string().log_comment()
-                );
-                // If we can't find the container, the tree is inconsistent. Propagate the error.
-                return Err(e); // Return the original error directly
-            }
-        }?;
-        let container_mod_id = container_mod_gid.try_into()?; // Get the ID after the match
-        let file_mod = self.get_module_checked(&container_mod_id)?; // Get the module node using the container ID
+        let container_mod_gid = self
+            .get_containing_mod_checked(&child_node_gid)
+            .map(|r| r.relation().source)?;
+
+        let container_mod_id_nodeid = container_mod_gid.try_into()?;
+        // *** ADD THIS CHECK ***
+        if container_mod_id_nodeid == node_id {
+            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Found self-containment loop for node {}", "✗".log_error(), node_id.to_string().log_id());
+            return Err(ModuleTreeError::InternalState(format!(
+                "Detected self-containment loop for node {}",
+                node_id
+            )));
+        }
+        // *** END CHECK ***
+
+        let container_mod_id = ModuleNodeId::new(container_mod_id_nodeid);
+        let file_mod = self.get_module_checked(&container_mod_id)?;
+
+        let container_mod_id = container_mod_gid.try_into()?;
+        let file_mod = self.get_module_checked(&container_mod_id)?;
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found container module: {} ({})", "->".log_comment(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
 
@@ -1031,12 +1055,6 @@ impl ModuleTree {
                         "Module {} has no file path but is file-based",
                         container_mod_id
                     )))
-                } else if recurse_count >= Self::RECURSIVE_LIMIT {
-                    log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursion limit ({}) reached for node {}", "✗".log_error(), Self::RECURSIVE_LIMIT, node_id.to_string().log_id());
-                    Err(ModuleTreeError::RecursionLimitExceeded {
-                        start_node_id: node_id, // The original node ID where recursion started/failed
-                        limit: Self::RECURSIVE_LIMIT,
-                    })
                 } else {
                     debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Recursing with container module ID: {}", "->".log_step(), container_mod_id.to_string().log_id());
                     // recurse_count += 1; // This mutation is incorrect for immutable `recurse_count`
@@ -2488,6 +2506,8 @@ impl ModuleTree {
     /// the necessary `CustomPath` relations. It does *not* yet handle updating paths for items
     /// *contained within* the modules affected by `#[path]`.
     pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
         self.log_update_path_index_entry_exit(true);
         // Collect keys to avoid borrowing issues while modifying the map inside the loop.
         // We iterate based on the declarations found to have path attributes.
@@ -2584,6 +2604,9 @@ impl ModuleTree {
         }
 
         self.log_update_path_index_entry_exit(false);
+
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
         Ok(())
     }
 
@@ -2639,6 +2662,9 @@ impl ModuleTree {
     /// all contained items, and the relations that were removed, or a `ModuleTreeError`
     /// if an issue occurs during processing.
     pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> {
+        #[cfg(feature = "validate")]
+        let rels_before = self.validate_unique_rels();
+
         // Changed return type
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
 
@@ -2661,7 +2687,7 @@ impl ModuleTree {
                         RelationKind::ResolvesToDefinition | RelationKind::CustomPath
                     )
                 })
-                .map_or(false, |rels| !rels.is_empty()); // Linked if the filtered result is not empty
+                .is_some_and(|rels| !rels.is_empty()); // Linked if the filtered result is not empty
 
             if !is_linked {
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Marking initially unlinked module for pruning: {} ({})", module_node.name.log_name(), mod_id.to_string().log_id());
@@ -2793,9 +2819,24 @@ impl ModuleTree {
         };
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Finished pruning ModuleTree state. Pruned {} modules, {} total items, and {} relations.", "End".log_header(), result_data.pruned_module_ids.len(), result_data.pruned_item_ids.len(), result_data.pruned_relations.len());
+
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
         Ok(result_data) // Corrected variable name
     }
 
+    pub(crate) fn validate_unique_rels(&self) -> bool {
+        let rels = &self.tree_relations();
+        let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
+            if !acc.contains(rel) {
+                acc.push(*rel);
+            } else {
+                self.log_relation_verbose(*rel.relation());
+            }
+            acc
+        });
+        unique_rels.len() == rels.len()
+    }
     fn log_access_restricted_check_ancestor(
         &self,
         ancestor_id: ModuleNodeId,

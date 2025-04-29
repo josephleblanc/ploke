@@ -1,6 +1,10 @@
+use colored::Colorize;
 use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
-use std::hash::Hasher;
+use std::{
+    collections::{hash_map::OccupiedEntry, HashMap, VecDeque},
+    hash::Hasher,
+};
 use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
@@ -10,7 +14,10 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::parser::nodes::GraphId;
+use crate::{
+    parser::nodes::GraphId,
+    utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD},
+};
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -189,23 +196,94 @@ pub fn analyze_file_phase2(
     let mut visitor = code_visitor::CodeVisitor::new(&mut state);
     visitor.visit_file(&file);
 
+    #[cfg(feature = "temp_target")]
+    debug_relationships(&visitor);
+
+    #[cfg(feature = "validate")]
+    assert!(&visitor.validate_unique_rels());
+
     // 5. Add relations using GraphId wrappers
-    let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
-    for module_id in module_ids {
-        if module_id != root_module_id {
-            state.code_graph.relations.push(Relation {
-                source: GraphId::Node(root_module_id),
-                target: GraphId::Node(module_id),
-                kind: crate::parser::relations::RelationKind::Contains,
-            });
-        }
-    }
+    // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
+    // for module_id in module_ids {
+    //     if module_id != root_module_id {
+    //         state.code_graph.relations.push(Relation {
+    //             source: GraphId::Node(root_module_id),
+    //             target: GraphId::Node(module_id),
+    //             kind: crate::parser::relations::RelationKind::Contains,
+    //         });
+    //     }
+    // }
 
     Ok(ParsedCodeGraph::new(
         file_path,
         crate_namespace,
         state.code_graph,
     ))
+}
+
+fn debug_relationships(visitor: &CodeVisitor<'_>) {
+    let unique_rels = visitor.relations().iter().fold(Vec::new(), |mut acc, r| {
+        if !acc.contains(r) {
+            acc.push(*r)
+        }
+        acc
+    });
+    let has_duplicate = unique_rels.len() == visitor.relations().len();
+    log::debug!(target: "temp",
+        "{} {} {}: {} | {}: {} | {}: {}",
+        "Relations are unique?".log_header(),
+        if has_duplicate {
+            "Yes!".log_spring_green().bold()
+        } else {
+            "NOOOO".log_error()
+        },
+        "Unique".log_step(),
+        unique_rels.len().to_string().log_magenta_debug(),
+        "Total".log_step(),
+        visitor.relations().len().to_string().log_magenta_debug(),
+        "Difference".log_step(),
+        (visitor.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
+    );
+    let rel_map: HashMap<Relation, usize> =
+        visitor
+            .relations()
+            .iter()
+            .copied()
+            .fold(HashMap::new(), |mut hmap, r| {
+                match hmap.entry(r) {
+                    std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                        let existing_count = occupied_entry.get();
+                        occupied_entry.insert(existing_count + 1);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(1);
+                    }
+                };
+                hmap
+            });
+    for (rel, count) in rel_map {
+        if count > 1 {
+            log::debug!(target: "temp",
+                "{} | {}: {} -> {} ",
+                "Duplicate!".log_header(),
+                rel.source.to_string().log_id(),
+                rel.target.to_string().log_id(),
+                rel.kind.log_magenta_debug(),
+            );
+        }
+    }
+
+    for rel in visitor.relations() {
+        if !unique_rels.contains(rel) {
+            log::debug!(target: "temp",
+                "{} | {}: {} -> {} ",
+                "Unique!".log_header(),
+                rel.source.to_string().log_id(),
+                rel.target.to_string().log_id(),
+                rel.kind.log_magenta_debug(),
+            );
+        }
+    }
 }
 
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator

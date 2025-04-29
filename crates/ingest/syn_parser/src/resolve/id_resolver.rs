@@ -145,7 +145,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 self.graph.find_node_unique(item_id) // -> Result<&dyn GraphNode, SynParserError>
                     .and_then(|node| { // If find_node_unique is Ok, proceed
                         trace!(target: LOG_TARGET, "    Found node: {}", node.name().log_name());
-                        self.module_tree.find_defining_file_path_ref(item_id) // -> Result<&Path, ModuleTreeError>
+                        self.module_tree.find_defining_file_path_ref_seq(item_id) // -> Result<&Path, ModuleTreeError>
                             .map_err(SynParserError::from) // Convert ModuleTreeError to SynParserError if Err
                             .map(|fp| { // If find_defining_file_path_ref is Ok
                                 trace!(target: LOG_TARGET, "    Found defining path: {}", fp.display().to_string().log_path());

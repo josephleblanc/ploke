@@ -9,6 +9,10 @@ mod phase2_tests {
 
     #[test]
     fn test_simple_crate_phase2_output() {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
         let results = run_phase1_phase2("simple_crate");
 
         assert_eq!(results.len(), 1, "Expected results for 1 file"); // Assuming simple_crate/src/lib.rs only

@@ -54,6 +54,8 @@ env_logger = "0.11" # Add env_logger for test logging
 feature_a = []     # Add feature_a used by fixture
 feature_b = []     # Add feature_b used by test
 verbose_debug = []
+temp_target = []
+validate = []
 mod_tree_cfg = []
 reexport = []
 # Post-MVP feature

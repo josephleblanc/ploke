@@ -80,6 +80,11 @@ impl ParsedCodeGraph {
     }
 
     pub fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
+        #[cfg(feature = "validate")]
+        {
+            ParsedCodeGraph::debug_relationships(self);
+            assert!(self.validate_unique_rels());
+        }
         self.graph.functions.append(&mut other.graph.functions);
         self.graph
             .defined_types
@@ -119,6 +124,8 @@ impl ParsedCodeGraph {
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
     // Changed back to &self as graph is immutable again.
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
         // 1: Register all modules with their containment info
@@ -195,7 +202,6 @@ impl ParsedCodeGraph {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.", pruning_result.pruned_module_ids.len(), pruning_result.pruned_item_ids.len(), pruning_result.pruned_relations.len());
             // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
         }
-
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items

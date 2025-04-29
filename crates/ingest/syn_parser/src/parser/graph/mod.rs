@@ -1,6 +1,8 @@
 mod code_graph;
 mod parsed_graph;
 
+use std::collections::HashMap;
+
 use crate::utils::logging::LOG_TARGET_GRAPH_FIND;
 
 pub use code_graph::CodeGraph;
@@ -49,6 +51,111 @@ pub trait GraphAccess {
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
 
+
+    fn validate_unique_rels(&self) -> bool {
+        let rels = &self.relations();
+        let mut dups = Vec::new();
+        let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
+            if !acc.contains(rel) {
+                acc.push(*rel);
+            } else {
+                dups.push(*rel);
+            }
+            acc
+        });
+        for dup in &dups {
+
+            debug!("{:#?}", dup);
+            let target = self.find_node_unique(dup.target.into_node().unwrap()).unwrap();
+            let source = self.find_node_unique(dup.source.into_node().unwrap()).unwrap();
+            target.log_node_debug();
+            source.log_node_debug();
+            if let Some(m_target) = target.as_module() {
+                debug!("{:#?}", m_target);
+                for (i, node ) in self.modules().iter().filter(|m| m.path == m_target.path ).enumerate() {
+                    debug!("{}: {} | {}", "Find by Path:".log_header(), i, node.name());
+                }
+            }
+            if let Some(module_source_node) = source.as_module() {
+                debug!("{:#?}", module_source_node);
+            }
+            for (i, module ) in self.modules().iter().filter(|m| m.id() == source.id()).enumerate() {
+                debug!("{}: {} | {}", "Counting source:".log_header(), i, module.name());
+            }
+
+
+            for (i, module ) in self.modules().iter().filter(|m| m.id() == target.id()).enumerate() {
+                debug!("{}: {} | {}", "Counting target:".log_header(), i, module.name());
+            }
+
+        }
+        unique_rels.len() == rels.len()
+    }
+
+fn debug_relationships(visitor: &Self) {
+    let unique_rels = visitor.relations().iter().fold(Vec::new(), |mut acc, r| {
+        if !acc.contains(r) {
+            acc.push(*r)
+        }
+        acc
+    });
+    let has_duplicate = unique_rels.len() == visitor.relations().len();
+    log::debug!(target: "temp",
+        "{} {} {}: {} | {}: {} | {}: {}",
+        "Relations are unique?".log_header(),
+        if has_duplicate {
+            "Yes!".log_spring_green().bold()
+        } else {
+            "NOOOO".log_error()
+        },
+        "Unique".log_step(),
+        unique_rels.len().to_string().log_magenta_debug(),
+        "Total".log_step(),
+        visitor.relations().len().to_string().log_magenta_debug(),
+        "Difference".log_step(),
+        (visitor.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
+    );
+    let rel_map: HashMap<Relation, usize> =
+        visitor
+            .relations()
+            .iter()
+            .copied()
+            .fold(HashMap::new(), |mut hmap, r| {
+                match hmap.entry(r) {
+                    std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                        let existing_count = occupied_entry.get();
+                        occupied_entry.insert(existing_count + 1);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(1);
+                    }
+                };
+                hmap
+            });
+    for (rel, count) in rel_map {
+        if count > 1 {
+            log::debug!(target: "temp",
+                "{} | {}: {} -> {} ",
+                "Duplicate!".log_header(),
+                rel.source.to_string().log_id(),
+                rel.target.to_string().log_id(),
+                rel.kind.log_magenta_debug(),
+            );
+        }
+    }
+
+    for rel in visitor.relations() {
+        if !unique_rels.contains(rel) {
+            log::debug!(target: "temp",
+                "{} | {}: {} -> {} ",
+                "Unique!".log_header(),
+                rel.source.to_string().log_id(),
+                rel.target.to_string().log_id(),
+                rel.kind.log_magenta_debug(),
+            );
+        }
+    }
+}
     fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
         self.find_module_by_path(&["crate".to_string()])
             .ok_or(SynParserError::RootModuleNotFound)

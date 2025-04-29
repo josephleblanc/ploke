@@ -3,6 +3,7 @@ use super::attribute_processing::extract_cfg_strings;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
+use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::GraphId;
 use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ValueKind;
@@ -35,10 +36,19 @@ pub struct CodeVisitor<'a> {
 }
 
 const LOG_TARGET_TRACE: &str = "visitor_trace"; // Define log target for trace logs
+const LOG_TARGET_STACK_TRACE: &str = "stack_trace";
 
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
         Self { state }
+    }
+
+    pub(crate) fn validate_unique_rels(&self) -> bool {
+        self.state.code_graph.validate_unique_rels()
+    }
+
+    pub(crate) fn relations(&self) -> &[Relation] {
+        self.state.code_graph.relations()
     }
 
     // Helper method to extract path segments from a use tree
@@ -203,7 +213,7 @@ impl<'a> CodeVisitor<'a> {
                 })
                 .unwrap_or_else(|| "<None>".to_string());
 
-            trace!(target: LOG_TARGET_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
+            trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
                 current_mod.name.cyan(),
                 name.yellow(),
                 node_id.to_string().magenta(),
@@ -226,7 +236,7 @@ impl<'a> CodeVisitor<'a> {
     }
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_push(&self, stack_name: &str, stack: &[String]) {
-        trace!(target: LOG_TARGET_TRACE, "  [PUSH STACK] {}: {:?} -> {:?}",
+        trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH STACK] {}: {:?} -> {:?}",
             stack_name.blue(),
             stack.last().unwrap_or(&"<empty>".to_string()).green(),
             stack
@@ -235,7 +245,7 @@ impl<'a> CodeVisitor<'a> {
 
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_pop(&self, stack_name: &str, popped: Option<String>, stack: &[String]) {
-        trace!(target: LOG_TARGET_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
+        trace!(target: LOG_TARGET_STACK_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
             stack_name.blue(),
             popped.unwrap_or("<empty>".to_string()).red(),
             stack
@@ -460,13 +470,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let mut parameters = Vec::new();
             for arg in &func.sig.inputs {
                 if let Some(param) = self.state.process_fn_arg(arg) {
-                    // Add relation between function and parameter
-
-                    self.state.code_graph.relations.push(Relation {
-                        source: GraphId::Node(fn_id),
-                        target: GraphId::Type(param.type_id),
-                        kind: RelationKind::FunctionParameter,
-                    });
+                    // TODO: Consider whether we should be making these relationships here, if at
+                    // all.
+                    // self.state.code_graph.relations.push(Relation {
+                    //     source: GraphId::Node(fn_id),
+                    //     target: GraphId::Type(param.type_id),
+                    //     kind: RelationKind::FunctionParameter,
+                    // });
                     parameters.push(param);
                 }
             }
@@ -477,6 +487,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ReturnType::Type(_, ty) => {
                     let type_id = get_or_create_type(self.state, ty);
                     // Add relation between function and return type
+                    // TODO: Consider whether we should be making these relationships here, if at
+                    // all.
                     self.state.code_graph.relations.push(Relation {
                         source: GraphId::Node(fn_id),
                         target: GraphId::Type(type_id),
@@ -551,7 +563,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process fields
         let mut fields = Vec::new();
-        for field in &item_struct.fields {
+        for (i, field) in item_struct.fields.iter().enumerate() {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
 
             // --- CFG Handling for Field (Raw Strings) ---
@@ -569,7 +581,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field_in_{}", struct_name)),
+                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
                 ItemKind::Field,
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
@@ -741,7 +753,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process fields
         let mut fields = Vec::new();
-        for field in &item_union.fields.named {
+        for (i, field) in item_union.fields.named.iter().enumerate() {
             let field_name = field.ident.as_ref().map(|ident| ident.to_string());
 
             // --- CFG Handling for Field (Raw Strings) ---
@@ -759,7 +771,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let field_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field_in_{}", union_name)),
+                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
                 ItemKind::Field,
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
@@ -768,7 +780,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Now uses trace!
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("Unnamed field of {}", union_name.clone())),
+                    .unwrap_or_else(|| format!("Unnamed field{} of {}", i, union_name.clone())),
                 field_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
@@ -782,7 +794,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 cfgs: field_item_cfgs, // Store field's own cfgs
             };
 
-            // Add relation between union and field
             self.state.code_graph.relations.push(Relation {
                 source: GraphId::Node(union_id),
                 target: GraphId::Node(field_id),
