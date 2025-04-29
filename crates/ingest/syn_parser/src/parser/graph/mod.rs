@@ -445,9 +445,7 @@ fn debug_relationships(visitor: &Self) {
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     fn debug_print_all_visible(&self) {
-        // Removed #[cfg(feature = "verbose_debug")]
-        // { // Keep the block if needed for scope, or remove if unnecessary
-        // New implementation using NodeId enum
+        // New implementation using NodeId
         let mut all_ids: Vec<(&str, NodeId)> = vec![]; // Collect NodeId enum
         all_ids.extend(self.functions().iter().map(|n| (n.name(), n.id())));
         all_ids.extend(self.impls().iter().map(|n| (n.name(), n.id())));
@@ -476,11 +474,10 @@ fn debug_relationships(visitor: &Self) {
         let module_id = self
             .relations()
             .iter()
-            .find(|r| r.target == item_id && r.kind == RelationKind::Contains) // Compare target with GraphId::Node
+            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
             .map(|r| r.source); // Source should be module_id
 
         if let Some(mod_id) = module_id {
-            // Unwrap GraphId::Node
             // Get the module's path
             self.modules()
                 .iter()

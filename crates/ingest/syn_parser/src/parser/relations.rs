@@ -1,4 +1,3 @@
-use super::nodes::GraphId;
 use ploke_core::{NodeId, TypeId}; // Import NodeId and TypeId
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -37,8 +36,8 @@ pub enum NodeTypeRelationKind {
 /// Represents a structural or semantic relation *between two Nodes* in the code graph.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Relation {
-    pub source: NodeId, // Changed from GraphId
-    pub target: NodeId, // Changed from GraphId
+    pub source: NodeId,
+    pub target: NodeId,
 
     pub kind: RelationKind,
 }

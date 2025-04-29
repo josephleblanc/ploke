@@ -7,13 +7,11 @@
 ///   - `new(NodeId) -> Self`
 ///   - `into_inner(self) -> NodeId`
 ///   - `as_inner(&self) -> &NodeId`
-///   - `to_graph_id(self) -> GraphId`
 /// - `impl Display for StructName` (delegates to inner NodeId).
-/// - `impl TryFrom<GraphId> for StructName` (errors on GraphId::Type).
 ///
 /// # Usage
 /// ```ignore
-/// // Assuming NodeId, GraphId, NodeError, Serialize, Deserialize are in scope
+/// // Assuming NodeId, NodeError, Serialize, Deserialize are in scope
 /// define_node_id_wrapper!(MyNodeIdWrapper);
 /// ```
 #[macro_export]
@@ -49,7 +47,5 @@ macro_rules! define_node_id_wrapper {
                 write!(f, "{}", self.0)
             }
         }
-
-        // Removed TryFrom<GraphId> implementation
     };
 }

@@ -217,27 +217,11 @@ impl ModuleNodeId {
     pub fn as_inner(&self) -> &NodeId {
         &self.0
     }
-
-    /// Converts this ModuleNodeId into a GraphId::Node.
-    pub fn to_graph_id(self) -> GraphId {
-        GraphId::Node(self.0)
-    }
 }
 
 impl std::fmt::Display for ModuleNodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Delegate to the inner NodeId's Display implementation
         write!(f, "{}", self.0)
-    }
-}
-
-impl TryFrom<GraphId> for ModuleNodeId {
-    type Error = NodeError;
-
-    fn try_from(value: GraphId) -> Result<Self, Self::Error> {
-        match value {
-            GraphId::Node(id) => Ok(ModuleNodeId::new(id)),
-            GraphId::Type(id) => Err(NodeError::Conversion(id)),
-        }
     }
 }

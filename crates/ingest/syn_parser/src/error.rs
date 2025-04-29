@@ -88,8 +88,6 @@ pub enum SynParserError {
 
     #[error("Relation conversion error: {0}")]
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
-    #[error("Graph ID conversion error: {0}")]
-    GraphIdConversionError(String), // Store string representation
 
     /// Indicates that shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
@@ -293,10 +291,6 @@ impl From<NodeError> for SynParserError {
         match err {
             NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
             NodeError::Conversion(type_id) => SynParserError::TypeIdConversionError(type_id), // Keep existing
-            NodeError::GraphIdConversion(graph_id_err) => {
-                // Convert the GraphIdConversionError into a String for SynParserError
-                SynParserError::GraphIdConversionError(graph_id_err.to_string())
-            }
         }
     }
 }

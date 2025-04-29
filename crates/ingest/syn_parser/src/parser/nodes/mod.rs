@@ -20,7 +20,6 @@ use crate::{
     utils::{LogStyle, LogStyleDebug},
 };
 
-// Removed GraphId import from relations
 use super::types::VisibilityKind;
 use log::debug;
 use ploke_core::{ItemKind, NodeId, TypeId};
@@ -208,73 +207,6 @@ pub trait GraphNode {
     // Add others like VariantNode, FieldNode if they implement GraphNode directly
 }
 
-/// Represents either a Node or a Type in the graph context, used primarily in Relations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum GraphId {
-    Node(NodeId),
-    Type(TypeId),
-}
-
-impl GraphId {
-    /// Returns a reference to the inner `NodeId` if this is a `Node` variant.
-    pub fn as_node_ref(&self) -> Option<&NodeId> {
-        match self {
-            GraphId::Node(id) => Some(id),
-            GraphId::Type(_) => None,
-        }
-    }
-
-    /// Returns a reference to the inner `TypeId` if this is a `Type` variant.
-    pub fn as_type_ref(&self) -> Option<&TypeId> {
-        match self {
-            GraphId::Type(id) => Some(id),
-            _ => None,
-        }
-    }
-
-    /// Consumes the `GraphId` and returns the inner `NodeId` if it's a `Node` variant.
-    pub fn into_node(self) -> Option<NodeId> {
-        match self {
-            GraphId::Node(id) => Some(id),
-            GraphId::Type(_) => None,
-        }
-    }
-
-    /// Consumes the `GraphId` and returns the inner `TypeId` if it's a `Type` variant.
-    pub fn into_type(self) -> Option<TypeId> {
-        match self {
-            _ => None,
-            GraphId::Type(id) => Some(id),
-        }
-    }
-}
-
-impl std::fmt::Display for GraphId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            node_id => write!(f, "GraphID: {}", node_id),
-            GraphId::Type(type_id) => write!(f, "GraphID: {}", type_id),
-        }
-    }
-}
-
-/// Error during GraphId conversion.
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)] // GraphId is Copy, Eq
-pub enum GraphIdConversionError {
-    #[error("Expected GraphId::Node variant, but found Type variant: {0}")]
-    ExpectedNode(GraphId),
-    #[error("Expected GraphId::Type variant, but found Node variant: {0}")]
-    ExpectedType(GraphId),
-}
-
-// Removed TryInto<NodeId> for GraphId
-// Removed TryInto<TypeId> for GraphId
-
-impl From<NodeId> for GraphId {
-    fn from(node_id: NodeId) -> Self {
-        GraphId::Node(node_id)
-    }
-}
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
@@ -282,10 +214,9 @@ pub enum NodeError {
     #[error("Invalid node configuration: {0}")]
     Validation(String),
 
-    #[error("Invalid node converstion from GraphId::Type, must be GraphId::Node: {0}")]
+    #[error("Invalid node converstion from TypeId, expected NodeId: {0}")] // Updated error message
     Conversion(TypeId),
-    #[error("Graph ID conversion error: {0}")]
-    GraphIdConversion(#[from] GraphIdConversionError), // Add From conversion
+    // Removed GraphIdConversion variant
 }
 
 /// Full module path name,

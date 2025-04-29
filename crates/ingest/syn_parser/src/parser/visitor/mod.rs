@@ -15,7 +15,6 @@ pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
 use crate::{
-    parser::nodes::GraphId,
     utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD},
 };
 
@@ -202,7 +201,6 @@ pub fn analyze_file_phase2(
     #[cfg(feature = "validate")]
     assert!(&visitor.validate_unique_rels());
 
-    // 5. Add relations using GraphId wrappers
     // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
     // for module_id in module_ids {
     //     if module_id != root_module_id {
