@@ -302,12 +302,10 @@ impl<'a> CodeVisitor<'a> {
                         ModuleKind::Declaration { .. } => (),
                     }
                 }
-            }
-
-            // Create the relation using GraphId wrappers
+            // Create the relation using NodeId directly
             self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(parent_id), // Use the correctly found parent ID
-                target: GraphId::Node(node_id),   // Wrap new item ID
+                source: parent_id, // Use the correctly found parent ID
+                target: node_id,   // Use new item ID directly
                 kind: RelationKind::Contains,
             });
             // Removed #[cfg(feature = "verbose_debug")] block
@@ -470,7 +468,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let mut parameters = Vec::new();
             for arg in &func.sig.inputs {
                 if let Some(param) = self.state.process_fn_arg(arg) {
-                    // Moved return type logic to Phase 3. See ADR-011: Handling Function Parameter Type Relations
+                    // RelationKind::FunctionParameter removed. TypeId is stored in ParamData.
                     parameters.push(param);
                 }
             }
@@ -480,8 +478,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => {
                     let type_id = get_or_create_type(self.state, ty);
-                    // Moved return type logic to phase 3 to remain consistent with parameter
-                    // relation logic. See ADR-011: Handling Function Parameter Type Relations
+                    // RelationKind::FunctionReturn removed. TypeId is stored in FunctionNode.return_type.
                     Some(type_id)
                 }
             };
@@ -599,9 +596,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Add relation between struct and field
             self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(struct_id),
-                target: GraphId::Node(field_id),
-                kind: RelationKind::StructField,
+                source: struct_id, // Use NodeId directly
+                target: field_id,  // Use NodeId directly
+                kind: RelationKind::Field, // Use consolidated kind
             });
 
             fields.push(field_node);
@@ -933,9 +930,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         };
                         // Add relation between variant and named field
                         self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(variant_id),
-                            target: GraphId::Node(field_id),
-                            kind: RelationKind::VariantField,
+                            source: variant_id, // Use NodeId directly
+                            target: field_id,   // Use NodeId directly
+                            kind: RelationKind::Field, // Use consolidated kind
                         });
 
                         fields.push(field_node);
@@ -980,9 +977,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         };
                         // Add relation between variant and unnamed field
                         self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(variant_id),
-                            target: GraphId::Node(field_id),
-                            kind: RelationKind::VariantField,
+                            source: variant_id, // Use NodeId directly
+                            target: field_id,   // Use NodeId directly
+                            kind: RelationKind::Field, // Use consolidated kind
                         });
 
                         fields.push(field_node);
@@ -1014,8 +1011,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Add relation between enum and variant
             self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(enum_id),
-                target: GraphId::Node(variant_id),
+                source: enum_id,    // Use NodeId directly
+                target: variant_id, // Use NodeId directly
                 kind: RelationKind::EnumVariant,
             });
 
@@ -1158,12 +1155,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let mut parameters = Vec::new();
                 for arg in &method.sig.inputs {
                     if let Some(param) = self.state.process_fn_arg(arg) {
-                        // Add relation between method and parameter
-                        self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(method_node_id),
-                            target: GraphId::Type(param.type_id),
-                            kind: RelationKind::FunctionParameter,
-                        });
+                        // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
                         parameters.push(param);
                     }
                 }
@@ -1173,20 +1165,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ReturnType::Default => None,
                     ReturnType::Type(_, ty) => {
                         let type_id = get_or_create_type(self.state, ty);
-                        // Add relation between method and return type
-                        self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(method_node_id),
-                            target: GraphId::Type(type_id),
-                            kind: RelationKind::FunctionReturn,
-                        });
+                        // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
                         Some(type_id)
                     }
                 };
-                self.state.code_graph.relations.push(Relation {
-                    source: GraphId::Type(self_type_id), // The struct/enum type
-                    target: GraphId::Node(method_node_id),
-                    kind: RelationKind::Method,
-                });
+                // RelationKind::Method removed. Replaced by AssociatedItem below.
+
                 // Process generic parameters for methods
                 let generic_params = self.state.process_generics(&method.sig.generics);
 
@@ -1219,8 +1203,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     cfgs: method_item_cfgs, // Store method's own cfgs
                 };
 
+                // Add relation between impl block and method
+                self.state.code_graph.relations.push(Relation {
+                    source: impl_id,        // Use NodeId directly
+                    target: method_node_id, // Use NodeId directly
+                    kind: RelationKind::AssociatedItem,
+                });
+
                 methods.push(method_node);
             }
+            // TODO: Handle syn::ImplItem::Const and syn::ImplItem::Type here
+            // Create ConstNode/TypeAliasNode and add AssociatedItem relation
         }
 
         // Process generic parameters for impl block
@@ -1238,24 +1231,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         self.state.code_graph.impls.push(impl_node);
 
-        // Add relation: ImplementsFor or ImplementsTrait
-        let relation_kind = if trait_type_id.is_some() {
-            RelationKind::ImplementsTrait
-        } else {
-            RelationKind::ImplementsFor
-        };
-        self.state.code_graph.relations.push(Relation {
-            source: GraphId::Node(impl_id),
-            target: GraphId::Type(self_type_id),
-            kind: relation_kind,
-        });
-        if let Some(trait_type_id) = trait_type_id {
-            self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(impl_id),
-                target: GraphId::Type(trait_type_id),
-                kind: RelationKind::ImplementsTrait,
-            });
-        }
+        // RelationKind::ImplementsFor and RelationKind::ImplementsTrait removed.
+        // TypeIds are stored directly in ImplNode.
 
         // Continue visiting children (methods handled above, visit generics/where)
         // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
@@ -1327,12 +1304,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let mut parameters = Vec::new();
                 for arg in &method.sig.inputs {
                     if let Some(param) = self.state.process_fn_arg(arg) {
-                        // Add relation between method and parameter
-                        self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(method_node_id),
-                            target: GraphId::Type(param.type_id),
-                            kind: RelationKind::FunctionParameter,
-                        });
+                        // RelationKind::FunctionParameter removed. TypeId stored in ParamData.
                         parameters.push(param);
                     }
                 }
@@ -1342,12 +1314,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ReturnType::Default => None,
                     ReturnType::Type(_, ty) => {
                         let type_id = get_or_create_type(self.state, ty);
-                        // Add relation between method and return type
-                        self.state.code_graph.relations.push(Relation {
-                            source: GraphId::Node(method_node_id),
-                            target: GraphId::Type(type_id),
-                            kind: RelationKind::FunctionReturn,
-                        });
+                        // RelationKind::FunctionReturn removed. TypeId stored in FunctionNode.return_type.
                         Some(type_id)
                     }
                 };
@@ -1387,8 +1354,18 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ),
                     cfgs: method_item_cfgs, // Store method's own cfgs
                 };
+
+                // Add relation between trait and method definition
+                self.state.code_graph.relations.push(Relation {
+                    source: trait_id,       // Use NodeId directly
+                    target: method_node_id, // Use NodeId directly
+                    kind: RelationKind::AssociatedItem,
+                });
+
                 methods.push(method_node);
             }
+            // TODO: Handle syn::TraitItem::Const and syn::TraitItem::Type here
+            // Create ConstNode/TypeAliasNode and add AssociatedItem relation
         }
 
         // Push the trait's ID onto the scope stack BEFORE processing its generics/supertraits
@@ -1456,14 +1433,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.traits.push(trait_node);
         // }
 
-        // Add relation for super traits
-        for super_trait_id in &super_traits {
-            self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(trait_id),
-                target: GraphId::Type(*super_trait_id),
-                kind: RelationKind::Inherits,
-            });
-        }
+        // RelationKind::Inherits removed. TypeIds stored in TraitNode.super_traits.
 
         // Continue visiting children (methods handled above, visit generics/where/supertraits)
         // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
@@ -1622,8 +1592,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             for import in imports {
                 // Add module import relation
                 graph.relations.push(Relation {
-                    source: GraphId::Node(module_id),
-                    target: GraphId::Node(import.id),
+                    source: module_id, // Use NodeId directly
+                    target: import.id, // Use NodeId directly
                     kind: RelationKind::ModuleImports,
                 });
 
@@ -1709,11 +1679,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         self.state.code_graph.use_statements.push(import_node);
         self.state.code_graph.relations.push(Relation {
-            source: GraphId::Node(module_id),
-            target: GraphId::Node(import_id),
+            source: module_id, // Use NodeId directly
+            target: import_id, // Use NodeId directly
             kind: RelationKind::ModuleImports,
         });
 
+        // RelationKind::Uses removed. The TypeId generated here was not meaningful.
+        /*
         let type_id = {
             // 1. Construct a representative syn::Type for the external crate.
             //    Using just the crate name as the path is simplest.
@@ -1812,12 +1784,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the constant to the code graph
         self.state.code_graph.values.push(const_node);
 
-        // Add relation between constant and its type
-        self.state.code_graph.relations.push(Relation {
-            source: GraphId::Node(const_id),
-            target: GraphId::Type(type_id),
-            kind: RelationKind::ValueType,
-        });
+        // RelationKind::ValueType removed. TypeId stored in ValueNode.type_id.
 
         // add this state management if recursing into the children of the const node, which
         // should... only happen if we are parding `syn::Expr`?
@@ -1886,12 +1853,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the static to the code graph
         self.state.code_graph.values.push(static_node);
 
-        // Add relation between static and its type
-        self.state.code_graph.relations.push(Relation {
-            source: GraphId::Node(static_id),
-            target: GraphId::Type(type_id),
-            kind: RelationKind::ValueType,
-        });
+        // RelationKind::ValueType removed. TypeId stored in ValueNode.type_id.
 
         // Continue visiting
         // add this state management if recursing into the children of the const node, which
