@@ -37,58 +37,44 @@ pub enum NodeTypeRelationKind {
 /// Represents a structural or semantic relation *between two Nodes* in the code graph.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Relation {
-    pub source: GraphId,
-    pub target: GraphId,
+    pub source: NodeId, // Changed from GraphId
+    pub target: NodeId, // Changed from GraphId
 
     pub kind: RelationKind,
 }
 
 impl Relation {
-    /// Checks if the relation's source matches the given `GraphId`.
-    pub fn matches_source(&self, source_id: GraphId) -> bool {
+    /// Checks if the relation's source matches the given `NodeId`.
+    pub fn matches_source(&self, source_id: NodeId) -> bool {
         self.source == source_id
     }
 
-    /// Checks if the relation's source is a `Node` and matches the given `NodeId`.
-    pub fn matches_source_node(&self, node_id: ploke_core::NodeId) -> bool {
-        matches!(self.source, GraphId::Node(id) if id == node_id)
-    }
+    // Removed matches_source_node (redundant)
+    // Removed matches_source_type
 
-    /// Checks if the relation's source is a `Type` and matches the given `TypeId`.
-    pub fn matches_source_type(&self, type_id: ploke_core::TypeId) -> bool {
-        matches!(self.source, GraphId::Type(id) if id == type_id)
-    }
-
-    /// Checks if the relation's target matches the given `GraphId`.
-    pub fn matches_target(&self, target_id: GraphId) -> bool {
+    /// Checks if the relation's target matches the given `NodeId`.
+    pub fn matches_target(&self, target_id: NodeId) -> bool {
         self.target == target_id
     }
 
-    /// Checks if the relation's target is a `Node` and matches the given `NodeId`.
-    pub fn matches_target_node(&self, node_id: ploke_core::NodeId) -> bool {
-        matches!(self.target, GraphId::Node(id) if id == node_id)
-    }
-
-    /// Checks if the relation's target is a `Type` and matches the given `TypeId`.
-    pub fn matches_target_type(&self, type_id: ploke_core::TypeId) -> bool {
-        matches!(self.target, GraphId::Type(id) if id == type_id)
-    }
+    // Removed matches_target_node (redundant)
+    // Removed matches_target_type
 
     /// Checks if the relation's source and kind match the given values.
-    pub fn matches_source_and_kind(&self, source_id: GraphId, kind: RelationKind) -> bool {
+    pub fn matches_source_and_kind(&self, source_id: NodeId, kind: RelationKind) -> bool {
         self.source == source_id && self.kind == kind
     }
 
     /// Checks if the relation's target and kind match the given values.
-    pub fn matches_target_and_kind(&self, target_id: GraphId, kind: RelationKind) -> bool {
+    pub fn matches_target_and_kind(&self, target_id: NodeId, kind: RelationKind) -> bool {
         self.target == target_id && self.kind == kind
     }
 
     /// Checks if the relation's source, target, and kind match the given values.
     pub fn matches_source_target_kind(
         &self,
-        source_id: GraphId,
-        target_id: GraphId,
+        source_id: NodeId,
+        target_id: NodeId,
         kind: RelationKind,
     ) -> bool {
         self.source == source_id && self.target == target_id && self.kind == kind
@@ -124,21 +110,18 @@ pub enum RelationKind {
     // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
     // NOTE: all `use` and `pub use` included, not distinguished by relation
     ModuleImports,
-    // StructNode/EnumNode/UnionNode ----StructField/VariantField---> FieldNode (NodeId)
+    // StructNode/EnumNode/UnionNode ----Field---> FieldNode (NodeId)
     // Used for fields within structs, unions, and enum variants.
-    Field,
+    Field, // Consolidated StructField and VariantField
     // EnumNode ---------------EnumVariant-----------> VariantNode (NodeId)
     EnumVariant,
-    // ImplNode ---------------AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
-    // Represents items defined within an impl block (methods, associated types, consts).
-    AssociatedItem,
-    // TraitNode --------------AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
-    // Represents items defined within a trait definition.
-    // Note: Supertrait relationships (Trait -> TypeId) are handled by NodeTypeRelationKind::Inherits.
-    // TraitAssociatedItem, // Maybe differentiate from ImplAssociatedItem? For now, reuse.
+    // ImplNode/TraitNode -----AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
+    // Represents items defined within an impl or trait block (methods, associated types, consts).
+    AssociatedItem, // Consolidated Method, TraitAssociatedItem, ImplAssociatedItem
 
     // MacroUse, // Example: FunctionNode --MacroUse--> MacroNode
     // References, // Example: FunctionNode --References--> StructNode (if function body uses it)
+    // MacroExpansion, // Example: MacroInvocationNode --MacroExpansion--> GeneratedNode(s)
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
@@ -183,10 +166,7 @@ impl RelationKind {
 
     /// Checks if this relation kind relates to importing or exporting items.
     pub fn is_import_export_related(self) -> bool {
-        matches!(
-            self,
-            RelationKind::ModuleImports | RelationKind::ReExports // Removed Uses
-        )
+        matches!(self, RelationKind::ModuleImports | RelationKind::ReExports)
     }
 }
 
