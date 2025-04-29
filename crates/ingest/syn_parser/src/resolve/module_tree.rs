@@ -939,6 +939,7 @@ impl ModuleTree {
         let mut cycle_guard = 0;
         // 2. Traverse upwards until a file-based module is found
         loop {
+            cycle_guard += 1;
             if cycle_guard >= 100 {
                 return Err(ModuleTreeError::InternalState(format!(
                     "Detected cycle/self-loop for {}",
@@ -964,7 +965,8 @@ impl ModuleTree {
                 .ok_or_else(|| {
                     ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
                 })?; // Error if inline has no parent
-
+                     // AI: Let's add a validation check here to return an error if the source and target of
+                     // the node are the same. AI!
             current_mod_id = inline_parent_relations
                 .first()
                 .and_then(|tr| tr.relation().source.try_into().ok())
