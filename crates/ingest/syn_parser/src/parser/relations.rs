@@ -1,6 +1,7 @@
-use super::nodes::GraphId; // Import GraphId from its new location
+use super::nodes::GraphId;
+use ploke_core::{NodeId, TypeId}; // Import NodeId and TypeId
 use serde::{Deserialize, Serialize};
-use thiserror::Error; // Add thiserror import
+use thiserror::Error;
 
 // Define the new error type
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -9,8 +10,31 @@ pub enum RelationConversionError {
     NotApplicable(RelationKind),
 }
 
+/// Represents a relationship where a Node is linked to a Type.
+/// These are typically stored directly on the Node struct rather than as separate Relation entries.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NodeTypeRelationKind {
+    /// FunctionNode -----------FunctionParameter-----> TypeId of ParamNode
+    FunctionParameter,
+    /// FunctionNode -----------FunctionReturn--------> TypeId of return type
+    FunctionReturn,
+    /// ImplNode ---------------ImplementsFor---------> TypeId of `Self`
+    ImplementsFor,
+    /// ImplNode ---------------ImplementsTrait-------> TypeId of trait
+    ImplementsTrait,
+    /// ValueNode --------------ValueType-------------> TypeId of its own type
+    ValueType,
+    /// TraitNode --------------Inherits--------------> TypeId of supertrait
+    Inherits,
+    /// ImportNode (Extern) ----Uses------------------> TypeId (representing the crate type?)
+    /// TODO: Revisit if 'Uses' for extern crate makes sense or should be removed.
+    Uses,
+    /// TypeAliasNode ----------Aliases---------------> TypeId of the target type
+    Aliases, // Added for TypeAliasNode -> TypeId link
+}
+
 // ANCHOR: Relation
-// Represents a relation between nodes
+/// Represents a structural or semantic relation *between two Nodes* in the code graph.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Relation {
     pub source: GraphId,
@@ -95,35 +119,26 @@ pub enum RelationKind {
     //-----------------Defined in visit_item_* methods-----------------------
     //-----------------------------------------------------------------------
     // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
-    // (including modules)
+    // (including other modules, functions, types, etc.)
     Contains,
     // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
     // NOTE: all `use` and `pub use` included, not distinguished by relation
     ModuleImports,
-    // FunctionNode -----------FunctionParameter-----> TypeId of ParamNode
-    // FunctionNode (method) --FunctionParameter-----> TypeId of ParamNode
-    FunctionParameter,
-    // FunctionNode -----------FunctionReturn--------> TypeId of return type
-    FunctionReturn,
-    // StructNode/EnumNode ----StructField-----------> StructField (NodeId)
-    StructField,
-    // (TypeId of struct) -----Method----------------> FunctionNode (NodeId)
-    Method,
-    // EnumNode ---------------EnumVariant-----------> EnumVariant (NodeId)
+    // StructNode/EnumNode/UnionNode ----StructField/VariantField---> FieldNode (NodeId)
+    // Used for fields within structs, unions, and enum variants.
+    Field,
+    // EnumNode ---------------EnumVariant-----------> VariantNode (NodeId)
     EnumVariant,
-    // EnumNode ---------------VariantField----------> named/unnamed VariantNode (NodeId)
-    VariantField,
-    // ImplNode ---------------ImplementsFor---------> TypeId of `Self` (cannot be known at parse time)
-    ImplementsFor,
-    // ImplNode ---------------ImplementsTrait-------> TypeId of trait (cannot be known at parse time)
-    ImplementsTrait,
-    // ValueNode --------------ValueType-------------> TypeId of its own type
-    ValueType,
-    // ImportNode (Extern) ----Uses------------------> TypeId (honestly not sure about this one)
-    Uses,
-    Inherits,
-    // MacroUse,
-    // References, // Not currently used, possibly will use for tracking lifetimes later
+    // ImplNode ---------------AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
+    // Represents items defined within an impl block (methods, associated types, consts).
+    AssociatedItem,
+    // TraitNode --------------AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
+    // Represents items defined within a trait definition.
+    // Note: Supertrait relationships (Trait -> TypeId) are handled by NodeTypeRelationKind::Inherits.
+    // TraitAssociatedItem, // Maybe differentiate from ImplAssociatedItem? For now, reuse.
+
+    // MacroUse, // Example: FunctionNode --MacroUse--> MacroNode
+    // References, // Example: FunctionNode --References--> StructNode (if function body uses it)
     // MacroExpansion,
     // This is outside the scope of this project right now, but if it were to be implemented, it
     // would probably go here.
@@ -166,28 +181,11 @@ impl RelationKind {
         )
     }
 
-    /// Checks if this relation kind relates to type definitions, usage, or implementation.
-    pub fn is_type_related(self) -> bool {
-        matches!(
-            self,
-            RelationKind::FunctionParameter
-                | RelationKind::FunctionReturn
-                | RelationKind::StructField
-                | RelationKind::Method // Method is a function related to a type
-                | RelationKind::EnumVariant
-                | RelationKind::VariantField
-                | RelationKind::ImplementsFor
-                | RelationKind::ImplementsTrait
-                | RelationKind::ValueType
-                | RelationKind::Inherits // Assuming Inherits relates types
-        )
-    }
-
     /// Checks if this relation kind relates to importing or exporting items.
     pub fn is_import_export_related(self) -> bool {
         matches!(
             self,
-            RelationKind::ModuleImports | RelationKind::ReExports | RelationKind::Uses
+            RelationKind::ModuleImports | RelationKind::ReExports // Removed Uses
         )
     }
 }
@@ -210,23 +208,20 @@ impl TryInto<ScopeKind> for RelationKind {
 
     fn try_into(self) -> Result<ScopeKind, Self::Error> {
         match self {
+            // Relations that allow the target to be used directly in the source scope
             Self::Contains => Ok(ScopeKind::CanUse),
-            Self::Uses => Ok(ScopeKind::CanUse),
-            Self::ValueType => Ok(ScopeKind::CanUse),
             Self::ModuleImports => Ok(ScopeKind::CanUse),
             Self::ReExports => Ok(ScopeKind::CanUse),
-            Self::FunctionParameter => Ok(ScopeKind::RequiresParent),
-            Self::FunctionReturn => Ok(ScopeKind::RequiresParent),
-            Self::StructField => Ok(ScopeKind::RequiresParent),
-            Self::Method => Ok(ScopeKind::RequiresParent),
-            Self::EnumVariant => Ok(ScopeKind::RequiresParent),
-            Self::VariantField => Ok(ScopeKind::RequiresParent),
-            Self::ImplementsFor => Err(RelationConversionError::NotApplicable(self)),
-            Self::ImplementsTrait => Err(RelationConversionError::NotApplicable(self)),
+            Self::CustomPath => Ok(ScopeKind::CanUse), // Module linked via path is usable
+
+            // Relations where the target requires the source as a parent/qualifier
+            Self::Field => Ok(ScopeKind::RequiresParent), // e.g., my_struct.field
+            Self::EnumVariant => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant
+            Self::AssociatedItem => Ok(ScopeKind::RequiresParent), // e.g., MyType::assoc_fn()
+
+            // Relations that don't fit the ScopeKind model
             Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
             Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
-            Self::Inherits => Err(RelationConversionError::NotApplicable(self)),
-            Self::CustomPath => Ok(ScopeKind::CanUse), // TODO: Revisit this one, not sure.
         }
     }
 }
