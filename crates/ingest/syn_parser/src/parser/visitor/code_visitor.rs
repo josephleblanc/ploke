@@ -780,9 +780,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
 
             self.state.code_graph.relations.push(Relation {
-                source: GraphId::Node(union_id),
-                target: GraphId::Node(field_id),
-                kind: RelationKind::StructField, // Reuse StructField relation for union fields
+                source: union_id, // Use NodeId directly
+                target: field_id, // Use NodeId directly
+                kind: RelationKind::Field, // Use consolidated kind
             });
 
             fields.push(field_node);
@@ -1705,17 +1705,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             get_or_create_type(self.state, &syn_type)
         };
 
-        // --- Relation Creation ---
-        // TODO: Remove this relation
-        // I did not really understand that an `extern crate some_crate` statement actually worked
-        // on the entire crate namespace itself, and cannot be specific enough to import a type
-        // directly. Therefore, the `TypeId` generation doesn't make sense here. `TypeId` is
-        // reserved for actual types.
-        self.state.code_graph.relations.push(Relation {
-            source: GraphId::Node(import_id),
-            target: GraphId::Type(type_id), // type_id is now guaranteed to be registered
-            kind: RelationKind::Uses,
-        });
+        // RelationKind::Uses removed. The TypeId generated here was not meaningful.
 
         // Continue visiting
         visit::visit_item_extern_crate(self, extern_crate);
