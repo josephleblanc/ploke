@@ -12,6 +12,7 @@ mod value;
 
 use std::fmt::Display;
 use std::iter::{Flatten, Map};
+use std::marker::PhantomData;
 use std::{borrow::Borrow, io::Chain};
 
 use crate::{
@@ -42,6 +43,9 @@ pub use value::{ValueKind, ValueNode};
 
 // ----- utility macro -----
 // Differentiators for primary id types
+// We don't actualy use these anywhere yet. You can see that `ModuleNodeId` is commented out
+// because there is a separate implementation of that. We started using ModuleNodeId during the
+// creation of the ModuleTree.
 use crate::define_node_id_wrapper;
 define_node_id_wrapper!(EnumNodeId);
 define_node_id_wrapper!(FunctionNodeId);
@@ -53,6 +57,7 @@ define_node_id_wrapper!(TraitNodeId);
 define_node_id_wrapper!(TypeAliasNodeId);
 define_node_id_wrapper!(UnionNodeId);
 define_node_id_wrapper!(ValueNodeId);
+// AI: Implement the remaining required ids AI!
 
 // For more explicit differntiation within Phase 3 module tree processing
 define_node_id_wrapper!(ReexportNodeId);
@@ -217,8 +222,8 @@ impl GraphId {
     /// Returns a reference to the inner `TypeId` if this is a `Type` variant.
     pub fn as_type_ref(&self) -> Option<&TypeId> {
         match self {
-            GraphId::Node(_) => None,
             GraphId::Type(id) => Some(id),
+            _ => None,
         }
     }
 
@@ -233,7 +238,7 @@ impl GraphId {
     /// Consumes the `GraphId` and returns the inner `TypeId` if it's a `Type` variant.
     pub fn into_type(self) -> Option<TypeId> {
         match self {
-            GraphId::Node(_) => None,
+            _ => None,
             GraphId::Type(id) => Some(id),
         }
     }
@@ -242,7 +247,7 @@ impl GraphId {
 impl std::fmt::Display for GraphId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GraphId::Node(node_id) => write!(f, "GraphID: {}", node_id),
+            node_id => write!(f, "GraphID: {}", node_id),
             GraphId::Type(type_id) => write!(f, "GraphID: {}", type_id),
         }
     }
