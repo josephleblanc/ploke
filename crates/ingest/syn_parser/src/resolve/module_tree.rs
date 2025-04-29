@@ -95,14 +95,14 @@ pub struct ModuleTree {
     /// Wrapped in `Option` to allow taking ownership via `take()` during processing.
     pending_path_attrs: Option<Vec<ModuleNodeId>>,
 
-    /// Index mapping a source `GraphId` (Node or Type) to a list of indices
+    /// Index mapping a source `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the source.
     /// Used for efficient lookup of outgoing relations.
-    relations_by_source: HashMap<GraphId, Vec<usize>>,
-    /// Index mapping a target `GraphId` (Node or Type) to a list of indices
+    relations_by_source: HashMap<NodeId, Vec<usize>>, // Changed key from GraphId
+    /// Index mapping a target `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the target.
     /// Used for efficient lookup of incoming relations.
-    relations_by_target: HashMap<GraphId, Vec<usize>>,
+    relations_by_target: HashMap<NodeId, Vec<usize>>, // Changed key from GraphId
 }
 
 /// Indicates a file-level module whose path has been resolved from a declaration that has the
@@ -613,7 +613,7 @@ impl ModuleTree {
     /// if the relation should be included in the results.
     ///
     /// # Arguments
-    /// * `source_id`: The GraphId of the source node.
+    /// * `source_id`: The NodeId of the source node.
     /// * `relation_filter`: A closure `Fn(&Relation) -> bool` used to filter relations.
     ///
     /// # Returns
@@ -624,11 +624,11 @@ impl ModuleTree {
     /// number of relations originating from `source_id`.
     pub fn get_relations_from<F>(
         &self,
-        source_id: &GraphId,
+        source_id: &NodeId, // Changed from &GraphId
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
-        F: Fn(&TreeRelation) -> bool, // Closure takes &Relation, returns bool
+        F: Fn(&TreeRelation) -> bool, // Closure takes &TreeRelation, returns bool
     {
         self.relations_by_source.get(source_id).map(|indices| {
             // If source_id not in map, return empty
@@ -645,7 +645,7 @@ impl ModuleTree {
     }
     pub fn get_iter_relations_from<'a>(
         &'a self,
-        source_id: &GraphId,
+        source_id: &NodeId, // Changed from &GraphId
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
         self.relations_by_source.get(source_id).map(|indices| {
@@ -659,7 +659,7 @@ impl ModuleTree {
         })
     }
 
-    pub fn get_all_relations_from(&self, source_id: &GraphId) -> Option<Vec<&TreeRelation>> {
+    pub fn get_all_relations_from(&self, source_id: &NodeId) -> Option<Vec<&TreeRelation>> { // Changed from &GraphId
         self.relations_by_source.get(source_id).map(|indices| {
             // If source_id not in map, return empty
             indices
@@ -678,7 +678,7 @@ impl ModuleTree {
     /// (Doc comments similar to get_relations_from)
     pub fn get_relations_to<F>(
         &self,
-        target_id: &GraphId,
+        target_id: &NodeId, // Changed from &GraphId
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
@@ -695,8 +695,8 @@ impl ModuleTree {
                 .collect()
         })
     }
-    pub fn get_all_relations_to(&self, source_id: &GraphId) -> Option<Vec<&TreeRelation>> {
-        self.relations_by_target.get(source_id).map(|indices| {
+    pub fn get_all_relations_to(&self, target_id: &NodeId) -> Option<Vec<&TreeRelation>> { // Changed from &GraphId, renamed param
+        self.relations_by_target.get(target_id).map(|indices| {
             // If source_id not in map, return empty
             indices
                 .iter()
@@ -707,10 +707,10 @@ impl ModuleTree {
 
     pub fn get_iter_relations_to<'a>(
         &'a self,
-        source_id: &GraphId,
+        target_id: &NodeId, // Changed from &GraphId, renamed param
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_source.get(source_id).map(|indices| {
+        self.relations_by_target.get(target_id).map(|indices| { // Use relations_by_target
             // If source_id not in map, return empty
             indices.iter().filter_map(|&index| {
                 self.tree_relations
@@ -723,13 +723,13 @@ impl ModuleTree {
 
     pub fn get_containing_mod_checked(
         &self,
-        target: &GraphId, // the child whose container we are searching for
+        target_node_id: &NodeId, // Changed from &GraphId
     ) -> Result<TreeRelation, ModuleTreeError> {
-        let node_id = (*target).try_into()?;
+        // let node_id = (*target).try_into()?; // No longer needed, input is NodeId
         let contains_relation = self
-            .relations_by_source // relations source -> target
-            .get(target)
-            .map(|indicies| {
+            .relations_by_target // Use target index: parent(source) -> child(target)
+            .get(target_node_id)
+            .and_then(|indicies| { // Use and_then to chain Option
                 let mut relations = indicies.iter().filter_map(|&index| {
                     self.tree_relations
                         .get(index)
@@ -737,28 +737,27 @@ impl ModuleTree {
                 });
                 let first = relations
                     .next()
-                    .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id));
+                    .ok_or(ModuleTreeError::ContainingModuleNotFound(*target_node_id));
                 if let Some(dup) = relations.next() {
                     self.log_relation(*dup.relation(), None);
-                    // self.log_relation_verbose(*dup.relation());
                     return Err(ModuleTreeError::DuplicateContains(*dup));
                 }
                 first
             })
-            .unwrap_or(Err(ModuleTreeError::NoRelationsFoundForId(node_id)));
-        contains_relation.copied()
+            .unwrap_or(Err(ModuleTreeError::NoRelationsFoundForId(*target_node_id))); // Use target_node_id
+        contains_relation.copied() // Copy the found TreeRelation
     }
 
     /// Adds a relation to the tree without checking if the source/target nodes exist.
     pub fn add_relation(&mut self, tr: TreeRelation) {
-        // TODO: Optionally check if source/target nodes exist in self.nodes first?
         let new_index = self.tree_relations.len();
-        let source_id = tr.relation().source;
-        let target_id = tr.relation().target;
+        let relation = tr.relation(); // Get the inner Relation
+        let source_id = relation.source; // Now NodeId
+        let target_id = relation.target; // Now NodeId
 
         self.tree_relations.push(tr);
 
-        // Update indices
+        // Update indices using NodeId keys
         self.relations_by_source
             .entry(source_id)
             .or_default()
@@ -774,30 +773,26 @@ impl ModuleTree {
     /// Returns `ModuleTreeError::ModuleNotFound` if a check fails.
     pub fn add_relation_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
         let relation = tr.relation();
-        let source_id = relation.source;
-        let target_id = relation.target;
+        let source_id = relation.source; // Now NodeId
+        let target_id = relation.target; // Now NodeId
 
-        // Check source node if it's a NodeId
-        if let GraphId::Node(node_id) = source_id {
-            let mod_id = ModuleNodeId::new(node_id);
-            if !self.modules.contains_key(&mod_id) {
-                return Err(ModuleTreeError::ModuleNotFound(mod_id));
-            }
+        // Check source node
+        let source_mod_id = ModuleNodeId::new(source_id);
+        if !self.modules.contains_key(&source_mod_id) {
+            return Err(ModuleTreeError::ModuleNotFound(source_mod_id));
         }
 
-        // Check target node if it's a NodeId
-        if let GraphId::Node(node_id) = target_id {
-            let mod_id = ModuleNodeId::new(node_id);
-            if !self.modules.contains_key(&mod_id) {
-                return Err(ModuleTreeError::ModuleNotFound(mod_id));
-            }
+        // Check target node
+        let target_mod_id = ModuleNodeId::new(target_id);
+        if !self.modules.contains_key(&target_mod_id) {
+            return Err(ModuleTreeError::ModuleNotFound(target_mod_id));
         }
 
         // Checks passed, add the relation using the unchecked method's logic
         let new_index = self.tree_relations.len();
         self.tree_relations.push(tr);
 
-        // Update indices
+        // Update indices using NodeId keys
         self.relations_by_source
             .entry(source_id)
             .or_default()
@@ -848,10 +843,10 @@ impl ModuleTree {
         for relation in relations_iter {
             // Convert to TreeRelation (cheap wrapper)
             let tr = TreeRelation::new(relation);
-            let source_id = tr.relation().source;
-            let target_id = tr.relation().target;
+            let source_id = tr.relation().source; // Now NodeId
+            let target_id = tr.relation().target; // Now NodeId
 
-            // Update the source index HashMap
+            // Update the source index HashMap using NodeId key
             // entry().or_default() gets the Vec<usize> for the source_id,
             // creating it if it doesn't exist, then pushes the current_index.
             self.relations_by_source
@@ -859,7 +854,7 @@ impl ModuleTree {
                 .or_default()
                 .push(current_index);
 
-            // Update the target index HashMap similarly
+            // Update the target index HashMap similarly using NodeId key
             self.relations_by_target
                 .entry(target_id)
                 .or_default()
@@ -923,18 +918,17 @@ impl ModuleTree {
         &self,
         node_id: NodeId,
     ) -> Result<&Path, ModuleTreeError> {
-        let graph_id = GraphId::Node(node_id);
+        // let graph_id = GraphId::Node(node_id); // No longer needed
 
-        // 1. Find the immediate parent module ID
+        // 1. Find the immediate parent module ID using NodeId
         let parent_relations = self
-            .get_relations_to(&graph_id, |tr| tr.relation().kind == RelationKind::Contains)
+            .get_relations_to(&node_id, |tr| tr.relation().kind == RelationKind::Contains)
             .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error
 
         let mut current_mod_id = parent_relations
             .first()
-            .and_then(|tr| tr.relation().source.try_into().ok()) // Convert GraphId to NodeId
-            .map(ModuleNodeId::new)
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if conversion fails
+            .map(|tr| ModuleNodeId::new(tr.relation().source)) // Source is NodeId
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if relation missing
 
         let mut cycle_guard = 0;
         // 2. Traverse upwards until a file-based module is found
@@ -957,9 +951,9 @@ impl ModuleTree {
                 return Ok(file_path);
             }
 
-            // 4. If inline, find *its* parent module ID
+            // 4. If inline, find *its* parent module ID using NodeId
             let inline_parent_relations = self
-                .get_relations_to(&current_mod_id.to_graph_id(), |tr| {
+                .get_relations_to(current_mod_id.as_inner(), |tr| { // Use inner NodeId
                     tr.relation().kind == RelationKind::Contains
                 })
                 .ok_or_else(|| {
@@ -969,12 +963,11 @@ impl ModuleTree {
             // Extract the potential parent ID *before* reassigning current_mod_id
             let potential_parent_mod_id = inline_parent_relations
                 .first()
-                .and_then(|tr| tr.relation().source.try_into().ok()) // Convert GraphId to NodeId
-                .map(ModuleNodeId::new) // Wrap in ModuleNodeId
+                .map(|tr| ModuleNodeId::new(tr.relation().source)) // Source is NodeId
                 .ok_or_else(|| {
-                    // Error if the relation source isn't a valid NodeId or relation is missing
+                    // Error if the relation is missing
                     ModuleTreeError::InternalState(format!(
-                        "Invalid or missing source GraphId in Contains relation for target {}",
+                        "Missing Contains relation for target {}",
                         current_mod_id
                     ))
                 })?;
@@ -1035,12 +1028,12 @@ impl ModuleTree {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Node is root, returning root file: {}", "✓".log_green(), self.root_file.display().log_path_debug());
             return Ok(&self.root_file);
         }
-        let child_node_gid = node_id.into();
-        let container_mod_gid = self
-            .get_containing_mod_checked(&child_node_gid)
-            .map(|r| r.relation().source)?;
+        // let child_node_gid = node_id.into(); // No longer needed
+        let container_mod_id_nodeid = self
+            .get_containing_mod_checked(&node_id) // Use NodeId directly
+            .map(|r| r.relation().source)?; // Source is NodeId
 
-        let container_mod_id_nodeid = container_mod_gid.try_into()?;
+        // let container_mod_id_nodeid = container_mod_gid.try_into()?; // No longer needed
         // *** ADD THIS CHECK ***
         if container_mod_id_nodeid == node_id {
             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Found self-containment loop for node {}", "✗".log_error(), node_id.to_string().log_id());
@@ -1054,8 +1047,8 @@ impl ModuleTree {
         let container_mod_id = ModuleNodeId::new(container_mod_id_nodeid);
         let file_mod = self.get_module_checked(&container_mod_id)?;
 
-        let container_mod_id = container_mod_gid.try_into()?;
-        let file_mod = self.get_module_checked(&container_mod_id)?;
+        // let container_mod_id = container_mod_gid.try_into()?; // Already have container_mod_id
+        // let file_mod = self.get_module_checked(&container_mod_id)?; // Already have file_mod
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  {} Found container module: {} ({})", "->".log_comment(), file_mod.name.log_name(), container_mod_id.to_string().log_id());
 
@@ -2697,9 +2690,9 @@ impl ModuleTree {
                 continue;
             }
 
-            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to
+            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with NodeId
             let is_linked = self
-                .get_relations_to(&mod_id.to_graph_id(), |tr| {
+                .get_relations_to(mod_id.as_inner(), |tr| { // Use inner NodeId
                     matches!(
                         tr.relation().kind,
                         RelationKind::ResolvesToDefinition | RelationKind::CustomPath
@@ -2729,15 +2722,14 @@ impl ModuleTree {
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Recursively finding items contained within unlinked modules...");
         while let Some(current_id) = queue.pop_front() {
-            // Find items directly contained by the current node
-            if let Some(contained_relations) =
-                self.get_all_relations_from(&GraphId::Node(current_id))
-            {
+            // Find items directly contained by the current node using NodeId
+            if let Some(contained_relations) = self.get_all_relations_from(&current_id) {
                 for rel in contained_relations {
-                    if let GraphId::Node(target_id) = rel.relation().target {
-                        // If this target item is newly discovered as prunable...
-                        if all_prunable_item_ids.insert(target_id) {
-                            // ...add it to the queue to explore its contents
+                    // Relation target is already NodeId
+                    let target_id = rel.relation().target;
+                    // If this target item is newly discovered as prunable...
+                    if all_prunable_item_ids.insert(target_id) {
+                        // ...add it to the queue to explore its contents
                             // (Important if it's an inline module defined within the unlinked file)
                             queue.push_back(target_id);
                         }
@@ -2752,14 +2744,9 @@ impl ModuleTree {
         let mut relations_to_prune_indices = HashSet::new();
         for (index, tr) in self.tree_relations.iter().enumerate() {
             let rel = tr.relation();
-            let source_is_pruned = match rel.source {
-                GraphId::Node(id) => all_prunable_item_ids.contains(&id),
-                GraphId::Type(_) => false, // Don't prune based on type IDs for now
-            };
-            let target_is_pruned = match rel.target {
-                GraphId::Node(id) => all_prunable_item_ids.contains(&id),
-                GraphId::Type(_) => false,
-            };
+            // Relation source and target are now NodeId
+            let source_is_pruned = all_prunable_item_ids.contains(&rel.source);
+            let target_is_pruned = all_prunable_item_ids.contains(&rel.target);
 
             if source_is_pruned || target_is_pruned {
                 relations_to_prune_indices.insert(index);
@@ -2819,12 +2806,13 @@ impl ModuleTree {
         self.relations_by_target.clear();
         // Iterate over the *filtered* tree_relations
         for (index, tr) in self.tree_relations.iter().enumerate() {
+            // Use NodeId keys for indices
             self.relations_by_source
-                .entry(tr.relation().source)
+                .entry(tr.relation().source) // Use NodeId directly
                 .or_default()
                 .push(index);
             self.relations_by_target
-                .entry(tr.relation().target)
+                .entry(tr.relation().target) // Use NodeId directly
                 .or_default()
                 .push(index);
         }
@@ -2997,6 +2985,7 @@ impl ModuleTree {
     }
 
     /// Logs detailed information about a GraphId (Node or Type) for debugging.
+    /// Note: This might become less useful as GraphId usage decreases.
     fn log_graph_id_verbose(&self, graph_id: GraphId) {
         match graph_id {
             GraphId::Node(node_id) => self.log_node_id_verbose(node_id),
@@ -3052,22 +3041,18 @@ impl ModuleTree {
             }
         }
 
-        // Log relations FROM this node
-        if let Some(relations_from) = self.get_all_relations_from(&graph_id) {
+        // Log relations FROM this node using NodeId
+        if let Some(relations_from) = self.get_all_relations_from(&node_id) {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
             for rel_ref in relations_from {
-                let target_id_str = match rel_ref.relation().target {
-                    GraphId::Node(id) => id.to_string().log_id(),
-                    GraphId::Type(id) => format!("Type({})", id).log_id(),
-                };
+                // Target is always NodeId now
+                let target_id = rel_ref.relation().target;
+                let target_id_str = target_id.to_string().log_id();
                 // Try to get target name if it's a module
-                let target_name = match rel_ref.relation().target {
-                    GraphId::Node(id) => self
-                        .modules
-                        .get(&ModuleNodeId::new(id))
-                        .map(|m| m.name.as_str()),
-                    _ => None,
-                };
+                let target_name = self
+                    .modules
+                    .get(&ModuleNodeId::new(target_id))
+                    .map(|m| m.name.as_str());
                 let target_display = target_name
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| target_id_str.to_string());
@@ -3078,22 +3063,18 @@ impl ModuleTree {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
         }
 
-        // Log relations TO this node
-        if let Some(relations_to) = self.get_all_relations_to(&graph_id) {
+        // Log relations TO this node using NodeId
+        if let Some(relations_to) = self.get_all_relations_to(&node_id) {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
             for rel_ref in relations_to {
-                let source_id_str = match rel_ref.relation().source {
-                    GraphId::Node(id) => id.to_string().log_id(),
-                    GraphId::Type(id) => format!("Type({})", id).log_id(),
-                };
+                // Source is always NodeId now
+                let source_id = rel_ref.relation().source;
+                let source_id_str = source_id.to_string().log_id();
                 // Try to get source name if it's a module
-                let source_name = match rel_ref.relation().source {
-                    GraphId::Node(id) => self
-                        .modules
-                        .get(&ModuleNodeId::new(id))
-                        .map(|m| m.name.as_str()),
-                    _ => None,
-                };
+                let source_name = self
+                    .modules
+                    .get(&ModuleNodeId::new(source_id))
+                    .map(|m| m.name.as_str());
                 let source_display = source_name
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| source_id_str.to_string());
