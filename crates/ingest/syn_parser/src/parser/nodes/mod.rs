@@ -57,7 +57,12 @@ define_node_id_wrapper!(TraitNodeId);
 define_node_id_wrapper!(TypeAliasNodeId);
 define_node_id_wrapper!(UnionNodeId);
 define_node_id_wrapper!(ValueNodeId);
-// AI: Implement the remaining required ids AI!
+define_node_id_wrapper!(FieldNodeId);
+define_node_id_wrapper!(VariantNodeId);
+define_node_id_wrapper!(ParamNodeId); // For ParamData
+define_node_id_wrapper!(GenericParamNodeId);
+define_node_id_wrapper!(MacroNodeId);
+
 
 // For more explicit differntiation within Phase 3 module tree processing
 define_node_id_wrapper!(ReexportNodeId);

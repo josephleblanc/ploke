@@ -59,5 +59,3 @@ macro_rules! define_node_id_wrapper {
         // Removed TryFrom<GraphId> implementation
     };
 }
-
-// AI:
