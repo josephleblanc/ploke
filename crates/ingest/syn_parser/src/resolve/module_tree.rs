@@ -965,11 +965,36 @@ impl ModuleTree {
                 .ok_or_else(|| {
                     ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
                 })?; // Error if inline has no parent
-                     // AI: Let's add a validation check here to return an error if the source and target of
-                     // the node are the same. AI!
-            current_mod_id = inline_parent_relations
+
+            // Extract the potential parent ID *before* reassigning current_mod_id
+            let potential_parent_mod_id = inline_parent_relations
                 .first()
                 .and_then(|tr| tr.relation().source.try_into().ok())
+                .map(ModuleNodeId::new)
+                .ok_or_else(|| {
+                    // Error if the relation source isn't a valid NodeId
+                    ModuleTreeError::InternalState(format!(
+                        "Invalid source GraphId in Contains relation for target {}",
+                        current_mod_id
+                    ))
+                })?;
+
+            // Check for self-containment loop
+            if potential_parent_mod_id == current_mod_id {
+                log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Found self-containment loop for module {}", "✗".log_error(), current_mod_id.to_string().log_id());
+                return Err(ModuleTreeError::InternalState(format!(
+                    "Detected self-containment loop for module {}",
+                    current_mod_id
+                )));
+            }
+
+            // Assign the validated parent ID
+            current_mod_id = potential_parent_mod_id;
+
+            // Original code to get the ID again (now redundant, but kept for structure match)
+            // current_mod_id = inline_parent_relations
+            //     .first()
+            //     .and_then(|tr| tr.relation().source.try_into().ok())
                 .map(ModuleNodeId::new)
                 .ok_or_else(|| {
                     ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
