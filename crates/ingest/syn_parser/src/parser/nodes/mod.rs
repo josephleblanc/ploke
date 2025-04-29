@@ -257,27 +257,8 @@ pub enum GraphIdConversionError {
     ExpectedType(GraphId),
 }
 
-impl TryInto<NodeId> for GraphId {
-    type Error = GraphIdConversionError;
-
-    fn try_into(self) -> Result<NodeId, Self::Error> {
-        match self {
-            GraphId::Node(id) => Ok(id),
-            GraphId::Type(_) => Err(GraphIdConversionError::ExpectedNode(self)),
-        }
-    }
-}
-
-impl TryInto<TypeId> for GraphId {
-    type Error = GraphIdConversionError;
-
-    fn try_into(self) -> Result<TypeId, Self::Error> {
-        match self {
-            GraphId::Node(_) => Err(GraphIdConversionError::ExpectedType(self)),
-            GraphId::Type(id) => Ok(id),
-        }
-    }
-}
+// Removed TryInto<NodeId> for GraphId
+// Removed TryInto<TypeId> for GraphId
 
 impl From<NodeId> for GraphId {
     fn from(node_id: NodeId) -> Self {

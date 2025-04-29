@@ -56,16 +56,6 @@ macro_rules! define_node_id_wrapper {
             }
         }
 
-        impl TryFrom<GraphId> for $NewTypeId {
-            type Error = NodeError; // Assumes NodeError is in scope
-
-            fn try_from(value: GraphId) -> Result<Self, Self::Error> {
-                match value {
-                    GraphId::Node(id) => Ok($NewTypeId::new(id)),
-                    // Assumes NodeError has a variant suitable for this conversion error
-                    GraphId::Type(type_id) => Err(NodeError::Conversion(type_id)),
-                }
-            }
-        }
+        // Removed TryFrom<GraphId> implementation
     };
 }
