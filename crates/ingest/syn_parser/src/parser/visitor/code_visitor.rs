@@ -4,7 +4,6 @@ use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
 use crate::parser::graph::GraphAccess;
-use crate::parser::nodes::GraphId;
 use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ValueKind;
 use crate::parser::nodes::ValueNode;
@@ -266,7 +265,7 @@ impl<'a> CodeVisitor<'a> {
             .state
             .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
 
-        // 2. Add the Contains relation using the new ID and GraphId wrapper
+        // 2. Add the Contains relation using the new NodeId.
         // Find the parent module based on the *current path*, not just the last pushed module.
         let parent_module_id = self
             .state
