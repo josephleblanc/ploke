@@ -676,6 +676,10 @@ fn test_value_node_field_attributes_single() {
 //  - // Maybe check specific args for one of them
 #[test]
 fn test_value_node_field_attributes_multiple() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     // Target: doc_attr_const (#[deprecated(...)], #[allow(...)])
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()

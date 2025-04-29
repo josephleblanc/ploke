@@ -72,9 +72,6 @@ impl Relation {
 }
 
 // Different kinds of relations
-// TODO: These relations really need to be refactored. We are not taking advantage of type safety
-// very well here, and the RelationKind can currently be between any two nodes of any type or
-// TypeId, which is just bad.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RelationKind {
     //-----------------------------------------------------------------------

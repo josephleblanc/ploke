@@ -470,13 +470,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let mut parameters = Vec::new();
             for arg in &func.sig.inputs {
                 if let Some(param) = self.state.process_fn_arg(arg) {
-                    // TODO: Consider whether we should be making these relationships here, if at
-                    // all.
-                    // self.state.code_graph.relations.push(Relation {
-                    //     source: GraphId::Node(fn_id),
-                    //     target: GraphId::Type(param.type_id),
-                    //     kind: RelationKind::FunctionParameter,
-                    // });
+                    // Moved return type logic to Phase 3. See ADR-011: Handling Function Parameter Type Relations
                     parameters.push(param);
                 }
             }
@@ -486,14 +480,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => {
                     let type_id = get_or_create_type(self.state, ty);
-                    // Add relation between function and return type
-                    // TODO: Consider whether we should be making these relationships here, if at
-                    // all.
-                    self.state.code_graph.relations.push(Relation {
-                        source: GraphId::Node(fn_id),
-                        target: GraphId::Type(type_id),
-                        kind: RelationKind::FunctionReturn,
-                    });
+                    // Moved return type logic to phase 3 to remain consistent with parameter
+                    // relation logic. See ADR-011: Handling Function Parameter Type Relations
                     Some(type_id)
                 }
             };
