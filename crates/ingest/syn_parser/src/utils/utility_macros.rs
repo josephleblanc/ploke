@@ -41,12 +41,6 @@ macro_rules! define_node_id_wrapper {
             pub fn as_inner(&self) -> &NodeId {
                 &self.0
             }
-
-            /// Converts this ID into a GraphId::Node.
-            #[inline]
-            pub fn to_graph_id(self) -> GraphId {
-                GraphId::Node(self.0)
-            }
         }
 
         impl std::fmt::Display for $NewTypeId {

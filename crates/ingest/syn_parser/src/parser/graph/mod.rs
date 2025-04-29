@@ -9,6 +9,7 @@ pub use code_graph::CodeGraph;
 use colored::Colorize;
 use log::{debug, trace};
 pub use parsed_graph::ParsedCodeGraph;
+use petgraph::graph::Node;
 
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
@@ -66,8 +67,8 @@ pub trait GraphAccess {
         for dup in &dups {
 
             debug!("{:#?}", dup);
-            let target = self.find_node_unique(dup.target.into_node().unwrap()).unwrap();
-            let source = self.find_node_unique(dup.source.into_node().unwrap()).unwrap();
+            let target = self.find_node_unique(dup.target).unwrap();
+            let source = self.find_node_unique(dup.source).unwrap();
             target.log_node_debug();
             source.log_node_debug();
             if let Some(m_target) = target.as_module() {
@@ -165,9 +166,9 @@ fn debug_relationships(visitor: &Self) {
     fn get_child_modules(&self, module_id: NodeId) -> Vec<&ModuleNode> {
         self.relations()
             .iter()
-            .filter(|r| r.source == GraphId::Node(module_id) && r.kind == RelationKind::Contains)
+            .filter(|r| r.source == module_id && r.kind == RelationKind::Contains)
             .filter_map(|r| match r.target {
-                GraphId::Node(id) => self.get_module(id),
+                id => self.get_module(id),
                 _ => None,
             })
             .collect()
@@ -475,10 +476,10 @@ fn debug_relationships(visitor: &Self) {
         let module_id = self
             .relations()
             .iter()
-            .find(|r| r.target == GraphId::Node(item_id) && r.kind == RelationKind::Contains) // Compare target with GraphId::Node
-            .map(|r| r.source); // Source should be GraphId::Node(module_id)
+            .find(|r| r.target == item_id && r.kind == RelationKind::Contains) // Compare target with GraphId::Node
+            .map(|r| r.source); // Source should be module_id
 
-        if let Some(GraphId::Node(mod_id)) = module_id {
+        if let Some(mod_id) = module_id {
             // Unwrap GraphId::Node
             // Get the module's path
             self.modules()
@@ -497,14 +498,14 @@ fn debug_relationships(visitor: &Self) {
         let module_id = self
             .relations()
             .iter()
-            .find(|r| r.target == GraphId::Node(item_id) && r.kind == RelationKind::Contains)
+            .find(|r| r.target == item_id && r.kind == RelationKind::Contains)
             .map(|r| r.source);
 
         if let Some(mod_id) = module_id {
             // Get the module's path
             self.modules()
                 .iter()
-                .find(|m| GraphId::Node(m.id) == mod_id)
+                .find(|m| m.id == mod_id)
                 .unwrap_or_else(|| panic!("No containing module found"))
         } else {
             panic!("No containing module found");
@@ -514,13 +515,8 @@ fn debug_relationships(visitor: &Self) {
     fn find_containing_mod_id(&self, node_id: NodeId) -> Option<NodeId> {
         self.relations()
             .iter()
-            .find(|m| m.target == GraphId::Node(node_id))
-            .map(|r| match r.source {
-                GraphId::Node(node_id) => node_id,
-                GraphId::Type(_type_id) => {
-                    panic!("ModuleNode should never have TypeId for containing node")
-                }
-            })
+            .find(|m| m.target == node_id && m.kind == RelationKind::Contains)
+            .map(|id| id.source)
     }
 
     fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
@@ -671,14 +667,11 @@ fn debug_relationships(visitor: &Self) {
         ids.iter().filter_map(|id| self.find_node(*id)).collect()
     }
 
-    fn get_children(&self, node_id: NodeId) -> Vec<&dyn GraphNode> {
+    fn get_children(&self, node_id: NodeId) -> Vec<NodeId> {
         self.relations()
             .iter()
-            .filter(|r| r.source == GraphId::Node(node_id) && r.kind == RelationKind::Contains)
-            .filter_map(|r| match r.target {
-                GraphId::Node(id) => self.find_node(id),
-                GraphId::Type(_) => None,
-            })
+            .filter(|r| r.source == node_id && r.kind == RelationKind::Contains)
+            .map(|r| r.target)
             .collect()
     }
 
@@ -691,8 +684,8 @@ fn debug_relationships(visitor: &Self) {
 
         // Check if module contains the item through nested modules
         self.relations().iter().any(|r| {
-            r.source == GraphId::Node(module_id)
-                && r.target == GraphId::Node(item_id)
+            r.source == module_id
+                && r.target == item_id
                 && r.kind == RelationKind::Contains
         })
     }
@@ -710,7 +703,7 @@ fn debug_relationships(visitor: &Self) {
 
         // Get all ModuleImports relations for this context module
         let import_relations = self.relations().iter().filter(|r| {
-            r.source == GraphId::Node(context_module_id) && r.kind == RelationKind::ModuleImports
+            r.source == context_module_id && r.kind == RelationKind::ModuleImports
         });
 
         for rel in import_relations {
@@ -718,21 +711,13 @@ fn debug_relationships(visitor: &Self) {
             let is_glob = self
                 .modules()
                 .iter()
-                .any(|m| GraphId::Node(m.id) == rel.target);
+                .any(|m| m.id == rel.target);
 
             if is_glob {
-                // For glob imports, check if item is in the imported module
-                match rel.target {
-                    GraphId::Node(_node_id) => {
                         return VisibilityResult::Direct;
-                    }
-                    GraphId::Type(_type_id) => {
-                        panic!("implement me!")
-                    }
-                }
             }
             // Direct import match
-            else if rel.target == GraphId::Node(item_id) {
+            else if rel.target == item_id {
                 return VisibilityResult::Direct;
             }
         }

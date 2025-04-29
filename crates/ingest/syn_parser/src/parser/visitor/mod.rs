@@ -207,8 +207,8 @@ pub fn analyze_file_phase2(
     // for module_id in module_ids {
     //     if module_id != root_module_id {
     //         state.code_graph.relations.push(Relation {
-    //             source: GraphId::Node(root_module_id),
-    //             target: GraphId::Node(module_id),
+    //             source: root_module_id,
+    //             target: module_id,
     //             kind: crate::parser::relations::RelationKind::Contains,
     //         });
     //     }
