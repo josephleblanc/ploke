@@ -155,12 +155,14 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: false,
                     span,
                     is_self_import,
-                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
+                    cfgs: Vec::new(), // CFGs are handled at the ItemUse level
                 };
-                imports.push(ImportNode::new(import_info));
+                // Return a Vec containing just this single import node.
+                Ok(vec![ImportNode::new(import_info)])
             }
             syn::UseTree::Rename(rename) => {
-                let mut full_path = base_path.to_vec();
+                // Base case: Renaming an imported item.
+                let mut full_path_for_id = base_path.clone(); // Clone for ID registration if needed
                 let original_name = rename.ident.to_string();
                 let visible_name = rename.rename.to_string(); // The 'as' name
 
@@ -183,9 +185,9 @@ impl<'a> CodeVisitor<'a> {
                 }
                 let (import_base_id, _) = registration_result.unwrap();
 
-                // Use the original base_path before it was potentially modified by recursion
-                let mut full_path = base_path; // Take ownership
-                full_path.push(original_name.clone());
+                // The source path uses the original name.
+                let mut source_path = base_path; // Take ownership
+                source_path.push(original_name.clone());
 
                 let import_info = ImportNodeInfo {
                     id: import_base_id,
@@ -196,12 +198,13 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: false,
                     span,
                     is_self_import: false,
-                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
+                    cfgs: Vec::new(), // CFGs are handled at the ItemUse level
                 };
-                imports.push(ImportNode::new(import_info));
+                // Return a Vec containing just this single import node.
+                Ok(vec![ImportNode::new(import_info)])
             }
             syn::UseTree::Glob(glob) => {
-                // Register the new node ID
+                // Base case: A glob import.
                 let registration_result = self.register_new_node_id(
                     "<glob>", // Use placeholder name
                     ItemKind::Import,
@@ -230,25 +233,27 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: true,
                     span: glob.extract_span_bytes(),
                     is_self_import: false,
-                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
+                    cfgs: Vec::new(), // CFGs are handled at the ItemUse level
                 };
-                imports.push(ImportNode::new(import_info));
+                // Return a Vec containing just this single import node.
+                Ok(vec![ImportNode::new(import_info)])
             }
             syn::UseTree::Group(group) => {
+                // Recursive case: A group import like `use std::{fs, io};`
+                let mut group_imports = Vec::new();
                 for item in &group.items {
-                    // Clone base_path for each branch of the group
-                    imports.extend(self.process_use_tree(
-                        item,
-                        base_path.clone(), // Clone here
-                        cfg_bytes,
-                        vis_kind,
-                    )?);
+                    // Recursively process each item within the group.
+                    // Crucially, clone `base_path` for each recursive call,
+                    // as they represent different branches from the same base.
+                    match self.process_use_tree(item, base_path.clone(), cfg_bytes, vis_kind) {
+                        Ok(item_imports) => group_imports.extend(item_imports),
+                        Err(e) => return Err(e), // Propagate the first error encountered.
+                    }
                 }
+                // Return the aggregated imports from all items in the group.
+                Ok(group_imports)
             }
         }
-
-        // Wrap successful result in Ok
-        Ok(imports)
     }
 
     // Removed #[cfg(feature = "verbose_debug")]
