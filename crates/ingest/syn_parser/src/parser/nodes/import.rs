@@ -1,6 +1,24 @@
-use ploke_core::NodeId;
+use crate::define_node_info_struct; // Import macro
+use ploke_core::NodeId; // Import NodeId
+use serde::{Deserialize, Serialize};
 
-use super::*;
+use super::*; // Keep for other node types, VisibilityKind etc.
+
+// --- Import Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating an ImportNode.
+    ImportNodeInfo {
+        span: (usize, usize),
+        source_path: Vec<String>,
+        kind: ImportKind,
+        visible_name: String,
+        original_name: Option<String>,
+        is_glob: bool,
+        is_self_import: bool,
+        cfgs: Vec<String>,
+    }
+}
 
 /// Represents all import/export semantics in the code graph, including:
 /// - Regular `use` statements
@@ -99,13 +117,28 @@ pub struct ImportNode {
 
     /// Whether this is a 'self' import, e.g. `std::fs::{self}`
     pub is_self_import: bool,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl ImportNode {
     /// Returns the typed ID for this import node.
     pub fn import_id(&self) -> ImportNodeId {
         self.id
+    }
+
+    /// Creates a new `ImportNode` from `ImportNodeInfo`.
+    pub(crate) fn new(info: ImportNodeInfo) -> Self {
+        Self {
+            id: ImportNodeId(info.id), // Wrap the raw ID here
+            span: info.span,
+            source_path: info.source_path,
+            kind: info.kind,
+            visible_name: info.visible_name,
+            original_name: info.original_name,
+            is_glob: info.is_glob,
+            is_self_import: info.is_self_import,
+            cfgs: info.cfgs,
+        }
     }
 
     pub fn source_path(&self) -> &[String] {

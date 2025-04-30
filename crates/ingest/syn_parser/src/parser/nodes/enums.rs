@@ -1,23 +1,39 @@
-use ploke_core::{NodeId, TrackingHash};
+use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
+use ploke_core::{NodeId, TrackingHash}; // Import NodeId
 use serde::{Deserialize, Serialize};
 
-use crate::parser::types::GenericParamNode;
+use super::*; // Keep for other node types, VisibilityKind etc.
 
-use super::*;
+// --- Enum Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating an EnumNode.
+    EnumNodeInfo {
+        name: String,
+        span: (usize, usize),
+        visibility: VisibilityKind,
+        variants: Vec<VariantNode>,
+        generic_params: Vec<GenericParamNode>,
+        attributes: Vec<Attribute>,
+        docstring: Option<String>,
+        tracking_hash: Option<TrackingHash>,
+        cfgs: Vec<String>,
+    }
+}
 
 // Represents an enum definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EnumNode {
     pub id: EnumNodeId, // Use typed ID
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub variants: Vec<VariantNode>,
     pub generic_params: Vec<GenericParamNode>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl EnumNode {
@@ -25,11 +41,40 @@ impl EnumNode {
     pub fn enum_id(&self) -> EnumNodeId {
         self.id
     }
+
+    /// Creates a new `EnumNode` from `EnumNodeInfo`.
+    pub(crate) fn new(info: EnumNodeInfo) -> Self {
+        Self {
+            id: EnumNodeId(info.id), // Wrap the raw ID here
+            name: info.name,
+            span: info.span,
+            visibility: info.visibility,
+            variants: info.variants,
+            generic_params: info.generic_params,
+            attributes: info.attributes,
+            docstring: info.docstring,
+            tracking_hash: info.tracking_hash,
+            cfgs: info.cfgs,
+        }
+    }
 }
 
 impl HasAttributes for EnumNode {
     fn attributes(&self) -> &[Attribute] {
         &self.attributes
+    }
+}
+
+// --- Variant Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating a VariantNode.
+    VariantNodeInfo {
+        name: String,
+        fields: Vec<FieldNode>,
+        discriminant: Option<String>,
+        attributes: Vec<Attribute>,
+        cfgs: Vec<String>,
     }
 }
 
@@ -41,13 +86,25 @@ pub struct VariantNode {
     pub fields: Vec<FieldNode>,
     pub discriminant: Option<String>,
     pub attributes: Vec<Attribute>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl VariantNode {
     /// Returns the typed ID for this variant node.
     pub fn variant_id(&self) -> VariantNodeId {
         self.id
+    }
+
+    /// Creates a new `VariantNode` from `VariantNodeInfo`.
+    pub(crate) fn new(info: VariantNodeInfo) -> Self {
+        Self {
+            id: VariantNodeId(info.id), // Wrap the raw ID here
+            name: info.name,
+            fields: info.fields,
+            discriminant: info.discriminant,
+            attributes: info.attributes,
+            cfgs: info.cfgs,
+        }
     }
 }
 

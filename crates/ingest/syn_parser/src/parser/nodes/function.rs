@@ -1,15 +1,34 @@
-use super::*;
-use crate::parser::types::GenericParamNode;
-use ploke_core::{TrackingHash, TypeId};
+use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
+use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
 use serde::{Deserialize, Serialize};
+
+use super::*; // Keep for other node types, VisibilityKind etc.
+
+// --- Method Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating a MethodNode.
+    MethodNodeInfo {
+        name: String,
+        span: (usize, usize),
+        visibility: VisibilityKind,
+        parameters: Vec<ParamData>,
+        return_type: Option<TypeId>,
+        generic_params: Vec<GenericParamNode>,
+        attributes: Vec<Attribute>,
+        docstring: Option<String>,
+        body: Option<String>,
+        tracking_hash: Option<TrackingHash>,
+        cfgs: Vec<String>,
+    }
+}
 
 /// Represents an associated function or method within an `impl` or `trait`.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MethodNode {
-    // Renamed from FunctionNode
     pub id: MethodNodeId, // Use typed ID
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParamData>,
     pub return_type: Option<TypeId>,
@@ -25,6 +44,25 @@ impl MethodNode {
     /// Returns the typed ID for this method node.
     pub fn method_id(&self) -> MethodNodeId {
         self.id
+    }
+
+    /// Creates a new `MethodNode` from `MethodNodeInfo`.
+    /// This is the controlled entry point for creating a `MethodNode` with a typed ID.
+    pub(crate) fn new(info: MethodNodeInfo) -> Self {
+        Self {
+            id: MethodNodeId(info.id), // Wrap the raw ID here
+            name: info.name,
+            span: info.span,
+            visibility: info.visibility,
+            parameters: info.parameters,
+            return_type: info.return_type,
+            generic_params: info.generic_params,
+            attributes: info.attributes,
+            docstring: info.docstring,
+            body: info.body,
+            tracking_hash: info.tracking_hash,
+            cfgs: info.cfgs,
+        }
     }
 }
 
@@ -67,12 +105,31 @@ impl MethodNode {
     }
 }
 
+// --- Function Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating a FunctionNode.
+    FunctionNodeInfo {
+        name: String,
+        span: (usize, usize),
+        visibility: VisibilityKind,
+        parameters: Vec<ParamData>,
+        return_type: Option<TypeId>,
+        generic_params: Vec<GenericParamNode>,
+        attributes: Vec<Attribute>,
+        docstring: Option<String>,
+        body: Option<String>,
+        tracking_hash: Option<TrackingHash>,
+        cfgs: Vec<String>,
+    }
+}
+
 /// Represents a standalone function item (`fn`).
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FunctionNode {
     pub id: FunctionNodeId, // Use typed ID
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParamData>,
     pub return_type: Option<TypeId>,
@@ -88,6 +145,25 @@ impl FunctionNode {
     /// Returns the typed ID for this function node.
     pub fn function_id(&self) -> FunctionNodeId {
         self.id
+    }
+
+    /// Creates a new `FunctionNode` from `FunctionNodeInfo`.
+    /// This is the controlled entry point for creating a `FunctionNode` with a typed ID.
+    pub(crate) fn new(info: FunctionNodeInfo) -> Self {
+        Self {
+            id: FunctionNodeId(info.id), // Wrap the raw ID here
+            name: info.name,
+            span: info.span,
+            visibility: info.visibility,
+            parameters: info.parameters,
+            return_type: info.return_type,
+            generic_params: info.generic_params,
+            attributes: info.attributes,
+            docstring: info.docstring,
+            body: info.body,
+            tracking_hash: info.tracking_hash,
+            cfgs: info.cfgs,
+        }
     }
 }
 

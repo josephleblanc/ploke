@@ -1,9 +1,25 @@
-use ploke_core::{NodeId, TrackingHash, TypeId};
+use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
+use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
 use serde::{Deserialize, Serialize};
 
-use crate::parser::types::GenericParamNode;
+use super::*; // Keep for other node types, VisibilityKind etc.
 
-use super::*;
+// --- Struct Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating a StructNode.
+    StructNodeInfo {
+        name: String,
+        span: (usize, usize),
+        visibility: VisibilityKind,
+        fields: Vec<FieldNode>,
+        generic_params: Vec<GenericParamNode>,
+        attributes: Vec<Attribute>,
+        docstring: Option<String>,
+        tracking_hash: Option<TrackingHash>,
+        cfgs: Vec<String>,
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StructNode {
@@ -16,7 +32,7 @@ pub struct StructNode {
     pub attributes: Vec<Attribute>, // Replace Vec<String>
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl StructNode {
@@ -25,16 +41,10 @@ impl StructNode {
         self.id
     }
 
-    pub fn new(info: StructNodeInfo) -> Self {
-        // AI: New constructor allows us to keep `StructNodeId`'s constructor method private and
-        // avoid creating a `StructNodeId::new` method, making it impossible to create a
-        // `StructNodeId` without all the provided context. This will go a long way to disallow the
-        // possibility of changing a typed id in the code. While it is not a perfect guarantee of
-        // valid state, it is getting closer, and that is what we are striving for: compile-time
-        // guarantees of only expressing valid state at the level of types, striving for the
-        // Curry-Howard correspondance style.
+    /// Creates a new `StructNode` from `StructNodeInfo`.
+    pub(crate) fn new(info: StructNodeInfo) -> Self {
         Self {
-            id: StructNodeId(info.id),
+            id: StructNodeId(info.id), // Wrap the raw ID here
             name: info.name,
             span: info.span,
             visibility: info.visibility,
@@ -48,18 +58,17 @@ impl StructNode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub(crate) struct StructNodeInfo {
-    pub id: NodeId, // Use raw NodeId
-    pub name: String,
-    pub span: (usize, usize),
-    pub visibility: VisibilityKind,
-    pub fields: Vec<FieldNode>,
-    pub generic_params: Vec<GenericParamNode>,
-    pub attributes: Vec<Attribute>, // Replace Vec<String>
-    pub docstring: Option<String>,
-    pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+// --- Field Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating a FieldNode.
+    FieldNodeInfo {
+        name: Option<String>,
+        type_id: TypeId,
+        visibility: VisibilityKind,
+        attributes: Vec<Attribute>,
+        cfgs: Vec<String>,
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -69,13 +78,25 @@ pub struct FieldNode {
     pub type_id: TypeId,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl FieldNode {
     /// Returns the typed ID for this field node.
     pub fn field_id(&self) -> FieldNodeId {
         self.id
+    }
+
+    /// Creates a new `FieldNode` from `FieldNodeInfo`.
+    pub(crate) fn new(info: FieldNodeInfo) -> Self {
+        Self {
+            id: FieldNodeId(info.id), // Wrap the raw ID here
+            name: info.name,
+            type_id: info.type_id,
+            visibility: info.visibility,
+            attributes: info.attributes,
+            cfgs: info.cfgs,
+        }
     }
 }
 

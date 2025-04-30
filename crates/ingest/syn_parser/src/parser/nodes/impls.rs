@@ -1,25 +1,56 @@
-use ploke_core::{NodeId, TypeId};
+use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
+use ploke_core::{NodeId, TypeId}; // Import NodeId
+use serde::{Deserialize, Serialize};
 
-use crate::parser::types::GenericParamNode;
+use super::*; // Keep for other node types, VisibilityKind etc.
 
-use super::*;
+// --- Impl Node ---
+
+define_node_info_struct! {
+    /// Temporary info struct for creating an ImplNode.
+    ImplNodeInfo {
+        self_type: TypeId,
+        span: (usize, usize),
+        trait_type: Option<TypeId>,
+        methods: Vec<MethodNode>, // Changed from FunctionNode
+        generic_params: Vec<GenericParamNode>,
+        cfgs: Vec<String>,
+        // Note: Associated consts/types would need to be added here if handled
+    }
+}
 
 // Represents an implementation block
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
     pub self_type: TypeId,
-    pub span: (usize, usize), // Byte start/end offsets
+    pub span: (usize, usize),
     pub trait_type: Option<TypeId>,
-    pub methods: Vec<FunctionNode>,
+    pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
+    // TODO: Add fields for associated consts and types if needed
+    // pub associated_consts: Vec<ConstNode>,
+    // pub associated_types: Vec<TypeAliasNode>,
 }
 
 impl ImplNode {
     /// Returns the typed ID for this impl node.
     pub fn impl_id(&self) -> ImplNodeId {
         self.id
+    }
+
+    /// Creates a new `ImplNode` from `ImplNodeInfo`.
+    pub(crate) fn new(info: ImplNodeInfo) -> Self {
+        Self {
+            id: ImplNodeId(info.id), // Wrap the raw ID here
+            self_type: info.self_type,
+            span: info.span,
+            trait_type: info.trait_type,
+            methods: info.methods,
+            generic_params: info.generic_params,
+            cfgs: info.cfgs,
+        }
     }
 }
 
