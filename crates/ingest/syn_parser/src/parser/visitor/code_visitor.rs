@@ -196,18 +196,22 @@ impl<'a> CodeVisitor<'a> {
             syn::UseTree::Glob(glob) => {
                 // Register the new node ID
                 let registration_result = self.register_new_node_id(
-        // AI: Same problem here AI!
                     "<glob>", // Use placeholder name
                     ItemKind::Import,
-                    item_name: "<glob>".to_string(),
-                    item_kind: ItemKind::Import,
-                };
-                error!(target: LOG_TARGET_TRACE, "{}", err);
-                return Err(err);
-            }
-            let (import_base_id, _) = registration_result.unwrap();
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
+                // Check if registration failed
+                if registration_result.is_none() {
+                    let err = CodeVisitorError::RegistrationFailed {
+                        item_name: "<glob>".to_string(),
+                        item_kind: ItemKind::Import,
+                    };
+                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    return Err(err);
+                }
+                let (import_base_id, _) = registration_result.unwrap();
 
-            // Use the original base_path
+                // Use the original base_path
             let full_path = base_path; // Take ownership
 
             let import_info = ImportNodeInfo {
