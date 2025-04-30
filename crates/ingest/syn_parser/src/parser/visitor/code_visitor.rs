@@ -52,8 +52,8 @@ use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
 
-use crate::parser::nodes::ModuleKind;
 use crate::error::CodeVisitorError; // Import the new error type
+use crate::parser::nodes::ModuleKind;
 use ploke_core::ItemKind;
 use ploke_core::{NodeId, TypeId};
 
@@ -101,8 +101,16 @@ impl<'a> CodeVisitor<'a> {
         mut base_path: Vec<String>,
         cfg_bytes: Option<&[u8]>,
         vis_kind: &VisibilityKind,
-    ) -> Result<Vec<ImportNode>, CodeVisitorError> { // Return Result
+    ) -> Result<Vec<ImportNode>, CodeVisitorError> {
+        // Return Result
         let mut imports = Vec::new();
+        // AI: Let's rethink how we are using this function. I don't think it is going to do what
+        // we want, which is, as described in the doc comment, to process a `syn::UseTree`. It
+        // looks like you earlier tried to make it iterative but forgot to add the loop, and now it
+        // is kind of caught between the two approaches. Let's go ahead and make it fully
+        // rescursive, since that suits the tree-like structure and potentially branching paths of
+        // a glob import well. Refactor this funciton so it will just be recursive without the
+        // half-done recursive structure (e.g. the `let mut imports` above). AI!
 
         match tree {
             syn::UseTree::Path(path) => {
@@ -110,7 +118,7 @@ impl<'a> CodeVisitor<'a> {
                 base_path.push(path.ident.to_string());
                 // Use `?` to propagate errors from recursive calls
                 imports.extend(self.process_use_tree(&path.tree, base_path, cfg_bytes, vis_kind)?);
-            },
+            }
             syn::UseTree::Name(name) => {
                 let mut full_path = base_path.to_vec();
                 let use_name = name.ident.to_string();
@@ -126,7 +134,6 @@ impl<'a> CodeVisitor<'a> {
                     use_name // This is the visible name in this case
                 };
 
-
                 // Register the new node ID (but don't get parent ID, handled later)
                 let registration_result = self.register_new_node_id(
                     &checked_name,
@@ -137,9 +144,9 @@ impl<'a> CodeVisitor<'a> {
                 error!(target: LOG_TARGET_TRACE, "{}", err);
                 return Err(err);
 
-            let (import_base_id, _) = registration_result.unwrap();
+                let (import_base_id, _) = registration_result.unwrap();
 
-            let import_info = ImportNodeInfo {
+                let import_info = ImportNodeInfo {
                     id: import_base_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
@@ -151,7 +158,7 @@ impl<'a> CodeVisitor<'a> {
                     cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
                 imports.push(ImportNode::new(import_info));
-            },
+            }
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
                 let original_name = rename.ident.to_string();
@@ -177,8 +184,8 @@ impl<'a> CodeVisitor<'a> {
                 let (import_base_id, _) = registration_result.unwrap();
 
                 // Use the original base_path before it was potentially modified by recursion
-            let mut full_path = base_path; // Take ownership
-            full_path.push(original_name.clone());
+                let mut full_path = base_path; // Take ownership
+                full_path.push(original_name.clone());
 
                 let import_info = ImportNodeInfo {
                     id: import_base_id,
@@ -212,9 +219,9 @@ impl<'a> CodeVisitor<'a> {
                 let (import_base_id, _) = registration_result.unwrap();
 
                 // Use the original base_path
-            let full_path = base_path; // Take ownership
+                let full_path = base_path; // Take ownership
 
-            let import_info = ImportNodeInfo {
+                let import_info = ImportNodeInfo {
                     id: import_base_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
@@ -1803,7 +1810,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Call the modified function and handle the Result
         let imports_result =
-            self.process_use_tree(use_item.tree.clone(), base_path, cfg_bytes.as_deref(), &vis_kind);
+            self.process_use_tree(&use_item.tree, base_path, cfg_bytes.as_deref(), &vis_kind);
 
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
@@ -1851,32 +1858,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         } else {
             log::warn!(target: LOG_TARGET_TRACE, "Could not find parent module for use statement at path {:?}. Imports not added.", current_module_path);
         }
+        // Continue visiting
         visit::visit_item_use(self, use_item);
     }
-    // Continue visiting
-                    source: parent_mod_id,
-                    target: PrimaryNodeId::from(typed_import_id),
-                };
-                graph.relations.push(contains_relation);
-
-                // Add ModuleImports relation
-                let module_import_relation = SyntacticRelation::ModuleImports {
-                    source: parent_mod_id,
-                    target: typed_import_id,
-                };
-                graph.relations.push(module_import_relation);
-
-                // Add the node itself
-                graph.use_statements.push(import_node.clone());
-                // Add to module's imports list
-                module.imports.push(import_node);
-            }
-        } else {
-            log::warn!(target: LOG_TARGET_TRACE, "Could not find parent module for use statement at path {:?}. Imports not added.", current_module_path);
-        }
-        visit::visit_item_use(self, use_item);
-    }
-    // Continue visiting
 
     /// Visit extern crate item, e.g. `extern crate serde;`
     /// Note that these may be renamed, e.g. `extern crate serde as MySerde;`
@@ -1947,7 +1931,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .code_graph
             .modules
             .iter_mut()
-            .find(|m| m.id == parent_mod_id.into_inner())
+            .find(|m| m.id == parent_mod_id)
         // Find by parent ID
         {
             module.imports.push(import_node.clone());
