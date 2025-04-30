@@ -13,9 +13,11 @@ mod type_processing;
 
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
-// AI: Let's update this file with our changes to `Relation` and the newtype structs AI!
 
-use crate::utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD};
+use crate::{
+    parser::relations::SyntacticRelation, // Import the new relation type
+    utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD},
+};
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -240,7 +242,8 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
         "Difference".log_step(),
         (visitor.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
     );
-    let rel_map: HashMap<Relation, usize> =
+    // Update HashMap key type to SyntacticRelation
+    let rel_map: HashMap<SyntacticRelation, usize> =
         visitor
             .relations()
             .iter()
@@ -259,27 +262,31 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
             });
     for (rel, count) in rel_map {
         if count > 1 {
+            // Use the helper methods to get base NodeIds for logging
             log::debug!(target: "temp",
-                "{} | {}: {} -> {} ",
+                "{} | {}: {} -> {} | {:?}", // Log the full relation variant for kind info
                 "Duplicate!".log_header(),
-                rel.source.to_string().log_id(),
-                rel.target.to_string().log_id(),
-                rel.kind.log_magenta_debug(),
+                rel.source_node_id().to_string().log_id(),
+                rel.target_node_id().to_string().log_id(),
+                rel, // Log the whole enum variant
             );
         }
     }
 
-    for rel in visitor.relations() {
-        if !unique_rels.contains(rel) {
-            log::debug!(target: "temp",
-                "{} | {}: {} -> {} ",
-                "Unique!".log_header(),
-                rel.source.to_string().log_id(),
-                rel.target.to_string().log_id(),
-                rel.kind.log_magenta_debug(),
-            );
-        }
-    }
+    // This loop seems incorrect - it logs relations *not* in the unique list,
+    // which shouldn't happen if unique_rels was derived correctly.
+    // Commenting out for now, can be revisited if needed.
+    // for rel in visitor.relations() {
+    //     if !unique_rels.contains(rel) {
+    //         log::debug!(target: "temp",
+    //             "{} | {}: {} -> {} | {:?}",
+    //             "Unique!".log_header(), // This log message seems misleading
+    //             rel.source_node_id().to_string().log_id(),
+    //             rel.target_node_id().to_string().log_id(),
+    //             rel,
+    //         );
+    //     }
+    // }
 }
 
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
