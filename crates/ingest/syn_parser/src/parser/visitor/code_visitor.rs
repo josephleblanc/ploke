@@ -12,7 +12,8 @@ use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ModuleNodeId;
 use crate::parser::nodes::PrimaryNodeId;
 use crate::parser::nodes::StaticNode;
-use crate::parser::nodes::ValueNode;
+use crate::parser::nodes::StructNodeId;
+use crate::parser::nodes::StructNodeInfo;
 use crate::parser::nodes::{
     EnumNode, FieldNode, FunctionNode, ImplNode, ImportKind, ImportNode, MacroKind, MacroNode,
     ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
@@ -352,68 +353,7 @@ impl<'a> CodeVisitor<'a> {
             self.state.current_scope_cfgs
         );
     }
-
-    fn fun_name(&mut self, func: &ItemFn) -> Result<MacroNodeId, CodeVisitorError> { 
-        // AI:
-        // Implement the `CodeVisitorError` error type using `thiserror` and including a `#[from]`
-        // for `SynParserError`
-        let macro_name = func.sig.ident.to_string();
-        let scope_cfgs = self.state.current_scope_cfgs.clone();
-        let item_cfgs = extract_cfg_strings(&func.attrs);
-        let provisional_effective_cfgs: Vec<String> = scope_cfgs
-            .iter()
-            .cloned()
-            .chain(item_cfgs.iter().cloned())
-            .collect();
-        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
-        let registration_result =
-            self.register_new_node_id(&macro_name, ItemKind::Macro, cfg_bytes.as_deref()).unwrap_or_else(|| todo!("// AI: Implement error handling"));
-        let (macro_base_id, parent_mod_id) = registration_result;
-        self.debug_new_id(&macro_name, macro_base_id);
-        let span = func.extract_span_bytes();
-        let proc_macro_kind = if func
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("proc_macro_derive"))
-        {
-            ProcMacroKind::Derive
-        } else if func
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("proc_macro_attribute"))
-        {
-            ProcMacroKind::Attribute
-        } else {
-            ProcMacroKind::Function
-        };
-        let docstring = extract_docstring(&func.attrs);
-        let attributes = extract_attributes(&func.attrs);
-        let body = Some(func.block.to_token_stream().to_string());
-        let macro_node = MacroNode {
-            id: macro_base_id, // Use base ID
-            name: macro_name.clone(),
-            visibility: self.state.convert_visibility(&func.vis),
-            kind: MacroKind::ProcedureMacro {
-                kind: proc_macro_kind,
-            },
-            attributes,
-            docstring,
-            body,
-            span,
-            tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-            cfgs: item_cfgs, // Store proc macro's own cfgs
-        };
-        let typed_macro_id = macro_node.macro_id();
-        self.state.code_graph.macros.push(macro_node);
-        let relation = SyntacticRelation::Contains {
-            source: parent_mod_id,
-            target: PrimaryNodeId::from(typed_macro_id), // Use category enum
-        };
-        self.state.code_graph.relations.push(relation);
-        Ok(())
-        // AI!
-    }
-} 
+}
 
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
@@ -425,7 +365,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 || attr.path().is_ident("proc_macro_attribute")
         });
 
-        is_proc_macro.then(|| self.fun_name(func))
         // TODO: Validate Correctness:
         // This if block runs, then so does the following code.
         // Are we processing the proc_macro functions twice?
@@ -433,6 +372,60 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // location, name, and other metadata that might be useful for the RAG to get easy wins.
         // Use if/else to prevent double processing
         if is_proc_macro {
+            let macro_name = func.sig.ident.to_string();
+            let scope_cfgs = self.state.current_scope_cfgs.clone();
+            let item_cfgs = extract_cfg_strings(&func.attrs);
+            let provisional_effective_cfgs: Vec<String> = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect();
+            let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+            let registration_result =
+            self.register_new_node_id(&macro_name, ItemKind::Macro,
+                cfg_bytes.as_deref()).unwrap_or_else(|| todo!("Implement proper error handling. We can't return a result inside the visitor implementation but we can log the error."));
+            let (macro_base_id, parent_mod_id) = registration_result;
+            self.debug_new_id(&macro_name, macro_base_id);
+            let span = func.extract_span_bytes();
+            let proc_macro_kind = if func
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("proc_macro_derive"))
+            {
+                ProcMacroKind::Derive
+            } else if func
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("proc_macro_attribute"))
+            {
+                ProcMacroKind::Attribute
+            } else {
+                ProcMacroKind::Function
+            };
+            let docstring = extract_docstring(&func.attrs);
+            let attributes = extract_attributes(&func.attrs);
+            let body = Some(func.block.to_token_stream().to_string());
+            let macro_node = MacroNode {
+                id: macro_base_id, // Use base ID
+                name: macro_name.clone(),
+                visibility: self.state.convert_visibility(&func.vis),
+                kind: MacroKind::ProcedureMacro {
+                    kind: proc_macro_kind,
+                },
+                attributes,
+                docstring,
+                body,
+                span,
+                tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
+                cfgs: item_cfgs, // Store proc macro's own cfgs
+            };
+            let typed_macro_id = macro_node.macro_id();
+            self.state.code_graph.macros.push(macro_node);
+            let relation = SyntacticRelation::Contains {
+                source: parent_mod_id,
+                target: PrimaryNodeId::from(typed_macro_id), // Use category enum
+            };
+            self.state.code_graph.relations.push(relation);
             // Don't visit the body of the proc macro function itself with visit_item_fn
         } else {
             // --- Handle Regular Functions ---
@@ -627,7 +620,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let attributes = extract_attributes(&item_struct.attrs);
 
         // Create the struct node
-        let struct_node = StructNode {
+        let struct_node_info = StructNodeInfo {
             id: struct_base_id, // Use base ID
             name: struct_name.clone(),
             span,
@@ -642,6 +635,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ),
             cfgs: item_cfgs.clone(), // Store struct's own cfgs
         };
+        let struct_node = StructNode::new(struct_node_info);
         let typed_struct_id = struct_node.struct_id(); // Get typed ID
 
         // Now add the StructField relations
