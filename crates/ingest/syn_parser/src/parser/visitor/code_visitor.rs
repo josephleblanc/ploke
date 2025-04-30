@@ -29,6 +29,8 @@ use syn::{
     visit::{self, Visit},
     ItemEnum, ItemFn, ItemImpl, ItemStruct, ItemTrait, ReturnType, Type,
 };
+// AI: OK, this is a big one. Be careful about your opening and closing braces here.
+// Let's update this file now AI!
 
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
