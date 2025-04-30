@@ -6,11 +6,16 @@
 
 // Declare the private internal module
 mod internal;
-
-// --- Re-exports ---
+pub(self) use super::*;
+// ----- Re-exports -----
 // We will re-export the specific ID types, marker traits, category enums,
 // and the TypedNodeIdGet trait from `internal` here later.
-// pub use internal::{StructNodeId, FunctionNodeId, /* ... */};
-// pub use internal::{TypedId, PrimaryNodeIdTrait, SecondaryNodeIdTrait, /* ... */};
-// pub use internal::{AnyNodeId, PrimaryNodeId, AssociatedItemId};
-// pub use internal::TypedNodeIdGet;
+// --- type-bearing ids ---
+// AI: Let's start by filling these type-bearing nodes out, since they are already done and I've
+// moved them into the `internal` module already AI!
+pub use internal::{FunctionNodeId /* ... */, StructNodeId};
+// --- traits ---
+pub use internal::{PrimaryNodeIdTrait, SecondaryNodeIdTrait /* ... */, TypedId};
+// --- enums ---
+pub use internal::TypedNodeIdGet;
+pub use internal::{AnyNodeId, AssociatedItemId, PrimaryNodeId};
