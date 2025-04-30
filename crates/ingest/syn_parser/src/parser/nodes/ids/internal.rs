@@ -383,38 +383,7 @@ define_category_enum!(
     ]
 );
 
-// Define AnyNodeId to hold *all* specific node ID types.
-// This serves as the primary key for heterogeneous storage like HashMaps.
-define_category_enum!(
-    #[doc = "Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage."]
-    AnyNodeId,
-    // Use the macro arm that does *not* expect ItemKind
-    [
-        // Primary Nodes
-        (Function, FunctionNodeId),
-        (Struct, StructNodeId),
-        (Enum, EnumNodeId),
-        (Union, UnionNodeId),
-        (TypeAlias, TypeAliasNodeId),
-        (Trait, TraitNodeId),
-        (Impl, ImplNodeId),
-        (Const, ConstNodeId),
-        (Static, StaticNodeId),
-        (Macro, MacroNodeId),
-        (Import, ImportNodeId),
-        (Module, ModuleNodeId),
-        // Associated Items (using their specific IDs)
-        (Method, MethodNodeId),
-        // Secondary Nodes
-        (Field, FieldNodeId),
-        (Variant, VariantNodeId),
-        (Param, ParamNodeId),
-        (GenericParam, GenericParamNodeId),
-        // Other IDs
-        (Reexport, ReexportNodeId),
-        // Add any other specific ID types here as they are created
-    ]
-);
+// Manually define AnyNodeId below
 
 // --- Node Struct Definitions ---
 // Logging target
