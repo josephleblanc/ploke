@@ -562,6 +562,7 @@ mod ids {
             // TODO: Refine ItemKind mapping if necessary (e.g., handle fields/variants differently?)
             match id_info.item_kind() {
                 ItemKind::Function
+                | ItemKind::Method // Added Method
                 | ItemKind::Struct
                 | ItemKind::Enum
                 | ItemKind::Union
@@ -649,6 +650,7 @@ mod ids {
             // Determine Node or Type variant based on ItemKind
             match id_info.item_kind() {
                 ItemKind::Function
+                | ItemKind::Method // Added Method
                 | ItemKind::Struct
                 | ItemKind::Enum
                 | ItemKind::Union
@@ -740,8 +742,8 @@ pub enum IdConversionError {
 /// will generate distinct `NodeId`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemKind {
-    // AI Let's update ItemKind to use `Method` as well AI!
-    Function,
+    Function,     // Standalone function
+    Method,       // Associated function/method
     Struct,
     Enum,
     Union,
