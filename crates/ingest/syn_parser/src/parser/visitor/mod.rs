@@ -13,10 +13,9 @@ mod type_processing;
 
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
+// AI: Let's update this file with our changes to `Relation` and the newtype structs AI!
 
-use crate::{
-    utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD},
-};
+use crate::utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD};
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -80,9 +79,8 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
 use super::ParsedCodeGraph;
 
 use {
-    super::nodes::ModuleNode,           // Moved ModuleNode import here
-    crate::discovery::DiscoveryOutput,  // Import DiscoveryOutput
-    crate::parser::relations::Relation, // Assuming Relation is in parser::relations
+    super::nodes::ModuleNode,          // Moved ModuleNode import here
+    crate::discovery::DiscoveryOutput, // Import DiscoveryOutput
     ploke_core::NodeId,
     rayon::prelude::*, // Import rayon traits
     uuid::Uuid,
