@@ -120,7 +120,7 @@ macro_rules! define_category_enum {
                     $EnumName::$Variant(id)
                 }
             }
-        )*; // <-- Add semicolon HERE
+        )* // <-- Add semicolon HERE
     };
 
     // Matcher for enums WITHOUT an associated ItemKind method (like AnyNodeId)
