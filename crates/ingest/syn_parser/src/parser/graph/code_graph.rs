@@ -8,6 +8,7 @@ use crate::parser::{
     relations::Relation,
     types::TypeNode,
 };
+// AI: Ok let's update this file with our changes to relations and the newtypes AI!
 
 use super::GraphAccess;
 
