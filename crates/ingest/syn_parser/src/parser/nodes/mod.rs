@@ -129,9 +129,9 @@ impl PrimaryNodeId {
 /// within an `impl` or `trait` block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum AssociatedItemId {
-    Function(FunctionNodeId),   // Associated function (method)
+    Method(MethodNodeId),       // Associated function/method (changed from Function)
     TypeAlias(TypeAliasNodeId), // Associated type
-    Const(ConstNodeId),         // Associated const (changed from Value)
+    Const(ConstNodeId),         // Associated const
 }
 
 impl AssociatedItemId {
@@ -147,10 +147,9 @@ impl AssociatedItemId {
     // Optional: Get the ItemKind directly
     pub fn kind(&self) -> ItemKind {
         match self {
-            // TODO: Refine Function kind if Method distinction needed
-            AssociatedItemId::Function(_) => ItemKind::Function, // TODO: Refine if Method distinction needed
+            AssociatedItemId::Method(_) => ItemKind::Method, // Changed from Function
             AssociatedItemId::TypeAlias(_) => ItemKind::TypeAlias,
-            AssociatedItemId::Const(_) => ItemKind::Const, // Changed from Value/Constant
+            AssociatedItemId::Const(_) => ItemKind::Const,
         }
     }
 }
