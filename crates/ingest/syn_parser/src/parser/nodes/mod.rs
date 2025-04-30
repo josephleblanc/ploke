@@ -66,6 +66,118 @@ define_node_id_wrapper!(MacroNodeId);
 // For more explicit differntiation within Phase 3 module tree processing
 define_node_id_wrapper!(ReexportNodeId);
 
+
+// --- Category ID Enums ---
+
+use ploke_core::ItemKind; // Need ItemKind for kind() methods
+
+/// Represents the ID of any node type that can typically be defined directly
+/// within a module scope (primary items).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum PrimaryNodeId {
+    Function(FunctionNodeId),
+    Struct(StructNodeId),
+    Enum(EnumNodeId),
+    Union(UnionNodeId),
+    TypeAlias(TypeAliasNodeId),
+    Trait(TraitNodeId),
+    Impl(ImplNodeId),
+    Value(ValueNodeId), // Represents Const or Static
+    Macro(MacroNodeId),
+    Import(ImportNodeId),
+    Module(ModuleNodeId),
+}
+
+impl PrimaryNodeId {
+    /// Returns the underlying base NodeId.
+    pub fn base_id(&self) -> NodeId {
+        match *self {
+            PrimaryNodeId::Function(id) => id.into_inner(),
+            PrimaryNodeId::Struct(id) => id.into_inner(),
+            PrimaryNodeId::Enum(id) => id.into_inner(),
+            PrimaryNodeId::Union(id) => id.into_inner(),
+            PrimaryNodeId::TypeAlias(id) => id.into_inner(),
+            PrimaryNodeId::Trait(id) => id.into_inner(),
+            PrimaryNodeId::Impl(id) => id.into_inner(),
+            PrimaryNodeId::Value(id) => id.into_inner(),
+            PrimaryNodeId::Macro(id) => id.into_inner(),
+            PrimaryNodeId::Import(id) => id.into_inner(),
+            PrimaryNodeId::Module(id) => id.into_inner(),
+        }
+    }
+
+    // Optional: Get the ItemKind directly
+    pub fn kind(&self) -> ItemKind {
+         match self {
+            PrimaryNodeId::Function(_) => ItemKind::Function,
+            PrimaryNodeId::Struct(_) => ItemKind::Struct,
+            PrimaryNodeId::Enum(_) => ItemKind::Enum,
+            PrimaryNodeId::Union(_) => ItemKind::Union,
+            PrimaryNodeId::TypeAlias(_) => ItemKind::TypeAlias,
+            PrimaryNodeId::Trait(_) => ItemKind::Trait,
+            PrimaryNodeId::Impl(_) => ItemKind::Impl,
+            // Value needs refinement if Const/Static distinction matters here
+            // TODO: Refine Value kind based on actual ValueNode if needed later
+            PrimaryNodeId::Value(_) => ItemKind::Constant,
+            PrimaryNodeId::Macro(_) => ItemKind::Macro,
+            PrimaryNodeId::Import(_) => ItemKind::Import,
+            PrimaryNodeId::Module(_) => ItemKind::Module,
+        }
+    }
+}
+
+/// Represents the ID of any node type that can be an associated item
+/// within an `impl` or `trait` block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum AssociatedItemId {
+    Function(FunctionNodeId),   // Associated function (method)
+    TypeAlias(TypeAliasNodeId), // Associated type
+    Value(ValueNodeId),         // Associated const
+}
+
+ impl AssociatedItemId {
+    /// Returns the underlying base NodeId.
+    pub fn base_id(&self) -> NodeId {
+        match *self {
+            AssociatedItemId::Function(id) => id.into_inner(),
+            AssociatedItemId::TypeAlias(id) => id.into_inner(),
+            AssociatedItemId::Value(id) => id.into_inner(),
+        }
+    }
+
+     // Optional: Get the ItemKind directly
+    pub fn kind(&self) -> ItemKind {
+         match self {
+            // TODO: Refine Function kind if Method distinction needed
+            AssociatedItemId::Function(_) => ItemKind::Function,
+            AssociatedItemId::TypeAlias(_) => ItemKind::TypeAlias,
+            // TODO: Refine Value kind if AssociatedConst distinction needed
+            AssociatedItemId::Value(_) => ItemKind::Constant,
+        }
+    }
+}
+
+// --- From Implementations for Category Enums ---
+
+impl From<FunctionNodeId> for PrimaryNodeId { fn from(id: FunctionNodeId) -> Self { PrimaryNodeId::Function(id) } }
+impl From<StructNodeId> for PrimaryNodeId { fn from(id: StructNodeId) -> Self { PrimaryNodeId::Struct(id) } }
+impl From<EnumNodeId> for PrimaryNodeId { fn from(id: EnumNodeId) -> Self { PrimaryNodeId::Enum(id) } }
+impl From<UnionNodeId> for PrimaryNodeId { fn from(id: UnionNodeId) -> Self { PrimaryNodeId::Union(id) } }
+impl From<TypeAliasNodeId> for PrimaryNodeId { fn from(id: TypeAliasNodeId) -> Self { PrimaryNodeId::TypeAlias(id) } }
+impl From<TraitNodeId> for PrimaryNodeId { fn from(id: TraitNodeId) -> Self { PrimaryNodeId::Trait(id) } }
+impl From<ImplNodeId> for PrimaryNodeId { fn from(id: ImplNodeId) -> Self { PrimaryNodeId::Impl(id) } }
+impl From<ValueNodeId> for PrimaryNodeId { fn from(id: ValueNodeId) -> Self { PrimaryNodeId::Value(id) } }
+impl From<MacroNodeId> for PrimaryNodeId { fn from(id: MacroNodeId) -> Self { PrimaryNodeId::Macro(id) } }
+impl From<ImportNodeId> for PrimaryNodeId { fn from(id: ImportNodeId) -> Self { PrimaryNodeId::Import(id) } }
+impl From<ModuleNodeId> for PrimaryNodeId { fn from(id: ModuleNodeId) -> Self { PrimaryNodeId::Module(id) } }
+
+
+impl From<FunctionNodeId> for AssociatedItemId { fn from(id: FunctionNodeId) -> Self { AssociatedItemId::Function(id) } }
+impl From<TypeAliasNodeId> for AssociatedItemId { fn from(id: TypeAliasNodeId) -> Self { AssociatedItemId::TypeAlias(id) } }
+impl From<ValueNodeId> for AssociatedItemId { fn from(id: ValueNodeId) -> Self { AssociatedItemId::Value(id) } }
+
+
+// --- Node Struct Definitions ---
 // Logging target
 const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
 
