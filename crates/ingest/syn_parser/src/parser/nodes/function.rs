@@ -3,6 +3,7 @@ use crate::parser::types::GenericParamNode;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 
+// AI: Let's make a similar distinction between `FunctionNode` and `MethodNode` AI!
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FunctionNode {
     pub id: NodeId,
