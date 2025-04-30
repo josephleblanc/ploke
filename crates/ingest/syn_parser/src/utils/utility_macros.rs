@@ -22,19 +22,15 @@ macro_rules! define_node_id_wrapper {
         pub struct $NewTypeId(NodeId);
 
         impl $NewTypeId {
-            /// Create from raw NodeId.
-            #[inline]
-            pub fn new(id: NodeId) -> Self {
-                Self(id)
-            }
-
             /// Consume the wrapper and return the inner NodeId.
+            /// Use sparingly, as this bypasses the type safety of the wrapper.
             #[inline]
             pub fn into_inner(self) -> NodeId {
                 self.0
             }
 
             /// Get a reference to the inner NodeId.
+            /// Use sparingly, as this bypasses the type safety of the wrapper.
             #[inline]
             pub fn as_inner(&self) -> &NodeId {
                 &self.0
@@ -45,6 +41,20 @@ macro_rules! define_node_id_wrapper {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 // Delegate to the inner NodeId's Display implementation
                 write!(f, "{}", self.0)
+            }
+        }
+
+        impl std::borrow::Borrow<NodeId> for $NewTypeId {
+            #[inline]
+            fn borrow(&self) -> &NodeId {
+                &self.0
+            }
+        }
+
+        impl AsRef<NodeId> for $NewTypeId {
+            #[inline]
+            fn as_ref(&self) -> &NodeId {
+                &self.0
             }
         }
     };
