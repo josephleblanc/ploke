@@ -188,10 +188,10 @@ macro_rules! define_internal_node_id {
     // Matcher with optional markers block
     (
         $(#[$outer:meta])*
-        struct $NewTypeId:ident {
-            $(markers: [$($MarkerTrait:path),* $(,)?])? // Optional markers block
-        }
-    ) => {
+        struct $NewTypeId:ident { // Match 'struct Name {'
+            $(markers: [$($MarkerTrait:path),* $(,)?])? // Optionally match 'markers: [...]'
+        } // Match the closing '}' brace *after* the optional markers
+    ) => { // Start expansion
         $(#[$outer])*
         // The struct is pub, but its field NodeId is private
         // because NodeId itself is not pub in this scope after potential future refactoring
