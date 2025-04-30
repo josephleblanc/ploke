@@ -35,7 +35,11 @@ pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
 pub use union::UnionNode;
 pub use value::{ConstNode, StaticNode}; // Updated re-export
-                                        // ... other re-exports
+
+// AI: Without making any other changes, add the other *NodeInfo structs here as pub(crate)
+// exports. AI!
+pub(crate) use module::ModuleNodeInfo;
+pub(crate) use structs::StructNodeInfo;
 
 // ----- utility macro -----
 // Differentiators for primary id types
@@ -156,7 +160,8 @@ impl AssociatedItemId {
 
 // --- From Implementations for Category Enums ---
 
-impl From<FunctionNodeId> for PrimaryNodeId { // Standalone Function
+impl From<FunctionNodeId> for PrimaryNodeId {
+    // Standalone Function
     fn from(id: FunctionNodeId) -> Self {
         PrimaryNodeId::Function(id)
     }
@@ -219,7 +224,8 @@ impl From<ModuleNodeId> for PrimaryNodeId {
 }
 
 // Removed From<FunctionNodeId> for AssociatedItemId
-impl From<MethodNodeId> for AssociatedItemId { // Method
+impl From<MethodNodeId> for AssociatedItemId {
+    // Method
     fn from(id: MethodNodeId) -> Self {
         AssociatedItemId::Method(id)
     }
@@ -243,15 +249,17 @@ const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility c
 /// Core trait for all graph nodes
 pub trait GraphNode {
     fn id(&self) -> NodeId;
-    fn visibility(&self) -> VisibilityKind;
+    fn visibility(&self) -> &VisibilityKind;
     fn name(&self) -> &str;
     fn cfgs(&self) -> &[String];
 
     // --- Default implementations for downcasting ---
-    fn as_function(&self) -> Option<&FunctionNode> { // Standalone function
+    fn as_function(&self) -> Option<&FunctionNode> {
+        // Standalone function
         None
     }
-    fn as_method(&self) -> Option<&MethodNode> { // Associated function/method
+    fn as_method(&self) -> Option<&MethodNode> {
+        // Associated function/method
         None
     }
     fn as_struct(&self) -> Option<&StructNode> {
@@ -541,12 +549,12 @@ pub enum TypeDefNode {
 }
 
 impl GraphNode for TypeDefNode {
-    fn visibility(&self) -> VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         match self {
-            TypeDefNode::Struct(struct_node) => struct_node.visibility.clone(),
-            TypeDefNode::Enum(enum_node) => enum_node.visibility.clone(),
-            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.visibility.clone(),
-            TypeDefNode::Union(union_node) => union_node.visibility.clone(),
+            TypeDefNode::Struct(struct_node) => &struct_node.visibility,
+            TypeDefNode::Enum(enum_node) => &enum_node.visibility,
+            TypeDefNode::TypeAlias(type_alias_node) => &type_alias_node.visibility,
+            TypeDefNode::Union(union_node) => &union_node.visibility,
         }
     }
 
