@@ -15,6 +15,8 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
+pub mod graph;
+
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
     use std::hash::Hasher;
@@ -738,6 +740,7 @@ pub enum IdConversionError {
 /// will generate distinct `NodeId`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemKind {
+    // AI Let's update ItemKind to use `Method` as well AI!
     Function,
     Struct,
     Enum,
