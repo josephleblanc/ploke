@@ -151,7 +151,7 @@ impl<'a> CodeVisitor<'a> {
                     cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
                 imports.push(ImportNode::new(import_info));
-}
+            },
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
                 let original_name = rename.ident.to_string();
@@ -196,6 +196,7 @@ impl<'a> CodeVisitor<'a> {
             syn::UseTree::Glob(glob) => {
                 // Register the new node ID
                 let registration_result = self.register_new_node_id(
+        // AI: Same problem here AI!
                     "<glob>", // Use placeholder name
                     ItemKind::Import,
                     item_name: "<glob>".to_string(),
