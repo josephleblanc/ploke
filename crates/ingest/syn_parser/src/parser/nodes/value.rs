@@ -32,6 +32,7 @@ impl HasAttributes for ValueNode {
         &self.attributes
     }
 }
+// AI: Let's split this into const and static to make the distinction clear AI!
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ValueNode {
     pub id: NodeId,
