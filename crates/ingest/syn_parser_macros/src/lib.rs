@@ -11,7 +11,8 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility}
 /// - A name derived by appending "Info" to the original struct name (e.g., `StructNode` -> `StructNodeInfo`).
 /// - A `pub id: ploke_core::NodeId` field.
 /// - All other public fields from the original struct, preserving their names and types.
-/// - Basic derives: `Debug`, `Clone`, `PartialEq`.
+/// - Basic derives on the `*NodeInfo` struct: `Debug`, `Clone`, `PartialEq`.
+/// - A `pub(crate) fn new(info: *NodeInfo) -> Self` constructor method implemented on the original struct.
 ///
 /// # Example Usage
 /// ```ignore
@@ -36,9 +37,6 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility}
 /// //     // ... other fields copied from StructNode
 /// // }
 /// ```
-///
-/// The original struct must still define a `pub(crate) fn new(info: *NodeInfo) -> Self` constructor
-/// that takes the generated `*NodeInfo` struct and correctly wraps the `info.id` into the typed ID.
 #[proc_macro_derive(GenerateNodeInfo)]
 pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
     // Parse the input tokens into a syntax tree (DeriveInput represents a struct/enum/union)
@@ -89,10 +87,35 @@ pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
         });
     }
 
-    // --- Generate the *NodeInfo struct definition ---
-    // We use the 'quote' macro to construct the Rust code as tokens.
+    // --- Generate the fields for the `new` method constructor body ---
+    let mut constructor_fields = Vec::new();
+    let mut id_type: Option<&Type> = None; // To store the type of the original 'id' field
 
-    let generated_struct = quote! {
+    for field in fields {
+        let field_name = field.ident.as_ref().expect("Named fields should have names");
+        let field_type = &field.ty;
+
+        if field_name == "id" {
+            // Store the type of the original 'id' field (e.g., StructNodeId)
+            id_type = Some(field_type);
+            // Generate the ID wrapping line for the constructor
+            constructor_fields.push(quote! {
+                #field_name : #field_type(info.id) // Assumes the typed ID struct is a tuple struct like `StructNodeId(NodeId)`
+            });
+        } else {
+            // Generate simple field copying for other fields
+            constructor_fields.push(quote! {
+                #field_name : info.#field_name
+            });
+        }
+    }
+
+    // Ensure the original struct had an 'id' field
+    let _ = id_type.expect("GenerateNodeInfo requires the struct to have an 'id' field.");
+
+
+    // --- Generate the *NodeInfo struct definition ---
+    let generated_info_struct = quote! {
         // Apply standard derives. Add more if needed (e.g., Serialize, Deserialize)
         // but keep them minimal for these intermediate structs unless necessary.
         #[derive(Debug, Clone, PartialEq)]
@@ -103,6 +126,28 @@ pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Convert the generated tokens back into a TokenStream and return it
-    TokenStream::from(generated_struct)
+    // --- Generate the `impl` block with the `new` constructor ---
+    let generated_impl = quote! {
+        impl #original_struct_name {
+            /// Creates a new instance from the corresponding `*NodeInfo` struct.
+            /// This constructor is typically `pub(crate)` and handles wrapping the raw `NodeId`
+            /// from the info struct into the specific typed ID for this node.
+            #[inline] // Suggest inlining for simple constructors
+            pub(crate) fn new(info: #info_struct_name) -> Self {
+                Self {
+                    // Add the generated constructor field assignments
+                    #(#constructor_fields),*
+                }
+            }
+        }
+    };
+
+    // --- Combine generated struct and impl block ---
+    let final_output = quote! {
+        #generated_info_struct
+        #generated_impl
+    };
+
+    // Convert the combined tokens back into a TokenStream and return it
+    TokenStream::from(final_output)
 }
