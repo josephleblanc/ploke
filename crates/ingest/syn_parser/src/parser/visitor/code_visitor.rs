@@ -102,25 +102,18 @@ impl<'a> CodeVisitor<'a> {
         cfg_bytes: Option<&[u8]>,
         vis_kind: &VisibilityKind,
     ) -> Result<Vec<ImportNode>, CodeVisitorError> {
-        // Return Result
-        let mut imports = Vec::new();
-        // AI: Let's rethink how we are using this function. I don't think it is going to do what
-        // we want, which is, as described in the doc comment, to process a `syn::UseTree`. It
-        // looks like you earlier tried to make it iterative but forgot to add the loop, and now it
-        // is kind of caught between the two approaches. Let's go ahead and make it fully
-        // rescursive, since that suits the tree-like structure and potentially branching paths of
-        // a glob import well. Refactor this funciton so it will just be recursive without the
-        // half-done recursive structure (e.g. the `let mut imports` above). AI!
+        // Fully recursive approach: each match arm returns the result directly.
 
         match tree {
             syn::UseTree::Path(path) => {
-                // No need to clone base_path, just push and pass ownership
+                // Push the current segment onto the path and recurse.
                 base_path.push(path.ident.to_string());
-                // Use `?` to propagate errors from recursive calls
-                imports.extend(self.process_use_tree(&path.tree, base_path, cfg_bytes, vis_kind)?);
+                // The result of the recursive call is the result for this path segment.
+                self.process_use_tree(&path.tree, base_path, cfg_bytes, vis_kind)
             }
             syn::UseTree::Name(name) => {
-                let mut full_path = base_path.to_vec();
+                // Base case: A specific item is being imported.
+                let mut full_path = base_path; // Take ownership
                 let use_name = name.ident.to_string();
                 let mut is_self_import = false;
 
