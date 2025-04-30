@@ -9,6 +9,7 @@ mod traits;
 mod type_alias;
 mod union;
 mod value;
+pub mod ids; // Declare the new ids module
 
 use std::borrow::Borrow;
 use std::fmt::Display;
