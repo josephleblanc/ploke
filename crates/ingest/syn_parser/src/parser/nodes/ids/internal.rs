@@ -189,7 +189,7 @@ macro_rules! define_internal_node_id {
     (
         $(#[$outer:meta])*
         struct $NewTypeId:ident { // Match 'struct Name {'
-            $(markers: [$($MarkerTrait:path),*])? // Optionally match 'markers: [...]' - Removed optional trailing comma $(,)?
+            $(markers: [$($MarkerTrait:path),*] $(,)? )?
         } // Match the closing '}' brace *after* the optional markers
     ) => { // Start expansion
         $(#[$outer])*
@@ -259,80 +259,80 @@ macro_rules! define_internal_node_id {
 // Now use the *new* internal macro with markers
 define_internal_node_id!(
     struct EnumNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct FunctionNodeId {
-        markers: [PrimaryNodeIdTrait]
+        markers: [PrimaryNodeIdTrait],
     }
 ); // For standalone functions
 define_internal_node_id!(
     struct MethodNodeId {
-        markers: [AssociatedItemIdTrait] // Removed trailing comma
+        markers: [AssociatedItemIdTrait], // Removed trailing comma
     }
 ); // For associated functions/methods
 define_internal_node_id!(
     struct ImplNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct ImportNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct ModuleNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 ); // Use the macro now
 define_internal_node_id!(
     struct StructNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct TraitNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(struct TypeAliasNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct UnionNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 // Removed ValueNodeId
 define_internal_node_id!(struct ConstNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct StaticNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 ); // Added
 define_internal_node_id!(
     struct FieldNodeId {
-        markers: [SecondaryNodeIdTrait] // Removed trailing comma
+        markers: [SecondaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct VariantNodeId {
-        markers: [SecondaryNodeIdTrait] // Removed trailing comma
+        markers: [SecondaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct ParamNodeId {
-        markers: [SecondaryNodeIdTrait] // Removed trailing comma
+        markers: [SecondaryNodeIdTrait], // Removed trailing comma
     }
 ); // For ParamData
 define_internal_node_id!(
     struct GenericParamNodeId {
-        markers: [SecondaryNodeIdTrait] // Removed trailing comma
+        markers: [SecondaryNodeIdTrait], // Removed trailing comma
     }
 );
 define_internal_node_id!(
     struct MacroNodeId {
-        markers: [PrimaryNodeIdTrait] // Removed trailing comma
+        markers: [PrimaryNodeIdTrait], // Removed trailing comma
     }
 );
 
