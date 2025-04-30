@@ -14,7 +14,6 @@ use petgraph::graph::Node;
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
 use crate::parser::nodes::*;
-use crate::parser::relations::RelationKind;
 use crate::resolve::module_tree;
 use crate::resolve::module_tree::ModuleTree;
 use crate::utils::{LogStyle, LogStyleDebug};
@@ -74,8 +73,8 @@ pub trait GraphAccess {
         for dup in &dups {
 
             debug!("{:#?}", dup);
-            let target = self.find_node_unique(dup.target).unwrap();
-            let source = self.find_node_unique(dup.source).unwrap();
+            let target = self.find_node_unique(dup.target()).unwrap();
+            let source = self.find_node_unique(dup.source()).unwrap();
             target.log_node_debug();
             source.log_node_debug();
             if let Some(m_target) = target.as_module() {
@@ -144,10 +143,12 @@ fn debug_relationships(visitor: &Self) {
         if count > 1 {
             // Use helper methods to get base NodeIds
             log::debug!(target: "temp",
-                "{} | {}: {} -> {} | {:?}", // Log the full relation variant
+                "{} | {}: {} | {} -> {} | {:?}", // Log the full relation variant
                 "Duplicate!".log_header(),
-                rel.source_node_id().to_string().log_id(),
-                rel.target_node_id().to_string().log_id(),
+                "Count".log_step(),
+                count.to_string().log_error(),
+                rel.source().to_string().log_id(),
+                rel.target().to_string().log_id(),
                 rel, // Log the specific variant
             );
         }
@@ -347,7 +348,8 @@ fn debug_relationships(visitor: &Self) {
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `StructNode` if a matching `TypeDefNode::Struct` is found.
-    fn get_struct(&self, id: NodeId) -> Option<&StructNode> {
+    // AI: update the rest of the methods to use the typed ids AI!
+    fn get_struct(&self, id: StructNodeId) -> Option<&StructNode> {
         self.defined_types().iter().find_map(|def| match def {
             TypeDefNode::Struct(s) if s.id == id => Some(s),
             _ => None,
