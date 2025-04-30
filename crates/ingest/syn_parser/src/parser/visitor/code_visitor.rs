@@ -12,7 +12,9 @@ use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ModuleNodeId; // Keep
 use crate::parser::nodes::PrimaryNodeId; // Keep
 use crate::parser::nodes::StaticNode; // Keep
-use crate::parser::nodes::StructNodeId; // Keep
+use crate::parser::nodes::StructNodeId;
+use crate::parser::nodes::StructNodeInfo;
+// Keep
 // Remove StructNodeInfo import, it's generated implicitly now
 use crate::parser::nodes::{
     ConstNodeInfo, // Add generated info struct imports
@@ -90,6 +92,8 @@ impl<'a> CodeVisitor<'a> {
     fn process_use_tree(
         &mut self,
         tree: &syn::UseTree,
+        // AI: Let's change this to accept a `Vec<String>` instead. It doesn't really seem to make
+        // sense for us to be taking a reference and using `clone` on every recursive call here.
         base_path: &[String],
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
         vis_kind: &VisibilityKind,
@@ -97,6 +101,12 @@ impl<'a> CodeVisitor<'a> {
         let mut imports = Vec::new();
 
         match tree {
+            // AI: Looks like an error in trying to use `continue` outside of a loop. Let's
+            // change this to return a result that uses a new error type you create. Then in the caller
+            // we can do error handling. While we can't return a result and abort the parsing, we
+            // can at least log the error in the caller. We should also log the error if it occurs
+            // here. For the error type, also update the `syn_parser/error.rs` file, using the
+            // `#[from]` provided by `thiserror`. Prefer `#[transparent]`.
             syn::UseTree::Path(path) => {
                 let mut new_base = base_path.to_vec();
                 new_base.push(path.ident.to_string());
@@ -127,6 +137,7 @@ impl<'a> CodeVisitor<'a> {
                 );
                 // If registration fails (e.g., no parent module found), skip this import item
                 if registration_result.is_none() {
+                    // AI: return the result instead of using `continue`
                     continue;
                 }
                 let (import_base_id, _) = registration_result.unwrap();
@@ -158,6 +169,7 @@ impl<'a> CodeVisitor<'a> {
                     cfg_bytes, // Pass down received cfg_bytes
                 );
                 if registration_result.is_none() {
+                    // AI: return the result instead of using `continue`
                     continue;
                 }
                 let (import_base_id, _) = registration_result.unwrap();
@@ -185,6 +197,7 @@ impl<'a> CodeVisitor<'a> {
                     cfg_bytes, // Pass down received cfg_bytes
                 );
                 if registration_result.is_none() {
+                    // AI: return the result instead of using `continue`
                     continue;
                 }
                 let (import_base_id, _) = registration_result.unwrap();
@@ -212,7 +225,9 @@ impl<'a> CodeVisitor<'a> {
             }
         }
 
+        // AI: should still be a vec, but now wrapped in Ok()
         imports
+        // AI!
     }
 
     // Removed #[cfg(feature = "verbose_debug")]
@@ -616,7 +631,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Removed #[cfg] block
             self.debug_new_id(
-                &field_name.clone().unwrap_or("unnamed_struct_field".to_string()),
+                &field_name
+                    .clone()
+                    .unwrap_or("unnamed_struct_field".to_string()),
                 field_base_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
@@ -837,7 +854,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
             self.debug_new_id(
-                &field_name.clone().unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
+                &field_name
+                    .clone()
+                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
                 field_base_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
@@ -1002,7 +1021,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
                         self.debug_new_id(
-                            &field_name.clone().unwrap_or("unnamed_enum_field".to_string()),
+                            &field_name
+                                .clone()
+                                .unwrap_or("unnamed_enum_field".to_string()),
                             field_base_id,
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
