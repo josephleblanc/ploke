@@ -25,9 +25,10 @@ We will implement typed node identifiers with strict encapsulation using a priva
     - **Maximum Compile-Time Safety:** Prevents *any* code outside the designated private module from converting a typed ID back to a raw `NodeId`, eliminating a class of potential internal errors. Makes invalid ID usage unrepresentable.
     - **Clear Encapsulation:** Establishes a very strong boundary around ID implementation details.
     - **Improved Maintainability (Safety):** Reduces the risk of introducing bugs during refactoring by enforcing strict type constraints; the compiler catches more errors.
+    - **Conceptual Clarity (Set Theory Alignment):** The use of distinct typed IDs, marker traits (`PrimaryNodeIdTrait`, `SecondaryNodeIdTrait`, etc.), and category enums (`AnyNodeId`) provides a natural way to model and reason about different *sets* of nodes within the code structure, aligning well with set-theoretic concepts and improving the conceptual integrity of the design.
     - **Alignment with Goals:** Better reflects the "program as proof" philosophy.
 - **Negative:**
-    - **Increased Structural Complexity:** Requires careful management of the private module, its internal traits, and restricted constructors.
+    - **Increased Structural Complexity:** Requires careful management of the private module, its internal traits, restricted constructors, and the `AnyNodeId` enum.
     *   **`AnyNodeId` Maintenance:** The `AnyNodeId` enum needs to be defined and updated whenever new primary node types are added.
     *   **Potential Boilerplate:** Requires careful macro design to manage the implementation details within the private module.
     *   **Slight Runtime Overhead:** Using `AnyNodeId` as a hash key involves an extra level of indirection compared to using the raw `NodeId` directly (though likely negligible).
