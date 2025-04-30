@@ -34,12 +34,20 @@ pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
 pub use union::UnionNode;
-pub use value::{ConstNode, StaticNode}; // Updated re-export
+pub use value::{ConstNode, StaticNode};
 
-// AI: Without making any other changes, add the other *NodeInfo structs here as pub(crate)
-// exports. AI!
+// Re-export the generated *NodeInfo structs for internal use within the crate
+pub(crate) use enums::{EnumNodeInfo, VariantNodeInfo};
+pub(crate) use function::{FunctionNodeInfo, MethodNodeInfo};
+pub(crate) use impls::ImplNodeInfo;
+pub(crate) use import::ImportNodeInfo;
+pub(crate) use macros::MacroNodeInfo;
 pub(crate) use module::ModuleNodeInfo;
-pub(crate) use structs::StructNodeInfo;
+pub(crate) use structs::{FieldNodeInfo, StructNodeInfo};
+pub(crate) use traits::TraitNodeInfo;
+pub(crate) use type_alias::TypeAliasNodeInfo;
+pub(crate) use union::UnionNodeInfo;
+pub(crate) use value::{ConstNodeInfo, StaticNodeInfo};
 
 // ----- utility macro -----
 // Differentiators for primary id types
