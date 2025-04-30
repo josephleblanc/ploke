@@ -6,6 +6,7 @@
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
+use ploke_core::NodeId;
 use std::borrow::Borrow;
 use std::fmt::Display;
 
@@ -151,7 +152,6 @@ macro_rules! impl_typed_node_id_get {
         impl TypedNodeIdGet for $IdType {
             #[inline]
             fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
-                // AI: Change this macro rule to instead use static dispatch without any trait objects AI!
                 graph
                     .$GetterMethod(*self)
                     .map(|node| node as &dyn GraphNode)
@@ -362,180 +362,180 @@ define_category_enum!(
 
 // --- Manually Defined AnyNodeId ---
 
-///// Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage.
-//#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-//pub enum AnyNodeId {
-//    // Primary Nodes
-//    Function(FunctionNodeId),
-//    Struct(StructNodeId),
-//    Enum(EnumNodeId),
-//    Union(UnionNodeId),
-//    TypeAlias(TypeAliasNodeId),
-//    Trait(TraitNodeId),
-//    Impl(ImplNodeId),
-//    Const(ConstNodeId),
-//    Static(StaticNodeId),
-//    Macro(MacroNodeId),
-//    Import(ImportNodeId),
-//    Module(ModuleNodeId),
-//    // Associated Items (using their specific IDs)
-//    Method(MethodNodeId),
-//    // Secondary Nodes
-//    Field(FieldNodeId),
-//    Variant(VariantNodeId),
-//    Param(ParamNodeId),
-//    GenericParam(GenericParamNodeId),
-//    // Other IDs
-//    Reexport(ReexportNodeId),
-//    // Add any other specific ID types here as they are created
-//}
-//
-//impl AnyNodeId {
-//    /// Returns the underlying base NodeId using the internal `base_id` method
-//    /// of the wrapped specific ID type.
-//    #[inline]
-//    pub fn base_id(&self) -> NodeId {
-//        match *self {
-//            // Primary Nodes
-//            AnyNodeId::Function(id) => id.base_id(),
-//            AnyNodeId::Struct(id) => id.base_id(),
-//            AnyNodeId::Enum(id) => id.base_id(),
-//            AnyNodeId::Union(id) => id.base_id(),
-//            AnyNodeId::TypeAlias(id) => id.base_id(),
-//            AnyNodeId::Trait(id) => id.base_id(),
-//            AnyNodeId::Impl(id) => id.base_id(),
-//            AnyNodeId::Const(id) => id.base_id(),
-//            AnyNodeId::Static(id) => id.base_id(),
-//            AnyNodeId::Macro(id) => id.base_id(),
-//            AnyNodeId::Import(id) => id.base_id(),
-//            AnyNodeId::Module(id) => id.base_id(),
-//            // Associated Items
-//            AnyNodeId::Method(id) => id.base_id(),
-//            // Secondary Nodes
-//            AnyNodeId::Field(id) => id.base_id(),
-//            AnyNodeId::Variant(id) => id.base_id(),
-//            AnyNodeId::Param(id) => id.base_id(),
-//            AnyNodeId::GenericParam(id) => id.base_id(),
-//            // Other IDs
-//            AnyNodeId::Reexport(id) => id.base_id(),
-//        }
-//    }
-//}
-//
-//// --- From Implementations for AnyNodeId ---
-//
-//// Primary Nodes
-//impl From<FunctionNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: FunctionNodeId) -> Self {
-//        AnyNodeId::Function(id)
-//    }
-//}
-//impl From<StructNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: StructNodeId) -> Self {
-//        AnyNodeId::Struct(id)
-//    }
-//}
-//impl From<EnumNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: EnumNodeId) -> Self {
-//        AnyNodeId::Enum(id)
-//    }
-//}
-//impl From<UnionNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: UnionNodeId) -> Self {
-//        AnyNodeId::Union(id)
-//    }
-//}
-//impl From<TypeAliasNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: TypeAliasNodeId) -> Self {
-//        AnyNodeId::TypeAlias(id)
-//    }
-//}
-//impl From<TraitNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: TraitNodeId) -> Self {
-//        AnyNodeId::Trait(id)
-//    }
-//}
-//impl From<ImplNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ImplNodeId) -> Self {
-//        AnyNodeId::Impl(id)
-//    }
-//}
-//impl From<ConstNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ConstNodeId) -> Self {
-//        AnyNodeId::Const(id)
-//    }
-//}
-//impl From<StaticNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: StaticNodeId) -> Self {
-//        AnyNodeId::Static(id)
-//    }
-//}
-//impl From<MacroNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: MacroNodeId) -> Self {
-//        AnyNodeId::Macro(id)
-//    }
-//}
-//impl From<ImportNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ImportNodeId) -> Self {
-//        AnyNodeId::Import(id)
-//    }
-//}
-//impl From<ModuleNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ModuleNodeId) -> Self {
-//        AnyNodeId::Module(id)
-//    }
-//}
-//// Associated Items
-//impl From<MethodNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: MethodNodeId) -> Self {
-//        AnyNodeId::Method(id)
-//    }
-//}
-//// Secondary Nodes
-//impl From<FieldNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: FieldNodeId) -> Self {
-//        AnyNodeId::Field(id)
-//    }
-//}
-//impl From<VariantNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: VariantNodeId) -> Self {
-//        AnyNodeId::Variant(id)
-//    }
-//}
-//impl From<ParamNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ParamNodeId) -> Self {
-//        AnyNodeId::Param(id)
-//    }
-//}
-//impl From<GenericParamNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: GenericParamNodeId) -> Self {
-//        AnyNodeId::GenericParam(id)
-//    }
-//}
-//// Other IDs
-//impl From<ReexportNodeId> for AnyNodeId {
-//    #[inline]
-//    fn from(id: ReexportNodeId) -> Self {
-//        AnyNodeId::Reexport(id)
-//    }
-//}
+/// Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum AnyNodeId {
+    // Primary Nodes
+    Function(FunctionNodeId),
+    Struct(StructNodeId),
+    Enum(EnumNodeId),
+    Union(UnionNodeId),
+    TypeAlias(TypeAliasNodeId),
+    Trait(TraitNodeId),
+    Impl(ImplNodeId),
+    Const(ConstNodeId),
+    Static(StaticNodeId),
+    Macro(MacroNodeId),
+    Import(ImportNodeId),
+    Module(ModuleNodeId),
+    // Associated Items (using their specific IDs)
+    Method(MethodNodeId),
+    // Secondary Nodes
+    Field(FieldNodeId),
+    Variant(VariantNodeId),
+    Param(ParamNodeId),
+    GenericParam(GenericParamNodeId),
+    // Other IDs
+    Reexport(ReexportNodeId),
+    // Add any other specific ID types here as they are created
+}
+
+impl AnyNodeId {
+    /// Returns the underlying base NodeId using the internal `base_id` method
+    /// of the wrapped specific ID type.
+    #[inline]
+    pub fn base_id(&self) -> NodeId {
+        match *self {
+            // Primary Nodes
+            AnyNodeId::Function(id) => id.base_id(),
+            AnyNodeId::Struct(id) => id.base_id(),
+            AnyNodeId::Enum(id) => id.base_id(),
+            AnyNodeId::Union(id) => id.base_id(),
+            AnyNodeId::TypeAlias(id) => id.base_id(),
+            AnyNodeId::Trait(id) => id.base_id(),
+            AnyNodeId::Impl(id) => id.base_id(),
+            AnyNodeId::Const(id) => id.base_id(),
+            AnyNodeId::Static(id) => id.base_id(),
+            AnyNodeId::Macro(id) => id.base_id(),
+            AnyNodeId::Import(id) => id.base_id(),
+            AnyNodeId::Module(id) => id.base_id(),
+            // Associated Items
+            AnyNodeId::Method(id) => id.base_id(),
+            // Secondary Nodes
+            AnyNodeId::Field(id) => id.base_id(),
+            AnyNodeId::Variant(id) => id.base_id(),
+            AnyNodeId::Param(id) => id.base_id(),
+            AnyNodeId::GenericParam(id) => id.base_id(),
+            // Other IDs
+            AnyNodeId::Reexport(id) => id.base_id(),
+        }
+    }
+}
+
+// --- From Implementations for AnyNodeId ---
+
+// Primary Nodes
+impl From<FunctionNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: FunctionNodeId) -> Self {
+        AnyNodeId::Function(id)
+    }
+}
+impl From<StructNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: StructNodeId) -> Self {
+        AnyNodeId::Struct(id)
+    }
+}
+impl From<EnumNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: EnumNodeId) -> Self {
+        AnyNodeId::Enum(id)
+    }
+}
+impl From<UnionNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: UnionNodeId) -> Self {
+        AnyNodeId::Union(id)
+    }
+}
+impl From<TypeAliasNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: TypeAliasNodeId) -> Self {
+        AnyNodeId::TypeAlias(id)
+    }
+}
+impl From<TraitNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: TraitNodeId) -> Self {
+        AnyNodeId::Trait(id)
+    }
+}
+impl From<ImplNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ImplNodeId) -> Self {
+        AnyNodeId::Impl(id)
+    }
+}
+impl From<ConstNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ConstNodeId) -> Self {
+        AnyNodeId::Const(id)
+    }
+}
+impl From<StaticNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: StaticNodeId) -> Self {
+        AnyNodeId::Static(id)
+    }
+}
+impl From<MacroNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: MacroNodeId) -> Self {
+        AnyNodeId::Macro(id)
+    }
+}
+impl From<ImportNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ImportNodeId) -> Self {
+        AnyNodeId::Import(id)
+    }
+}
+impl From<ModuleNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ModuleNodeId) -> Self {
+        AnyNodeId::Module(id)
+    }
+}
+// Associated Items
+impl From<MethodNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: MethodNodeId) -> Self {
+        AnyNodeId::Method(id)
+    }
+}
+// Secondary Nodes
+impl From<FieldNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: FieldNodeId) -> Self {
+        AnyNodeId::Field(id)
+    }
+}
+impl From<VariantNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: VariantNodeId) -> Self {
+        AnyNodeId::Variant(id)
+    }
+}
+impl From<ParamNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ParamNodeId) -> Self {
+        AnyNodeId::Param(id)
+    }
+}
+impl From<GenericParamNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: GenericParamNodeId) -> Self {
+        AnyNodeId::GenericParam(id)
+    }
+}
+// Other IDs
+impl From<ReexportNodeId> for AnyNodeId {
+    #[inline]
+    fn from(id: ReexportNodeId) -> Self {
+        AnyNodeId::Reexport(id)
+    }
+}
 
 // --- Node Struct Definitions ---
 // Logging target
@@ -544,7 +544,7 @@ const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility c
 // end up needing access to NodeId
 /// Core trait for all graph nodes
 pub trait GraphNode {
-    fn id(&self) -> NodeId;
+    fn any_id(&self) -> AnyNodeId;
     fn visibility(&self) -> &VisibilityKind;
     fn name(&self) -> &str;
     fn cfgs(&self) -> &[String];
