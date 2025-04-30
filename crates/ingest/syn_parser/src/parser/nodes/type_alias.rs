@@ -6,9 +6,16 @@ use crate::parser::types::GenericParamNode;
 use super::*;
 
 // Represents a type alias (type NewType = OldType)
+impl TypeAliasNode {
+    /// Returns the typed ID for this type alias node.
+    pub fn type_alias_id(&self) -> TypeAliasNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for TypeAliasNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -33,7 +40,7 @@ impl HasAttributes for TypeAliasNode {
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TypeAliasNode {
-    pub id: NodeId,
+    pub id: TypeAliasNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize),
     pub visibility: VisibilityKind,

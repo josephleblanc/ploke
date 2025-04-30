@@ -7,7 +7,7 @@ use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StructNode {
-    pub id: NodeId,
+    pub id: StructNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
@@ -21,7 +21,7 @@ pub struct StructNode {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FieldNode {
-    pub id: NodeId,
+    pub id: FieldNodeId, // Use typed ID
     pub name: Option<String>,
     pub type_id: TypeId,
     pub visibility: VisibilityKind,
@@ -35,9 +35,16 @@ impl HasAttributes for FieldNode {
     }
 }
 
+impl StructNode {
+    /// Returns the typed ID for this struct node.
+    pub fn struct_id(&self) -> StructNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for StructNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()

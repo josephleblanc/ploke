@@ -5,7 +5,7 @@ use super::*;
 /// Represents a `const` item.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConstNode {
-    pub id: NodeId,
+    pub id: ConstNodeId, // Use typed ID
     pub name: String,
     pub visibility: VisibilityKind,
     pub type_id: TypeId,
@@ -17,9 +17,16 @@ pub struct ConstNode {
     pub cfgs: Vec<String>,
 }
 
+impl StaticNode {
+    /// Returns the typed ID for this static node.
+    pub fn static_id(&self) -> StaticNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for StaticNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -42,9 +49,16 @@ impl HasAttributes for StaticNode {
     }
 }
 
+impl ConstNode {
+    /// Returns the typed ID for this const node.
+    pub fn const_id(&self) -> ConstNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for ConstNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -70,7 +84,7 @@ impl HasAttributes for ConstNode {
 /// Represents a `static` item.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StaticNode {
-    pub id: NodeId,
+    pub id: StaticNodeId, // Use typed ID
     pub name: String,
     pub visibility: VisibilityKind,
     pub type_id: TypeId,

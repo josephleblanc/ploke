@@ -8,7 +8,7 @@ use super::*;
 // Represents a trait definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TraitNode {
-    pub id: NodeId,
+    pub id: TraitNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
@@ -21,6 +21,13 @@ pub struct TraitNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
+impl TraitNode {
+    /// Returns the typed ID for this trait node.
+    pub fn trait_id(&self) -> TraitNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for TraitNode {
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -31,7 +38,7 @@ impl GraphNode for TraitNode {
     }
 
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn cfgs(&self) -> &[String] {
         &self.cfgs

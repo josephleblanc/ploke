@@ -74,7 +74,7 @@ use super::*;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
-    pub id: NodeId,
+    pub id: ImportNodeId, // Use typed ID
 
     /// Source code span (byte offsets) of the import statement
     pub span: (usize, usize),
@@ -103,6 +103,11 @@ pub struct ImportNode {
 }
 
 impl ImportNode {
+    /// Returns the typed ID for this import node.
+    pub fn import_id(&self) -> ImportNodeId {
+        self.id
+    }
+
     pub fn source_path(&self) -> &[String] {
         &self.source_path
     }
@@ -198,7 +203,7 @@ impl ImportNode {
 
 impl GraphNode for ImportNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
 
     fn visibility(&self) -> VisibilityKind {

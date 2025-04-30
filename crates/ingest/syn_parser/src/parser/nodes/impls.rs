@@ -7,7 +7,7 @@ use super::*;
 // Represents an implementation block
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ImplNode {
-    pub id: NodeId,
+    pub id: ImplNodeId, // Use typed ID
     pub self_type: TypeId,
     pub span: (usize, usize), // Byte start/end offsets
     pub trait_type: Option<TypeId>,
@@ -16,9 +16,16 @@ pub struct ImplNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
+impl ImplNode {
+    /// Returns the typed ID for this impl node.
+    pub fn impl_id(&self) -> ImplNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for ImplNode {
     fn visibility(&self) -> VisibilityKind {
-        VisibilityKind::Public
+        VisibilityKind::Public // Impls don't have inherent visibility in the same way items do
     }
 
     fn name(&self) -> &str {
@@ -28,7 +35,7 @@ impl GraphNode for ImplNode {
     }
 
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn cfgs(&self) -> &[String] {
         &self.cfgs

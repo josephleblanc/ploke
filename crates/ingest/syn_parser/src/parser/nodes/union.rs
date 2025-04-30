@@ -5,9 +5,16 @@ use crate::parser::types::GenericParamNode;
 use super::*;
 
 // Represents a union definition
+impl UnionNode {
+    /// Returns the typed ID for this union node.
+    pub fn union_id(&self) -> UnionNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for UnionNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -32,7 +39,7 @@ impl HasAttributes for UnionNode {
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UnionNode {
-    pub id: NodeId,
+    pub id: UnionNodeId, // Use typed ID
     pub name: String,
     pub visibility: VisibilityKind,
     pub fields: Vec<FieldNode>,

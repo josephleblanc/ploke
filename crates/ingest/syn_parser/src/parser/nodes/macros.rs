@@ -3,9 +3,16 @@ use ploke_core::{NodeId, TrackingHash};
 use super::*;
 
 // Represents a macro definition
+impl MacroNode {
+    /// Returns the typed ID for this macro node.
+    pub fn macro_id(&self) -> MacroNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for MacroNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -31,7 +38,7 @@ impl HasAttributes for MacroNode {
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroNode {
-    pub id: NodeId,
+    pub id: MacroNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize), // Add span field
     pub visibility: VisibilityKind,

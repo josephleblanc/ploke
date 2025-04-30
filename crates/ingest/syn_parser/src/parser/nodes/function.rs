@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MethodNode {
     // Renamed from FunctionNode
-    pub id: NodeId,
+    pub id: MethodNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
@@ -21,10 +21,17 @@ pub struct MethodNode {
     pub cfgs: Vec<String>,
 }
 
+impl MethodNode {
+    /// Returns the typed ID for this method node.
+    pub fn method_id(&self) -> MethodNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for MethodNode {
     // Renamed from FunctionNode
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
@@ -63,7 +70,7 @@ impl MethodNode {
 /// Represents a standalone function item (`fn`).
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct FunctionNode {
-    pub id: NodeId,
+    pub id: FunctionNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
@@ -77,9 +84,16 @@ pub struct FunctionNode {
     pub cfgs: Vec<String>,
 }
 
+impl FunctionNode {
+    /// Returns the typed ID for this function node.
+    pub fn function_id(&self) -> FunctionNodeId {
+        self.id
+    }
+}
+
 impl GraphNode for FunctionNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()

@@ -9,7 +9,7 @@ use super::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ModuleNode {
-    pub id: NodeId,
+    pub id: ModuleNodeId, // Use typed ID
     pub name: String,
     pub path: Vec<String>,
     pub visibility: VisibilityKind,
@@ -24,6 +24,11 @@ pub struct ModuleNode {
 }
 
 impl ModuleNode {
+    /// Returns the typed ID for this module node.
+    pub fn module_id(&self) -> ModuleNodeId {
+        self.id
+    }
+
     /// Definition path to file as it would be called by a `use` statement,
     /// Examples:
     ///     module declaration in project/main.rs
@@ -174,7 +179,7 @@ pub enum ModuleKind {
 
 impl GraphNode for ModuleNode {
     fn id(&self) -> NodeId {
-        self.id
+        self.id.into_inner() // Return base NodeId
     }
     fn visibility(&self) -> VisibilityKind {
         self.visibility.clone()
