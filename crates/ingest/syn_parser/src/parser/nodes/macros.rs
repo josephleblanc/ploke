@@ -1,15 +1,18 @@
-use crate::define_node_info_struct; // Import macro
-use ploke_core::{NodeId, TrackingHash}; // Import NodeId
+use ploke_core::{NodeId, TrackingHash};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Macro Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a MacroNode.
-    MacroNodeInfo {
-        name: String,
+// Removed the macro invocation for MacroNodeInfo
+
+// Represents a macro definition
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct MacroNode {
+    pub id: MacroNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         kind: MacroKind,

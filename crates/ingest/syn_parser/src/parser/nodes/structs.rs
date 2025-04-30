@@ -1,15 +1,18 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Struct Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a StructNode.
-    StructNodeInfo {
-        name: String,
+// Removed the macro invocation for StructNodeInfo
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct StructNode {
+    pub id: StructNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         fields: Vec<FieldNode>,
@@ -60,10 +63,12 @@ impl StructNode {
 
 // --- Field Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a FieldNode.
-    FieldNodeInfo {
-        name: Option<String>,
+// Removed the macro invocation for FieldNodeInfo
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct FieldNode {
+    pub id: FieldNodeId, // Use typed ID
+    pub name: Option<String>,
         type_id: TypeId,
         visibility: VisibilityKind,
         attributes: Vec<Attribute>,

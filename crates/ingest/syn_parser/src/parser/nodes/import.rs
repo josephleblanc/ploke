@@ -1,15 +1,16 @@
-use crate::define_node_info_struct; // Import macro
-use ploke_core::NodeId; // Import NodeId
+use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Import Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating an ImportNode.
-    ImportNodeInfo {
-        span: (usize, usize),
+// Removed the macro invocation for ImportNodeInfo
+
+/// Represents all import/export semantics in the code graph, including:
+/// - Regular `use` statements
+/// - `pub use` re-exports
         source_path: Vec<String>,
         kind: ImportKind,
         visible_name: String,
@@ -89,7 +90,7 @@ define_node_info_struct! {
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, GenerateNodeInfo)] // Add derive
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
     pub id: ImportNodeId, // Use typed ID

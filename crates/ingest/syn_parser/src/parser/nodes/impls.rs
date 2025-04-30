@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TypeId}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Impl Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating an ImplNode.
-    ImplNodeInfo {
-        self_type: TypeId,
+// Removed the macro invocation for ImplNodeInfo
+
+// Represents an implementation block
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct ImplNode {
+    pub id: ImplNodeId, // Use typed ID
+    pub self_type: TypeId,
         span: (usize, usize),
         trait_type: Option<TypeId>,
         methods: Vec<MethodNode>, // Changed from FunctionNode

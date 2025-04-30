@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Enum Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating an EnumNode.
-    EnumNodeInfo {
-        name: String,
+// Removed the macro invocation for EnumNodeInfo
+
+// Represents an enum definition
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct EnumNode {
+    pub id: EnumNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         variants: Vec<VariantNode>,
@@ -67,10 +71,13 @@ impl HasAttributes for EnumNode {
 
 // --- Variant Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a VariantNode.
-    VariantNodeInfo {
-        name: String,
+// Removed the macro invocation for VariantNodeInfo
+
+// Represents a variant in an enum
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct VariantNode {
+    pub id: VariantNodeId, // Use typed ID
+    pub name: String,
         fields: Vec<FieldNode>,
         discriminant: Option<String>,
         attributes: Vec<Attribute>,

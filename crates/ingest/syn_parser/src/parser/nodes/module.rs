@@ -1,19 +1,21 @@
-use crate::define_node_info_struct; // Import macro
-use ploke_core::{NodeId, TrackingHash}; // Import NodeId
+use ploke_core::{NodeId, TrackingHash};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Module Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a ModuleNode.
-    ModuleNodeInfo {
-        name: String,
+// Removed the macro invocation for ModuleNodeInfo
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, GenerateNodeInfo)] // Add derive
+pub struct ModuleNode {
+    pub id: ModuleNodeId, // Use typed ID
+    pub name: String,
         path: Vec<String>,
         visibility: VisibilityKind,
         attributes: Vec<Attribute>,

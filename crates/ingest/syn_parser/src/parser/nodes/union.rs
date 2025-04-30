@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Union Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a UnionNode.
-    UnionNodeInfo {
-        name: String,
+// Removed the macro invocation for UnionNodeInfo
+
+// Represents a union definition
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct UnionNode {
+    pub id: UnionNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         fields: Vec<FieldNode>,

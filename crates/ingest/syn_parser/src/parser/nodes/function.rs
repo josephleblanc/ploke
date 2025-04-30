@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Method Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a MethodNode.
-    MethodNodeInfo {
-        name: String,
+// Removed the macro invocation for MethodNodeInfo
+
+/// Represents an associated function or method within an `impl` or `trait`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct MethodNode {
+    pub id: MethodNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         parameters: Vec<ParamData>,
@@ -107,10 +111,13 @@ impl MethodNode {
 
 // --- Function Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a FunctionNode.
-    FunctionNodeInfo {
-        name: String,
+// Removed the macro invocation for FunctionNodeInfo
+
+/// Represents a standalone function item (`fn`).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct FunctionNode {
+    pub id: FunctionNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         parameters: Vec<ParamData>,

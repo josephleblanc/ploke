@@ -1,15 +1,18 @@
-use crate::define_node_info_struct; // Import macro
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Const Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a ConstNode.
-    ConstNodeInfo {
-        name: String,
+// Removed the macro invocation for ConstNodeInfo
+
+/// Represents a `const` item.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct ConstNode {
+    pub id: ConstNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         type_id: TypeId,
@@ -86,10 +89,13 @@ impl HasAttributes for ConstNode {
 
 // --- Static Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a StaticNode.
-    StaticNodeInfo {
-        name: String,
+// Removed the macro invocation for StaticNodeInfo
+
+/// Represents a `static` item.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct StaticNode {
+    pub id: StaticNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         type_id: TypeId,

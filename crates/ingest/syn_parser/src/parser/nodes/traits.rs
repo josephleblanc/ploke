@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Trait Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a TraitNode.
-    TraitNodeInfo {
-        name: String,
+// Removed the macro invocation for TraitNodeInfo
+
+// Represents a trait definition
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct TraitNode {
+    pub id: TraitNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         methods: Vec<MethodNode>, // Changed from FunctionNode

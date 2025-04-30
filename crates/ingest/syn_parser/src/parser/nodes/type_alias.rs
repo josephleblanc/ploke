@@ -1,15 +1,19 @@
-use crate::{define_node_info_struct, parser::types::GenericParamNode}; // Import macro
-use ploke_core::{NodeId, TrackingHash, TypeId}; // Import NodeId
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use ploke_core::{NodeId, TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Type Alias Node ---
 
-define_node_info_struct! {
-    /// Temporary info struct for creating a TypeAliasNode.
-    TypeAliasNodeInfo {
-        name: String,
+// Removed the macro invocation for TypeAliasNodeInfo
+
+// Represents a type alias (type NewType = OldType)
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+pub struct TypeAliasNode {
+    pub id: TypeAliasNodeId, // Use typed ID
+    pub name: String,
         span: (usize, usize),
         visibility: VisibilityKind,
         type_id: TypeId, // The ID of the aliased type
