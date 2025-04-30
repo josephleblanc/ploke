@@ -26,6 +26,7 @@ We will implement typed node identifiers with strict encapsulation using a priva
     - **Clear Encapsulation:** Establishes a very strong boundary around ID implementation details.
     - **Improved Maintainability (Safety):** Reduces the risk of introducing bugs during refactoring by enforcing strict type constraints; the compiler catches more errors.
     - **Conceptual Clarity (Set Theory Alignment):** The use of distinct typed IDs, marker traits (`PrimaryNodeIdTrait`, `SecondaryNodeIdTrait`, etc.), and category enums (`AnyNodeId`) provides a natural way to model and reason about different *sets* of nodes within the code structure, aligning well with set-theoretic concepts and improving the conceptual integrity of the design.
+    - **Foundation for Abstraction Layers:** Provides a type-safe foundation for building higher-level abstractions. The categorized typed IDs allow defining transformations or mappings (e.g., from the syntactic graph layer to a logical/semantic layer) that are enforced by the type system, facilitating the creation of a multi-layered graph architecture with strong guarantees.
     - **Alignment with Goals:** Better reflects the "program as proof" philosophy.
 - **Negative:**
     - **Increased Structural Complexity:** Requires careful management of the private module, its internal traits, restricted constructors, and the `AnyNodeId` enum.
