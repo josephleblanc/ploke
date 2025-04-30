@@ -402,7 +402,7 @@ impl AnyNodeId {
     /// Returns the underlying base NodeId using the internal `base_id` method
     /// of the wrapped specific ID type.
     #[inline]
-    pub fn base_id(&self) -> NodeId {
+    pub(super) fn base_id(&self) -> NodeId {
         match *self {
             // Primary Nodes
             AnyNodeId::Function(id) => id.base_id(),
