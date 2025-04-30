@@ -1,4 +1,9 @@
-use ploke_core::{NodeId, TypeId}; // Import NodeId and TypeId
+use crate::parser::nodes::{
+    EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId, ImportNodeId,
+    MacroNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId, StructNodeId, TraitNodeId,
+    TypeAliasNodeId, UnionNodeId, ValueNodeId, VariantNodeId,
+};
+use ploke_core::{NodeId, TypeId}; // Keep NodeId for generic targets
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -6,168 +11,129 @@ use thiserror::Error;
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
-    NotApplicable(RelationKind),
+    // Use the new SyntacticRelation enum name here once defined
+    NotApplicable(/* SyntacticRelationKind */), // Placeholder, will update below
 }
 
-/// Represents a relationship where a Node is linked to a Type.
-/// These are typically stored directly on the Node struct rather than as separate Relation entries.
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NodeTypeRelationKind {
-    /// FunctionNode -----------FunctionParameter-----> TypeId of ParamNode
-    FunctionParameter,
-    /// FunctionNode -----------FunctionReturn--------> TypeId of return type
-    FunctionReturn,
-    /// ImplNode ---------------ImplementsFor---------> TypeId of `Self`
-    ImplementsFor,
-    /// ImplNode ---------------ImplementsTrait-------> TypeId of trait
-    ImplementsTrait,
-    /// ValueNode --------------ValueType-------------> TypeId of its own type
-    ValueType,
-    /// TraitNode --------------Inherits--------------> TypeId of supertrait
-    Inherits,
-    /// ImportNode (Extern) ----Uses------------------> TypeId (representing the crate type?)
-    /// TODO: Revisit if 'Uses' for extern crate makes sense or should be removed.
-    Uses,
-    /// TypeAliasNode ----------Aliases---------------> TypeId of the target type
-    Aliases, // Added for TypeAliasNode -> TypeId link
-}
 
 // ANCHOR: Relation
-/// Represents a structural or semantic relation *between two Nodes* in the code graph.
+// Removed original Relation struct and RelationKind enum.
+
+/// Represents a type-safe structural or semantic relation between two nodes in the code graph.
+/// Each variant enforces the correct NodeId types for its source and target where possible.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Relation {
-    pub source: NodeId,
-    pub target: NodeId,
+pub enum SyntacticRelation {
+    //-----------------------------------------------------------------------
+    // Module Structure & Definition Relations (Primarily from ModuleTree)
+    //-----------------------------------------------------------------------
+    /// Module contains another node (function, struct, enum, impl, trait, module, import, etc.).
+    /// Source: ModuleNodeId
+    /// Target: NodeId (can be any node type contained within)
+    Contains { source: ModuleNodeId, target: NodeId },
 
-    pub kind: RelationKind,
+    /// Module declaration resolves to its definition.
+    /// Source: ModuleNodeId (Declaration)
+    /// Target: ModuleNodeId (Definition)
+    ResolvesToDefinition { source: ModuleNodeId, target: ModuleNodeId },
+
+    /// Module declaration uses `#[path]` attribute.
+    /// Source: ModuleNodeId (Declaration)
+    /// Target: ModuleNodeId (Definition pointed to by path)
+    CustomPath { source: ModuleNodeId, target: ModuleNodeId },
+
+    /// Module is a sibling file (e.g., `mod foo;` and `mod bar;` in `lib.rs`).
+    /// Used for SPP calculation.
+    /// Source: ModuleNodeId
+    /// Target: ModuleNodeId
+    Sibling { source: ModuleNodeId, target: ModuleNodeId },
+
+    //-----------------------------------------------------------------------
+    // Import/Export Relations (Primarily from ModuleTree & Visitor)
+    //-----------------------------------------------------------------------
+    /// Module contains an import statement.
+    /// Source: ModuleNodeId
+    /// Target: ImportNodeId
+    ModuleImports { source: ModuleNodeId, target: ImportNodeId },
+
+    /// An import statement re-exports an item.
+    /// Source: ImportNodeId
+    /// Target: NodeId (The actual item being re-exported)
+    ReExports { source: ImportNodeId, target: NodeId },
+
+    //-----------------------------------------------------------------------
+    // Item Composition Relations (Primarily from Visitor)
+    //-----------------------------------------------------------------------
+    /// Struct contains a field.
+    /// Source: StructNodeId
+    /// Target: FieldNodeId
+    StructField { source: StructNodeId, target: FieldNodeId },
+
+    /// Union contains a field.
+    /// Source: UnionNodeId
+    /// Target: FieldNodeId
+    UnionField { source: UnionNodeId, target: FieldNodeId },
+
+    /// Enum variant contains a field (for struct-like variants).
+    /// Source: VariantNodeId
+    /// Target: FieldNodeId
+    VariantField { source: VariantNodeId, target: FieldNodeId },
+
+    /// Enum contains a variant.
+    /// Source: EnumNodeId
+    /// Target: VariantNodeId
+    EnumVariant { source: EnumNodeId, target: VariantNodeId },
+
+    /// Impl block contains an associated item (method, type, const).
+    /// Source: ImplNodeId
+    /// Target: NodeId (FunctionNodeId, TypeAliasNodeId, or ValueNodeId)
+    ImplAssociatedItem { source: ImplNodeId, target: NodeId },
+
+    /// Trait definition contains an associated item (method, type, const).
+    /// Source: TraitNodeId
+    /// Target: NodeId (FunctionNodeId, TypeAliasNodeId, or ValueNodeId)
+    TraitAssociatedItem { source: TraitNodeId, target: NodeId },
 }
 
-impl Relation {
-    /// Checks if the relation's source matches the given `NodeId`.
-    pub fn matches_source(&self, source_id: NodeId) -> bool {
-        self.source == source_id
+impl SyntacticRelation {
+    // Add helper methods if needed, e.g., getting source/target NodeId generically
+    pub fn source_node_id(&self) -> NodeId {
+        match *self {
+            SyntacticRelation::Contains { source, .. } => source.into_inner(),
+            SyntacticRelation::ResolvesToDefinition { source, .. } => source.into_inner(),
+            SyntacticRelation::CustomPath { source, .. } => source.into_inner(),
+            SyntacticRelation::Sibling { source, .. } => source.into_inner(),
+            SyntacticRelation::ModuleImports { source, .. } => source.into_inner(),
+            SyntacticRelation::ReExports { source, .. } => source.into_inner(),
+            SyntacticRelation::StructField { source, .. } => source.into_inner(),
+            SyntacticRelation::UnionField { source, .. } => source.into_inner(),
+            SyntacticRelation::VariantField { source, .. } => source.into_inner(),
+            SyntacticRelation::EnumVariant { source, .. } => source.into_inner(),
+            SyntacticRelation::ImplAssociatedItem { source, .. } => source.into_inner(),
+            SyntacticRelation::TraitAssociatedItem { source, .. } => source.into_inner(),
+        }
     }
 
-    // Removed matches_source_node (redundant)
-    // Removed matches_source_type
-
-    /// Checks if the relation's target matches the given `NodeId`.
-    pub fn matches_target(&self, target_id: NodeId) -> bool {
-        self.target == target_id
+    pub fn target_node_id(&self) -> NodeId {
+        match *self {
+            SyntacticRelation::Contains { target, .. } => target, // Already NodeId
+            SyntacticRelation::ResolvesToDefinition { target, .. } => target.into_inner(),
+            SyntacticRelation::CustomPath { target, .. } => target.into_inner(),
+            SyntacticRelation::Sibling { target, .. } => target.into_inner(),
+            SyntacticRelation::ModuleImports { target, .. } => target.into_inner(),
+            SyntacticRelation::ReExports { target, .. } => target, // Already NodeId
+            SyntacticRelation::StructField { target, .. } => target.into_inner(),
+            SyntacticRelation::UnionField { target, .. } => target.into_inner(),
+            SyntacticRelation::VariantField { target, .. } => target.into_inner(),
+            SyntacticRelation::EnumVariant { target, .. } => target.into_inner(),
+            SyntacticRelation::ImplAssociatedItem { target, .. } => target, // Already NodeId
+            SyntacticRelation::TraitAssociatedItem { target, .. } => target, // Already NodeId
+        }
     }
 
-    // Removed matches_target_node (redundant)
-    // Removed matches_target_type
-
-    /// Checks if the relation's source and kind match the given values.
-    pub fn matches_source_and_kind(&self, source_id: NodeId, kind: RelationKind) -> bool {
-        self.source == source_id && self.kind == kind
-    }
-
-    /// Checks if the relation's target and kind match the given values.
-    pub fn matches_target_and_kind(&self, target_id: NodeId, kind: RelationKind) -> bool {
-        self.target == target_id && self.kind == kind
-    }
-
-    /// Checks if the relation's source, target, and kind match the given values.
-    pub fn matches_source_target_kind(
-        &self,
-        source_id: NodeId,
-        target_id: NodeId,
-        kind: RelationKind,
-    ) -> bool {
-        self.source == source_id && self.target == target_id && self.kind == kind
-    }
+    // Add other potential helpers: is_module_related, is_import_export_related, etc.
+    // based on matching the variants.
 }
 
-// Different kinds of relations
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RelationKind {
-    //-----------------------------------------------------------------------
-    //-----------------Defined in ModuleTree Methods-------------------------
-    //-----------------------------------------------------------------------
-    // e.g. `pub use some_dep::a::b::ReExportedStruct`--ReExport-->ReExportedStruct defn
-    // (currently only targets module in module_tree.rs)
-    // ImportNode--------------ReExports-------------> NodeId of reexported item
-    // The NodeId of the ReExported item might be another re-export.
-    // We need a new Relation to represent that connection, but it will be in a different set of
-    // logical relations, whereas all of these relations are meant to be syntactically accurate.
-    ReExports,
-    // ModuleNode decl --------CustomPath------------> module defn for `#[path]` attribute
-    CustomPath,
-    /// Links a module declaration (`mod foo;`) to its definition (the `ModuleNode` for `foo.rs` or
-    /// `mod foo { ... }`).
-    /// Direction: Declaration `ModuleNode` -> `Definition ModuleNode`.
-    // ModuleNode Delc---------ResolvesToDefinition--> ModuleNode definition
-    ResolvesToDefinition,
-    //-----------------------------------------------------------------------
-    //-----------------Defined in visit_item_* methods-----------------------
-    //-----------------------------------------------------------------------
-    // ModuleNode definition---Contains--------------> all primary nodes (NodeId)
-    // (including other modules, functions, types, etc.)
-    Contains,
-    // ModuleNode -------------ModuleImports---------> ImportNode (NodeId)
-    // NOTE: all `use` and `pub use` included, not distinguished by relation
-    ModuleImports,
-    // StructNode/EnumNode/UnionNode ----Field---> FieldNode (NodeId)
-    // Used for fields within structs, unions, and enum variants.
-    Field, // Consolidated StructField and VariantField
-    // EnumNode ---------------EnumVariant-----------> VariantNode (NodeId)
-    EnumVariant,
-    // ImplNode/TraitNode -----AssociatedItem--------> FunctionNode/TypeAliasNode/ConstNode (NodeId)
-    // Represents items defined within an impl or trait block (methods, associated types, consts).
-    AssociatedItem, // Consolidated Method, TraitAssociatedItem, ImplAssociatedItem
-
-    // MacroUse, // Example: FunctionNode --MacroUse--> MacroNode
-    // References, // Example: FunctionNode --References--> StructNode (if function body uses it)
-    // MacroExpansion, // Example: MacroInvocationNode --MacroExpansion--> GeneratedNode(s)
-    // MacroExpansion,
-    // This is outside the scope of this project right now, but if it were to be implemented, it
-    // would probably go here.
-    // Inherits, // Not currently used, may wish to use this in a different context
-
-    // TODO: Likely will delete this later.
-    // Using it currently for testing an implementation of `shortest_public_path` in module_tree.rs
-    // ModuleNode --Sibling--> ModuleNode
-    Sibling,
-}
-
-impl RelationKind {
-    /// Checks if this relation kind implies a scoping relationship (either requiring a parent or allowing use).
-    /// Returns `true` if `TryInto::<ScopeKind>::try_into(self)` succeeds, `false` otherwise.
-    pub fn is_scoping(self) -> bool {
-        TryInto::<ScopeKind>::try_into(self).is_ok()
-    }
-
-    /// Checks if this relation kind specifically requires a parent scope.
-    /// Returns `true` if `try_into::<ScopeKind>()` results in `Ok(ScopeKind::RequiresParent)`.
-    pub fn is_parent_required(self) -> bool {
-        matches!(self.try_into(), Ok(ScopeKind::RequiresParent))
-    }
-
-    /// Checks if this relation kind represents a usage relationship (can use).
-    /// Returns `true` if `try_into::<ScopeKind>()` results in `Ok(ScopeKind::CanUse)`.
-    pub fn is_use(self) -> bool {
-        matches!(self.try_into(), Ok(ScopeKind::CanUse))
-    }
-
-    /// Checks if this relation kind relates to module structure or definition.
-    pub fn is_module_related(self) -> bool {
-        matches!(
-            self,
-            RelationKind::Contains
-                | RelationKind::ModuleImports
-                | RelationKind::ResolvesToDefinition
-                | RelationKind::CustomPath
-                | RelationKind::Sibling
-        )
-    }
-
-    /// Checks if this relation kind relates to importing or exporting items.
-    pub fn is_import_export_related(self) -> bool {
-        matches!(self, RelationKind::ModuleImports | RelationKind::ReExports)
-    }
-}
 
 /// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
 /// through a `use module_a::SomeStruct`, which can then be freely used inside the module without
@@ -182,25 +148,28 @@ pub enum ScopeKind {
     CanUse,
 }
 
-impl TryInto<ScopeKind> for RelationKind {
+impl TryInto<ScopeKind> for SyntacticRelation {
     type Error = RelationConversionError; // Use the new error type
 
     fn try_into(self) -> Result<ScopeKind, Self::Error> {
         match self {
             // Relations that allow the target to be used directly in the source scope
-            Self::Contains => Ok(ScopeKind::CanUse),
-            Self::ModuleImports => Ok(ScopeKind::CanUse),
-            Self::ReExports => Ok(ScopeKind::CanUse),
-            Self::CustomPath => Ok(ScopeKind::CanUse), // Module linked via path is usable
+            Self::Contains { .. } => Ok(ScopeKind::CanUse),
+            Self::ModuleImports { .. } => Ok(ScopeKind::CanUse),
+            Self::ReExports { .. } => Ok(ScopeKind::CanUse),
+            Self::CustomPath { .. } => Ok(ScopeKind::CanUse), // Module linked via path is usable
 
             // Relations where the target requires the source as a parent/qualifier
-            Self::Field => Ok(ScopeKind::RequiresParent), // e.g., my_struct.field
-            Self::EnumVariant => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant
-            Self::AssociatedItem => Ok(ScopeKind::RequiresParent), // e.g., MyType::assoc_fn()
+            Self::StructField { .. } => Ok(ScopeKind::RequiresParent), // e.g., my_struct.field
+            Self::UnionField { .. } => Ok(ScopeKind::RequiresParent), // e.g., my_union.field
+            Self::VariantField { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant.field
+            Self::EnumVariant { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant
+            Self::ImplAssociatedItem { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyType::assoc_fn()
+            Self::TraitAssociatedItem { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyTrait::assoc_fn()
 
             // Relations that don't fit the ScopeKind model
-            Self::ResolvesToDefinition => Err(RelationConversionError::NotApplicable(self)),
-            Self::Sibling => Err(RelationConversionError::NotApplicable(self)),
+            Self::ResolvesToDefinition { .. } => Err(RelationConversionError::NotApplicable(self)),
+            Self::Sibling { .. } => Err(RelationConversionError::NotApplicable(self)),
         }
     }
 }
