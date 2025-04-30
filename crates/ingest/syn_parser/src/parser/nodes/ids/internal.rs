@@ -131,7 +131,7 @@ macro_rules! define_category_enum {
             $(
                 $Variant($IdType),
             )*
-        }
+        }; // <-- Added semicolon
 
         impl $EnumName {
             /// Returns the underlying base NodeId using the internal `base_id` method
@@ -145,7 +145,7 @@ macro_rules! define_category_enum {
                 }
             }
             // No kind() method generated for this variant
-        }
+        }; // <-- Added semicolon
 
         $(
             impl From<$IdType> for $EnumName {
@@ -392,11 +392,6 @@ define_category_enum!(
     [
         // Primary Nodes
         (Function, FunctionNodeId),
-        // AI: Still getting an error here
-        //
-        // │ │ │ │ │ └╴  expected one of `;` or `]`, found `,`
-        // │ │ │ │ │      expected one of `;` or `]` rustc  [394, 35]
-        // AI!
         (Struct, StructNodeId),
         (Enum, EnumNodeId),
         (Union, UnionNodeId),
