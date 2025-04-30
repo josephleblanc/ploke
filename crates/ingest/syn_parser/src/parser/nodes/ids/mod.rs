@@ -6,7 +6,9 @@
 
 // Declare the private internal module
 mod internal;
+mod utility_macros;
 pub(self) use super::*;
+pub(self) use utility_macros::*;
 // ----- Re-exports -----
 // We will re-export the specific ID types, marker traits, category enums,
 // and the TypedNodeIdGet trait from `internal` here later.
@@ -18,9 +20,8 @@ pub use internal::{
     StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // --- traits ---
-// AI: Add re-exports for traits later
-// pub use internal::{PrimaryNodeIdTrait, SecondaryNodeIdTrait /* ... */, TypedId};
+pub use internal::{PrimaryNodeIdTrait, SecondaryNodeIdTrait /* ... */, TypedId};
 // --- enums ---
-// AI: Add re-exports for enums later
 pub use internal::TypedNodeIdGet;
 pub use internal::{AnyNodeId, AssociatedItemId, PrimaryNodeId};
+// --- macro rules ---
