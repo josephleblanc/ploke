@@ -61,9 +61,6 @@ macro_rules! define_node_id_wrapper {
 }
 
 
-/// Macro to define a `pub(crate)` struct containing the necessary information
-/// to construct a corresponding `*Node` struct.
-///
 /// This macro generates an intermediate struct (e.g., `StructNodeInfo`) that
 /// mirrors the fields of the target node struct (e.g., `StructNode`), with
 /// the crucial difference that the `id` field is of type `NodeId` (the raw ID).
@@ -113,8 +110,22 @@ macro_rules! define_node_id_wrapper {
 /// //    }
 /// // }
 /// ```
+///
+/// ---
+/// **BACKUP VERSION - RETAINED FOR DEBUGGING/COMPARISON**
+///
+/// This `macro_rules!` version is kept as a backup while exploring the procedural macro
+/// approach (`#[derive(GenerateNodeInfo)]`). If issues arise with the procedural macro,
+/// you can temporarily switch back to using this macro by:
+/// 1. Renaming `define_node_info_struct_backup!` back to `define_node_info_struct!`.
+/// 2. Removing `#[derive(GenerateNodeInfo)]` from the target node structs.
+/// 3. Re-adding the `define_node_info_struct! { ... }` invocations in the node definition files.
+///
+/// This allows isolating whether a problem originates from the proc macro generation
+/// or from other parts of the code.
+/// ---
 #[macro_export]
-macro_rules! define_node_info_struct {
+macro_rules! define_node_info_struct_backup {
     (
         $(#[$outer:meta])* // Capture outer attributes like doc comments
         $InfoStructName:ident { // The name of the *NodeInfo struct to generate

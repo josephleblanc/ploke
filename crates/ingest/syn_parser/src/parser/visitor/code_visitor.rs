@@ -9,14 +9,41 @@ use crate::parser::nodes::ConstNode;
 use crate::parser::nodes::MacroNodeId;
 use crate::parser::nodes::MethodNode;
 use crate::parser::nodes::ModuleNode;
-use crate::parser::nodes::ModuleNodeId;
-use crate::parser::nodes::PrimaryNodeId;
-use crate::parser::nodes::StaticNode;
-use crate::parser::nodes::StructNodeId;
-use crate::parser::nodes::StructNodeInfo;
+use crate::parser::nodes::ModuleNodeId; // Keep
+use crate::parser::nodes::PrimaryNodeId; // Keep
+use crate::parser::nodes::StaticNode; // Keep
+use crate::parser::nodes::StructNodeId; // Keep
+// Remove StructNodeInfo import, it's generated implicitly now
 use crate::parser::nodes::{
-    EnumNode, FieldNode, FunctionNode, ImplNode, ImportKind, ImportNode, MacroKind, MacroNode,
-    ProcMacroKind, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
+    ConstNodeInfo, // Add generated info struct imports
+    EnumNode,
+    EnumNodeInfo,
+    FieldNode,
+    FieldNodeInfo,
+    FunctionNode,
+    FunctionNodeInfo,
+    ImplNode,
+    ImplNodeInfo,
+    ImportKind,
+    ImportNode,
+    ImportNodeInfo,
+    MacroKind,
+    MacroNode,
+    MacroNodeInfo,
+    MethodNodeInfo, // Add generated info struct imports
+    ModuleNodeInfo, // Add generated info struct imports
+    ProcMacroKind,
+    StaticNodeInfo, // Add generated info struct imports
+    StructNode,
+    TraitNode,
+    TraitNodeInfo, // Add generated info struct imports
+    TypeAliasNode,
+    TypeAliasNodeInfo, // Add generated info struct imports
+    TypeDefNode,
+    UnionNode,
+    UnionNodeInfo, // Add generated info struct imports
+    VariantNode,
+    VariantNodeInfo, // Add generated info struct imports
 };
 use crate::parser::relations::*;
 use crate::parser::types::*;
@@ -102,10 +129,10 @@ impl<'a> CodeVisitor<'a> {
                 if registration_result.is_none() {
                     continue;
                 }
-                let (import_base_id, _) = registration_result.unwrap(); // Discard parent ID for now
+                let (import_base_id, _) = registration_result.unwrap();
 
-                let import_node = ImportNode {
-                    id: import_base_id, // Use base ID
+                let import_info = ImportNodeInfo {
+                    id: import_base_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: checked_name,
@@ -113,9 +140,9 @@ impl<'a> CodeVisitor<'a> {
                     is_glob: false,
                     span,
                     is_self_import,
-                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
+                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
-                imports.push(import_node);
+                imports.push(ImportNode::new(import_info));
             }
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
@@ -135,20 +162,20 @@ impl<'a> CodeVisitor<'a> {
                 }
                 let (import_base_id, _) = registration_result.unwrap();
 
-                full_path.push(original_name.clone()); // Path still uses original name segment
+                full_path.push(original_name.clone());
 
-                let import_node = ImportNode {
-                    id: import_base_id,     // Use base ID
-                    source_path: full_path, // Path uses original name segment
+                let import_info = ImportNodeInfo {
+                    id: import_base_id,
+                    source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
-                    visible_name,                       // The 'as' name
+                    visible_name,
                     original_name: Some(original_name), // The original name before 'as'
                     is_glob: false,
                     span,
                     is_self_import: false,
-                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
+                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
-                imports.push(import_node);
+                imports.push(ImportNode::new(import_info));
             }
             syn::UseTree::Glob(glob) => {
                 // Register the new node ID
@@ -162,21 +189,20 @@ impl<'a> CodeVisitor<'a> {
                 }
                 let (import_base_id, _) = registration_result.unwrap();
 
-                // Path stored should be the path *to* the glob, not including '*'
                 let full_path = base_path.to_vec();
 
-                let import_node = ImportNode {
-                    id: import_base_id,     // Use base ID
-                    source_path: full_path, // Path to the glob
+                let import_info = ImportNodeInfo {
+                    id: import_base_id,
+                    source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
-                    visible_name: "*".to_string(), // Visual representation
+                    visible_name: "*".to_string(),
                     original_name: None,
                     is_glob: true,
-                    span: glob.extract_span_bytes(), // Use glob span
+                    span: glob.extract_span_bytes(),
                     is_self_import: false,
-                    cfgs: Vec::new(), // Individual use items don't have their own cfgs, they inherit
+                    cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
-                imports.push(import_node);
+                imports.push(ImportNode::new(import_info));
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
@@ -405,8 +431,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let docstring = extract_docstring(&func.attrs);
             let attributes = extract_attributes(&func.attrs);
             let body = Some(func.block.to_token_stream().to_string());
-            let macro_node = MacroNode {
-                id: macro_base_id, // Use base ID
+
+            let macro_info = MacroNodeInfo {
+                id: macro_base_id,
                 name: macro_name.clone(),
                 visibility: self.state.convert_visibility(&func.vis),
                 kind: MacroKind::ProcedureMacro {
@@ -417,8 +444,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 body,
                 span,
                 tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-                cfgs: item_cfgs, // Store proc macro's own cfgs
+                cfgs: item_cfgs,
             };
+            let macro_node = MacroNode::new(macro_info);
             let typed_macro_id = macro_node.macro_id();
             self.state.code_graph.macros.push(macro_node);
             let relation = SyntacticRelation::Contains {
@@ -492,9 +520,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Extract function body as a string
             let body = Some(func.block.to_token_stream().to_string());
 
-            // Create and store function node
-            let function_node = FunctionNode {
-                id: fn_base_id, // Use base ID
+            // Create info struct and then the node
+            let function_info = FunctionNodeInfo {
+                id: fn_base_id,
                 name: fn_name.clone(),
                 span,
                 visibility: self.state.convert_visibility(&func.vis),
@@ -505,9 +533,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 docstring,
                 body,
                 tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-                cfgs: item_cfgs, // Store only the item's own cfgs
+                cfgs: item_cfgs,
             };
-            let typed_fn_id = function_node.function_id(); // Get typed ID
+            let function_node = FunctionNode::new(function_info);
+            let typed_fn_id = function_node.function_id();
             self.state.code_graph.functions.push(function_node);
 
             // Create and add the Contains relation
@@ -587,25 +616,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Removed #[cfg] block
             self.debug_new_id(
-                // Now uses trace!
-                &field
-                    .ident
-                    .as_ref()
-                    .map(|ident| ident.to_string())
-                    .unwrap_or("unnamed_struct_field".to_string()),
+                &field_name.clone().unwrap_or("unnamed_struct_field".to_string()),
                 field_base_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
 
-            let field_node = FieldNode {
-                id: field_base_id, // Use base ID
+            let field_info = FieldNodeInfo {
+                id: field_base_id,
                 name: field_name,
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
-                attributes: extract_attributes(&field.attrs), // Non-CFG attributes
-                cfgs: field_item_cfgs,                        // Store only the field's own cfgs
+                attributes: extract_attributes(&field.attrs),
+                cfgs: field_item_cfgs,
             };
-            let typed_field_id = field_node.field_id(); // Get typed ID
+            let field_node = FieldNode::new(field_info);
             fields.push(field_node);
 
             // Add relation between struct and field (defer until struct node is created)
@@ -636,13 +660,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             cfgs: item_cfgs.clone(), // Store struct's own cfgs
         };
         let struct_node = StructNode::new(struct_node_info);
-        let typed_struct_id = struct_node.struct_id(); // Get typed ID
+        let typed_struct_id = struct_node.struct_id();
 
-        // Now add the StructField relations
-        for field_node in &fields {
+        // Now add the StructField relations using the fields from the created struct_node
+        for field_node in &struct_node.fields {
             let relation = SyntacticRelation::StructField {
                 source: typed_struct_id,
-                target: field_node.field_id(), // Use typed field ID
+                target: field_node.field_id(),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -716,9 +740,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_type.attrs);
         let attributes = extract_attributes(&item_type.attrs);
 
-        // Create the type alias node
-        let type_alias_node = TypeAliasNode {
-            id: type_alias_base_id, // Use base ID
+        // Create info struct and then the node
+        let type_alias_info = TypeAliasNodeInfo {
+            id: type_alias_base_id,
             name: type_alias_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_type.vis),
@@ -730,9 +754,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_type.to_token_stream()),
             ),
-            cfgs: item_cfgs, // Store type alias's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_alias_id = type_alias_node.type_alias_id(); // Get typed ID
+        let type_alias_node = TypeAliasNode::new(type_alias_info);
+        let typed_alias_id = type_alias_node.type_alias_id();
 
         // Add the node to the graph
         self.state
@@ -812,22 +837,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
             self.debug_new_id(
-                &field_name
-                    .clone()
-                    .unwrap_or_else(|| format!("Unnamed field{} of {}", i, union_name.clone())),
+                &field_name.clone().unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
                 field_base_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
 
-            let field_node = FieldNode {
-                id: field_base_id, // Use base ID
+            let field_info = FieldNodeInfo {
+                id: field_base_id,
                 name: field_name,
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
                 attributes: extract_attributes(&field.attrs),
-                cfgs: field_item_cfgs, // Store field's own cfgs
+                cfgs: field_item_cfgs,
             };
-            // Defer adding relation until union node is created
+            let field_node = FieldNode::new(field_info);
             fields.push(field_node);
         }
 
@@ -843,29 +866,30 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_union.attrs);
         let attributes = extract_attributes(&item_union.attrs);
 
-        // Create the union node
-        let union_node = UnionNode {
-            id: union_base_id, // Use base ID
+        // Create info struct and then the node
+        let union_info = UnionNodeInfo {
+            id: union_base_id,
             name: union_name.clone(),
+            span, // Add span here
             visibility: self.state.convert_visibility(&item_union.vis),
-            fields,
+            fields, // Pass the collected FieldNode Vec
             generic_params,
             attributes,
             docstring,
-            span,
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_union.to_token_stream()),
             ),
-            cfgs: item_cfgs, // Store union's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_union_id = union_node.union_id(); // Get typed ID
+        let union_node = UnionNode::new(union_info);
+        let typed_union_id = union_node.union_id();
 
-        // Now add the UnionField relations
-        for field_node in &fields {
+        // Now add the UnionField relations using fields from the created union_node
+        for field_node in &union_node.fields {
             let relation = SyntacticRelation::UnionField {
                 source: typed_union_id,
-                target: field_node.field_id(), // Use typed field ID
+                target: field_node.field_id(),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -978,22 +1002,20 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
                         self.debug_new_id(
-                            &field_name
-                                .clone()
-                                .unwrap_or("unnamed_enum_field".to_string()),
+                            &field_name.clone().unwrap_or("unnamed_enum_field".to_string()),
                             field_base_id,
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
 
-                        let field_node = FieldNode {
-                            id: field_base_id, // Use base ID
+                        let field_info = FieldNodeInfo {
+                            id: field_base_id,
                             name: field_name,
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
-                            attributes: extract_attributes(&field.attrs), // Non-CFG attributes
-                            cfgs: field_item_cfgs,                        // Store field's own cfgs
+                            attributes: extract_attributes(&field.attrs),
+                            cfgs: field_item_cfgs,
                         };
-                        // Defer adding relation until variant node is created
+                        let field_node = FieldNode::new(field_info);
                         fields.push(field_node);
                     }
                 }
@@ -1023,17 +1045,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(),
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
-                        self.debug_new_id("unnamed_enum_field", field_base_id); // Now uses trace!
+                        self.debug_new_id("unnamed_enum_field", field_base_id);
 
-                        let field_node = FieldNode {
-                            id: field_base_id, // Use base ID
-                            name: None,        // Tuple fields don't have names
+                        let field_info = FieldNodeInfo {
+                            id: field_base_id,
+                            name: None,
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
-                            attributes: extract_attributes(&field.attrs), // Non-CFG attributes
-                            cfgs: field_item_cfgs,                        // Store field's own cfgs
+                            attributes: extract_attributes(&field.attrs),
+                            cfgs: field_item_cfgs,
                         };
-                        // Defer adding relation until variant node is created
+                        let field_node = FieldNode::new(field_info);
                         fields.push(field_node);
                     }
                 }
@@ -1052,16 +1074,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .as_ref()
                 .map(|(_, expr)| expr.to_token_stream().to_string());
 
-            // Create the variant node
-            let variant_node = VariantNode {
-                id: variant_base_id, // Use base ID
+            // Create info struct and then the node
+            let variant_info = VariantNodeInfo {
+                id: variant_base_id,
                 name: variant_name,
-                fields: fields.clone(), // Clone fields Vec for the node
+                fields: fields.clone(), // Clone the collected FieldNode Vec
                 discriminant,
-                attributes: extract_attributes(&variant.attrs), // Non-CFG attributes
-                cfgs: variant_item_cfgs,                        // Store variant's own cfgs
+                attributes: extract_attributes(&variant.attrs),
+                cfgs: variant_item_cfgs,
             };
-            let typed_variant_id = variant_node.variant_id(); // Get typed ID
+            let variant_node = VariantNode::new(variant_info);
+            let typed_variant_id = variant_node.variant_id();
             variants.push(variant_node);
 
             // Add EnumVariant relation (defer until enum node is created)
@@ -1093,9 +1116,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_enum.attrs);
         let attributes = extract_attributes(&item_enum.attrs);
 
-        // Create the enum node
-        let enum_node = EnumNode {
-            id: enum_base_id, // Use base ID
+        // Create info struct and then the node
+        let enum_info = EnumNodeInfo {
+            id: enum_base_id,
             name: enum_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_enum.vis),
@@ -1107,15 +1130,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_enum.to_token_stream()),
             ),
-            cfgs: item_cfgs.clone(), // Store enum's own cfgs
+            cfgs: item_cfgs.clone(),
         };
-        let typed_enum_id = enum_node.enum_id(); // Get typed ID
+        let enum_node = EnumNode::new(enum_info);
+        let typed_enum_id = enum_node.enum_id();
 
-        // Now add the EnumVariant relations
-        for variant_node in &variants {
+        // Now add the EnumVariant relations using variants from the created enum_node
+        for variant_node in &enum_node.variants {
             let relation = SyntacticRelation::EnumVariant {
                 source: typed_enum_id,
-                target: variant_node.variant_id(), // Use typed variant ID
+                target: variant_node.variant_id(),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1267,9 +1291,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Extract method body as a string
                 let body = Some(method.block.to_token_stream().to_string());
 
-                // Create method node (using MethodNode struct)
-                let method_node = MethodNode {
-                    id: method_base_id, // Use base ID
+                // Create info struct and then the node
+                let method_info = MethodNodeInfo {
+                    id: method_base_id,
                     name: method_name.clone(),
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&method.vis),
@@ -1280,11 +1304,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     docstring,
                     body,
                     tracking_hash: Some(
-                        self.state.generate_tracking_hash(&method.to_token_stream()), // Use method tokens
+                        self.state.generate_tracking_hash(&method.to_token_stream()),
                     ),
-                    cfgs: method_item_cfgs, // Store method's own cfgs
+                    cfgs: method_item_cfgs,
                 };
-                // Defer adding relation until impl node is created
+                let method_node = MethodNode::new(method_info);
                 methods.push(method_node);
             }
             // TODO: Handle syn::ImplItem::Const and syn::ImplItem::Type here
@@ -1301,23 +1325,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process generic parameters for impl block
         let generic_params = self.state.process_generics(&item_impl.generics);
 
-        // Create the impl node
-        let impl_node = ImplNode {
-            id: impl_base_id, // Use base ID
+        // Create info struct and then the node
+        let impl_info = ImplNodeInfo {
+            id: impl_base_id,
             span: item_impl.extract_span_bytes(),
             self_type: self_type_id,
             trait_type: trait_type_id,
-            methods,
+            methods, // Pass the collected MethodNode Vec
             generic_params,
-            cfgs: item_cfgs, // Store impl's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_impl_id = impl_node.impl_id(); // Get typed ID
+        let impl_node = ImplNode::new(impl_info);
+        let typed_impl_id = impl_node.impl_id();
 
-        // Now add the ImplAssociatedItem relations
-        for method_node in &methods {
+        // Now add the ImplAssociatedItem relations using methods from the created impl_node
+        for method_node in &impl_node.methods {
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
-                target: AssociatedItemId::from(method_node.method_id()), // Use category enum
+                target: AssociatedItemId::from(method_node.method_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1452,12 +1477,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     .as_ref()
                     .map(|block| block.to_token_stream().to_string());
 
-                // Create method node (using MethodNode struct)
-                let method_node = MethodNode {
-                    id: method_base_id, // Use base ID
+                // Create info struct and then the node
+                let method_info = MethodNodeInfo {
+                    id: method_base_id,
                     name: method_name,
                     span: method.extract_span_bytes(),
-                    visibility: self.state.convert_visibility(&item_trait.vis),
+                    visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
                     parameters,
                     return_type,
                     generic_params,
@@ -1468,9 +1493,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         self.state
                             .generate_tracking_hash(&method.clone().to_token_stream()),
                     ),
-                    cfgs: method_item_cfgs, // Store method's own cfgs
+                    cfgs: method_item_cfgs,
                 };
-                // Defer adding relation until trait node is created
+                let method_node = MethodNode::new(method_info);
                 methods.push(method_node);
             }
             // TODO: Handle syn::TraitItem::Const and syn::TraitItem::Type here
@@ -1533,9 +1558,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_trait.attrs);
         let attributes = extract_attributes(&item_trait.attrs);
 
-        // Create the trait node
-        let trait_node = TraitNode {
-            id: trait_base_id, // Use base ID
+        // Create info struct and then the node
+        let trait_info = TraitNodeInfo {
+            id: trait_base_id,
             name: trait_name.clone(),
             span: item_trait.extract_span_bytes(),
             visibility: self.state.convert_visibility(&item_trait.vis),
@@ -1548,15 +1573,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state
                     .generate_tracking_hash(&item_trait.to_token_stream()),
             ),
-            cfgs: item_cfgs.clone(), // Store trait's own cfgs
+            cfgs: item_cfgs.clone(),
         };
-        let typed_trait_id = trait_node.trait_id(); // Get typed ID
+        let trait_node = TraitNode::new(trait_info);
+        let typed_trait_id = trait_node.trait_id();
 
-        // Now add the TraitAssociatedItem relations
-        for method_node in &methods {
+        // Now add the TraitAssociatedItem relations using methods from the created trait_node
+        for method_node in &trait_node.methods {
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: typed_trait_id,
-                target: AssociatedItemId::from(method_node.method_id()), // Use category enum
+                target: AssociatedItemId::from(method_node.method_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1646,8 +1672,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                                            // cfgs removed from here, belongs on ModuleNode
             },
         };
-        let module_node = ModuleNode {
-            id: module_base_id, // Use base ID
+
+        // Create info struct and then the node
+        let module_info = ModuleNodeInfo {
+            id: module_base_id,
             name: module_name.clone(),
             path: self.state.current_module_path.clone(),
             visibility: self.state.convert_visibility(&module.vis),
@@ -1655,18 +1683,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             docstring: extract_docstring(&module.attrs),
             imports: Vec::new(),
             exports: Vec::new(),
-            span, // Assign the extracted span
+            span,
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
             module_def,
-            cfgs: item_cfgs, // Store module's own cfgs
+            cfgs: item_cfgs,
         };
+        let module_node = ModuleNode::new(module_info);
 
         // Restore parent path after processing module
         self.state.current_module_path = parent_path;
 
-        let typed_module_id = module_node.module_id(); // Get typed ID
+        let typed_module_id = module_node.module_id();
         self.state.current_module.push(module_node.name.clone());
-        self.log_push("current module", &self.state.current_module); // Now uses trace!
+        self.log_push("current module", &self.state.current_module);
 
         self.state
             .current_module_path
@@ -1820,15 +1849,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         self.debug_new_id(&visible_name, import_base_id); // Log with visible name, now uses trace!
 
-        let crate_name = extern_crate.ident.to_string(); // Keep original name for path etc.
+        let crate_name = extern_crate.ident.to_string();
 
         let span = extern_crate.extract_span_bytes();
 
-        let import_node = ImportNode {
-            id: import_base_id, // Use base ID
+        let import_info = ImportNodeInfo {
+            id: import_base_id,
             span,
-            source_path: vec![crate_name.clone()], // Path is just crate name
-            kind: ImportKind::ExternCrate,         // <<< Correct kind
+            source_path: vec![crate_name.clone()],
+            kind: ImportKind::ExternCrate,
             // Name used by `use` statements
             visible_name: extern_crate
                 .rename
@@ -1839,9 +1868,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             original_name: extern_crate.rename.as_ref().map(|_| crate_name.clone()),
             is_glob: false,
             is_self_import: false,
-            cfgs: item_cfgs, // Store extern crate's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_import_id = import_node.import_id(); // Get typed ID
+        let import_node = ImportNode::new(import_info);
+        let typed_import_id = import_node.import_id();
 
         // Add the node to the graph and module list
         if let Some(module) = self
@@ -1932,24 +1962,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_const.attrs);
         let attributes = extract_attributes(&item_const.attrs);
 
-        // Create the constant node (using ConstNode struct)
-        let const_node = ConstNode {
-            id: const_base_id, // Use base ID
+        // Create info struct and then the node
+        let const_info = ConstNodeInfo {
+            id: const_base_id,
             name: const_name,
+            span, // Add span here
             visibility: self.state.convert_visibility(&item_const.vis),
-            type_id,
             type_id,
             value,
             attributes,
             docstring,
-            span,
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_const.to_token_stream()),
             ),
-            cfgs: item_cfgs, // Store const's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_const_id = const_node.const_id(); // Get typed ID
+        let const_node = ConstNode::new(const_info);
+        let typed_const_id = const_node.const_id();
 
         // Add the constant node to the graph
         self.state.code_graph.consts.push(const_node);
@@ -2007,24 +2037,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_static.attrs);
         let attributes = extract_attributes(&item_static.attrs);
 
-        // Create the static node (using StaticNode struct)
-        let static_node = StaticNode {
-            id: static_base_id, // Use base ID
+        // Create info struct and then the node
+        let static_info = StaticNodeInfo {
+            id: static_base_id,
             name: static_name,
+            span, // Add span here
             visibility: self.state.convert_visibility(&item_static.vis),
             type_id,
             is_mutable: matches!(item_static.mutability, syn::StaticMutability::Mut(_)),
             value,
             attributes,
             docstring,
-            span,
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_static.to_token_stream()),
             ),
-            cfgs: item_cfgs, // Store static's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_static_id = static_node.static_id(); // Get typed ID
+        let static_node = StaticNode::new(static_info);
+        let typed_static_id = static_node.static_id();
 
         // Add the static node to the graph
         self.state.code_graph.statics.push(static_node);
@@ -2100,25 +2131,27 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let body = Some(item_macro.mac.tokens.to_string());
         let docstring = extract_docstring(&item_macro.attrs);
-        let attributes = extract_attributes(&item_macro.attrs); // Includes #[macro_export] if present
+        let attributes = extract_attributes(&item_macro.attrs);
 
-        let macro_node = MacroNode {
-            id: macro_base_id, // Use base ID
+        // Create info struct and then the node
+        let macro_info = MacroNodeInfo {
+            id: macro_base_id,
             name: macro_name,
-            visibility, // Use the correctly determined visibility
+            span, // Add span here
+            visibility,
             kind: MacroKind::DeclarativeMacro,
             // rules field removed
             attributes,
             docstring,
             body,
-            span,
             tracking_hash: Some(
                 self.state
                     .generate_tracking_hash(&item_macro.to_token_stream()),
             ),
-            cfgs: item_cfgs, // Store macro's own cfgs
+            cfgs: item_cfgs,
         };
-        let typed_macro_id = macro_node.macro_id(); // Get typed ID
+        let macro_node = MacroNode::new(macro_info);
+        let typed_macro_id = macro_node.macro_id();
 
         // Add the macro node to the graph
         self.state.code_graph.macros.push(macro_node);

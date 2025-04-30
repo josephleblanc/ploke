@@ -1,0 +1,20 @@
+[package]
+name = "syn_parser_macros"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for syn_parser crate"
+authors = ["Your Name <your.email@example.com>"] # Update with actual author info
+
+[lib]
+proc-macro = true # Important: Marks this as a proc macro crate
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] } # Need full for parsing, extra-traits for derives
+quote = "1.0"
+proc-macro2 = "1.0"
+
+# Need access to NodeId type definition for path generation
+# This is a bit tricky, as proc macros can't directly depend on normal crates easily.
+# We'll handle this by assuming a fixed path in the generated code for now.
+# A more robust solution might involve configuration or helper crates.
+ploke-core = { path = "../../ploke-core", version = "0.1.0" } # Path relative to this macro crate
