@@ -161,19 +161,22 @@ impl<'a> CodeVisitor<'a> {
 
                 // Register the new node ID
                 let registration_result = self.register_new_node_id(
-        // AI: I think you are getting confused about this... it looks like you are trying to
-        // initialize a struct? This is a function call. Fix it AI!
                     &visible_name,
                     ItemKind::Import,
-                    item_name: visible_name.clone(),
-                    item_kind: ItemKind::Import,
-                };
-                error!(target: LOG_TARGET_TRACE, "{}", err);
-                return Err(err);
-            }
-            let (import_base_id, _) = registration_result.unwrap();
+                    cfg_bytes, // Pass down received cfg_bytes
+                );
+                // Check if registration failed
+                if registration_result.is_none() {
+                    let err = CodeVisitorError::RegistrationFailed {
+                        item_name: visible_name.clone(),
+                        item_kind: ItemKind::Import,
+                    };
+                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    return Err(err);
+                }
+                let (import_base_id, _) = registration_result.unwrap();
 
-            // Use the original base_path before it was potentially modified by recursion
+                // Use the original base_path before it was potentially modified by recursion
             let mut full_path = base_path; // Take ownership
             full_path.push(original_name.clone());
 
