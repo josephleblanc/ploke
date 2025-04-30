@@ -16,23 +16,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 pub struct ModuleNode {
     pub id: ModuleNodeId, // Use typed ID
     pub name: String,
-        path: Vec<String>,
-        visibility: VisibilityKind,
-        attributes: Vec<Attribute>,
-        docstring: Option<String>,
-        imports: Vec<ImportNode>,
-        exports: Vec<NodeId>, // Keep as NodeId for now, resolution might change this
-        span: (usize, usize),
-        tracking_hash: Option<TrackingHash>,
-        module_def: ModuleKind,
-        cfgs: Vec<String>,
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct ModuleNode {
-    pub id: ModuleNodeId, // Use typed ID
-    pub name: String,
     pub path: Vec<String>,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
@@ -49,24 +32,6 @@ impl ModuleNode {
     /// Returns the typed ID for this module node.
     pub fn module_id(&self) -> ModuleNodeId {
         self.id
-    }
-
-    /// Creates a new `ModuleNode` from `ModuleNodeInfo`.
-    pub(crate) fn new(info: ModuleNodeInfo) -> Self {
-        Self {
-            id: ModuleNodeId(info.id), // Wrap the raw ID here
-            name: info.name,
-            path: info.path,
-            visibility: info.visibility,
-            attributes: info.attributes,
-            docstring: info.docstring,
-            imports: info.imports,
-            exports: info.exports,
-            span: info.span,
-            tracking_hash: info.tracking_hash,
-            module_def: info.module_def,
-            cfgs: info.cfgs,
-        }
     }
 
     /// Definition path to file as it would be called by a `use` statement,
@@ -221,8 +186,8 @@ impl GraphNode for ModuleNode {
     fn id(&self) -> NodeId {
         self.id.into_inner() // Return base NodeId
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {
