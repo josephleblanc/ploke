@@ -15,8 +15,8 @@ use crate::{
     error::SynParserError,
     parser::{
         nodes::{
-            self, extract_path_attr_from_node, GraphId, GraphNode, ImportNode, ModuleNode,
-            ModuleNodeId, NodePath,
+            self, extract_path_attr_from_node, GraphNode, ImportNode, ModuleNode, ModuleNodeId,
+            NodePath,
         },
         relations::{Relation, RelationKind},
         types::VisibilityKind,
@@ -98,11 +98,11 @@ pub struct ModuleTree {
     /// Index mapping a source `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the source.
     /// Used for efficient lookup of outgoing relations.
-    relations_by_source: HashMap<NodeId, Vec<usize>>, // Changed key from GraphId
+    relations_by_source: HashMap<NodeId, Vec<usize>>,
     /// Index mapping a target `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the target.
     /// Used for efficient lookup of incoming relations.
-    relations_by_target: HashMap<NodeId, Vec<usize>>, // Changed key from GraphId
+    relations_by_target: HashMap<NodeId, Vec<usize>>,
 }
 
 /// Indicates a file-level module whose path has been resolved from a declaration that has the
@@ -245,9 +245,6 @@ pub enum ModuleTreeError {
 
     #[error("Item with ID {0} is not publicly accessible from the crate root.")]
     ItemNotPubliclyAccessible(NodeId), // New error variant for SPP
-
-    #[error("Graph ID conversion error: {0}")]
-    GraphIdConversion(#[from] nodes::GraphIdConversionError), // Add #[from] for automatic conversion
 
     #[error("Node error: {0}")]
     NodeError(#[from] nodes::NodeError), // Add #[from] for NodeError
@@ -624,7 +621,7 @@ impl ModuleTree {
     /// number of relations originating from `source_id`.
     pub fn get_relations_from<F>(
         &self,
-        source_id: &NodeId, // Changed from &GraphId
+        source_id: &NodeId,
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
@@ -645,7 +642,7 @@ impl ModuleTree {
     }
     pub fn get_iter_relations_from<'a>(
         &'a self,
-        source_id: &NodeId,     // Changed from &GraphId
+        source_id: &NodeId,
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
         self.relations_by_source.get(source_id).map(|indices| {
@@ -660,7 +657,6 @@ impl ModuleTree {
     }
 
     pub fn get_all_relations_from(&self, source_id: &NodeId) -> Option<Vec<&TreeRelation>> {
-        // Changed from &GraphId
         self.relations_by_source.get(source_id).map(|indices| {
             // If source_id not in map, return empty
             indices
@@ -679,7 +675,7 @@ impl ModuleTree {
     /// (Doc comments similar to get_relations_from)
     pub fn get_relations_to<F>(
         &self,
-        target_id: &NodeId, // Changed from &GraphId
+        target_id: &NodeId,
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
@@ -697,7 +693,6 @@ impl ModuleTree {
         })
     }
     pub fn get_all_relations_to(&self, target_id: &NodeId) -> Option<Vec<&TreeRelation>> {
-        // Changed from &GraphId, renamed param
         self.relations_by_target.get(target_id).map(|indices| {
             // If source_id not in map, return empty
             indices
@@ -709,7 +704,7 @@ impl ModuleTree {
 
     pub fn get_iter_relations_to<'a>(
         &'a self,
-        target_id: &NodeId,     // Changed from &GraphId, renamed param
+        target_id: &NodeId,
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
         self.relations_by_target.get(target_id).map(|indices| {
@@ -745,7 +740,7 @@ impl ModuleTree {
     }
 
     /// Adds a relation to the tree, first checking if the source and target nodes
-    /// (if they are `GraphId::Node`) exist in the `modules` map.
+    /// exist in the `modules` map.
     /// Returns `ModuleTreeError::ModuleNotFound` if a check fails.
     pub fn add_relation_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
         let relation = tr.relation();
@@ -1227,7 +1222,7 @@ impl ModuleTree {
                 // For now, assume SPP correctly resolves through internal re-exports.
 
                 // Let's refine the target_kind determination:
-                let (resolved_id, target_kind) = match graph.find_node_unique(item_id)?.as_import()
+                let (resolved_id, target_kind) = match graph.find_node_unique(item_id)?.as_import() // find_node_unique uses NodeId
                 {
                     // If the original item_id points to an ImportNode (meaning it was a re-export)
                     Some(import_node) => {
@@ -1690,8 +1685,8 @@ impl ModuleTree {
                     // Note: The target_node_id is relation.target
                     let target_node_id = match relation.target {
                         id => id,
-                        // Handle other GraphId variants if necessary, though ReExports target should be Node
-                        // _ => { // Target is always NodeId now
+                        // Target is always NodeId now
+                        // _ => {
                         //     log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "ReExport relation target is not a NodeId: {:?}", relation);
                         //     // Decide how to handle this unexpected case, maybe continue or return error
                         //     continue;
@@ -1895,7 +1890,6 @@ impl ModuleTree {
                         );
                     }
                 }
-                // Else: Relation target was not a GraphId::Node - This block is now unreachable
             }
             // --- DIAGNOSTIC LOGGING END ---
 
@@ -2610,7 +2604,6 @@ impl ModuleTree {
                         queue.push_back(target_id);
                     }
                 }
-                // Ignore relations where target is not GraphId::Node (shouldn't happen for Contains)
             }
         }
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Collected {} total item IDs (including modules) to prune via containment.", all_prunable_item_ids.len().to_string().log_id());
@@ -2858,8 +2851,6 @@ impl ModuleTree {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Target:");
         self.log_node_id_verbose(rel.target); // Use helper for NodeId
     }
-
-    // Removed log_graph_id_verbose as GraphId is no longer directly logged here
 
     /// Logs detailed information about a NodeId for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups within the ModuleTree.
