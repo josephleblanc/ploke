@@ -387,9 +387,8 @@ define_category_enum!(
 // This serves as the primary key for heterogeneous storage like HashMaps.
 define_category_enum!(
     #[doc = "Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage."]
-    AnyNodeId, // AI: There is a problem with this macro, we don't have a ItemKind as the macro
-    // requires. AI!
-    // No ItemKind method needed for AnyNodeId
+    AnyNodeId,
+    // Use the macro arm that does *not* expect ItemKind
     [
         // Primary Nodes
         (Function, FunctionNodeId),
