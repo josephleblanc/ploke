@@ -133,11 +133,17 @@ impl<'a> CodeVisitor<'a> {
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
-                // Log the error before returning
-                error!(target: LOG_TARGET_TRACE, "{}", err); // AI: there is no `err` defined here.
-                                                             // AI!
-                return Err(err);
-
+                // Check if registration failed
+                if registration_result.is_none() {
+                    let err = CodeVisitorError::RegistrationFailed {
+                        item_name: checked_name.clone(),
+                        item_kind: ItemKind::Import,
+                    };
+                    // Log the error before returning
+                    error!(target: LOG_TARGET_TRACE, "{}", err);
+                    return Err(err);
+                }
+                // If registration succeeded, unwrap and proceed
                 let (import_base_id, _) = registration_result.unwrap();
 
                 let import_info = ImportNodeInfo {
