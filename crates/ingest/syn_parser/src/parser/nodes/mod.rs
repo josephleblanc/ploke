@@ -18,7 +18,7 @@ use crate::{
     utils::{LogStyle, LogStyleDebug},
 };
 
-use super::types::VisibilityKind;
+use super::{graph::GraphAccess, types::VisibilityKind};
 use log::debug;
 use ploke_core::{NodeId, TypeId};
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,58 @@ define_node_id_wrapper!(ReexportNodeId);
 // --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
+
+pub trait PrimaryNodeMarker {}
+
+impl PrimaryNodeMarker for FunctionNode {}
+impl PrimaryNodeMarker for StructNode {}
+impl PrimaryNodeMarker for UnionNode {}
+impl PrimaryNodeMarker for EnumNode {}
+impl PrimaryNodeMarker for TypeAliasNode {}
+impl PrimaryNodeMarker for TraitNode {}
+impl PrimaryNodeMarker for ImplNode {}
+impl PrimaryNodeMarker for ConstNode {}
+impl PrimaryNodeMarker for StaticNode {}
+impl PrimaryNodeMarker for MacroNode {}
+impl PrimaryNodeMarker for ImportNode {}
+impl PrimaryNodeMarker for ModuleNode {}
+
+// AI:
+
+// Maybe seal it for better control
+mod private {
+    pub trait Sealed {}
+}
+
+pub trait TypedNodeIdGet: private::Sealed + Copy + Into<NodeId> {
+    // Bounds needed by impls
+    type TargetNode: PrimaryNodeMarker + GraphNode + 'static; // The associated node type
+
+    /// Method to perform the lookup, dispatched statically based on `Self` (the ID type)       
+    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode>;
+}
+impl private::Sealed for FunctionNodeId {}
+impl TypedNodeIdGet for FunctionNodeId {
+    type TargetNode = FunctionNode;
+
+    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode> {
+        graph.get_function(self) // Calls the specific getter
+    }
+}
+
+impl private::Sealed for StructNodeId {}
+impl TypedNodeIdGet for StructNodeId {
+    type TargetNode = StructNode;
+
+    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode> {
+        graph.get_struct(self) // Calls the specific getter
+    }
+}
+// The above doesn't work because we are trying to keep conversions between the node types like
+// ModuleNodeId or FunctionNodeId into NodeId private as far as is possible to leverage
+// compile-time guarentees wherever possible. Is there some way we can refine this approach, or
+// perhaps locate the implementation in a certain context where the privacy can be managed without
+// loosening our desired restrictions on conversions between the primary node ids and NodeId AI?
 
 /// Represents the ID of any node type that can typically be defined directly
 /// within a module scope (primary items).

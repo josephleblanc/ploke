@@ -1,3 +1,5 @@
+// AI:
+
 /// Macro to define a newtype wrapper around NodeId with common implementations.
 ///
 /// Generates:
@@ -25,14 +27,14 @@ macro_rules! define_node_id_wrapper {
             /// Consume the wrapper and return the inner NodeId.
             /// Use sparingly, as this bypasses the type safety of the wrapper.
             #[inline]
-            pub fn into_inner(self) -> NodeId {
+            pub(crate) fn into_inner(self) -> NodeId {
                 self.0
             }
 
             /// Get a reference to the inner NodeId.
             /// Use sparingly, as this bypasses the type safety of the wrapper.
             #[inline]
-            pub fn as_inner(&self) -> &NodeId {
+            pub(crate) fn as_inner(&self) -> &NodeId {
                 &self.0
             }
         }
@@ -60,6 +62,8 @@ macro_rules! define_node_id_wrapper {
     };
 }
 
+// I'd like to see how you change the above `define_node_id_wrapper!` to allow for static dispatch
+// as we have been discussing. AI!
 
 /// This macro generates an intermediate struct (e.g., `StructNodeInfo`) that
 /// mirrors the fields of the target node struct (e.g., `StructNode`), with
