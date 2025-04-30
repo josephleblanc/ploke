@@ -176,14 +176,22 @@ macro_rules! impl_typed_node_id_get {
 /// # Usage (within this module)
 /// ```ignore
 /// define_internal_node_id!(
-///     #[doc = "Identifier for a function node."] // Optional outer attributes
-///     FunctionNodeId
+///     #[doc = "Identifier for a function node."]
+///     struct FunctionNodeId {
+///         markers: [TypedId, PrimaryNodeIdTrait] // Optional list of marker traits
+///     }
 /// );
 /// ```
 macro_rules! define_internal_node_id {
-    ($(#[$outer:meta])* $NewTypeId:ident) => {
+    // Matcher with optional markers block
+    (
+        $(#[$outer:meta])*
+        struct $NewTypeId:ident {
+            $(markers: [$($MarkerTrait:path),* $(,)?])? // Optional markers block
+        }
+    ) => {
         $(#[$outer])*
-        // The struct is pub, but its field NodeId is private by default
+        // The struct is pub, but its field NodeId is private
         // because NodeId itself is not pub in this scope after potential future refactoring
         // or simply because tuple struct fields are private without `pub`.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -236,38 +244,38 @@ macro_rules! define_internal_node_id {
             }
         }
 
-        // Placeholder for implementing marker traits via the macro later
-        // impl $crate::parser::nodes::ids::internal::TypedId for $NewTypeId {}
-        // // Example: Add marker trait implementation based on macro input
-        // // define_internal_node_id!(StructNodeId, marker: PrimaryNodeIdTrait);
-        // // macro_rules! define_internal_node_id {
-        // //     ($NewTypeId:ident $(, marker: $MarkerTrait:path)*) => { ... $(impl $MarkerTrait for $NewTypeId {})* ... }
-        // // }
+        // Implement the base TypedId trait for all generated IDs
+        // Ensure the TypedId trait is defined in this scope or accessible via path
+        impl $crate::parser::nodes::ids::internal::TypedId for $NewTypeId {}
+
+        // Implement specified marker traits
+        // Ensure marker traits are defined in this scope or accessible via path
+        $( $(impl $MarkerTrait for $NewTypeId {})* )?
     };
 }
 
-// Now use the *new* internal macro
-define_internal_node_id!(EnumNodeId);
-define_internal_node_id!(FunctionNodeId); // For standalone functions
-define_internal_node_id!(MethodNodeId); // For associated functions/methods
-define_internal_node_id!(ImplNodeId);
-define_internal_node_id!(ImportNodeId);
-define_internal_node_id!(ModuleNodeId); // Use the macro now, assuming no special manual impl needed yet
-define_internal_node_id!(StructNodeId);
-define_internal_node_id!(TraitNodeId);
-define_internal_node_id!(TypeAliasNodeId);
-define_internal_node_id!(UnionNodeId);
+// Now use the *new* internal macro with markers
+define_internal_node_id!(struct EnumNodeId { markers: [PrimaryNodeIdTrait] });
+define_internal_node_id!(struct FunctionNodeId { markers: [PrimaryNodeIdTrait] }); // For standalone functions
+define_internal_node_id!(struct MethodNodeId { markers: [AssociatedItemIdTrait] }); // For associated functions/methods
+define_internal_node_id!(struct ImplNodeId { markers: [PrimaryNodeIdTrait] });
+define_internal_node_id!(struct ImportNodeId { markers: [PrimaryNodeIdTrait] });
+define_internal_node_id!(struct ModuleNodeId { markers: [PrimaryNodeIdTrait] }); // Use the macro now
+define_internal_node_id!(struct StructNodeId { markers: [PrimaryNodeIdTrait] });
+define_internal_node_id!(struct TraitNodeId { markers: [PrimaryNodeIdTrait] });
+define_internal_node_id!(struct TypeAliasNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
+define_internal_node_id!(struct UnionNodeId { markers: [PrimaryNodeIdTrait] });
 // Removed ValueNodeId
-define_internal_node_id!(ConstNodeId); // Added
-define_internal_node_id!(StaticNodeId); // Added
-define_internal_node_id!(FieldNodeId);
-define_internal_node_id!(VariantNodeId);
-define_internal_node_id!(ParamNodeId); // For ParamData
-define_internal_node_id!(GenericParamNodeId);
-define_internal_node_id!(MacroNodeId);
+define_internal_node_id!(struct ConstNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
+define_internal_node_id!(struct StaticNodeId { markers: [PrimaryNodeIdTrait] }); // Added
+define_internal_node_id!(struct FieldNodeId { markers: [SecondaryNodeIdTrait] });
+define_internal_node_id!(struct VariantNodeId { markers: [SecondaryNodeIdTrait] });
+define_internal_node_id!(struct ParamNodeId { markers: [SecondaryNodeIdTrait] }); // For ParamData
+define_internal_node_id!(struct GenericParamNodeId { markers: [SecondaryNodeIdTrait] });
+define_internal_node_id!(struct MacroNodeId { markers: [PrimaryNodeIdTrait] });
 
 // For more explicit differntiation within Phase 3 module tree processing
-define_internal_node_id!(ReexportNodeId);
+define_internal_node_id!(struct ReexportNodeId { markers: [] }); // No specific category yet, just TypedId
 // --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
@@ -288,9 +296,9 @@ impl PrimaryNodeMarker for ImportNode {}
 impl PrimaryNodeMarker for ModuleNode {}
 
 // --- Marker Traits ---
-// Define the marker traits themselves here. Implementations will be added later,
-// ideally via the define_internal_node_id! macro.
-pub trait TypedId: Copy + std::fmt::Debug + std::hash::Hash + Eq + Ord {} // Base trait for all typed IDs
+// Define the marker traits themselves here.
+// Implementations are generated by the define_internal_node_id! macro.
+pub trait TypedId: Copy + std::fmt::Debug + std::hash::Hash + Eq + Ord + Serialize + Deserialize + Send + Sync {} // Base trait for all typed IDs - Added common bounds
 pub trait PrimaryNodeIdTrait: TypedId {} // Marker for primary node IDs
 pub trait AssociatedItemIdTrait: TypedId {} // Marker for associated item IDs
 pub trait SecondaryNodeIdTrait: TypedId {} // Marker for secondary node IDs (fields, params, etc.)
