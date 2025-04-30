@@ -186,7 +186,7 @@ fn debug_relationships(visitor: &Self) {
                     // Check if the target is a Module
                     match target {
                         PrimaryNodeId::Module(target_mod_id) => {
-                            self.get_module(target_mod_id.into_inner())
+                            self.get_module(*target_mod_id)
                         }
                         _ => None, // Target is not a module
                     }
@@ -511,16 +511,20 @@ fn debug_relationships(visitor: &Self) {
         });
 
         if let Some(SyntacticRelation::Contains { source, .. }) = containing_relation {
-            let mod_id = source.into_inner();
-            // Get the module's path
             self.modules()
                 .iter()
-                .find(|m| m.id == mod_id) // Compare NodeId == NodeId
+                .filter(|m| m.is_file_based() || m.is_inline())
+                .find(|m| m.id == *source) // Compare NodeId == NodeId
                 .map(|m| m.path.clone())
                 .unwrap_or_else(|| vec!["crate".to_string()]) // Should not happen if relation exists
         } else {
             // Item not in any module (crate root) or source wasn't a Node
-            vec!["crate".to_string()]
+            vec!["crate".to_string()];
+            // WARNING: Intentional panic! temporary for testing. DO NOT REMOVE UNTIL THIS CAUSES
+            // RUNTIME ERROR.
+            panic!( "Adding a panic here since this should never happen. We'll likely change this to an
+            `Err` and have this function return a Result, but I want to see if we encounter any
+            occurrances of this, and if passing an error is the right way to handle it." );
         }
     }
 
@@ -532,11 +536,10 @@ fn debug_relationships(visitor: &Self) {
         });
 
         if let Some(SyntacticRelation::Contains { source, .. }) = containing_relation {
-            let mod_id = source.into_inner();
             // Get the module's path
             self.modules()
                 .iter()
-                .find(|m| m.id == mod_id)
+                .find(|m| m.id == *source)
                 .unwrap_or_else(|| panic!("No containing module found"))
         } else {
             panic!("No containing module found");
@@ -552,57 +555,145 @@ fn debug_relationships(visitor: &Self) {
         })
     }
 
-    fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
+    #[cfg(feature = "type_bearing_ids")]
+    fn find_node<T: Into<PrimaryNodeId>>(&self, item_id: T) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
+        // AI: fill out these match arms AI!
+        match Into::<PrimaryNodeId>::into(item_id) {
+            PrimaryNodeId::Function(function_node_id) => self.get_function(item_id),
+            PrimaryNodeId::Struct(struct_node_id) => todo!(),
+            PrimaryNodeId::Enum(enum_node_id) => todo!(),
+            PrimaryNodeId::Union(union_node_id) => todo!(),
+            PrimaryNodeId::TypeAlias(type_alias_node_id) => todo!(),
+            PrimaryNodeId::Trait(trait_node_id) => todo!(),
+            PrimaryNodeId::Impl(impl_node_id) => todo!(),
+            PrimaryNodeId::Const(const_node_id) => todo!(),
+            PrimaryNodeId::Static(static_node_id) => todo!(),
+            PrimaryNodeId::Macro(macro_node_id) => todo!(),
+            PrimaryNodeId::Import(import_node_id) => todo!(),
+            PrimaryNodeId::Module(module_node_id) => todo!(),
+        }
 
         self.functions()
             .iter()
-            .find(|n| n.id == item_id)
+            .find(|n| n.id.into() == item_id)
+            .map(|n| n as &dyn GraphNode)
+            // .or_else(|| -> Option<&dyn GraphNode> {
+            //     self.defined_types().iter().find_map(|n| match n {
+            //         TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode),
+            //         TypeDefNode::Enum(e) if e.id() == item_id => Some(e as &dyn GraphNode),
+            //         TypeDefNode::TypeAlias(t) if t.id() == item_id => Some(t as &dyn GraphNode),
+            //         TypeDefNode::Union(u) if u.id() == item_id => Some(u as &dyn GraphNode),
+            //         _ => None,
+            //     })
+            // })
+           //  .or_else(|| {
+           //      self.traits()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+           //  .or_else(|| {
+           //      self.modules()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+           //  .or_else(|| { // Search Consts
+           //      self.consts()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+           //  .or_else(|| { // Search Statics
+           //      self.statics()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+           //  .or_else(|| {
+           //      self.macros()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+           //  .or_else(|| { // Search Methods within Impls
+           //      self.impls().iter().find_map(|i| {
+           //          i.methods
+           //              .iter()
+           //              .find(|m| m.id() == item_id)
+           //              .map(|m| m as &dyn GraphNode) // Cast MethodNode
+           //      })
+           //  })
+           //   .or_else(|| { // Search Methods within Traits (assuming similar structure)
+           //      self.traits().iter().find_map(|t| {
+           //          t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
+           //              .iter()
+           //              .find(|m| m.id() == item_id)
+           //              .map(|m| m as &dyn GraphNode) // Cast MethodNode
+           //      })
+           //  })
+           // // --- Add ImportNode search ---
+           //  .or_else(|| {
+           //      self.use_statements()
+           //          .iter()
+           //          .find(|n| n.id() == item_id)
+           //          .map(|n| n as &dyn GraphNode)
+           //  })
+    }
+
+
+    #[cfg(not(feature = "type_bearing_ids"))]
+    fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
+        // Check all node collections for matching ID
+        self.functions()
+            .iter()
+            .find(|n| n.id() == item_id)
             .map(|n| n as &dyn GraphNode)
             .or_else(|| -> Option<&dyn GraphNode> {
                 self.defined_types().iter().find_map(|n| match n {
-                    TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
-                    TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
-                    TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
-                    TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
+                    TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode),
+                    TypeDefNode::Enum(e) if e.id() == item_id => Some(e as &dyn GraphNode),
+                    TypeDefNode::TypeAlias(t) if t.id() == item_id => Some(t as &dyn GraphNode),
+                    TypeDefNode::Union(u) if u.id() == item_id => Some(u as &dyn GraphNode),
                     _ => None,
                 })
             })
             .or_else(|| {
                 self.traits()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.modules()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Consts
                 self.consts()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Statics
                 self.statics()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.macros()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Methods within Impls
                 self.impls().iter().find_map(|i| {
                     i.methods
                         .iter()
-                        .find(|m| m.id == item_id)
+                        .find(|m| m.id() == item_id)
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
@@ -610,7 +701,7 @@ fn debug_relationships(visitor: &Self) {
                 self.traits().iter().find_map(|t| {
                     t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
                         .iter()
-                        .find(|m| m.id == item_id)
+                        .find(|m| m.id() == item_id)
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
@@ -618,7 +709,7 @@ fn debug_relationships(visitor: &Self) {
             .or_else(|| {
                 self.use_statements()
                     .iter()
-                    .find(|n| n.id == item_id)
+                    .find(|n| n.id() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
     }
