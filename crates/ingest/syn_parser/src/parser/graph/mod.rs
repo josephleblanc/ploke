@@ -28,6 +28,7 @@ use crate::parser::{
     relations::Relation,
     types::TypeNode,
 };
+// AI: Let's update this file with our recent changes to relation and the additional node types AI!
 
 pub trait GraphAccess {
     fn functions(&self) -> &[FunctionNode];
