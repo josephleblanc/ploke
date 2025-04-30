@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
 pub use enums::{EnumNode, VariantNode};
-pub use function::{FunctionNode, ParamData};
+pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
@@ -44,10 +44,11 @@ pub use value::{ConstNode, StaticNode}; // Updated re-export
 // creation of the ModuleTree.
 use crate::define_node_id_wrapper;
 define_node_id_wrapper!(EnumNodeId);
-define_node_id_wrapper!(FunctionNodeId);
+define_node_id_wrapper!(FunctionNodeId); // For standalone functions
+define_node_id_wrapper!(MethodNodeId); // For associated functions/methods
 define_node_id_wrapper!(ImplNodeId);
 define_node_id_wrapper!(ImportNodeId);
-// define_node_id_wrapper!(ModuleNodeId);
+// define_node_id_wrapper!(ModuleNodeId); // Keep commented out if manual impl exists
 define_node_id_wrapper!(StructNodeId);
 define_node_id_wrapper!(TraitNodeId);
 define_node_id_wrapper!(TypeAliasNodeId);
@@ -137,9 +138,9 @@ impl AssociatedItemId {
     /// Returns the underlying base NodeId.
     pub fn base_id(&self) -> NodeId {
         match *self {
-            AssociatedItemId::Function(id) => id.into_inner(),
+            AssociatedItemId::Method(id) => id.into_inner(), // Changed from Function
             AssociatedItemId::TypeAlias(id) => id.into_inner(),
-            AssociatedItemId::Const(id) => id.into_inner(), // Changed from Value
+            AssociatedItemId::Const(id) => id.into_inner(),
         }
     }
 
@@ -156,7 +157,7 @@ impl AssociatedItemId {
 
 // --- From Implementations for Category Enums ---
 
-impl From<FunctionNodeId> for PrimaryNodeId {
+impl From<FunctionNodeId> for PrimaryNodeId { // Standalone Function
     fn from(id: FunctionNodeId) -> Self {
         PrimaryNodeId::Function(id)
     }
@@ -218,9 +219,10 @@ impl From<ModuleNodeId> for PrimaryNodeId {
     }
 }
 
-impl From<FunctionNodeId> for AssociatedItemId {
-    fn from(id: FunctionNodeId) -> Self {
-        AssociatedItemId::Function(id)
+// Removed From<FunctionNodeId> for AssociatedItemId
+impl From<MethodNodeId> for AssociatedItemId { // Method
+    fn from(id: MethodNodeId) -> Self {
+        AssociatedItemId::Method(id)
     }
 }
 impl From<TypeAliasNodeId> for AssociatedItemId {
@@ -247,7 +249,10 @@ pub trait GraphNode {
     fn cfgs(&self) -> &[String];
 
     // --- Default implementations for downcasting ---
-    fn as_function(&self) -> Option<&FunctionNode> {
+    fn as_function(&self) -> Option<&FunctionNode> { // Standalone function
+        None
+    }
+    fn as_method(&self) -> Option<&MethodNode> { // Associated function/method
         None
     }
     fn as_struct(&self) -> Option<&StructNode> {
@@ -287,7 +292,8 @@ pub trait GraphNode {
     }
     fn kind_matches(&self, kind: ItemKind) -> bool {
         match kind {
-            ItemKind::Function => self.as_function().is_some(),
+            ItemKind::Function => self.as_function().is_some(), // Matches standalone functions
+            ItemKind::Method => self.as_method().is_some(), // Matches associated functions/methods
             ItemKind::Struct => self.as_struct().is_some(),
             ItemKind::Enum => self.as_enum().is_some(),
             ItemKind::Union => self.as_union().is_some(),
@@ -316,8 +322,11 @@ pub trait GraphNode {
     }
 
     fn kind(&self) -> ItemKind {
-        if self.as_function().is_some() {
-            ItemKind::Function
+        // Check for Method first as it might overlap with Function if not careful
+        if self.as_method().is_some() {
+            ItemKind::Method // Method is more specific
+        } else if self.as_function().is_some() {
+            ItemKind::Function // Standalone function
         } else if self.as_struct().is_some() {
             ItemKind::Struct
         } else if self.as_enum().is_some() {

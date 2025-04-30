@@ -3,9 +3,9 @@ use crate::parser::types::GenericParamNode;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 
-// AI: Let's make a similar distinction between `FunctionNode` and `MethodNode` AI!
+/// Represents an associated function or method within an `impl` or `trait`.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct FunctionNode {
+pub struct MethodNode { // Renamed from FunctionNode
     pub id: NodeId,
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
@@ -17,10 +17,10 @@ pub struct FunctionNode {
     pub docstring: Option<String>,
     pub body: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
-impl GraphNode for FunctionNode {
+impl GraphNode for MethodNode { // Renamed from FunctionNode
     fn id(&self) -> NodeId {
         self.id
     }
@@ -35,21 +35,22 @@ impl GraphNode for FunctionNode {
         &self.cfgs
     }
 
-    fn as_function(&self) -> Option<&FunctionNode> {
+    fn as_method(&self) -> Option<&MethodNode> { // Changed from as_function
         Some(self)
     }
 }
 
-impl HasAttributes for FunctionNode {
+impl HasAttributes for MethodNode { // Renamed from FunctionNode
     fn attributes(&self) -> &[Attribute] {
         &self.attributes
     }
 }
 
-impl FunctionNode {
-    /// Validates the function node structure
+impl MethodNode { // Renamed from FunctionNode
+    /// Validates the method node structure
     pub fn validate(&self) -> Result<(), super::NodeError> {
-        todo!()
+        // TODO: Implement validation logic if needed
+        Ok(())
         // ... validation logic
     }
 }
