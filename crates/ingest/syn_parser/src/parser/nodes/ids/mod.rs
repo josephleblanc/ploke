@@ -6,9 +6,9 @@
 
 // Declare the private internal module
 mod internal;
-mod utility_macros;
+// Removed: mod utility_macros;
 pub(self) use super::*;
-pub(self) use utility_macros::*;
+// Removed: pub(self) use utility_macros::*;
 // ----- Re-exports -----
 // We will re-export the specific ID types, marker traits, category enums,
 // and the TypedNodeIdGet trait from `internal` here later.
