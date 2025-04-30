@@ -16,6 +16,8 @@ use {
 };
 const LOG_TARGET: &str = "node_id";
 
+// AI: Ok, let's update this file next AI!
+
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
     pub(crate) crate_namespace: Uuid, // Namespace for the crate being parsed
