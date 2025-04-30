@@ -71,32 +71,33 @@ impl ModuleNode {
 
     /// Definition path to file as it would be called by a `use` statement,
     /// Examples:
-    ///     module declaration in project/main.rs
-    ///         "mod module_one;" -> ["crate", "module_one"]
-    ///     file module:
-    ///         project/module_one/mod.rs -> ["crate", "module_one"]
-    ///     in-line module in project/module_one/mod.rs
-    ///         `mod module_two {}` -> ["crate", "module_one", "module_two"]
+    ///     `mod module_two {}` -> ["crate", "module_one", "module_two"]
     pub fn defn_path(&self) -> &Vec<String> {
         &self.path
     }
 
-    /// Returns true if this is a file-based module
+    /// Returns `true` if this module node represents a definition stored in a separate file
+    /// (e.g., `mod foo;` pointing to `foo.rs` or `foo/mod.rs`).
     pub fn is_file_based(&self) -> bool {
         matches!(self.module_def, ModuleKind::FileBased { .. })
     }
 
-    /// Returns true if this is an inline module
+    /// Returns `true` if this module node represents a definition written inline
+    /// (e.g., `mod foo { ... }`).
     pub fn is_inline(&self) -> bool {
         matches!(self.module_def, ModuleKind::Inline { .. })
     }
 
-    /// Returns true if this is just a module declaration
+    /// Returns `true` if this module node represents only a declaration
+    /// (e.g., `mod foo;`) whose definition needs to be resolved.
     pub fn is_declaration(&self) -> bool {
         matches!(self.module_def, ModuleKind::Declaration { .. })
     }
 
-    /// Returns the items if this is an inline module, None otherwise
+    /// Returns the NodeIds of items directly contained within this module definition,
+    /// if this represents a `FileBased` or `Inline` module definition.
+    /// Returns `None` if this is only a `Declaration`.
+    /// Note: This might be temporary; `Relation::Contains` is the primary way to query containment.
     pub fn items(&self) -> Option<&[NodeId]> {
         match &self.module_def {
             ModuleKind::Inline { items, .. } => Some(items),
@@ -105,7 +106,7 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the file path if this is a file-based module, None otherwise
+    /// Returns the absolute file path if this is a `FileBased` module, `None` otherwise.
     pub fn file_path(&self) -> Option<&PathBuf> {
         if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             Some(file_path)
@@ -114,8 +115,8 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the file path relative to a given `Path` if this is a file-based module,
-    /// None otherwise.
+    /// Returns the file path relative to a given base path if this is a `FileBased` module
+    /// and the path is relative to the base, `None` otherwise.
     pub fn file_path_relative_to(&self, base: &Path) -> Option<&Path> {
         if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             file_path.strip_prefix(base).ok()
@@ -124,6 +125,8 @@ impl ModuleNode {
         }
     }
 
+    /// Returns the file name (e.g., "mod.rs", "foo.rs") if this is a `FileBased` module,
+    /// `None` otherwise.
     pub fn file_name(&self) -> Option<&OsStr> {
         if let ModuleKind::FileBased { file_path, .. } = &self.module_def {
             file_path.file_name()
@@ -132,7 +135,7 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the file attributes if this is a file-based module, None otherwise
+    /// Returns the inner attributes (`#![...]`) if this is a `FileBased` module, `None` otherwise.
     pub fn file_attrs(&self) -> Option<&[Attribute]> {
         if let ModuleKind::FileBased { file_attrs, .. } = &self.module_def {
             Some(file_attrs)
@@ -141,7 +144,7 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the file docs if this is a file-based module, None otherwise
+    /// Returns the inner documentation (`//! ...`) if this is a `FileBased` module, `None` otherwise.
     pub fn file_docs(&self) -> Option<&String> {
         if let ModuleKind::FileBased { file_docs, .. } = &self.module_def {
             // Want to return the reference to the inner type, not Option (using .as_ref())
@@ -151,7 +154,8 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the span if this is an inline module, None otherwise
+    /// Returns the byte span of the inline module definition (`mod foo { ... }`)
+    /// if this is an `Inline` module, `None` otherwise.
     pub fn inline_span(&self) -> Option<(usize, usize)> {
         if let ModuleKind::Inline { span, .. } = &self.module_def {
             Some(*span)
@@ -160,7 +164,8 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the declaration span if this is a module declaration, None otherwise
+    /// Returns the byte span of the module declaration (`mod foo;`)
+    /// if this is a `Declaration` module, `None` otherwise.
     pub fn declaration_span(&self) -> Option<(usize, usize)> {
         if let ModuleKind::Declaration {
             declaration_span, ..
@@ -172,7 +177,8 @@ impl ModuleNode {
         }
     }
 
-    /// Returns the resolved definition if this is a module declaration, None otherwise
+    /// Returns the `NodeId` of the resolved definition module if this is a `Declaration`
+    /// and resolution has occurred, `None` otherwise.
     pub fn resolved_definition(&self) -> Option<NodeId> {
         if let ModuleKind::Declaration {
             resolved_definition,
@@ -185,8 +191,9 @@ impl ModuleNode {
         }
     }
 
-    /// Checks module to see if it has a #[path = "..."] attribute.
-    /// Only checks module declarations, e.g.
+    /// Checks if this module node (specifically a `Declaration`) has a `#[path = "..."]` attribute.
+    ///
+    /// Example:
     /// ```rust,ignore
     /// #[path = "path/to/file.rs"]
     /// mod my_mod;
