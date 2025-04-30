@@ -29,6 +29,13 @@ pub struct FieldNode {
     pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
 }
 
+impl FieldNode {
+    /// Returns the typed ID for this field node.
+    pub fn field_id(&self) -> FieldNodeId {
+        self.id
+    }
+}
+
 impl HasAttributes for FieldNode {
     fn attributes(&self) -> &[Attribute] {
         &self.attributes
