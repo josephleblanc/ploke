@@ -31,6 +31,121 @@ use std::fmt::Display;
 // Define TypedNodeIdGet trait here later
 // Define private sealing trait here later
 
+// ----- Macros -----
+
+/// Macro to generate category enums (like PrimaryNodeId, AnyNodeId) that wrap specific typed IDs.
+///
+/// Generates:
+/// - The enum definition with specified variants.
+/// - Standard derives: Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord.
+/// - `impl EnumName`:
+///   - `pub fn base_id(&self) -> NodeId`: Calls `base_id()` on the inner typed ID.
+///   - `pub fn kind(&self) -> ItemKind` (optional): Returns the corresponding `ItemKind`.
+/// - `impl From<SpecificIdType> for EnumName` for each variant.
+///
+/// # Usage
+/// ```ignore
+/// define_category_enum!(
+///     #[doc = "Represents primary node IDs."] // Optional outer attributes
+///     PrimaryNodeId, // Enum Name
+///     ItemKind, // Include kind() method that returns this type
+///     [ // List of variants: (VariantName, SpecificIdType, ItemKindValue)
+///         (Function, FunctionNodeId, ItemKind::Function),
+///         (Struct, StructNodeId, ItemKind::Struct),
+///         // ...
+///     ]
+/// );
+///
+/// define_category_enum!(
+///     AnyNodeId, // Enum Name
+///     // No ItemKind specified, so kind() method won't be generated
+///     [ // List of variants: (VariantName, SpecificIdType)
+///         (Function, FunctionNodeId),
+///         (Struct, StructNodeId),
+///         // ... *all* specific IDs
+///     ]
+/// );
+/// ```
+macro_rules! define_category_enum {
+    // Matcher for enums WITH an associated ItemKind method
+    ($(#[$outer:meta])* $EnumName:ident, $KindType:ty, [ $( ($Variant:ident, $IdType:ty, $ItemKindVal:expr) ),* $(,)? ] ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $EnumName {
+            $(
+                $Variant($IdType),
+            )*
+        }
+
+        impl $EnumName {
+            /// Returns the underlying base NodeId using the internal `base_id` method
+            /// of the wrapped specific ID type.
+            #[inline]
+            pub fn base_id(&self) -> NodeId {
+                match *self {
+                    $(
+                        $EnumName::$Variant(id) => id.base_id(),
+                    )*
+                }
+            }
+
+            /// Returns the corresponding ItemKind for this category ID variant.
+            #[inline]
+            pub fn kind(&self) -> $KindType {
+                match *self {
+                    $(
+                        $EnumName::$Variant(_) => $ItemKindVal,
+                    )*
+                }
+            }
+        }
+
+        $(
+            impl From<$IdType> for $EnumName {
+                #[inline]
+                fn from(id: $IdType) -> Self {
+                    $EnumName::$Variant(id)
+                }
+            }
+        )*
+    };
+
+    // Matcher for enums WITHOUT an associated ItemKind method (like AnyNodeId)
+    ($(#[$outer:meta])* $EnumName:ident, [ $( ($Variant:ident, $IdType:ty) ),* $(,)? ] ) => {
+        $(#[$outer])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub enum $EnumName {
+            $(
+                $Variant($IdType),
+            )*
+        }
+
+        impl $EnumName {
+            /// Returns the underlying base NodeId using the internal `base_id` method
+            /// of the wrapped specific ID type.
+            #[inline]
+            pub fn base_id(&self) -> NodeId {
+                match *self {
+                    $(
+                        $EnumName::$Variant(id) => id.base_id(),
+                    )*
+                }
+            }
+            // No kind() method generated for this variant
+        }
+
+        $(
+            impl From<$IdType> for $EnumName {
+                #[inline]
+                fn from(id: $IdType) -> Self {
+                    $EnumName::$Variant(id)
+                }
+            }
+        )*
+    };
+}
+
+
 // ----- Internal Macro for Typed IDs -----
 
 /// Macro to define a strictly encapsulated newtype wrapper around NodeId.
@@ -216,173 +331,71 @@ pub enum AnyNodeId {
 // ------------------end example-------------------------------
 // ------------------------------------------------------------
 
-/// Represents the ID of any node type that can typically be defined directly
-/// within a module scope (primary items).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum PrimaryNodeId {
-    Function(FunctionNodeId),
-    Struct(StructNodeId),
-    Enum(EnumNodeId),
-    Union(UnionNodeId),
-    TypeAlias(TypeAliasNodeId),
-    Trait(TraitNodeId),
-    Impl(ImplNodeId),
-    Const(ConstNodeId),   // Changed from Value
-    Static(StaticNodeId), // Added
-    Macro(MacroNodeId),
-    Import(ImportNodeId),
-    Module(ModuleNodeId),
-}
+// --- Generated Category Enums ---
 
-impl PrimaryNodeId {
-    /// Returns the underlying base NodeId using the internal `base_id` method.
-    pub fn base_id(&self) -> NodeId {
-        match *self {
-            PrimaryNodeId::Function(id) => id.base_id(),
-            PrimaryNodeId::Struct(id) => id.base_id(),
-            PrimaryNodeId::Enum(id) => id.base_id(),
-            PrimaryNodeId::Union(id) => id.base_id(),
-            PrimaryNodeId::TypeAlias(id) => id.base_id(),
-            PrimaryNodeId::Trait(id) => id.base_id(),
-            PrimaryNodeId::Impl(id) => id.base_id(),
-            PrimaryNodeId::Const(id) => id.base_id(),
-            PrimaryNodeId::Static(id) => id.base_id(),
-            PrimaryNodeId::Macro(id) => id.base_id(),
-            PrimaryNodeId::Import(id) => id.base_id(),
-            PrimaryNodeId::Module(id) => id.base_id(),
-        }
-    }
+define_category_enum!(
+    #[doc = "Represents the ID of any node type that can typically be defined directly within a module scope (primary items)."]
+    PrimaryNodeId,
+    ItemKind,
+    [
+        (Function, FunctionNodeId, ItemKind::Function),
+        (Struct, StructNodeId, ItemKind::Struct),
+        (Enum, EnumNodeId, ItemKind::Enum),
+        (Union, UnionNodeId, ItemKind::Union),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias),
+        (Trait, TraitNodeId, ItemKind::Trait),
+        (Impl, ImplNodeId, ItemKind::Impl),
+        (Const, ConstNodeId, ItemKind::Const),
+        (Static, StaticNodeId, ItemKind::Static),
+        (Macro, MacroNodeId, ItemKind::Macro),
+        (Import, ImportNodeId, ItemKind::Import),
+        (Module, ModuleNodeId, ItemKind::Module),
+    ]
+);
 
-    // Optional: Get the ItemKind directly
-    pub fn kind(&self) -> ItemKind {
-        match self {
-            PrimaryNodeId::Function(_) => ItemKind::Function,
-            PrimaryNodeId::Struct(_) => ItemKind::Struct,
-            PrimaryNodeId::Enum(_) => ItemKind::Enum,
-            PrimaryNodeId::Union(_) => ItemKind::Union,
-            PrimaryNodeId::TypeAlias(_) => ItemKind::TypeAlias,
-            PrimaryNodeId::Trait(_) => ItemKind::Trait,
-            PrimaryNodeId::Impl(_) => ItemKind::Impl,
-            PrimaryNodeId::Const(_) => ItemKind::Const, // Changed from Value
-            PrimaryNodeId::Static(_) => ItemKind::Static, // Added
-            PrimaryNodeId::Macro(_) => ItemKind::Macro,
-            PrimaryNodeId::Import(_) => ItemKind::Import,
-            PrimaryNodeId::Module(_) => ItemKind::Module,
-        }
-    }
-}
+define_category_enum!(
+    #[doc = "Represents the ID of any node type that can be an associated item within an `impl` or `trait` block."]
+    AssociatedItemId,
+    ItemKind,
+    [
+        (Method, MethodNodeId, ItemKind::Method),
+        (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias), // Associated types use TypeAliasNodeId
+        (Const, ConstNodeId, ItemKind::Const), // Associated consts use ConstNodeId
+    ]
+);
 
-/// Represents the ID of any node type that can be an associated item
-/// within an `impl` or `trait` block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum AssociatedItemId {
-    Method(MethodNodeId),       // Associated function/method (changed from Function)
-    TypeAlias(TypeAliasNodeId), // Associated type
-    Const(ConstNodeId),         // Associated const
-}
-
-impl AssociatedItemId {
-    /// Returns the underlying base NodeId using the internal `base_id` method.
-    pub fn base_id(&self) -> NodeId {
-        match *self {
-            AssociatedItemId::Method(id) => id.base_id(),
-            AssociatedItemId::TypeAlias(id) => id.base_id(),
-            AssociatedItemId::Const(id) => id.base_id(),
-        }
-    }
-
-    // Optional: Get the ItemKind directly
-    pub fn kind(&self) -> ItemKind {
-        match self {
-            AssociatedItemId::Method(_) => ItemKind::Method, // Changed from Function
-            AssociatedItemId::TypeAlias(_) => ItemKind::TypeAlias,
-            AssociatedItemId::Const(_) => ItemKind::Const,
-        }
-    }
-}
-
-// --- From Implementations for Category Enums ---
-impl From<FunctionNodeId> for PrimaryNodeId {
-    // Standalone Function
-    fn from(id: FunctionNodeId) -> Self {
-        PrimaryNodeId::Function(id)
-    }
-}
-impl From<StructNodeId> for PrimaryNodeId {
-    fn from(id: StructNodeId) -> Self {
-        PrimaryNodeId::Struct(id)
-    }
-}
-impl From<EnumNodeId> for PrimaryNodeId {
-    fn from(id: EnumNodeId) -> Self {
-        PrimaryNodeId::Enum(id)
-    }
-}
-impl From<UnionNodeId> for PrimaryNodeId {
-    fn from(id: UnionNodeId) -> Self {
-        PrimaryNodeId::Union(id)
-    }
-}
-impl From<TypeAliasNodeId> for PrimaryNodeId {
-    fn from(id: TypeAliasNodeId) -> Self {
-        PrimaryNodeId::TypeAlias(id)
-    }
-}
-impl From<TraitNodeId> for PrimaryNodeId {
-    fn from(id: TraitNodeId) -> Self {
-        PrimaryNodeId::Trait(id)
-    }
-}
-impl From<ImplNodeId> for PrimaryNodeId {
-    fn from(id: ImplNodeId) -> Self {
-        PrimaryNodeId::Impl(id)
-    }
-}
-// Removed From<ValueNodeId>
-impl From<ConstNodeId> for PrimaryNodeId {
-    fn from(id: ConstNodeId) -> Self {
-        PrimaryNodeId::Const(id)
-    }
-} // Added
-impl From<StaticNodeId> for PrimaryNodeId {
-    fn from(id: StaticNodeId) -> Self {
-        PrimaryNodeId::Static(id)
-    }
-} // Added
-impl From<MacroNodeId> for PrimaryNodeId {
-    fn from(id: MacroNodeId) -> Self {
-        PrimaryNodeId::Macro(id)
-    }
-}
-impl From<ImportNodeId> for PrimaryNodeId {
-    fn from(id: ImportNodeId) -> Self {
-        PrimaryNodeId::Import(id)
-    }
-}
-impl From<ModuleNodeId> for PrimaryNodeId {
-    fn from(id: ModuleNodeId) -> Self {
-        PrimaryNodeId::Module(id)
-    }
-}
-
-// Removed From<FunctionNodeId> for AssociatedItemId
-impl From<MethodNodeId> for AssociatedItemId {
-    // Method
-    fn from(id: MethodNodeId) -> Self {
-        AssociatedItemId::Method(id)
-    }
-}
-impl From<TypeAliasNodeId> for AssociatedItemId {
-    fn from(id: TypeAliasNodeId) -> Self {
-        AssociatedItemId::TypeAlias(id)
-    }
-}
-// Removed From<ValueNodeId>
-impl From<ConstNodeId> for AssociatedItemId {
-    fn from(id: ConstNodeId) -> Self {
-        AssociatedItemId::Const(id)
-    }
-} // Added
+// Define AnyNodeId to hold *all* specific node ID types.
+// This serves as the primary key for heterogeneous storage like HashMaps.
+define_category_enum!(
+    #[doc = "Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage."]
+    AnyNodeId,
+    // No ItemKind method needed for AnyNodeId
+    [
+        // Primary Nodes
+        (Function, FunctionNodeId),
+        (Struct, StructNodeId),
+        (Enum, EnumNodeId),
+        (Union, UnionNodeId),
+        (TypeAlias, TypeAliasNodeId),
+        (Trait, TraitNodeId),
+        (Impl, ImplNodeId),
+        (Const, ConstNodeId),
+        (Static, StaticNodeId),
+        (Macro, MacroNodeId),
+        (Import, ImportNodeId),
+        (Module, ModuleNodeId),
+        // Associated Items (using their specific IDs)
+        (Method, MethodNodeId),
+        // Secondary Nodes
+        (Field, FieldNodeId),
+        (Variant, VariantNodeId),
+        (Param, ParamNodeId),
+        (GenericParam, GenericParamNodeId),
+        // Other IDs
+        (Reexport, ReexportNodeId),
+        // Add any other specific ID types here as they are created
+    ]
+);
 
 // --- Node Struct Definitions ---
 // Logging target
