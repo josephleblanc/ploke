@@ -558,29 +558,38 @@ fn debug_relationships(visitor: &Self) {
     #[cfg(feature = "type_bearing_ids")]
     fn find_node<T: Into<PrimaryNodeId>>(&self, item_id: T) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
-        // AI: fill out these match arms AI!
-        match Into::<PrimaryNodeId>::into(item_id) {
-            PrimaryNodeId::Function(function_node_id) => self.get_function(item_id),
-            PrimaryNodeId::Struct(struct_node_id) => todo!(),
-            PrimaryNodeId::Enum(enum_node_id) => todo!(),
-            PrimaryNodeId::Union(union_node_id) => todo!(),
-            PrimaryNodeId::TypeAlias(type_alias_node_id) => todo!(),
-            PrimaryNodeId::Trait(trait_node_id) => todo!(),
-            PrimaryNodeId::Impl(impl_node_id) => todo!(),
-            PrimaryNodeId::Const(const_node_id) => todo!(),
-            PrimaryNodeId::Static(static_node_id) => todo!(),
-            PrimaryNodeId::Macro(macro_node_id) => todo!(),
-            PrimaryNodeId::Import(import_node_id) => todo!(),
-            PrimaryNodeId::Module(module_node_id) => todo!(),
+        // Match on the PrimaryNodeId variant derived from the input typed ID `T`.
+        // For each variant, call the corresponding specific getter method.
+        // Map the Option<&SpecificNode> to Option<&dyn GraphNode>.
+        match item_id.into() {
+            PrimaryNodeId::Function(id) => self.get_function(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Struct(id) => self.get_struct(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Enum(id) => self.get_enum(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Union(id) => self.get_union(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::TypeAlias(id) => self.get_type_alias(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Trait(id) => self.get_trait(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Impl(id) => self.get_impl(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Const(id) => self.get_const(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Static(id) => self.get_static(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Macro(id) => self.get_macro(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Import(id) => self.get_import(id).map(|n| n as &dyn GraphNode),
+            PrimaryNodeId::Module(id) => self.get_module(id).map(|n| n as &dyn GraphNode),
+            // Note: MethodNodeId is not part of PrimaryNodeId, it's in AssociatedItemId.
+            // If find_node needed to find methods, it would need a different approach
+            // or the caller would need to go through the ImplNode/TraitNode first.
         }
 
-        self.functions()
-            .iter()
-            .find(|n| n.id.into() == item_id)
-            .map(|n| n as &dyn GraphNode)
+        // The following chained .or_else calls are redundant if the match above is exhaustive
+        // and covers all node types correctly via their specific getters.
+        // Keeping the old code commented out for reference during transition.
+
+        // self.functions()
+        //     .iter()
+        //     .find(|n| n.id.into() == item_id) // This comparison logic was flawed
+        //     .map(|n| n as &dyn GraphNode)
             // .or_else(|| -> Option<&dyn GraphNode> {
             //     self.defined_types().iter().find_map(|n| match n {
-            //         TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode),
+            //         TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode), // Comparing NodeId == NodeId
             //         TypeDefNode::Enum(e) if e.id() == item_id => Some(e as &dyn GraphNode),
             //         TypeDefNode::TypeAlias(t) if t.id() == item_id => Some(t as &dyn GraphNode),
             //         TypeDefNode::Union(u) if u.id() == item_id => Some(u as &dyn GraphNode),
