@@ -110,7 +110,7 @@ impl<'a> CodeVisitor<'a> {
                 base_path.push(path.ident.to_string());
                 // Use `?` to propagate errors from recursive calls
                 imports.extend(self.process_use_tree(&path.tree, base_path, cfg_bytes, vis_kind)?);
-            }
+            },
             syn::UseTree::Name(name) => {
                 let mut full_path = base_path.to_vec();
                 let use_name = name.ident.to_string();
@@ -126,18 +126,16 @@ impl<'a> CodeVisitor<'a> {
                     use_name // This is the visible name in this case
                 };
 
+
                 // Register the new node ID (but don't get parent ID, handled later)
                 let registration_result = self.register_new_node_id(
                     &checked_name,
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
-                    item_name: checked_name.clone(),
-                    item_kind: ItemKind::Import,
-                };
+                );
                 // Log the error before returning
                 error!(target: LOG_TARGET_TRACE, "{}", err);
                 return Err(err);
-            }
 
             let (import_base_id, _) = registration_result.unwrap();
 
@@ -153,7 +151,7 @@ impl<'a> CodeVisitor<'a> {
                     cfgs: Vec::new(), // Inherited CFGs handled by the scope
                 };
                 imports.push(ImportNode::new(import_info));
-            }
+}
             syn::UseTree::Rename(rename) => {
                 let mut full_path = base_path.to_vec();
                 let original_name = rename.ident.to_string();
@@ -163,6 +161,8 @@ impl<'a> CodeVisitor<'a> {
 
                 // Register the new node ID
                 let registration_result = self.register_new_node_id(
+        // AI: I think you are getting confused about this... it looks like you are trying to
+        // initialize a struct? This is a function call. Fix it AI!
                     &visible_name,
                     ItemKind::Import,
                     item_name: visible_name.clone(),
