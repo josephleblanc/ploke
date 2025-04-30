@@ -53,11 +53,12 @@ use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
 
 use crate::parser::nodes::ModuleKind;
-use ploke_core::ItemKind; // Import TypeKind
+use crate::error::CodeVisitorError; // Import the new error type
+use ploke_core::ItemKind;
 use ploke_core::{NodeId, TypeId};
 
-use colored::*; // Import colored
-use log::trace; // Import trace macro
+use colored::*;
+use log::{error, trace}; // Import error macro
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::TypePath;
@@ -89,30 +90,26 @@ impl<'a> CodeVisitor<'a> {
 
     // Helper method to extract path segments from a use tree
     // Needs cfg_bytes passed down from visit_item_use
+    /// Recursively processes a `syn::UseTree` to extract `ImportNode`s.
+    ///
+    /// Returns a `Result` containing a `Vec` of `ImportNode`s or a `CodeVisitorError`
+    /// if registration fails for any item within the tree.
     fn process_use_tree(
         &mut self,
         tree: &syn::UseTree,
-        // AI: Let's change this to accept a `Vec<String>` instead. It doesn't really seem to make
-        // sense for us to be taking a reference and using `clone` on every recursive call here.
-        base_path: &[String],
-        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+        // Accept base_path by value (Vec<String>)
+        mut base_path: Vec<String>,
+        cfg_bytes: Option<&[u8]>,
         vis_kind: &VisibilityKind,
-    ) -> Vec<ImportNode> {
+    ) -> Result<Vec<ImportNode>, CodeVisitorError> { // Return Result
         let mut imports = Vec::new();
 
         match tree {
-            // AI: Looks like an error in trying to use `continue` outside of a loop. Let's
-            // change this to return a result that uses a new error type you create. Then in the caller
-            // we can do error handling. While we can't return a result and abort the parsing, we
-            // can at least log the error in the caller. We should also log the error if it occurs
-            // here. For the error type, also update the `syn_parser/error.rs` file, using the
-            // `#[from]` provided by `thiserror`. Prefer `#[transparent]`.
             syn::UseTree::Path(path) => {
-                let mut new_base = base_path.to_vec();
-                new_base.push(path.ident.to_string());
-
-                imports.extend(self.process_use_tree(&path.tree, &new_base, cfg_bytes, vis_kind));
-                // Pass cfg_bytes down
+                // No need to clone base_path, just push and pass ownership
+                base_path.push(path.ident.to_string());
+                // Use `?` to propagate errors from recursive calls
+                imports.extend(self.process_use_tree(&path.tree, base_path, cfg_bytes, vis_kind)?);
             }
             syn::UseTree::Name(name) => {
                 let mut full_path = base_path.to_vec();
@@ -134,15 +131,17 @@ impl<'a> CodeVisitor<'a> {
                     &checked_name,
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
-                );
-                // If registration fails (e.g., no parent module found), skip this import item
-                if registration_result.is_none() {
-                    // AI: return the result instead of using `continue`
-                    continue;
-                }
-                let (import_base_id, _) = registration_result.unwrap();
+                    item_name: checked_name.clone(),
+                    item_kind: ItemKind::Import,
+                };
+                // Log the error before returning
+                error!(target: LOG_TARGET_TRACE, "{}", err);
+                return Err(err);
+            }
 
-                let import_info = ImportNodeInfo {
+            let (import_base_id, _) = registration_result.unwrap();
+
+            let import_info = ImportNodeInfo {
                     id: import_base_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
@@ -166,15 +165,17 @@ impl<'a> CodeVisitor<'a> {
                 let registration_result = self.register_new_node_id(
                     &visible_name,
                     ItemKind::Import,
-                    cfg_bytes, // Pass down received cfg_bytes
-                );
-                if registration_result.is_none() {
-                    // AI: return the result instead of using `continue`
-                    continue;
-                }
-                let (import_base_id, _) = registration_result.unwrap();
+                    item_name: visible_name.clone(),
+                    item_kind: ItemKind::Import,
+                };
+                error!(target: LOG_TARGET_TRACE, "{}", err);
+                return Err(err);
+            }
+            let (import_base_id, _) = registration_result.unwrap();
 
-                full_path.push(original_name.clone());
+            // Use the original base_path before it was potentially modified by recursion
+            let mut full_path = base_path; // Take ownership
+            full_path.push(original_name.clone());
 
                 let import_info = ImportNodeInfo {
                     id: import_base_id,
@@ -194,17 +195,18 @@ impl<'a> CodeVisitor<'a> {
                 let registration_result = self.register_new_node_id(
                     "<glob>", // Use placeholder name
                     ItemKind::Import,
-                    cfg_bytes, // Pass down received cfg_bytes
-                );
-                if registration_result.is_none() {
-                    // AI: return the result instead of using `continue`
-                    continue;
-                }
-                let (import_base_id, _) = registration_result.unwrap();
+                    item_name: "<glob>".to_string(),
+                    item_kind: ItemKind::Import,
+                };
+                error!(target: LOG_TARGET_TRACE, "{}", err);
+                return Err(err);
+            }
+            let (import_base_id, _) = registration_result.unwrap();
 
-                let full_path = base_path.to_vec();
+            // Use the original base_path
+            let full_path = base_path; // Take ownership
 
-                let import_info = ImportNodeInfo {
+            let import_info = ImportNodeInfo {
                     id: import_base_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
@@ -219,15 +221,19 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
-                    imports.extend(self.process_use_tree(item, base_path, cfg_bytes, vis_kind));
-                    // Pass cfg_bytes down
+                    // Clone base_path for each branch of the group
+                    imports.extend(self.process_use_tree(
+                        item,
+                        base_path.clone(), // Clone here
+                        cfg_bytes,
+                        vis_kind,
+                    )?);
                 }
             }
         }
 
-        // AI: should still be a vec, but now wrapped in Ok()
-        imports
-        // AI!
+        // Wrap successful result in Ok
+        Ok(imports)
     }
 
     // Removed #[cfg(feature = "verbose_debug")]
@@ -1786,9 +1792,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
 
         let vis_kind = self.state.convert_visibility(&use_item.vis);
-        // Pass cfg_bytes down to process_use_tree
-        let imports =
-            self.process_use_tree(&use_item.tree, &base_path, cfg_bytes.as_deref(), &vis_kind);
+
+        // Call the modified function and handle the Result
+        let imports_result =
+            self.process_use_tree(use_item.tree.clone(), base_path, cfg_bytes.as_deref(), &vis_kind);
 
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
@@ -1800,13 +1807,45 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .iter_mut()
             .find(|m| &m.path == current_module_path)
         {
-            let parent_mod_id = module.module_id(); // Get typed ID
+            let parent_mod_id = module.module_id();
 
-            for import_node in imports {
-                let typed_import_id = import_node.import_id(); // Get typed ID
+            // Process imports only if process_use_tree succeeded
+            match imports_result {
+                Ok(imports) => {
+                    for import_node in imports {
+                        let typed_import_id = import_node.import_id();
 
-                // Add Contains relation (Import is a PrimaryNode)
-                let contains_relation = SyntacticRelation::Contains {
+                        // Add Contains relation (Import is a PrimaryNode)
+                        let contains_relation = SyntacticRelation::Contains {
+                            source: parent_mod_id,
+                            target: PrimaryNodeId::from(typed_import_id),
+                        };
+                        graph.relations.push(contains_relation);
+
+                        // Add ModuleImports relation
+                        let module_import_relation = SyntacticRelation::ModuleImports {
+                            source: parent_mod_id,
+                            target: typed_import_id,
+                        };
+                        graph.relations.push(module_import_relation);
+
+                        // Add the node itself
+                        graph.use_statements.push(import_node.clone());
+                        // Add to module's imports list
+                        module.imports.push(import_node);
+                    }
+                }
+                Err(err) => {
+                    // Log the error from process_use_tree, but don't stop parsing
+                    error!(target: LOG_TARGET_TRACE, "Error processing use tree: {}", err);
+                }
+            }
+        } else {
+            log::warn!(target: LOG_TARGET_TRACE, "Could not find parent module for use statement at path {:?}. Imports not added.", current_module_path);
+        }
+        visit::visit_item_use(self, use_item);
+    }
+    // Continue visiting
                     source: parent_mod_id,
                     target: PrimaryNodeId::from(typed_import_id),
                 };

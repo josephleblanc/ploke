@@ -3,9 +3,22 @@ use ploke_core::{IdConversionError, NodeId, TypeId};
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
+use ploke_core::ItemKind; // Import ItemKind
+
+/// Errors specific to the CodeVisitor processing.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum CodeVisitorError {
+    /// Failed to register a node ID, likely because the parent module couldn't be found.
+    #[error("Failed to register node ID for item '{item_name}' ({item_kind:?})")]
+    RegistrationFailed {
+        item_name: String,
+        item_kind: ItemKind,
+    },
+    // Add other visitor-specific errors here if needed
+}
 
 /// Custom error type for the syn_parser crate.
-#[derive(Error, Debug, Clone, PartialEq)] // Removed Eq
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
@@ -92,6 +105,9 @@ pub enum SynParserError {
     /// Indicates that shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
     ExternalItemNotResolved(NodeId),
+
+    #[error(transparent)]
+    VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
