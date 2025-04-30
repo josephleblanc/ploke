@@ -158,7 +158,6 @@ macro_rules! define_category_enum {
     };
 }
 
-
 /// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
 ///
 /// # Usage
@@ -176,12 +175,13 @@ macro_rules! impl_typed_node_id_get {
             fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
                 // Call the specified getter method on GraphAccess (e.g., graph.get_struct(*self))
                 // and cast the result to &dyn GraphNode.
-                graph.$GetterMethod(*self).map(|node| node as &dyn GraphNode)
+                graph
+                    .$GetterMethod(*self)
+                    .map(|node| node as &dyn GraphNode)
             }
         }
     };
 }
-
 
 // ----- Internal Macro for Typed IDs -----
 
@@ -310,73 +310,23 @@ impl PrimaryNodeMarker for MacroNode {}
 impl PrimaryNodeMarker for ImportNode {}
 impl PrimaryNodeMarker for ModuleNode {}
 
-// ------------------------------------------------------------
-// -----------------begin example------------------------------
-use crate::parser::graph::GraphAccess;
-use ploke_core::NodeId;
-use std::hash::{Hash, Hasher}; // Public trait
-
-// --- ID Structs (Field private) ---
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
-pub struct ExampleNodeId(NodeId);
-// ... others ...
-// --- Internal Base ID Access ---
-trait HasBaseId {
-    fn base_id(&self) -> NodeId;
-}
-impl HasBaseId for ExampleNodeId {
-    fn base_id(&self) -> NodeId {
-        self.0
-    }
-}
-pub trait TypedId {} // General marker for all typed IDs
+// --- Marker Traits ---
+// Define the marker traits themselves here. Implementations will be added later,
+// ideally via the define_internal_node_id! macro.
+pub trait TypedId: Copy + std::fmt::Debug + std::hash::Hash + Eq + Ord {} // Base trait for all typed IDs
 pub trait PrimaryNodeIdTrait: TypedId {} // Marker for primary node IDs
 pub trait AssociatedItemIdTrait: TypedId {} // Marker for associated item IDs
 pub trait SecondaryNodeIdTrait: TypedId {} // Marker for secondary node IDs (fields, params, etc.)
+
 // Add other category marker traits as needed
 
-/// Private module for the sealing pattern. Prevents external crates or modules
-/// from implementing traits intended only for internal ID types (like TypedNodeIdGet).
+/// Private module for the sealing pattern. Prevents external crates or modules                    
+/// from implementing traits intended only for internal ID types (like TypedNodeIdGet).            
 mod private_traits {
-    /// The sealing trait. Cannot be named or implemented outside this module.
+    /// The sealing trait. Cannot be named or implemented outside this module.                     
     pub(super) trait Sealed {}
 }
-// ... others ...
-
-// --- Marker Trait Impls ---
-impl TypedId for ExampleNodeId {}
-impl PrimaryNodeIdTrait for ExampleNodeId {}
-// ... others ...
-
-// --- TypedNodeIdGet Trait Def & Impls ---
-pub trait TypedNodeIdGet /* ... */ {
-    /* ... */
-} // Define here or re-export public one
-impl private_traits::Sealed for ExampleNodeId {}
-impl TypedNodeIdGet for ExampleNodeId {
-    /* ... calls graph.get_struct(self) ... */
-}
-// ... others ...
-
-// --- Restricted Constructors ---
-impl ExampleNodeId {
-    pub(super) fn create(id: NodeId) -> Self {
-        Self(id)
-    }
-}
-// ... others ...
-
-// --- Heterogeneous Key (Option 1 Example) ---
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AnyNodeId {
-    Struct(ExampleNodeId), /* ... */
-}
-
-// ------------------end example-------------------------------
-// ------------------------------------------------------------
-
 // --- TypedNodeIdGet Implementations ---
-
 // Primary Nodes
 impl_typed_node_id_get!(FunctionNodeId, get_function);
 impl_typed_node_id_get!(StructNodeId, get_struct);
@@ -399,7 +349,6 @@ impl_typed_node_id_get!(ModuleNodeId, get_module);
 
 // Other IDs
 // Note: ReexportNodeId does *not* get an impl.
-
 
 // --- Generated Category Enums ---
 
@@ -430,7 +379,7 @@ define_category_enum!(
     [
         (Method, MethodNodeId, ItemKind::Method),
         (TypeAlias, TypeAliasNodeId, ItemKind::TypeAlias), // Associated types use TypeAliasNodeId
-        (Const, ConstNodeId, ItemKind::Const), // Associated consts use ConstNodeId
+        (Const, ConstNodeId, ItemKind::Const),             // Associated consts use ConstNodeId
     ]
 );
 
@@ -438,7 +387,8 @@ define_category_enum!(
 // This serves as the primary key for heterogeneous storage like HashMaps.
 define_category_enum!(
     #[doc = "Represents the ID of *any* node type in the graph. Used as a key for heterogeneous storage."]
-    AnyNodeId,
+    AnyNodeId, // AI: There is a problem with this macro, we don't have a ItemKind as the macro
+    // requires. AI!
     // No ItemKind method needed for AnyNodeId
     [
         // Primary Nodes
