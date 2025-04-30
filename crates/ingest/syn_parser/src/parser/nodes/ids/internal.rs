@@ -31,27 +31,114 @@ use std::fmt::Display;
 // Define TypedNodeIdGet trait here later
 // Define private sealing trait here later
 
-// ----- utility macro -----
-define_node_id_wrapper!(EnumNodeId);
-define_node_id_wrapper!(FunctionNodeId); // For standalone functions
-define_node_id_wrapper!(MethodNodeId); // For associated functions/methods
-define_node_id_wrapper!(ImplNodeId);
-define_node_id_wrapper!(ImportNodeId);
-define_node_id_wrapper!(ModuleNodeId);
-define_node_id_wrapper!(StructNodeId);
-define_node_id_wrapper!(TraitNodeId);
-define_node_id_wrapper!(TypeAliasNodeId);
-define_node_id_wrapper!(UnionNodeId);
+// ----- Internal Macro for Typed IDs -----
+
+/// Macro to define a strictly encapsulated newtype wrapper around NodeId.
+///
+/// Generates:
+/// - A public struct `StructName(NodeId)` where the `NodeId` field is private.
+/// - Derives: Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord.
+/// - `impl StructName`:
+///   - `pub(in crate::parser::nodes) fn create(NodeId) -> Self`: Restricted constructor.
+///   - `pub(super) fn base_id(&self) -> NodeId`: Internal access to the base ID.
+/// - `impl Display for StructName` (delegates to inner NodeId).
+/// - `impl Borrow<NodeId>` and `impl AsRef<NodeId>` for internal use if needed (though direct access via `base_id` might be preferred).
+///
+/// # Usage (within this module)
+/// ```ignore
+/// define_internal_node_id!(
+///     #[doc = "Identifier for a function node."] // Optional outer attributes
+///     FunctionNodeId
+/// );
+/// ```
+macro_rules! define_internal_node_id {
+    ($(#[$outer:meta])* $NewTypeId:ident) => {
+        $(#[$outer])*
+        // The struct is pub, but its field NodeId is private by default
+        // because NodeId itself is not pub in this scope after potential future refactoring
+        // or simply because tuple struct fields are private without `pub`.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+        pub struct $NewTypeId(NodeId);
+
+        impl $NewTypeId {
+            /// Creates a new typed ID. Restricted constructor.
+            /// Only code within `crate::parser::nodes` can call this.
+            /// Ensures typed IDs are only created alongside actual node construction.
+            #[inline]
+            pub(in crate::parser::nodes) fn create(id: NodeId) -> Self {
+                Self(id)
+            }
+
+            /// Get the underlying base NodeId.
+            /// Restricted visibility (`pub(super)`) allows access only within the `ids` module.
+            /// This is the controlled escape hatch for internal operations like hashing,
+            /// indexing in generic maps, or passing context to ploke-core.
+            #[inline]
+            pub(super) fn base_id(&self) -> NodeId {
+                self.0
+            }
+
+            // We intentionally DO NOT provide public or pub(crate) `into_inner` or `as_inner`.
+            // Access to the base ID outside this module should be impossible.
+        }
+
+        impl std::fmt::Display for $NewTypeId {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                // Delegate to the inner NodeId's Display implementation
+                write!(f, "{}", self.0)
+            }
+        }
+
+        // These Borrow/AsRef impls might be useful for internal generic code
+        // within the `ids` module that needs to operate on the base ID without
+        // consuming the wrapper. However, calling `base_id()` might be clearer.
+        // Keep them commented out unless a clear need arises.
+        // impl std::borrow::Borrow<NodeId> for $NewTypeId {
+        //     #[inline]
+        //     fn borrow(&self) -> &NodeId {
+        //         &self.0
+        //     }
+        // }
+        //
+        // impl AsRef<NodeId> for $NewTypeId {
+        //     #[inline]
+        //     fn as_ref(&self) -> &NodeId {
+        //         &self.0
+        //     }
+        // }
+
+        // Placeholder for implementing marker traits via the macro later
+        // impl $crate::parser::nodes::ids::internal::TypedId for $NewTypeId {}
+        // // Example: Add marker trait implementation based on macro input
+        // // define_internal_node_id!(StructNodeId, marker: PrimaryNodeIdTrait);
+        // // macro_rules! define_internal_node_id {
+        // //     ($NewTypeId:ident $(, marker: $MarkerTrait:path)*) => { ... $(impl $MarkerTrait for $NewTypeId {})* ... }
+        // // }
+    };
+}
+
+// Now use the *new* internal macro
+define_internal_node_id!(EnumNodeId);
+define_internal_node_id!(FunctionNodeId); // For standalone functions
+define_internal_node_id!(MethodNodeId); // For associated functions/methods
+define_internal_node_id!(ImplNodeId);
+define_internal_node_id!(ImportNodeId);
+define_internal_node_id!(ModuleNodeId); // Use the macro now, assuming no special manual impl needed yet
+define_internal_node_id!(StructNodeId);
+define_internal_node_id!(TraitNodeId);
+define_internal_node_id!(TypeAliasNodeId);
+define_internal_node_id!(UnionNodeId);
 // Removed ValueNodeId
-define_node_id_wrapper!(ConstNodeId); // Added
-define_node_id_wrapper!(StaticNodeId); // Added
-define_node_id_wrapper!(FieldNodeId);
-define_node_id_wrapper!(VariantNodeId);
-define_node_id_wrapper!(ParamNodeId); // For ParamData
-define_node_id_wrapper!(GenericParamNodeId);
-define_node_id_wrapper!(MacroNodeId);
+define_internal_node_id!(ConstNodeId); // Added
+define_internal_node_id!(StaticNodeId); // Added
+define_internal_node_id!(FieldNodeId);
+define_internal_node_id!(VariantNodeId);
+define_internal_node_id!(ParamNodeId); // For ParamData
+define_internal_node_id!(GenericParamNodeId);
+define_internal_node_id!(MacroNodeId);
+
 // For more explicit differntiation within Phase 3 module tree processing
-define_node_id_wrapper!(ReexportNodeId);
+define_internal_node_id!(ReexportNodeId);
 // --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
@@ -148,21 +235,21 @@ pub enum PrimaryNodeId {
 }
 
 impl PrimaryNodeId {
-    /// Returns the underlying base NodeId.
+    /// Returns the underlying base NodeId using the internal `base_id` method.
     pub fn base_id(&self) -> NodeId {
         match *self {
-            PrimaryNodeId::Function(id) => id.into_inner(),
-            PrimaryNodeId::Struct(id) => id.into_inner(),
-            PrimaryNodeId::Enum(id) => id.into_inner(),
-            PrimaryNodeId::Union(id) => id.into_inner(),
-            PrimaryNodeId::TypeAlias(id) => id.into_inner(),
-            PrimaryNodeId::Trait(id) => id.into_inner(),
-            PrimaryNodeId::Impl(id) => id.into_inner(),
-            PrimaryNodeId::Const(id) => id.into_inner(), // Changed from Value
-            PrimaryNodeId::Static(id) => id.into_inner(), // Added
-            PrimaryNodeId::Macro(id) => id.into_inner(),
-            PrimaryNodeId::Import(id) => id.into_inner(),
-            PrimaryNodeId::Module(id) => id.into_inner(),
+            PrimaryNodeId::Function(id) => id.base_id(),
+            PrimaryNodeId::Struct(id) => id.base_id(),
+            PrimaryNodeId::Enum(id) => id.base_id(),
+            PrimaryNodeId::Union(id) => id.base_id(),
+            PrimaryNodeId::TypeAlias(id) => id.base_id(),
+            PrimaryNodeId::Trait(id) => id.base_id(),
+            PrimaryNodeId::Impl(id) => id.base_id(),
+            PrimaryNodeId::Const(id) => id.base_id(),
+            PrimaryNodeId::Static(id) => id.base_id(),
+            PrimaryNodeId::Macro(id) => id.base_id(),
+            PrimaryNodeId::Import(id) => id.base_id(),
+            PrimaryNodeId::Module(id) => id.base_id(),
         }
     }
 
@@ -195,12 +282,12 @@ pub enum AssociatedItemId {
 }
 
 impl AssociatedItemId {
-    /// Returns the underlying base NodeId.
+    /// Returns the underlying base NodeId using the internal `base_id` method.
     pub fn base_id(&self) -> NodeId {
         match *self {
-            AssociatedItemId::Method(id) => id.into_inner(), // Changed from Function
-            AssociatedItemId::TypeAlias(id) => id.into_inner(),
-            AssociatedItemId::Const(id) => id.into_inner(),
+            AssociatedItemId::Method(id) => id.base_id(),
+            AssociatedItemId::TypeAlias(id) => id.base_id(),
+            AssociatedItemId::Const(id) => id.base_id(),
         }
     }
 
