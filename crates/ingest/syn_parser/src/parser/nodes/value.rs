@@ -2,37 +2,6 @@ use ploke_core::{NodeId, TrackingHash, TypeId};
 
 use super::*;
 
-// Represents a constant or static variable
-impl GraphNode for ValueNode {
-    fn id(&self) -> NodeId {
-        self.id
-    }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn cfgs(&self) -> &[String] {
-        &self.cfgs
-    }
-
-    fn as_value_const(&self) -> Option<&ValueNode> {
-        Some(self)
-    }
-
-    fn as_value_static(&self) -> Option<&ValueNode> {
-        Some(self)
-    }
-}
-
-impl HasAttributes for ValueNode {
-    fn attributes(&self) -> &[Attribute] {
-        &self.attributes
-    }
-}
-
 /// Represents a `const` item.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConstNode {
@@ -61,7 +30,8 @@ impl GraphNode for StaticNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
-    fn as_static(&self) -> Option<&StaticNode> { // Changed from as_value_static
+    fn as_static(&self) -> Option<&StaticNode> {
+        // Changed from as_value_static
         Some(self)
     }
 }
@@ -85,7 +55,8 @@ impl GraphNode for ConstNode {
     fn cfgs(&self) -> &[String] {
         &self.cfgs
     }
-    fn as_const(&self) -> Option<&ConstNode> { // Changed from as_value_const
+    fn as_const(&self) -> Option<&ConstNode> {
+        // Changed from as_value_const
         Some(self)
     }
 }

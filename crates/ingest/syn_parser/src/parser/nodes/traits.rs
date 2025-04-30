@@ -12,7 +12,7 @@ pub struct TraitNode {
     pub name: String,
     pub span: (usize, usize), // Byte start/end offsets
     pub visibility: VisibilityKind,
-    pub methods: Vec<FunctionNode>,
+    pub methods: Vec<MethodNode>,
     pub generic_params: Vec<GenericParamNode>,
     pub super_traits: Vec<TypeId>,
     pub attributes: Vec<Attribute>,
