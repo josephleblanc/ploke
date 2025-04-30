@@ -134,7 +134,8 @@ impl<'a> CodeVisitor<'a> {
                     cfg_bytes, // Pass down received cfg_bytes
                 );
                 // Log the error before returning
-                error!(target: LOG_TARGET_TRACE, "{}", err);
+                error!(target: LOG_TARGET_TRACE, "{}", err); // AI: there is no `err` defined here.
+                                                             // AI!
                 return Err(err);
 
                 let (import_base_id, _) = registration_result.unwrap();
