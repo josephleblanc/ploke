@@ -20,7 +20,6 @@ pub struct ParsedCodeGraph {
 }
 
 impl ParsedCodeGraph {
-    // AI: Let's update this file next AI!
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
@@ -95,7 +94,9 @@ impl ParsedCodeGraph {
         self.graph.traits.append(&mut other.graph.traits);
         self.graph.relations.append(&mut other.graph.relations);
         self.graph.modules.append(&mut other.graph.modules);
-        self.graph.values.append(&mut other.graph.values);
+        self.graph.consts.append(&mut other.graph.consts); // Use consts
+        self.graph.statics.append(&mut other.graph.statics); // Use statics
+        // Removed values append
         self.graph.macros.append(&mut other.graph.macros);
         self.graph
             .use_statements
@@ -256,7 +257,7 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.traits
     }
 
-    fn relations(&self) -> &[Relation] {
+    fn relations(&self) -> &[SyntacticRelation] { // Updated type
         &self.graph.relations
     }
 
@@ -264,8 +265,13 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.modules
     }
 
-    fn values(&self) -> &[ValueNode] {
-        &self.graph.values
+    // Removed values()
+    fn consts(&self) -> &[ConstNode] { // Added
+        &self.graph.consts
+    }
+
+    fn statics(&self) -> &[StaticNode] { // Added
+        &self.graph.statics
     }
 
     fn macros(&self) -> &[MacroNode] {
@@ -296,7 +302,7 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.traits
     }
 
-    fn relations_mut(&mut self) -> &mut Vec<Relation> {
+    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> { // Updated type
         &mut self.graph.relations
     }
 
@@ -304,8 +310,13 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.modules
     }
 
-    fn values_mut(&mut self) -> &mut Vec<ValueNode> {
-        &mut self.graph.values
+    // Removed values_mut()
+    fn consts_mut(&mut self) -> &mut Vec<ConstNode> { // Added
+        &mut self.graph.consts
+    }
+
+    fn statics_mut(&mut self) -> &mut Vec<StaticNode> { // Added
+        &mut self.graph.statics
     }
 
     fn macros_mut(&mut self) -> &mut Vec<MacroNode> {
