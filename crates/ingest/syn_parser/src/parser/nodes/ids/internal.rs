@@ -392,6 +392,11 @@ define_category_enum!(
     [
         // Primary Nodes
         (Function, FunctionNodeId),
+        // AI: Still getting an error here
+        //
+        // │ │ │ │ │ └╴  expected one of `;` or `]`, found `,`
+        // │ │ │ │ │      expected one of `;` or `]` rustc  [394, 35]
+        // AI!
         (Struct, StructNodeId),
         (Enum, EnumNodeId),
         (Union, UnionNodeId),
