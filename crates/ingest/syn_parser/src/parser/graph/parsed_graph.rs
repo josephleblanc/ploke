@@ -20,6 +20,7 @@ pub struct ParsedCodeGraph {
 }
 
 impl ParsedCodeGraph {
+    // AI: Let's update this file next AI!
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
