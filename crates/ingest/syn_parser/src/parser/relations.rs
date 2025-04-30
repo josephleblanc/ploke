@@ -1,9 +1,10 @@
+// Import specific typed IDs AND the new category enums
 use crate::parser::nodes::{
-    EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId, ImportNodeId,
-    MacroNodeId, ModuleNodeId, ParamNodeId, ReexportNodeId, StructNodeId, TraitNodeId,
-    TypeAliasNodeId, UnionNodeId, ValueNodeId, VariantNodeId,
+    AssociatedItemId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
+    ImportNodeId, MacroNodeId, ModuleNodeId, ParamNodeId, PrimaryNodeId, ReexportNodeId,
+    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, ValueNodeId, VariantNodeId,
 };
-use ploke_core::{NodeId, TypeId}; // Keep NodeId for generic targets
+use ploke_core::{NodeId, TypeId};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -26,10 +27,10 @@ pub enum SyntacticRelation {
     //-----------------------------------------------------------------------
     /// Module contains another node (function, struct, enum, impl, trait, module, import, etc.).
     /// Source: ModuleNodeId
-    /// Target: NodeId (can be any node type contained within)
+    /// Target: PrimaryNodeId (Restricts target to primary item types)
     Contains {
         source: ModuleNodeId,
-        target: NodeId,
+        target: PrimaryNodeId,
     },
 
     /// Module declaration resolves to its definition.
@@ -70,10 +71,10 @@ pub enum SyntacticRelation {
 
     /// An import statement re-exports an item.
     /// Source: ImportNodeId
-    /// Target: NodeId (The actual item being re-exported)
+    /// Target: PrimaryNodeId (Restricts target to primary item types)
     ReExports {
         source: ImportNodeId,
-        target: NodeId,
+        target: PrimaryNodeId,
     },
 
     //-----------------------------------------------------------------------
@@ -113,13 +114,19 @@ pub enum SyntacticRelation {
 
     /// Impl block contains an associated item (method, type, const).
     /// Source: ImplNodeId
-    /// Target: NodeId (FunctionNodeId, TypeAliasNodeId, or ValueNodeId)
-    ImplAssociatedItem { source: ImplNodeId, target: NodeId },
+    /// Target: AssociatedItemId (Restricts target to valid associated item types)
+    ImplAssociatedItem {
+        source: ImplNodeId,
+        target: AssociatedItemId,
+    },
 
     /// Trait definition contains an associated item (method, type, const).
     /// Source: TraitNodeId
-    /// Target: NodeId (FunctionNodeId, TypeAliasNodeId, or ValueNodeId)
-    TraitAssociatedItem { source: TraitNodeId, target: NodeId },
+    /// Target: AssociatedItemId (Restricts target to valid associated item types)
+    TraitAssociatedItem {
+        source: TraitNodeId,
+        target: AssociatedItemId,
+    },
 }
 
 impl SyntacticRelation {
@@ -143,18 +150,21 @@ impl SyntacticRelation {
 
     pub fn target_node_id(&self) -> NodeId {
         match *self {
-            SyntacticRelation::Contains { target, .. } => target, // Already NodeId
+            // Variants using category enums now need to call .base_id()
+            SyntacticRelation::Contains { target, .. } => target.base_id(),
+            SyntacticRelation::ReExports { target, .. } => target.base_id(),
+            SyntacticRelation::ImplAssociatedItem { target, .. } => target.base_id(),
+            SyntacticRelation::TraitAssociatedItem { target, .. } => target.base_id(),
+
+            // Variants using specific typed IDs use .into_inner()
             SyntacticRelation::ResolvesToDefinition { target, .. } => target.into_inner(),
             SyntacticRelation::CustomPath { target, .. } => target.into_inner(),
             SyntacticRelation::Sibling { target, .. } => target.into_inner(),
             SyntacticRelation::ModuleImports { target, .. } => target.into_inner(),
-            SyntacticRelation::ReExports { target, .. } => target, // Already NodeId
             SyntacticRelation::StructField { target, .. } => target.into_inner(),
             SyntacticRelation::UnionField { target, .. } => target.into_inner(),
             SyntacticRelation::VariantField { target, .. } => target.into_inner(),
             SyntacticRelation::EnumVariant { target, .. } => target.into_inner(),
-            SyntacticRelation::ImplAssociatedItem { target, .. } => target, // Already NodeId
-            SyntacticRelation::TraitAssociatedItem { target, .. } => target, // Already NodeId
         }
     }
 
