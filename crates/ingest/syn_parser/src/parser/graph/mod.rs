@@ -348,10 +348,9 @@ fn debug_relationships(visitor: &Self) {
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `StructNode` if a matching `TypeDefNode::Struct` is found.
-    // AI: update the rest of the methods to use the typed ids AI!
     fn get_struct(&self, id: StructNodeId) -> Option<&StructNode> {
         self.defined_types().iter().find_map(|def| match def {
-            TypeDefNode::Struct(s) if s.id == id => Some(s),
+            TypeDefNode::Struct(s) if s.id == id => Some(s), // Compare StructNodeId == StructNodeId
             _ => None,
         })
     }
@@ -363,25 +362,26 @@ fn debug_relationships(visitor: &Self) {
     /// - `Ok(&StructNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn get_struct_checked(&self, id: NodeId) -> Result<&StructNode, SynParserError> {
+    fn get_struct_checked(&self, id: StructNodeId) -> Result<&StructNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
-            TypeDefNode::Struct(s) if s.id == id => Some(s),
+            TypeDefNode::Struct(s) if s.id == id => Some(s), // Compare StructNodeId == StructNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     /// Finds an enum node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `EnumNode` if a matching `TypeDefNode::Enum` is found.
-    fn get_enum(&self, id: NodeId) -> Option<&EnumNode> {
+    fn get_enum(&self, id: EnumNodeId) -> Option<&EnumNode> {
         self.defined_types().iter().find_map(|def| match def {
-            TypeDefNode::Enum(e) if e.id == id => Some(e),
+            TypeDefNode::Enum(e) if e.id == id => Some(e), // Compare EnumNodeId == EnumNodeId
             _ => None,
         })
     }
@@ -393,25 +393,26 @@ fn debug_relationships(visitor: &Self) {
     /// - `Ok(&EnumNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn get_enum_checked(&self, id: NodeId) -> Result<&EnumNode, SynParserError> {
+    fn get_enum_checked(&self, id: EnumNodeId) -> Result<&EnumNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
-            TypeDefNode::Enum(e) if e.id == id => Some(e),
+            TypeDefNode::Enum(e) if e.id == id => Some(e), // Compare EnumNodeId == EnumNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     /// Finds a type alias node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `TypeAliasNode` if a matching `TypeDefNode::TypeAlias` is found.
-    fn get_type_alias(&self, id: NodeId) -> Option<&TypeAliasNode> {
+    fn get_type_alias(&self, id: TypeAliasNodeId) -> Option<&TypeAliasNode> {
         self.defined_types().iter().find_map(|def| match def {
-            TypeDefNode::TypeAlias(t) if t.id == id => Some(t),
+            TypeDefNode::TypeAlias(t) if t.id == id => Some(t), // Compare TypeAliasNodeId == TypeAliasNodeId
             _ => None,
         })
     }
@@ -423,25 +424,26 @@ fn debug_relationships(visitor: &Self) {
     /// - `Ok(&TypeAliasNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn get_type_alias_checked(&self, id: NodeId) -> Result<&TypeAliasNode, SynParserError> {
+    fn get_type_alias_checked(&self, id: TypeAliasNodeId) -> Result<&TypeAliasNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
-            TypeDefNode::TypeAlias(t) if t.id == id => Some(t),
+            TypeDefNode::TypeAlias(t) if t.id == id => Some(t), // Compare TypeAliasNodeId == TypeAliasNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     /// Finds a union node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `UnionNode` if a matching `TypeDefNode::Union` is found.
-    fn get_union(&self, id: NodeId) -> Option<&UnionNode> {
+    fn get_union(&self, id: UnionNodeId) -> Option<&UnionNode> {
         self.defined_types().iter().find_map(|def| match def {
-            TypeDefNode::Union(u) if u.id == id => Some(u),
+            TypeDefNode::Union(u) if u.id == id => Some(u), // Compare UnionNodeId == UnionNodeId
             _ => None,
         })
     }
@@ -453,16 +455,17 @@ fn debug_relationships(visitor: &Self) {
     /// - `Ok(&UnionNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn get_union_checked(&self, id: NodeId) -> Result<&UnionNode, SynParserError> {
+    fn get_union_checked(&self, id: UnionNodeId) -> Result<&UnionNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
-            TypeDefNode::Union(u) if u.id == id => Some(u),
+            TypeDefNode::Union(u) if u.id == id => Some(u), // Compare UnionNodeId == UnionNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     /// Gets the full module path for an item by searching through all modules
@@ -815,140 +818,148 @@ fn debug_relationships(visitor: &Self) {
     // --- FunctionNode Getters ---
 
     /// Finds a function node by its ID.
-    fn get_function(&self, id: NodeId) -> Option<&FunctionNode> {
-        self.functions().iter().find(|f| f.id == id)
+    fn get_function(&self, id: FunctionNodeId) -> Option<&FunctionNode> {
+        self.functions().iter().find(|f| f.id == id) // Compare FunctionNodeId == FunctionNodeId
     }
 
     /// Finds a function node by its ID, returning an error if not found or if duplicates exist.
-    fn get_function_checked(&self, id: NodeId) -> Result<&FunctionNode, SynParserError> {
-        let mut matches = self.functions().iter().filter(|f| f.id == id);
+    fn get_function_checked(&self, id: FunctionNodeId) -> Result<&FunctionNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.functions().iter().filter(|f| f.id == id); // Compare FunctionNodeId == FunctionNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     // --- ImplNode Getters ---
 
     /// Finds an impl node by its ID.
-    fn get_impl(&self, id: NodeId) -> Option<&ImplNode> {
-        self.impls().iter().find(|i| i.id == id)
+    fn get_impl(&self, id: ImplNodeId) -> Option<&ImplNode> {
+        self.impls().iter().find(|i| i.id == id) // Compare ImplNodeId == ImplNodeId
     }
 
     /// Finds an impl node by its ID, returning an error if not found or if duplicates exist.
-    fn get_impl_checked(&self, id: NodeId) -> Result<&ImplNode, SynParserError> {
-        let mut matches = self.impls().iter().filter(|i| i.id == id);
+    fn get_impl_checked(&self, id: ImplNodeId) -> Result<&ImplNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.impls().iter().filter(|i| i.id == id); // Compare ImplNodeId == ImplNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     // --- TraitNode Getters ---
 
     /// Finds a trait node by its ID, searching both public and private traits.
-    fn get_trait(&self, id: NodeId) -> Option<&TraitNode> {
-        self.traits().iter().find(|t| t.id == id)
+    fn get_trait(&self, id: TraitNodeId) -> Option<&TraitNode> {
+        self.traits().iter().find(|t| t.id == id) // Compare TraitNodeId == TraitNodeId
     }
 
     /// Finds a trait node by its ID, searching both public and private traits,
     /// returning an error if not found or if duplicates exist across both lists.
-    fn get_trait_checked(&self, id: NodeId) -> Result<&TraitNode, SynParserError> {
-        let mut matches = self.traits().iter().filter(|t| t.id == id);
+    fn get_trait_checked(&self, id: TraitNodeId) -> Result<&TraitNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.traits().iter().filter(|t| t.id == id); // Compare TraitNodeId == TraitNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     // --- ModuleNode Getters ---
 
     /// Finds a module node by its ID.
-    fn get_module(&self, id: NodeId) -> Option<&ModuleNode> {
-        self.modules().iter().find(|m| m.id == id)
+    fn get_module(&self, id: ModuleNodeId) -> Option<&ModuleNode> {
+        self.modules().iter().find(|m| m.id == id) // Compare ModuleNodeId == ModuleNodeId
     }
 
     /// Finds a module node by its ID, returning an error if not found or if duplicates exist.
-    fn get_module_checked(&self, id: NodeId) -> Result<&ModuleNode, SynParserError> {
-        let mut matches = self.modules().iter().filter(|m| m.id == id);
+    fn get_module_checked(&self, id: ModuleNodeId) -> Result<&ModuleNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.modules().iter().filter(|m| m.id == id); // Compare ModuleNodeId == ModuleNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
 
     // --- ConstNode Getters ---
 
     /// Finds a const node by its ID.
-    fn get_const(&self, id: NodeId) -> Option<&ConstNode> {
-        self.consts().iter().find(|c| c.id == id)
+    fn get_const(&self, id: ConstNodeId) -> Option<&ConstNode> {
+        self.consts().iter().find(|c| c.id == id) // Compare ConstNodeId == ConstNodeId
     }
 
     /// Finds a const node by its ID, returning an error if not found or if duplicates exist.
-    fn get_const_checked(&self, id: NodeId) -> Result<&ConstNode, SynParserError> {
-        let mut matches = self.consts().iter().filter(|c| c.id == id);
+    fn get_const_checked(&self, id: ConstNodeId) -> Result<&ConstNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.consts().iter().filter(|c| c.id == id); // Compare ConstNodeId == ConstNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     // --- StaticNode Getters ---
 
     /// Finds a static node by its ID.
-    fn get_static(&self, id: NodeId) -> Option<&StaticNode> {
-        self.statics().iter().find(|s| s.id == id)
+    fn get_static(&self, id: StaticNodeId) -> Option<&StaticNode> {
+        self.statics().iter().find(|s| s.id == id) // Compare StaticNodeId == StaticNodeId
     }
 
     /// Finds a static node by its ID, returning an error if not found or if duplicates exist.
-    fn get_static_checked(&self, id: NodeId) -> Result<&StaticNode, SynParserError> {
-        let mut matches = self.statics().iter().filter(|s| s.id == id);
+    fn get_static_checked(&self, id: StaticNodeId) -> Result<&StaticNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.statics().iter().filter(|s| s.id == id); // Compare StaticNodeId == StaticNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
 
     // --- MacroNode Getters ---
 
     /// Finds a macro node by its ID.
-    fn get_macro(&self, id: NodeId) -> Option<&MacroNode> {
-        self.macros().iter().find(|m| m.id == id)
+    fn get_macro(&self, id: MacroNodeId) -> Option<&MacroNode> {
+        self.macros().iter().find(|m| m.id == id) // Compare MacroNodeId == MacroNodeId
     }
 
     /// Finds a macro node by its ID, returning an error if not found or if duplicates exist.
-    fn get_macro_checked(&self, id: NodeId) -> Result<&MacroNode, SynParserError> {
-        let mut matches = self.macros().iter().filter(|m| m.id == id);
+    fn get_macro_checked(&self, id: MacroNodeId) -> Result<&MacroNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.macros().iter().filter(|m| m.id == id); // Compare MacroNodeId == MacroNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 
     // --- ImportNode Getters ---
 
     /// Finds an import node by its ID (searches `use_statements`).
-    fn get_import(&self, id: NodeId) -> Option<&ImportNode> {
-        self.use_statements().iter().find(|u| u.id == id)
+    fn get_import(&self, id: ImportNodeId) -> Option<&ImportNode> {
+        self.use_statements().iter().find(|u| u.id == id) // Compare ImportNodeId == ImportNodeId
     }
 
     /// Finds an import node by its ID (searches `use_statements`),
     /// returning an error if not found or if duplicates exist.
-    fn get_import_checked(&self, id: NodeId) -> Result<&ImportNode, SynParserError> {
-        let mut matches = self.use_statements().iter().filter(|u| u.id == id);
+    fn get_import_checked(&self, id: ImportNodeId) -> Result<&ImportNode, SynParserError> {
+        let base_id = id.into_inner(); // Get base ID for error reporting
+        let mut matches = self.use_statements().iter().filter(|u| u.id == id); // Compare ImportNodeId == ImportNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(base_id));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(base_id))
     }
 }
