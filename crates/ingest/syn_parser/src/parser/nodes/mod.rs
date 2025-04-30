@@ -97,41 +97,93 @@ impl PrimaryNodeMarker for ImportNode {}
 impl PrimaryNodeMarker for ModuleNode {}
 
 // AI:
+pub use private_node_id::ExampleNodeId;
+mod private_node_id {
+    use crate::parser::graph::GraphAccess;
+    use ploke_core::NodeId;
+    use std::hash::{Hash, Hasher}; // Public trait
 
-// Maybe seal it for better control
-mod private {
-    pub trait Sealed {}
-}
-
-pub trait TypedNodeIdGet: private::Sealed + Copy + Into<NodeId> {
-    // Bounds needed by impls
-    type TargetNode: PrimaryNodeMarker + GraphNode + 'static; // The associated node type
-
-    /// Method to perform the lookup, dispatched statically based on `Self` (the ID type)       
-    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode>;
-}
-impl private::Sealed for FunctionNodeId {}
-impl TypedNodeIdGet for FunctionNodeId {
-    type TargetNode = FunctionNode;
-
-    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode> {
-        graph.get_function(self) // Calls the specific getter
+    // --- ID Structs (Field private) ---
+    #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
+    pub struct ExampleNodeId(NodeId);
+    // ... others ...
+    // --- Internal Base ID Access ---
+    trait HasBaseId {
+        fn base_id(&self) -> NodeId;
     }
-}
-
-impl private::Sealed for StructNodeId {}
-impl TypedNodeIdGet for StructNodeId {
-    type TargetNode = StructNode;
-
-    fn get_node<'a>(self, graph: &'a impl GraphAccess) -> Option<&'a Self::TargetNode> {
-        graph.get_struct(self) // Calls the specific getter
+    impl HasBaseId for ExampleNodeId {
+        fn base_id(&self) -> NodeId {
+            self.0
+        }
     }
+    pub trait TypedId {}
+    pub trait PrimaryNodeIdTrait {}
+    mod private_traits {
+        pub(super) trait Sealed {}
+    }
+    // ... others ...
+
+    // --- Manual Trait Impls (Hash, Eq, Ord) ---
+    // impl Hash for ExampleNodeId {
+    //     /* ... */
+    //  AI: Unneeded, we can use derive
+    // }
+    // impl PartialEq for ExampleNodeId {
+    //     /* ... */
+    // AI: Unneeded, we can use derive
+    // }
+    // impl Eq for ExampleNodeId {
+    //  AI: Unneeded, we can use derive
+    // }
+    // ... others ...
+
+    // --- Marker Trait Impls ---
+    impl TypedId for ExampleNodeId {}
+    impl PrimaryNodeIdTrait for ExampleNodeId {}
+    // ... others ...
+
+    // --- TypedNodeIdGet Trait Def & Impls ---
+    pub trait TypedNodeIdGet /* ... */ {
+        /* ... */
+    } // Define here or re-export public one
+    impl private_traits::Sealed for ExampleNodeId {}
+    impl TypedNodeIdGet for ExampleNodeId {
+        /* ... calls graph.get_struct(self) ... */
+    }
+    // ... others ...
+
+    // --- Restricted Constructors ---
+    impl ExampleNodeId {
+        pub(super) fn create(id: NodeId) -> Self {
+            Self(id)
+        }
+    }
+    // ... others ...
+
+    // --- Heterogeneous Key (Option 1 Example) ---
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum AnyNodeId {
+        Struct(ExampleNodeId), /* ... */
+    }
+
+    // --- Graph Storage & Access Impl (Potentially needed here if using base NodeId keys) ---
+    // If CodeGraph uses HashMap<NodeId, _>, its impl GraphAccess might need to be here
+    // to call HasBaseId::base_id().
+    // pub(crate) mod graph_impl {
+    //     use super::*;
+    //     use crate::parser::graph::CodeGraph; // Assuming CodeGraph struct is defined elsewhere
+    //
+    //     impl crate::parser::graph::GraphAccess for CodeGraph {
+    //         fn get_struct(&self, id: StructNodeId) -> Option<&StructNode> {
+    //             let base_id = id.base_id(); // CALL INTERNAL METHOD
+    //             self.internal_storage.get(&base_id).and_then(|node| node.as_struct())
+    //         }
+    //         // ... other getters ...
+    //     }
+    // }
 }
-// The above doesn't work because we are trying to keep conversions between the node types like
-// ModuleNodeId or FunctionNodeId into NodeId private as far as is possible to leverage
-// compile-time guarentees wherever possible. Is there some way we can refine this approach, or
-// perhaps locate the implementation in a certain context where the privacy can be managed without
-// loosening our desired restrictions on conversions between the primary node ids and NodeId AI?
+// AI: So the above works just fine. I'm not sure why you're being all dramatic about this. It
+// seems fairly simple to implement. AI?
 
 /// Represents the ID of any node type that can typically be defined directly
 /// within a module scope (primary items).
