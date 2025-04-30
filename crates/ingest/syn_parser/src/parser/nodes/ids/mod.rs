@@ -20,8 +20,11 @@ pub use internal::{
     StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // --- traits ---
-pub use internal::{PrimaryNodeIdTrait, SecondaryNodeIdTrait /* ... */, TypedId};
+// Re-export marker traits (adjust list as needed)
+pub use internal::{AssociatedItemIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
+// Re-export the getter trait (make it crate-visible)
+pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
-pub use internal::TypedNodeIdGet;
+// Re-export category enums
 pub use internal::{AnyNodeId, AssociatedItemId, PrimaryNodeId};
 // --- macro rules ---

@@ -31,6 +31,19 @@ use std::fmt::Display;
 // Define TypedNodeIdGet trait here later
 // Define private sealing trait here later
 
+// ----- Traits -----
+
+/// Allows retrieving the corresponding `GraphNode` trait object from a graph
+/// using a specific typed ID.
+///
+/// This trait is implemented internally for each specific ID type that represents
+/// a node directly stored and retrievable in the `GraphAccess` implementor.
+pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
+    // Added Copy bound as IDs are Copy
+    // Added Sealed bound to prevent external implementations
+    fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode>;
+}
+
 // ----- Macros -----
 
 /// Macro to generate category enums (like PrimaryNodeId, AnyNodeId) that wrap specific typed IDs.
@@ -142,6 +155,30 @@ macro_rules! define_category_enum {
                 }
             }
         )*
+    };
+}
+
+
+/// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
+///
+/// # Usage
+/// ```ignore
+/// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
+/// impl_typed_node_id_get!(StructNodeId, get_struct);
+/// ```
+macro_rules! impl_typed_node_id_get {
+    ($IdType:ty, $GetterMethod:ident) => {
+        // Implement the private sealing trait first
+        impl private_traits::Sealed for $IdType {}
+        // Implement the getter trait
+        impl TypedNodeIdGet for $IdType {
+            #[inline]
+            fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
+                // Call the specified getter method on GraphAccess (e.g., graph.get_struct(*self))
+                // and cast the result to &dyn GraphNode.
+                graph.$GetterMethod(*self).map(|node| node as &dyn GraphNode)
+            }
+        }
     };
 }
 
@@ -292,9 +329,16 @@ impl HasBaseId for ExampleNodeId {
         self.0
     }
 }
-pub trait TypedId {}
-pub trait PrimaryNodeIdTrait {}
+pub trait TypedId {} // General marker for all typed IDs
+pub trait PrimaryNodeIdTrait: TypedId {} // Marker for primary node IDs
+pub trait AssociatedItemIdTrait: TypedId {} // Marker for associated item IDs
+pub trait SecondaryNodeIdTrait: TypedId {} // Marker for secondary node IDs (fields, params, etc.)
+// Add other category marker traits as needed
+
+/// Private module for the sealing pattern. Prevents external crates or modules
+/// from implementing traits intended only for internal ID types (like TypedNodeIdGet).
 mod private_traits {
+    /// The sealing trait. Cannot be named or implemented outside this module.
     pub(super) trait Sealed {}
 }
 // ... others ...
@@ -330,6 +374,32 @@ pub enum AnyNodeId {
 
 // ------------------end example-------------------------------
 // ------------------------------------------------------------
+
+// --- TypedNodeIdGet Implementations ---
+
+// Primary Nodes
+impl_typed_node_id_get!(FunctionNodeId, get_function);
+impl_typed_node_id_get!(StructNodeId, get_struct);
+impl_typed_node_id_get!(EnumNodeId, get_enum);
+impl_typed_node_id_get!(UnionNodeId, get_union);
+impl_typed_node_id_get!(TypeAliasNodeId, get_type_alias);
+impl_typed_node_id_get!(TraitNodeId, get_trait);
+impl_typed_node_id_get!(ImplNodeId, get_impl);
+impl_typed_node_id_get!(ConstNodeId, get_const);
+impl_typed_node_id_get!(StaticNodeId, get_static);
+impl_typed_node_id_get!(MacroNodeId, get_macro);
+impl_typed_node_id_get!(ImportNodeId, get_import);
+impl_typed_node_id_get!(ModuleNodeId, get_module);
+
+// Associated Items (Methods are retrieved via their parent Impl/Trait, not directly)
+// Note: MethodNodeId does *not* get an impl, as there's no `graph.get_method(MethodNodeId)`
+
+// Secondary Nodes (Fields, Variants, Params, Generics are part of their parent node, not directly retrieved)
+// Note: FieldNodeId, VariantNodeId, ParamNodeId, GenericParamNodeId do *not* get impls.
+
+// Other IDs
+// Note: ReexportNodeId does *not* get an impl.
+
 
 // --- Generated Category Enums ---
 
