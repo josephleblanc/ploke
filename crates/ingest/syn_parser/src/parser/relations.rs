@@ -14,7 +14,6 @@ pub enum RelationConversionError {
     NotApplicable(SyntacticRelation), // Use the new enum type
 }
 
-
 // ANCHOR: Relation
 // Removed original Relation struct and RelationKind enum.
 
@@ -28,23 +27,35 @@ pub enum SyntacticRelation {
     /// Module contains another node (function, struct, enum, impl, trait, module, import, etc.).
     /// Source: ModuleNodeId
     /// Target: NodeId (can be any node type contained within)
-    Contains { source: ModuleNodeId, target: NodeId },
+    Contains {
+        source: ModuleNodeId,
+        target: NodeId,
+    },
 
     /// Module declaration resolves to its definition.
     /// Source: ModuleNodeId (Declaration)
     /// Target: ModuleNodeId (Definition)
-    ResolvesToDefinition { source: ModuleNodeId, target: ModuleNodeId },
+    ResolvesToDefinition {
+        source: ModuleNodeId,
+        target: ModuleNodeId,
+    },
 
     /// Module declaration uses `#[path]` attribute.
     /// Source: ModuleNodeId (Declaration)
     /// Target: ModuleNodeId (Definition pointed to by path)
-    CustomPath { source: ModuleNodeId, target: ModuleNodeId },
+    CustomPath {
+        source: ModuleNodeId,
+        target: ModuleNodeId,
+    },
 
     /// Module is a sibling file (e.g., `mod foo;` and `mod bar;` in `lib.rs`).
     /// Used for SPP calculation.
     /// Source: ModuleNodeId
     /// Target: ModuleNodeId
-    Sibling { source: ModuleNodeId, target: ModuleNodeId },
+    Sibling {
+        source: ModuleNodeId,
+        target: ModuleNodeId,
+    },
 
     //-----------------------------------------------------------------------
     // Import/Export Relations (Primarily from ModuleTree & Visitor)
@@ -52,12 +63,18 @@ pub enum SyntacticRelation {
     /// Module contains an import statement.
     /// Source: ModuleNodeId
     /// Target: ImportNodeId
-    ModuleImports { source: ModuleNodeId, target: ImportNodeId },
+    ModuleImports {
+        source: ModuleNodeId,
+        target: ImportNodeId,
+    },
 
     /// An import statement re-exports an item.
     /// Source: ImportNodeId
     /// Target: NodeId (The actual item being re-exported)
-    ReExports { source: ImportNodeId, target: NodeId },
+    ReExports {
+        source: ImportNodeId,
+        target: NodeId,
+    },
 
     //-----------------------------------------------------------------------
     // Item Composition Relations (Primarily from Visitor)
@@ -65,22 +82,34 @@ pub enum SyntacticRelation {
     /// Struct contains a field.
     /// Source: StructNodeId
     /// Target: FieldNodeId
-    StructField { source: StructNodeId, target: FieldNodeId },
+    StructField {
+        source: StructNodeId,
+        target: FieldNodeId,
+    },
 
     /// Union contains a field.
     /// Source: UnionNodeId
     /// Target: FieldNodeId
-    UnionField { source: UnionNodeId, target: FieldNodeId },
+    UnionField {
+        source: UnionNodeId,
+        target: FieldNodeId,
+    },
 
     /// Enum variant contains a field (for struct-like variants).
     /// Source: VariantNodeId
     /// Target: FieldNodeId
-    VariantField { source: VariantNodeId, target: FieldNodeId },
+    VariantField {
+        source: VariantNodeId,
+        target: FieldNodeId,
+    },
 
     /// Enum contains a variant.
     /// Source: EnumNodeId
     /// Target: VariantNodeId
-    EnumVariant { source: EnumNodeId, target: VariantNodeId },
+    EnumVariant {
+        source: EnumNodeId,
+        target: VariantNodeId,
+    },
 
     /// Impl block contains an associated item (method, type, const).
     /// Source: ImplNodeId
@@ -133,7 +162,6 @@ impl SyntacticRelation {
     // based on matching the variants.
 }
 
-
 /// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
 /// through a `use module_a::SomeStruct`, which can then be freely used inside the module without
 /// including the path of the parent, e.g. `let some_struct: SomeStruct = SomeStruct::default();`
@@ -160,9 +188,9 @@ impl TryInto<ScopeKind> for SyntacticRelation {
 
             // Relations where the target requires the source as a parent/qualifier
             Self::StructField { .. } => Ok(ScopeKind::RequiresParent), // e.g., my_struct.field
-            Self::UnionField { .. } => Ok(ScopeKind::RequiresParent), // e.g., my_union.field
+            Self::UnionField { .. } => Ok(ScopeKind::RequiresParent),  // e.g., my_union.field
             Self::VariantField { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant.field
-            Self::EnumVariant { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyEnum::Variant
+            Self::EnumVariant { .. } => Ok(ScopeKind::RequiresParent),  // e.g., MyEnum::Variant
             Self::ImplAssociatedItem { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyType::assoc_fn()
             Self::TraitAssociatedItem { .. } => Ok(ScopeKind::RequiresParent), // e.g., MyTrait::assoc_fn()
 
