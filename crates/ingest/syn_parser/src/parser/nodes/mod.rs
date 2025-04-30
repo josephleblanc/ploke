@@ -37,7 +37,7 @@ pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
 pub use union::UnionNode;
-pub use value::{ValueKind, ValueNode};
+pub use value::{ConstNode, StaticNode}; // Updated re-export
 // ... other re-exports
 
 // ----- utility macro -----
@@ -55,7 +55,9 @@ define_node_id_wrapper!(StructNodeId);
 define_node_id_wrapper!(TraitNodeId);
 define_node_id_wrapper!(TypeAliasNodeId);
 define_node_id_wrapper!(UnionNodeId);
-define_node_id_wrapper!(ValueNodeId);
+// Removed ValueNodeId
+define_node_id_wrapper!(ConstNodeId); // Added
+define_node_id_wrapper!(StaticNodeId); // Added
 define_node_id_wrapper!(FieldNodeId);
 define_node_id_wrapper!(VariantNodeId);
 define_node_id_wrapper!(ParamNodeId); // For ParamData
@@ -82,7 +84,8 @@ pub enum PrimaryNodeId {
     TypeAlias(TypeAliasNodeId),
     Trait(TraitNodeId),
     Impl(ImplNodeId),
-    Value(ValueNodeId), // Represents Const or Static
+    Const(ConstNodeId), // Changed from Value
+    Static(StaticNodeId), // Added
     Macro(MacroNodeId),
     Import(ImportNodeId),
     Module(ModuleNodeId),
@@ -99,7 +102,8 @@ impl PrimaryNodeId {
             PrimaryNodeId::TypeAlias(id) => id.into_inner(),
             PrimaryNodeId::Trait(id) => id.into_inner(),
             PrimaryNodeId::Impl(id) => id.into_inner(),
-            PrimaryNodeId::Value(id) => id.into_inner(),
+            PrimaryNodeId::Const(id) => id.into_inner(), // Changed from Value
+            PrimaryNodeId::Static(id) => id.into_inner(), // Added
             PrimaryNodeId::Macro(id) => id.into_inner(),
             PrimaryNodeId::Import(id) => id.into_inner(),
             PrimaryNodeId::Module(id) => id.into_inner(),
@@ -116,9 +120,8 @@ impl PrimaryNodeId {
             PrimaryNodeId::TypeAlias(_) => ItemKind::TypeAlias,
             PrimaryNodeId::Trait(_) => ItemKind::Trait,
             PrimaryNodeId::Impl(_) => ItemKind::Impl,
-            // Value needs refinement if Const/Static distinction matters here
-            // TODO: Refine Value kind based on actual ValueNode if needed later
-            PrimaryNodeId::Value(_) => ItemKind::Constant,
+            PrimaryNodeId::Const(_) => ItemKind::Const, // Changed from Value
+            PrimaryNodeId::Static(_) => ItemKind::Static, // Added
             PrimaryNodeId::Macro(_) => ItemKind::Macro,
             PrimaryNodeId::Import(_) => ItemKind::Import,
             PrimaryNodeId::Module(_) => ItemKind::Module,
@@ -132,7 +135,7 @@ impl PrimaryNodeId {
 pub enum AssociatedItemId {
     Function(FunctionNodeId),   // Associated function (method)
     TypeAlias(TypeAliasNodeId), // Associated type
-    Value(ValueNodeId),         // Associated const
+    Const(ConstNodeId),         // Associated const (changed from Value)
 }
 
  impl AssociatedItemId {
@@ -141,7 +144,7 @@ pub enum AssociatedItemId {
         match *self {
             AssociatedItemId::Function(id) => id.into_inner(),
             AssociatedItemId::TypeAlias(id) => id.into_inner(),
-            AssociatedItemId::Value(id) => id.into_inner(),
+            AssociatedItemId::Const(id) => id.into_inner(), // Changed from Value
         }
     }
 
@@ -149,10 +152,9 @@ pub enum AssociatedItemId {
     pub fn kind(&self) -> ItemKind {
          match self {
             // TODO: Refine Function kind if Method distinction needed
-            AssociatedItemId::Function(_) => ItemKind::Function,
+            AssociatedItemId::Function(_) => ItemKind::Function, // TODO: Refine if Method distinction needed
             AssociatedItemId::TypeAlias(_) => ItemKind::TypeAlias,
-            // TODO: Refine Value kind if AssociatedConst distinction needed
-            AssociatedItemId::Value(_) => ItemKind::Constant,
+            AssociatedItemId::Const(_) => ItemKind::Const, // Changed from Value/Constant
         }
     }
 }
@@ -166,7 +168,9 @@ impl From<UnionNodeId> for PrimaryNodeId { fn from(id: UnionNodeId) -> Self { Pr
 impl From<TypeAliasNodeId> for PrimaryNodeId { fn from(id: TypeAliasNodeId) -> Self { PrimaryNodeId::TypeAlias(id) } }
 impl From<TraitNodeId> for PrimaryNodeId { fn from(id: TraitNodeId) -> Self { PrimaryNodeId::Trait(id) } }
 impl From<ImplNodeId> for PrimaryNodeId { fn from(id: ImplNodeId) -> Self { PrimaryNodeId::Impl(id) } }
-impl From<ValueNodeId> for PrimaryNodeId { fn from(id: ValueNodeId) -> Self { PrimaryNodeId::Value(id) } }
+// Removed From<ValueNodeId>
+impl From<ConstNodeId> for PrimaryNodeId { fn from(id: ConstNodeId) -> Self { PrimaryNodeId::Const(id) } } // Added
+impl From<StaticNodeId> for PrimaryNodeId { fn from(id: StaticNodeId) -> Self { PrimaryNodeId::Static(id) } } // Added
 impl From<MacroNodeId> for PrimaryNodeId { fn from(id: MacroNodeId) -> Self { PrimaryNodeId::Macro(id) } }
 impl From<ImportNodeId> for PrimaryNodeId { fn from(id: ImportNodeId) -> Self { PrimaryNodeId::Import(id) } }
 impl From<ModuleNodeId> for PrimaryNodeId { fn from(id: ModuleNodeId) -> Self { PrimaryNodeId::Module(id) } }
@@ -174,7 +178,8 @@ impl From<ModuleNodeId> for PrimaryNodeId { fn from(id: ModuleNodeId) -> Self { 
 
 impl From<FunctionNodeId> for AssociatedItemId { fn from(id: FunctionNodeId) -> Self { AssociatedItemId::Function(id) } }
 impl From<TypeAliasNodeId> for AssociatedItemId { fn from(id: TypeAliasNodeId) -> Self { AssociatedItemId::TypeAlias(id) } }
-impl From<ValueNodeId> for AssociatedItemId { fn from(id: ValueNodeId) -> Self { AssociatedItemId::Value(id) } }
+// Removed From<ValueNodeId>
+impl From<ConstNodeId> for AssociatedItemId { fn from(id: ConstNodeId) -> Self { AssociatedItemId::Const(id) } } // Added
 
 
 // --- Node Struct Definitions ---
@@ -213,14 +218,10 @@ pub trait GraphNode {
     fn as_module(&self) -> Option<&ModuleNode> {
         None
     }
-    // Replaced by following const/static differentiators
-    // fn as_value(&self) -> Option<&ValueNode> {
-    //     None
-    // }
-    fn as_value_const(&self) -> Option<&ValueNode> {
+    fn as_const(&self) -> Option<&ConstNode> { // Added
         None
     }
-    fn as_value_static(&self) -> Option<&ValueNode> {
+    fn as_static(&self) -> Option<&StaticNode> { // Added
         None
     }
     fn as_macro(&self) -> Option<&MacroNode> {
@@ -239,21 +240,20 @@ pub trait GraphNode {
             ItemKind::Trait => self.as_trait().is_some(),
             ItemKind::Impl => self.as_impl().is_some(),
             ItemKind::Module => self.as_module().is_some(),
-            ItemKind::Const => self.as_value_const().is_some(),
-            ItemKind::Static => self.as_value_static().is_some(), // Combine Const/Static check
+            ItemKind::Const => self.as_const().is_some(), // Updated
+            ItemKind::Static => self.as_static().is_some(), // Updated
             ItemKind::Macro => self.as_macro().is_some(),
             ItemKind::Import => self.as_import().is_some(),
             ItemKind::ExternCrate => {
                 // kind of a hack job. needs cleaner solution
-                if self.as_import().is_some() {
-                    let extern_crate = self.as_import().unwrap(); // safe due to check above
-                    extern_crate.is_extern_crate()
+                if let Some(import_node) = self.as_import() { // Use if let for safety
+                    import_node.is_extern_crate()
                 } else {
                     false
                 }
             }
 
-            // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
+            // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam
             // are not directly represented as top-level GraphNode types this way.
             _ => false,
         }
@@ -279,14 +279,20 @@ pub trait GraphNode {
         } else if self.as_macro().is_some() {
             ItemKind::Macro
         } else if self.as_import().is_some() {
-            ItemKind::Import
-        } else if self.as_value_static().is_some() {
+            // Check for extern crate specifically within import
+            if self.kind_matches(ItemKind::ExternCrate) {
+                 ItemKind::ExternCrate
+            } else {
+                 ItemKind::Import
+            }
+        } else if self.as_static().is_some() { // Updated check order
             ItemKind::Static
-        } else if self.as_value_const().is_some() {
+        } else if self.as_const().is_some() { // Updated check order
             ItemKind::Const
         } else {
-            // Kind of a hack
-            panic!("Unknown TypeKind found.")
+            // This panic indicates a GraphNode implementation is missing a corresponding
+            // 'as_xxx' method or the kind() logic here is incomplete.
+            panic!("Unknown GraphNode kind encountered. Name: {}, ID: {}", self.name(), self.id())
         }
 
         // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
