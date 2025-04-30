@@ -16,7 +16,6 @@ use {
 };
 const LOG_TARGET: &str = "node_id";
 
-// AI: Ok, let's update this file next AI!
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -53,7 +52,8 @@ impl VisitorState {
                 traits: Vec::new(),
                 relations: Vec::new(),
                 modules: Vec::new(),
-                values: Vec::new(),
+                consts: Vec::new(), // Initialize consts
+                statics: Vec::new(), // Initialize statics
                 macros: Vec::new(),
                 use_statements: Vec::new(),
             },
