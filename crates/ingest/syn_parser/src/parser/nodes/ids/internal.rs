@@ -5,9 +5,12 @@
 //! `AnyNodeId`. Access to the base `NodeId` is confined to this module.
 
 use crate::parser::graph::GraphNode;
+use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
+use crate::utils::LOG_TARGET_NODE_ID;
+use log::debug;
 use ploke_core::NodeId; // Removed IdConversionError import
 use std::borrow::Borrow;
 use std::convert::TryFrom;
@@ -25,6 +28,99 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
     // Added Copy bound as IDs are Copy
     // Added Sealed bound to prevent external implementations
     fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode>;
+}
+
+/// Convenience trait to help be more explicit about converting into AnyNodeId.
+/// Relies on `Into<AnyNodeId>` being implemented on the base type on a case by case basis.
+pub trait AsAnyNodeId
+where
+    Self: TypedId + Into<AnyNodeId> + Sized + Copy,
+{
+    fn as_any(self) -> AnyNodeId;
+}
+
+impl<T: TypedId + Into<AnyNodeId>> AsAnyNodeId for T {
+    fn as_any(self) -> AnyNodeId {
+        self.into()
+    }
+}
+
+// TODO: Reach true certainty regarding scoping of `NodeId` generation by making this trait
+// private.
+// Can't keep this completely private, unfortunately. It is a reasonable compromise for now. Maybe
+// I'll be able to figure this one out later. The goal would be to prevent all possibility of
+// creating new node is within this private crate itself, but I'm not sure that is really possible.
+// Perhaps if we used a `#[path}`... we'd need to do the same thing for the `nodes` directory, and
+// have it be a sibling or perhaps child of `visitor.rs`. Worth considering. Not today.
+pub(in crate::parser) trait GeneratesAnyNodeId {
+    /// Helper to generate a synthetic NodeId using the current visitor state.
+    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
+    /// Accepts the calculated hash bytes of the effective CFG strings.
+    fn generate_synthetic_node_id(
+        &self,
+        name: &str,
+        item_kind: ItemKind,
+        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    ) -> AnyNodeId;
+}
+impl GeneratesAnyNodeId for VisitorState {
+    fn generate_synthetic_node_id(
+        &self,
+        name: &str,
+        item_kind: ItemKind,
+        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    ) -> AnyNodeId {
+        // Get the last pushed scope ID as the parent, if available
+        let parent_scope_id = self
+            .current_definition_scope
+            .last()
+            .copied()
+            .map(|p_id| p_id.base_id());
+
+        debug!(target: LOG_TARGET_NODE_ID,
+            "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
+            name, item_kind
+        );
+        debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
+        debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
+        debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
+        debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
+        debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
+        debug!(target: LOG_TARGET_NODE_ID, "  parent_scope_id: {:?}", parent_scope_id);
+        debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
+
+        let node_id = NodeId::generate_synthetic(
+            self.crate_namespace,
+            &self.current_file_path,
+            &self.current_module_path, // Current module path acts as relative path context
+            name,
+            item_kind,
+            parent_scope_id, // Pass the parent scope ID from the stack
+            cfg_bytes,       // Pass the provided CFG bytes
+        );
+
+        match item_kind {
+            // AI: Fill out the following `todo!()` items similarly to the first example I've filled
+            // in. AI!
+            ItemKind::Function => FunctionNodeId(node_id).into(),
+            ItemKind::Method => todo!(),
+            ItemKind::Struct => todo!(),
+            ItemKind::Enum => todo!(),
+            ItemKind::Union => todo!(),
+            ItemKind::TypeAlias => todo!(),
+            ItemKind::Trait => todo!(),
+            ItemKind::Impl => todo!(),
+            ItemKind::Module => todo!(),
+            ItemKind::Field => todo!(),
+            ItemKind::Variant => todo!(),
+            ItemKind::GenericParam => todo!(),
+            ItemKind::Const => todo!(),
+            ItemKind::Static => todo!(),
+            ItemKind::Macro => todo!(),
+            ItemKind::Import => todo!(),
+            ItemKind::ExternCrate => todo!(),
+        }
+    }
 }
 
 // ----- Macros -----
@@ -115,7 +211,20 @@ macro_rules! define_category_enum {
             }
         }
 
+        impl From<$EnumName> for AnyNodeId {
+            #[inline]
+            fn from(id: $EnumName) -> Self {
+                match id {
+                    $(
+                        $EnumName::$Variant(typed_id) => AnyNodeId::$Variant(typed_id),
+                    )*
+                }
+            }
+        }
+
         $(
+
+
             impl From<$IdType> for $EnumName {
                 #[inline]
                 fn from(id: $IdType) -> Self {
