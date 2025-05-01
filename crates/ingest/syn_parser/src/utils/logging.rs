@@ -755,8 +755,46 @@ pub trait LogDataStructure {
             existing_id.to_string().log_id(),
             "This implies a non-unique canonical path was generated or indexed incorrectly.".log_comment()
         );
+}
+
+// --- New Trait for Error Logging ---
+
+use crate::parser::nodes::AnyNodeIdConversionError;
+use crate::parser::visitor::VisitorState; // Import VisitorState
+use ploke_core::ItemKind; // Import ItemKind
+
+/// Trait for logging specific conversion errors within the VisitorState.
+pub trait LogErrorConversion {
+    /// Logs an error when AnyNodeId fails to convert to GenericParamNodeId.
+    fn log_generic_param_id_conversion_error(
+        &self,
+        generic_param_name: &str,
+        item_kind: ItemKind, // Add item_kind for context
+        error: AnyNodeIdConversionError,
+    );
+}
+
+impl LogErrorConversion for VisitorState {
+    fn log_generic_param_id_conversion_error(
+        &self,
+        generic_param_name: &str,
+        item_kind: ItemKind,
+        _error: AnyNodeIdConversionError, // Error itself doesn't carry much info yet
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for generic parameter '{}' ({:?}) in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "GenericParamNodeId".log_id(),
+            generic_param_name.log_name(),
+            item_kind.log_vis_debug(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+        // Consider adding more context like parent_scope_id if helpful
     }
 }
+
 
 /// Helper struct to hold context for accessibility logging.
 pub(crate) struct AccLogCtx<'a> {

@@ -1,7 +1,8 @@
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::GeneratesAnyNodeId; // NEW: Import helper
+use crate::parser::nodes::{AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId}; // Import AnyNodeIdConversionError, GenericParamNodeId
 use crate::parser::nodes::PrimaryNodeId;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
+use crate::utils::logging::LogErrorConversion; // Import the new logging trait
 use log::debug;
 // Removed cfg_expr::Expression import
 use ploke_core::ItemKind;
@@ -209,14 +210,21 @@ impl VisitorState {
                             &format!("generic_type_{}", ident), // Use a distinct name format
                             ItemKind::GenericParam,
                             generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        )
+                        );
+                    let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e| e) // AI: add an error logging message here
-                        .unwrap(); // AI: Don't mess with the unwrap
-                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
+                        .map_err(|e: AnyNodeIdConversionError| {
+                            self.log_generic_param_id_conversion_error(
+                                &ident.to_string(),
+                                ItemKind::GenericParam, // Explicitly pass the kind
+                                e,
+                            );
+                            e // Return the error for the unwrap
+                        })
+                        .unwrap(); // Keep the unwrap as requested
 
                     params.push(GenericParamNode {
-                        id: param_node_id,
+                        id: param_node_id, // Now correctly typed
                         kind: GenericParamKind::Type {
                             name: ident.to_string(),
                             bounds,
@@ -240,14 +248,21 @@ impl VisitorState {
                             &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
                             ItemKind::GenericParam,
                             generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        )
+                        );
+                    let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e| e) // AI: add an error logging message here
-                        .unwrap(); // AI: Don't mess with the unwrap
-                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
+                        .map_err(|e: AnyNodeIdConversionError| {
+                            self.log_generic_param_id_conversion_error(
+                                &lifetime_def.lifetime.ident.to_string(),
+                                ItemKind::GenericParam, // Explicitly pass the kind
+                                e,
+                            );
+                            e // Return the error for the unwrap
+                        })
+                        .unwrap(); // Keep the unwrap as requested
 
                     params.push(GenericParamNode {
-                        id: param_node_id,
+                        id: param_node_id, // Now correctly typed
                         kind: GenericParamKind::Lifetime {
                             name: lifetime_def.lifetime.ident.to_string(),
                             bounds,
@@ -266,18 +281,21 @@ impl VisitorState {
                             &format!("generic_const_{}", const_param.ident), // Use a distinct name format
                             ItemKind::GenericParam,
                             generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        )
+                        );
+                    let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e| e) // AI: add an error logging message here
-                        .unwrap(); // AI: Don't mess with the unwrap
-                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
-                                   // AI: For all of the instructions in these comments, use the methods available
-                                   // in `logging.rs` where possible, or create a new one trait+method for
-                                   // VisitorState if necessary. The method used for logging should use our
-                                   // colorscheme methods, and should capture valuable info from `self` AI!
+                        .map_err(|e: AnyNodeIdConversionError| {
+                            self.log_generic_param_id_conversion_error(
+                                &const_param.ident.to_string(),
+                                ItemKind::GenericParam, // Explicitly pass the kind
+                                e,
+                            );
+                            e // Return the error for the unwrap
+                        })
+                        .unwrap(); // Keep the unwrap as requested
 
                     params.push(GenericParamNode {
-                        id: param_node_id,
+                        id: param_node_id, // Now correctly typed
                         kind: GenericParamKind::Const {
                             name: const_param.ident.to_string(),
                             type_id,
