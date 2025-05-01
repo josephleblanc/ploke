@@ -8,7 +8,7 @@ use crate::parser::graph::GraphNode;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
-use ploke_core::NodeId;
+use ploke_core::{IdConversionError, NodeId};
 use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::fmt::Display;
@@ -129,7 +129,7 @@ macro_rules! define_category_enum {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
                         // Instantiate the error type using Default
-                        _ => Err($ErrorType::default()),
+                        _ => Err(<$ErrorType>::default()),
                     }
                 }
             }
@@ -599,6 +599,14 @@ impl AnyNodeId {
             AnyNodeId::Reexport(id) => id.base_id(),
         }
     }
+
+    /// Returns `true` if the any node id is [`Function`].
+    ///
+    /// [`Function`]: AnyNodeId::Function
+    #[must_use]
+    pub fn is_function(&self) -> bool {
+        matches!(self, Self::Function(..))
+    }
 }
 
 // --- From Implementations for AnyNodeId ---
@@ -713,6 +721,14 @@ impl From<ReexportNodeId> for AnyNodeId {
     #[inline]
     fn from(id: ReexportNodeId) -> Self {
         AnyNodeId::Reexport(id)
+    }
+}
+
+impl<T: TypedId> TryInto<T> for AnyNodeId {
+    type Error = IdConversionError;
+
+    fn try_into(self) -> Result<T, Self::Error> {
+        // Implement this AI!
     }
 }
 
