@@ -601,9 +601,35 @@ impl AnyNodeId {
         }
     }
 }
-// AI: Implement Display for `AnyNode` - it should include both an indicator that the nodes is wrapped
-// in an `AnyNode` and what the veriant is, as well as utilizing the default display that has
-// already been implemented for the base id. AI!
+
+impl Display for AnyNodeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            // Primary Nodes
+            AnyNodeId::Function(id) => write!(f, "AnyNodeId::Function({})", id),
+            AnyNodeId::Struct(id) => write!(f, "AnyNodeId::Struct({})", id),
+            AnyNodeId::Enum(id) => write!(f, "AnyNodeId::Enum({})", id),
+            AnyNodeId::Union(id) => write!(f, "AnyNodeId::Union({})", id),
+            AnyNodeId::TypeAlias(id) => write!(f, "AnyNodeId::TypeAlias({})", id),
+            AnyNodeId::Trait(id) => write!(f, "AnyNodeId::Trait({})", id),
+            AnyNodeId::Impl(id) => write!(f, "AnyNodeId::Impl({})", id),
+            AnyNodeId::Const(id) => write!(f, "AnyNodeId::Const({})", id),
+            AnyNodeId::Static(id) => write!(f, "AnyNodeId::Static({})", id),
+            AnyNodeId::Macro(id) => write!(f, "AnyNodeId::Macro({})", id),
+            AnyNodeId::Import(id) => write!(f, "AnyNodeId::Import({})", id),
+            AnyNodeId::Module(id) => write!(f, "AnyNodeId::Module({})", id),
+            // Associated Items
+            AnyNodeId::Method(id) => write!(f, "AnyNodeId::Method({})", id),
+            // Secondary Nodes
+            AnyNodeId::Field(id) => write!(f, "AnyNodeId::Field({})", id),
+            AnyNodeId::Variant(id) => write!(f, "AnyNodeId::Variant({})", id),
+            AnyNodeId::Param(id) => write!(f, "AnyNodeId::Param({})", id),
+            AnyNodeId::GenericParam(id) => write!(f, "AnyNodeId::GenericParam({})", id),
+            // Other IDs
+            AnyNodeId::Reexport(id) => write!(f, "AnyNodeId::Reexport({})", id),
+        }
+    }
+}
 
 // --- From Implementations for AnyNodeId ---
 
