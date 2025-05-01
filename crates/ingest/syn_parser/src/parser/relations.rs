@@ -2,11 +2,13 @@
 use crate::parser::nodes::{
     AssociatedItemId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
     ImportNodeId, MacroNodeId, ModuleNodeId, ParamNodeId, PrimaryNodeId, ReexportNodeId,
-    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, ValueNodeId, VariantNodeId,
+    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
-use ploke_core::{NodeId, TypeId};
+use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use super::nodes::PrimaryNodeIdTrait;
 
 // Define the new error type
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,49 +131,91 @@ pub enum SyntacticRelation {
     },
 }
 
+// pub fn find_ancestor(child: PrimaryNodeId, rels: &[ SyntacticRelation ]) -> ModuleNodeId {
+//     rels.iter().find_map(|r| r.contains_target(child).or_else())
+//
+// }
+
 impl SyntacticRelation {
     // Add helper methods if needed, e.g., getting source/target NodeId generically
-    pub fn source_node_id(&self) -> NodeId {
-        match *self {
-            SyntacticRelation::Contains { source, .. } => source.into_inner(),
-            SyntacticRelation::ResolvesToDefinition { source, .. } => source.into_inner(),
-            SyntacticRelation::CustomPath { source, .. } => source.into_inner(),
-            SyntacticRelation::Sibling { source, .. } => source.into_inner(),
-            SyntacticRelation::ModuleImports { source, .. } => source.into_inner(),
-            SyntacticRelation::ReExports { source, .. } => source.into_inner(),
-            SyntacticRelation::StructField { source, .. } => source.into_inner(),
-            SyntacticRelation::UnionField { source, .. } => source.into_inner(),
-            SyntacticRelation::VariantField { source, .. } => source.into_inner(),
-            SyntacticRelation::EnumVariant { source, .. } => source.into_inner(),
-            SyntacticRelation::ImplAssociatedItem { source, .. } => source.into_inner(),
-            SyntacticRelation::TraitAssociatedItem { source, .. } => source.into_inner(),
+    pub fn source_contains(&self, trg: PrimaryNodeId) -> Option<ModuleNodeId> {
+        match self {
+            Self::Contains { target: t, source } if *t == trg => Some(*source),
+            _ => None,
         }
     }
-
-    pub fn target_node_id(&self) -> NodeId {
-        match *self {
-            // Variants using category enums now need to call .base_id()
-            SyntacticRelation::Contains { target, .. } => target.base_id(),
-            SyntacticRelation::ReExports { target, .. } => target.base_id(),
-            SyntacticRelation::ImplAssociatedItem { target, .. } => target.base_id(),
-            SyntacticRelation::TraitAssociatedItem { target, .. } => target.base_id(),
-
-            // Variants using specific typed IDs use .into_inner()
-            SyntacticRelation::ResolvesToDefinition { target, .. } => target.into_inner(),
-            SyntacticRelation::CustomPath { target, .. } => target.into_inner(),
-            SyntacticRelation::Sibling { target, .. } => target.into_inner(),
-            SyntacticRelation::ModuleImports { target, .. } => target.into_inner(),
-            SyntacticRelation::StructField { target, .. } => target.into_inner(),
-            SyntacticRelation::UnionField { target, .. } => target.into_inner(),
-            SyntacticRelation::VariantField { target, .. } => target.into_inner(),
-            SyntacticRelation::EnumVariant { target, .. } => target.into_inner(),
+    pub fn contains_target<T: From<PrimaryNodeId>>(&self, src: ModuleNodeId) -> Option<T> {
+        match self {
+            Self::Contains { source: s, target } if *s == src => Some(T::from(*target)),
+            _ => None,
         }
     }
-
-    // Add other potential helpers: is_module_related, is_import_export_related, etc.
-    // based on matching the variants.
+    pub fn resolves_to_defn(&self, decl: ModuleNodeId) -> Option<ModuleNodeId> {
+        match self {
+            Self::ResolvesToDefinition {
+                source: s,
+                target: defn,
+            } if *s == decl => Some(*defn),
+            _ => None,
+        }
+    }
+    pub fn resolved_by_decl(&self, decl: ModuleNodeId) -> Option<ModuleNodeId> {
+        match self {
+            Self::ResolvesToDefinition { source, target: t } if *t == decl => Some(*source),
+            _ => None,
+        }
+    }
+    pub fn mod_tree_parent(&self, child: PrimaryNodeId) -> Option<ModuleNodeId> {
+        self.source_contains(child)?;
+        child
+            .try_into()
+            .ok()
+            .and_then(|m_child| self.resolved_by_decl(m_child))
+    }
+    // Implement a `target()` and `source()` method AI!
 }
-
+impl std::fmt::Display for SyntacticRelation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SyntacticRelation::Contains { source, target } => {
+                write!(f, "Contains({} → {})", source, target)
+            }
+            SyntacticRelation::ResolvesToDefinition { source, target } => {
+                write!(f, "ResolvesToDefinition({} → {})", source, target)
+            }
+            SyntacticRelation::CustomPath { source, target } => {
+                write!(f, "CustomPath({} → {})", source, target)
+            }
+            SyntacticRelation::Sibling { source, target } => {
+                write!(f, "Sibling({} → {})", source, target)
+            }
+            SyntacticRelation::ModuleImports { source, target } => {
+                write!(f, "ModuleImports({} → {})", source, target)
+            }
+            SyntacticRelation::ReExports { source, target } => {
+                write!(f, "ReExports({} → {})", source, target)
+            }
+            SyntacticRelation::StructField { source, target } => {
+                write!(f, "StructField({} → {})", source, target)
+            }
+            SyntacticRelation::UnionField { source, target } => {
+                write!(f, "UnionField({} → {})", source, target)
+            }
+            SyntacticRelation::VariantField { source, target } => {
+                write!(f, "VariantField({} → {})", source, target)
+            }
+            SyntacticRelation::EnumVariant { source, target } => {
+                write!(f, "EnumVariant({} → {})", source, target)
+            }
+            SyntacticRelation::ImplAssociatedItem { source, target } => {
+                write!(f, "ImplAssociatedItem({} → {})", source, target)
+            }
+            SyntacticRelation::TraitAssociatedItem { source, target } => {
+                write!(f, "TraitAssociatedItem({} → {})", source, target)
+            }
+        }
+    }
+}
 /// Differentiates between a `Relation` that can be used to bring an item directly into scope, e.g.
 /// through a `use module_a::SomeStruct`, which can then be freely used inside the module without
 /// including the path of the parent, e.g. `let some_struct: SomeStruct = SomeStruct::default();`
