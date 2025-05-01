@@ -600,15 +600,10 @@ impl AnyNodeId {
             AnyNodeId::Reexport(id) => id.base_id(),
         }
     }
-
-    /// Returns `true` if the any node id is [`Function`].
-    ///
-    /// [`Function`]: AnyNodeId::Function
-    #[must_use]
-    pub fn is_function(&self) -> bool {
-        matches!(self, Self::Function(..))
-    }
 }
+// AI: Implement Display for `AnyNode` - it should include both an indicator that the nodes is wrapped
+// in an `AnyNode` and what the veriant is, as well as utilizing the default display that has
+// already been implemented for the base id. AI!
 
 // --- From Implementations for AnyNodeId ---
 
@@ -777,23 +772,3 @@ impl_try_from_any_node_id!(ParamNodeId, Param);
 impl_try_from_any_node_id!(GenericParamNodeId, GenericParam);
 // Other IDs
 impl_try_from_any_node_id!(ReexportNodeId, Reexport);
-
-// --- Generic TryInto<T> Implementation for AnyNodeId ---
-
-// Now, implement TryInto<T> using the TryFrom implementations above.
-// The bound `T: TryFrom<AnyNodeId, Error = AnyNodeIdConversionError>` ensures this only compiles
-// for types T that we've provided a TryFrom<AnyNodeId> implementation for.
-impl<T> TryInto<T> for AnyNodeId
-where
-    T: TypedId + TryFrom<AnyNodeId, Error = AnyNodeIdConversionError>, // Use new error type in bound
-{
-    type Error = AnyNodeIdConversionError; // Use new error type
-
-    #[inline]
-    fn try_into(self) -> Result<T, Self::Error> {
-        T::try_from(self)
-    }
-}
-
-// --- Node Struct Definitions ---
-// Logging target
