@@ -108,6 +108,8 @@ pub enum SynParserError {
 
     #[error(transparent)]
     VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
+
+                                            // Add the new error type here, making use of `thiserror` for simplicity where possible AI!
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -172,9 +174,6 @@ impl From<ModuleTreeError> for SynParserError {
                     node_id
                 ))
                 // Or define a new SynParserError variant if more specific handling is needed
-            }
-            ModuleTreeError::GraphIdConversion(graph_id_err) => {
-                SynParserError::from(NodeError::GraphIdConversion(graph_id_err))
             }
             ModuleTreeError::NodeError(node_err) => {
                 // Convert the inner NodeError into SynParserError using its existing From impl
