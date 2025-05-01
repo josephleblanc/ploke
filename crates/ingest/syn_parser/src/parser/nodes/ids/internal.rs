@@ -93,6 +93,23 @@ macro_rules! define_category_enum {
                 }
             }
         }
+        // --- Display Implementation ---
+        impl std::fmt::Display for $EnumName {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match *self {
+                    $(
+                        // Include the variant name using stringify! and delegate formatting of the ID
+                        $EnumName::$Variant(id) => write!(f,
+                            "{}({})",
+                            stringify!($EnumName::$Variant),
+                            id,
+                        ),
+                    )*
+                }
+            }
+        }
+
+        // AI: Let's add a `TryFrom<$EnumName> for $IdType` here AI!
 
         $(
             impl From<$IdType> for $EnumName {
@@ -101,7 +118,7 @@ macro_rules! define_category_enum {
                     $EnumName::$Variant(id)
                 }
             }
-        )* // <-- Add semicolon HERE
+        )*
     };
 
     // Matcher for enums WITHOUT an associated ItemKind method (like AnyNodeId)
@@ -126,8 +143,22 @@ macro_rules! define_category_enum {
                 }
             }
             // No kind() method generated for this variant
-        }; // <-- Added semicolon
-
+        };
+        // --- Display Implementation ---
+        impl std::fmt::Display for $EnumName {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match *self {
+                    $(
+                        // Include the variant name using stringify! and delegate formatting of the ID
+                        $EnumName::$Variant(id) => write!(f,
+                            "{}({})",
+                            stringify!($EnumName::$Variant),
+                            id
+                        ),
+                    )*
+                }
+            }
+        }
         $(
             impl From<$IdType> for $EnumName {
                 #[inline]
@@ -354,7 +385,6 @@ impl std::fmt::Display for TryFromPrimaryError {
 }
 impl std::error::Error for TryFromPrimaryError {}
 
-
 pub trait PrimaryNodeMarker {}
 
 impl PrimaryNodeMarker for FunctionNode {}
@@ -542,7 +572,6 @@ impl TryFrom<PrimaryNodeId> for ModuleNodeId {
         }
     }
 }
-
 
 // --- Generated Category Enums ---
 
