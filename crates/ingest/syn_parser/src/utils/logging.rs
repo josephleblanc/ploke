@@ -853,7 +853,7 @@ pub(crate) struct CfgLogCtx<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub module_path: &'a [String], // Use slice for efficiency
-    pub module_cfgs: &'a [String],
+    pub module_cfgs: Vec<String>, // Changed to owned Vec<String>
     // module_attrs: &'a [Attribute],
 }
 
@@ -865,7 +865,7 @@ impl<'a> CfgLogCtx<'a> {
             module_id: module_node.id, // Use the ID from the passed ModuleNode
             module_name: &module_node.name,
             module_path: &module_node.path,
-            module_cfgs: module_node.cfgs(),
+            module_cfgs: module_node.cfgs(), // Assign the owned Vec<String> directly
             // module_attrs: &module_node.attributes(),
         }
     }
