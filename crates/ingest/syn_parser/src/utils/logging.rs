@@ -862,7 +862,7 @@ impl<'a> CfgLogCtx<'a> {
     /// Creates a new context for logging path attribute processing.
     fn new(module_node: &'a ModuleNode) -> Self {
         Self {
-            module_id: todo!("Need to update this logging struct CfgLogCtx"),
+            module_id: module_node.id, // Use the ID from the passed ModuleNode
             module_name: &module_node.name,
             module_path: &module_node.path,
             module_cfgs: module_node.cfgs(),
