@@ -1,5 +1,5 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::{NodeId, TrackingHash, TypeId};
+use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
@@ -11,24 +11,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // Represents a trait definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
-pub struct TraitNode {
-    pub id: TraitNodeId, // Use typed ID
-    pub name: String,
-        span: (usize, usize),
-        visibility: VisibilityKind,
-        methods: Vec<MethodNode>, // Changed from FunctionNode
-        generic_params: Vec<GenericParamNode>,
-        super_traits: Vec<TypeId>,
-        attributes: Vec<Attribute>,
-        docstring: Option<String>,
-        tracking_hash: Option<TrackingHash>,
-        cfgs: Vec<String>,
-        // Note: Associated consts/types would need to be added here if handled
-    }
-}
-
-// Represents a trait definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct TraitNode {
     pub id: TraitNodeId, // Use typed ID
     pub name: String,
@@ -51,36 +33,19 @@ impl TraitNode {
     pub fn trait_id(&self) -> TraitNodeId {
         self.id
     }
-
-    /// Creates a new `TraitNode` from `TraitNodeInfo`.
-    pub(crate) fn new(info: TraitNodeInfo) -> Self {
-        Self {
-            id: TraitNodeId(info.id), // Wrap the raw ID here
-            name: info.name,
-            span: info.span,
-            visibility: info.visibility,
-            methods: info.methods,
-            generic_params: info.generic_params,
-            super_traits: info.super_traits,
-            attributes: info.attributes,
-            docstring: info.docstring,
-            tracking_hash: info.tracking_hash,
-            cfgs: info.cfgs,
-        }
-    }
 }
 
 impl GraphNode for TraitNode {
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+    fn visibility(&self) ->&VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {
         &self.name
     }
 
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
     fn cfgs(&self) -> &[String] {
         &self.cfgs

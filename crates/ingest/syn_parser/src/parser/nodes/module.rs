@@ -1,4 +1,4 @@
-use ploke_core::{NodeId, TrackingHash};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsStr,
@@ -41,9 +41,9 @@ pub struct ModuleNode {
     /// Import statements (`use ...;`, `extern crate ...;`) found directly within this module.
     /// Populated during the visitor phase.
     pub imports: Vec<ImportNode>,
-    /// List of NodeIds that are re-exported (`pub use`) from this module.
+    /// List ofImportNodeIds that are re-exported (`pub use`) from this module.
     /// Populated during the resolution phase (ModuleTree processing).
-    pub exports: Vec<NodeId>, // Keep as NodeId for now, resolution determines specific item types
+    pub exports: Vec<ImportNodeId>,
     /// The byte span (start, end) of the module definition or declaration in the source file.
     pub span: (usize, usize),
     /// A hash representing the content relevant for tracking changes (currently experimental).
@@ -94,11 +94,11 @@ impl ModuleNode {
         matches!(self.module_def, ModuleKind::Declaration { .. })
     }
 
-    /// Returns the NodeIds of items directly contained within this module definition,
+    /// Returns thePrimaryNodeIds of items directly contained within this module definition,
     /// if this represents a `FileBased` or `Inline` module definition.
     /// Returns `None` if this is only a `Declaration`.
     /// Note: This might be temporary; `Relation::Contains` is the primary way to query containment.
-    pub fn items(&self) -> Option<&[NodeId]> {
+    pub fn items(&self) -> Option<&[PrimaryNodeId]> {
         match &self.module_def {
             ModuleKind::Inline { items, .. } => Some(items),
             ModuleKind::FileBased { items, .. } => Some(items),
@@ -179,7 +179,7 @@ impl ModuleNode {
 
     /// Returns the `NodeId` of the resolved definition module if this is a `Declaration`
     /// and resolution has occurred, `None` otherwise.
-    pub fn resolved_definition(&self) -> Option<NodeId> {
+    pub fn resolved_definition(&self) -> Option<ModuleNodeId> {
         if let ModuleKind::Declaration {
             resolved_definition,
             ..
@@ -209,9 +209,9 @@ pub enum ModuleKind {
     /// Represents a module whose definition resides in a separate file
     /// (e.g., `foo.rs` or `foo/mod.rs`) referenced by `mod foo;`.
     FileBased {
-        /// NodeIds of items directly contained within the module's file.
+        /// PrimaryNodeIds of items directly contained within the module's file.
         /// Note: May be temporary; `Relation::Contains` is the primary source.
-        items: Vec<NodeId>,
+        items: Vec<PrimaryNodeId>,
         /// The absolute path to the file containing the module definition.
         file_path: PathBuf,
         /// Inner attributes (`#![...]`) found at the top of the module file.
@@ -222,9 +222,9 @@ pub enum ModuleKind {
     /// Represents a module defined inline within another file
     /// (e.g., `mod foo { ... }`).
     Inline {
-        /// NodeIds of items directly contained within the inline module block.
+        /// PrimaryNodeIds of items directly contained within the inline module block.
         /// Note: May be temporary; `Relation::Contains` is the primary source.
-        items: Vec<NodeId>,
+        items: Vec<PrimaryNodeId>,
         /// The byte span (start, end) of the inline module block (`{ ... }`).
         span: (usize, usize),
     },
@@ -235,13 +235,13 @@ pub enum ModuleKind {
         declaration_span: (usize, usize),
         /// The `NodeId` of the corresponding `FileBased` or `Inline` `ModuleNode`
         /// after the module tree has been resolved. `None` before resolution.
-        resolved_definition: Option<NodeId>,
+        resolved_definition: Option<ModuleNodeId>,
     },
 }
 
 impl GraphNode for ModuleNode {
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base ModuleNodeId
     }
     fn visibility(&self) -> &VisibilityKind {
         &self.visibility
@@ -264,44 +264,5 @@ impl HasAttributes for ModuleNode {
         // Return the attributes associated with the `mod` item itself,
         // not the inner file attributes (`#![...]`).
         &self.attributes
-    }
-}
-
-/// A type-safe wrapper around a `NodeId` that specifically identifies a `ModuleNode`.
-///
-/// This prevents accidentally using the ID of a different node type (e.g., `FunctionNodeId`)
-/// where a module ID is expected, particularly in defining `SyntacticRelation` variants.
-///
-/// Instances of this type should only be obtained via `ModuleNode::module_id()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct ModuleNodeId(NodeId);
-
-impl ModuleNodeId {
-    // Note: No public `::new(NodeId)` constructor is provided to enforce that
-    // a `ModuleNodeId` can only be obtained from an actual `ModuleNode` instance.
-
-    /// Consumes the wrapper and returns the underlying base `NodeId`.
-    ///
-    /// This is an "escape hatch" necessary for certain operations like hashing,
-    /// storing in generic collections keyed by `NodeId`, or interfacing with
-    /// functions that require the base ID. Use sparingly where type safety
-    /// is not the primary concern for the operation.
-    pub fn into_inner(self) -> NodeId {
-        self.0
-    }
-
-    /// Returns a reference to the underlying base `NodeId`.
-    ///
-    /// Similar to `into_inner`, this provides access to the base ID when needed,
-    /// without consuming the typed wrapper. Use deliberately.
-    pub fn as_inner(&self) -> &NodeId {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for ModuleNodeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Delegate to the inner NodeId's Display implementation
-        write!(f, "{}", self.0)
     }
 }

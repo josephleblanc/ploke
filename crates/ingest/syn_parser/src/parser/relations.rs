@@ -8,7 +8,7 @@ use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use super::nodes::PrimaryNodeIdTrait;
+use super::nodes::{AnyNodeId, AsAnyNodeId, PrimaryNodeIdTrait};
 
 // Define the new error type
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,8 +174,7 @@ impl SyntacticRelation {
     }
 
     /// Returns the source NodeId of the relation as a generic TypeId.
-    // AI: No, they should return the typed ids that are used in each variant AI!
-    pub fn source(&self) -> TypeId {
+    pub fn source(&self) -> AnyNodeId {
         match *self {
             SyntacticRelation::Contains { source, .. } => source.into(),
             SyntacticRelation::ResolvesToDefinition { source, .. } => source.into(),
@@ -193,7 +192,7 @@ impl SyntacticRelation {
     }
 
     /// Returns the target NodeId of the relation as a generic TypeId.
-    pub fn target(&self) -> TypeId {
+    pub fn target(&self) -> AnyNodeId {
         match *self {
             SyntacticRelation::Contains { target, .. } => target.into(),
             SyntacticRelation::ResolvesToDefinition { target, .. } => target.into(),

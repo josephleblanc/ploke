@@ -1,5 +1,4 @@
 extern crate proc_macro;
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility};
@@ -17,7 +16,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility}
 /// # Example Usage
 /// ```ignore
 /// use syn_parser_macros::GenerateNodeInfo;
-/// use ploke_core::{NodeId, StructNodeId}; // Assuming these exist
+/// use ploke_core::{StructNodeId}; // Assuming these exist
 /// // ... other necessary imports ...
 ///
 /// #[derive(GenerateNodeInfo)]
@@ -72,7 +71,10 @@ pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
 
     // Iterate over the fields of the original struct
     for field in fields {
-        let field_name = field.ident.as_ref().expect("Named fields should have names");
+        let field_name = field
+            .ident
+            .as_ref()
+            .expect("Named fields should have names");
         let field_type = &field.ty;
         let field_vis = &field.vis; // Capture original visibility
 
@@ -92,17 +94,21 @@ pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
     let mut id_type: Option<&Type> = None; // To store the type of the original 'id' field
 
     for field in fields {
-        let field_name = field.ident.as_ref().expect("Named fields should have names");
+        let field_name = field
+            .ident
+            .as_ref()
+            .expect("Named fields should have names");
         let field_type = &field.ty;
 
         if field_name == "id" {
             // Store the type of the original 'id' field (e.g., StructNodeId)
             id_type = Some(field_type);
-            // Generate the ID wrapping line for the constructor
+            // Generate the ID wrapping line for the constructor using the restricted ::create method
             constructor_fields.push(quote! {
-                #field_name : #field_type(info.id) // Assumes the typed ID struct is a tuple struct like `StructNodeId(NodeId)`
+                #field_name : #field_type::create(info.id) // Use the restricted constructor
             });
         } else {
+            // Generate simple field copying for other fields
             // Generate simple field copying for other fields
             constructor_fields.push(quote! {
                 #field_name : info.#field_name
@@ -112,7 +118,6 @@ pub fn generate_node_info_derive(input: TokenStream) -> TokenStream {
 
     // Ensure the original struct had an 'id' field
     let _ = id_type.expect("GenerateNodeInfo requires the struct to have an 'id' field.");
-
 
     // --- Generate the *NodeInfo struct definition ---
     let generated_info_struct = quote! {

@@ -1,9 +1,10 @@
+use crate::parser::nodes::AsAnyNodeId;
 mod code_graph;
 mod parsed_graph;
 
 use std::collections::HashMap;
 
-use crate::utils::logging::LOG_TARGET_GRAPH_FIND;
+use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 
 pub use code_graph::CodeGraph;
 use colored::Colorize;
@@ -17,7 +18,7 @@ use crate::parser::nodes::*;
 use crate::resolve::module_tree;
 use crate::resolve::module_tree::ModuleTree;
 use crate::utils::{LogStyle, LogStyleDebug};
-use ploke_core::{NodeId, TypeId, TypeKind};
+use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -30,6 +31,8 @@ use crate::parser::{
     relations::SyntacticRelation, // Use new relation enum
     types::TypeNode,
 };
+
+use super::types::VisibilityKind;
 
 pub trait GraphAccess {
     fn functions(&self) -> &[FunctionNode]; // Standalone functions
@@ -99,14 +102,14 @@ pub trait GraphAccess {
         unique_rels.len() == rels.len()
     }
 
-fn debug_relationships(visitor: &Self) {
-    let unique_rels = visitor.relations().iter().fold(Vec::new(), |mut acc, r| {
+fn debug_relationships(&self) {
+    let unique_rels = self.relations().iter().fold(Vec::new(), |mut acc, r| {
         if !acc.contains(r) {
             acc.push(*r)
         }
         acc
     });
-    let has_duplicate = unique_rels.len() == visitor.relations().len();
+    let has_duplicate = unique_rels.len() == self.relations().len();
     log::debug!(target: "temp",
         "{} {} {}: {} | {}: {} | {}: {}",
         "Relations are unique?".log_header(),
@@ -118,12 +121,12 @@ fn debug_relationships(visitor: &Self) {
         "Unique".log_step(),
         unique_rels.len().to_string().log_magenta_debug(),
         "Total".log_step(),
-        visitor.relations().len().to_string().log_magenta_debug(),
+        self.relations().len().to_string().log_magenta_debug(),
         "Difference".log_step(),
-        (visitor.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
+        (self.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
     );
     let rel_map: HashMap<SyntacticRelation, usize> = // Use updated type
-        visitor
+        self
             .relations()
             .iter()
             .copied()
@@ -154,20 +157,6 @@ fn debug_relationships(visitor: &Self) {
         }
     }
 
-    // This loop seems incorrect - it logs relations *not* in the unique list,
-    // which shouldn't happen if unique_rels was derived correctly.
-    // Commenting out for now, can be revisited if needed.
-    // for rel in visitor.relations() {
-    //     if !unique_rels.contains(rel) {
-    //         log::debug!(target: "temp",
-    //             "{} | {}: {} -> {} | {:?}",
-    //             "Unique!".log_header(), // This log message seems misleading
-    //             rel.source_node_id().to_string().log_id(),
-    //             rel.target_node_id().to_string().log_id(),
-    //             rel,
-    //         );
-    //     }
-    // }
 }
     fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
         self.find_module_by_path(&["crate".to_string()])
@@ -555,104 +544,6 @@ fn debug_relationships(visitor: &Self) {
         })
     }
 
-    #[cfg(feature = "type_bearing_ids")]
-    fn find_node<T: Into<PrimaryNodeId>>(&self, item_id: T) -> Option<&dyn GraphNode> {
-        // Check all node collections for matching ID
-        // Match on the PrimaryNodeId variant derived from the input typed ID `T`.
-        // For each variant, call the corresponding specific getter method.
-        // Map the Option<&SpecificNode> to Option<&dyn GraphNode>.
-        match item_id.into() {
-            PrimaryNodeId::Function(id) => self.get_function(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Struct(id) => self.get_struct(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Enum(id) => self.get_enum(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Union(id) => self.get_union(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::TypeAlias(id) => self.get_type_alias(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Trait(id) => self.get_trait(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Impl(id) => self.get_impl(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Const(id) => self.get_const(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Static(id) => self.get_static(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Macro(id) => self.get_macro(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Import(id) => self.get_import(id).map(|n| n as &dyn GraphNode),
-            PrimaryNodeId::Module(id) => self.get_module(id).map(|n| n as &dyn GraphNode),
-            // Note: MethodNodeId is not part of PrimaryNodeId, it's in AssociatedItemId.
-            // If find_node needed to find methods, it would need a different approach
-            // or the caller would need to go through the ImplNode/TraitNode first.
-        }
-
-        // The following chained .or_else calls are redundant if the match above is exhaustive
-        // and covers all node types correctly via their specific getters.
-        // Keeping the old code commented out for reference during transition.
-
-        // self.functions()
-        //     .iter()
-        //     .find(|n| n.id.into() == item_id) // This comparison logic was flawed
-        //     .map(|n| n as &dyn GraphNode)
-            // .or_else(|| -> Option<&dyn GraphNode> {
-            //     self.defined_types().iter().find_map(|n| match n {
-            //         TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode), // Comparing NodeId == NodeId
-            //         TypeDefNode::Enum(e) if e.id() == item_id => Some(e as &dyn GraphNode),
-            //         TypeDefNode::TypeAlias(t) if t.id() == item_id => Some(t as &dyn GraphNode),
-            //         TypeDefNode::Union(u) if u.id() == item_id => Some(u as &dyn GraphNode),
-            //         _ => None,
-            //     })
-            // })
-           //  .or_else(|| {
-           //      self.traits()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-           //  .or_else(|| {
-           //      self.modules()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-           //  .or_else(|| { // Search Consts
-           //      self.consts()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-           //  .or_else(|| { // Search Statics
-           //      self.statics()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-           //  .or_else(|| {
-           //      self.macros()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-           //  .or_else(|| { // Search Methods within Impls
-           //      self.impls().iter().find_map(|i| {
-           //          i.methods
-           //              .iter()
-           //              .find(|m| m.id() == item_id)
-           //              .map(|m| m as &dyn GraphNode) // Cast MethodNode
-           //      })
-           //  })
-           //   .or_else(|| { // Search Methods within Traits (assuming similar structure)
-           //      self.traits().iter().find_map(|t| {
-           //          t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
-           //              .iter()
-           //              .find(|m| m.id() == item_id)
-           //              .map(|m| m as &dyn GraphNode) // Cast MethodNode
-           //      })
-           //  })
-           // // --- Add ImportNode search ---
-           //  .or_else(|| {
-           //      self.use_statements()
-           //          .iter()
-           //          .find(|n| n.id() == item_id)
-           //          .map(|n| n as &dyn GraphNode)
-           //  })
-    }
-
-
-    #[cfg(not(feature = "type_bearing_ids"))]
     fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
         self.functions()
@@ -1062,4 +953,163 @@ fn debug_relationships(visitor: &Self) {
         }
         first.ok_or(SynParserError::NotFound(base_id))
     }
+}
+
+
+
+/// Core trait for all graph nodes
+pub trait GraphNode {
+    fn any_id(&self) -> AnyNodeId;
+    fn visibility(&self) -> &VisibilityKind;
+    fn name(&self) -> &str;
+    fn cfgs(&self) -> &[String];
+
+    // --- Default implementations for downcasting ---
+    fn as_function(&self) -> Option<&FunctionNode> {
+        // Standalone function
+        None
+    }
+    fn as_method(&self) -> Option<&MethodNode> {
+        // Associated function/method
+        None
+    }
+    fn as_struct(&self) -> Option<&StructNode> {
+        None
+    }
+    fn as_enum(&self) -> Option<&EnumNode> {
+        None
+    }
+    fn as_union(&self) -> Option<&UnionNode> {
+        None
+    }
+    fn as_type_alias(&self) -> Option<&TypeAliasNode> {
+        None
+    }
+    fn as_trait(&self) -> Option<&TraitNode> {
+        None
+    }
+    fn as_impl(&self) -> Option<&ImplNode> {
+        None
+    }
+    fn as_module(&self) -> Option<&ModuleNode> {
+        None
+    }
+    fn as_const(&self) -> Option<&ConstNode> {
+        // Added
+        None
+    }
+    fn as_static(&self) -> Option<&StaticNode> {
+        // Added
+        None
+    }
+    fn as_macro(&self) -> Option<&MacroNode> {
+        None
+    }
+    fn as_import(&self) -> Option<&ImportNode> {
+        None
+    }
+    fn kind_matches(&self, kind: ItemKind) -> bool {
+        match kind {
+            ItemKind::Function => self.as_function().is_some(), // Matches standalone functions
+            ItemKind::Method => self.as_method().is_some(), // Matches associated functions/methods
+            ItemKind::Struct => self.as_struct().is_some(),
+            ItemKind::Enum => self.as_enum().is_some(),
+            ItemKind::Union => self.as_union().is_some(),
+            ItemKind::TypeAlias => self.as_type_alias().is_some(),
+            ItemKind::Trait => self.as_trait().is_some(),
+            ItemKind::Impl => self.as_impl().is_some(),
+            ItemKind::Module => self.as_module().is_some(),
+            ItemKind::Const => self.as_const().is_some(), // Updated
+            ItemKind::Static => self.as_static().is_some(), // Updated
+            ItemKind::Macro => self.as_macro().is_some(),
+            ItemKind::Import => self.as_import().is_some(),
+            ItemKind::ExternCrate => {
+                // kind of a hack job. needs cleaner solution
+                if let Some(import_node) = self.as_import() {
+                    // Use if let for safety
+                    import_node.is_extern_crate()
+                } else {
+                    false
+                }
+            }
+
+            // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam
+            // are not directly represented as top-level GraphNode types this way.
+            _ => false,
+        }
+    }
+
+    fn kind(&self) -> ItemKind {
+        // Check for Method first as it might overlap with Function if not careful
+        if self.as_method().is_some() {
+            ItemKind::Method // Method is more specific
+        } else if self.as_function().is_some() {
+            ItemKind::Function // Standalone function
+        } else if self.as_struct().is_some() {
+            ItemKind::Struct
+        } else if self.as_enum().is_some() {
+            ItemKind::Enum
+        } else if self.as_union().is_some() {
+            ItemKind::Union
+        } else if self.as_type_alias().is_some() {
+            ItemKind::TypeAlias
+        } else if self.as_trait().is_some() {
+            ItemKind::Trait
+        } else if self.as_impl().is_some() {
+            ItemKind::Impl
+        } else if self.as_module().is_some() {
+            ItemKind::Module
+        } else if self.as_macro().is_some() {
+            ItemKind::Macro
+        } else if self.as_import().is_some() {
+            // Check for extern crate specifically within import
+            if self.kind_matches(ItemKind::ExternCrate) {
+                ItemKind::ExternCrate
+            } else {
+                ItemKind::Import
+            }
+        } else if self.as_static().is_some() {
+            // Updated check order
+            ItemKind::Static
+        } else if self.as_const().is_some() {
+            // Updated check order
+            ItemKind::Const
+        } else {
+            // This panic indicates a GraphNode implementation is missing a corresponding
+            // 'as_xxx' method or the kind() logic here is incomplete.
+            panic!(
+                "Unknown GraphNode kind encountered. Name: {}, ID: {}",
+                self.name(),
+                self.any_id()
+            )
+        }
+
+        // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
+        // are not directly represented as top-level GraphNode types this way.
+    }
+
+    fn log_node_debug(&self) {
+        debug!(target: LOG_TARGET_NODE,
+            "{} {: <12} {: <20} | {: <12} | {: <15}",
+            "NodeInfo".log_header(),
+            self.name().log_name(),
+            self.any_id().to_string().log_id(),
+            self.kind().log_vis_debug(),
+            self.visibility().log_name_debug(),
+        );
+    }
+
+    fn log_node_error(&self) {
+        log::error!(target: LOG_TARGET_NODE,
+            "{} {} {: <12} {: <20} | {: <12} | {: <15}",
+            "ERROR".log_error(),
+            "NodeInfo".log_header(),
+            self.name().log_name(),
+            self.any_id().to_string().log_id(),
+            self.kind().log_vis_debug(),
+            self.visibility().log_name_debug(),
+        );
+    }
+
+    // Add others like VariantNode, FieldNode if they implement GraphNode directly
 }

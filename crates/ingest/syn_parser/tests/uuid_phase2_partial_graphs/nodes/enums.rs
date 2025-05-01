@@ -1,6 +1,6 @@
 use crate::common::paranoid::find_enum_node_paranoid;
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeId, TypeKind};
+use ploke_core::{TypeId, TypeKind};
 use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 use syn_parser::parser::types::VisibilityKind;

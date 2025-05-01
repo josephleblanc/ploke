@@ -1,10 +1,7 @@
 use colored::Colorize;
 use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
-use std::{
-    collections::{hash_map::OccupiedEntry, HashMap, VecDeque},
-    hash::Hasher,
-};
+use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
@@ -15,8 +12,11 @@ pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
 use crate::{
-    parser::relations::SyntacticRelation, // Import the new relation type
-    utils::{LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD},
+    parser::{
+        nodes::{ModuleNodeInfo, PrimaryNodeId},
+        relations::SyntacticRelation,
+    }, // Import the new relation type
+    utils::{LogStyle, LogStyleDebug, LOG_TARGET_RELS},
 };
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
@@ -137,7 +137,7 @@ pub fn analyze_file_phase2(
         .cloned()
         .collect();
 
-    let root_module_id = NodeId::generate_synthetic(
+    let root_module_node_id = NodeId::generate_synthetic(
         crate_namespace,
         &file_path,
         &root_module_parent_path, // Use parent path for ID generation context
@@ -147,21 +147,6 @@ pub fn analyze_file_phase2(
         root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
     );
 
-    #[cfg(feature = "verbose_debug")]
-    eprintln!(
-        "root_module_id: {}\ncreated by:\n\tcrate_namespace: {}
-    \tfile_path: {:?}\n\troot_module_parent_path: {:?}\n\troot_module_name: {}\n",
-        root_module_id,
-        crate_namespace,
-        file_path.as_os_str(),
-        root_module_parent_path,
-        root_module_name
-    );
-
-    // *** NEW STEP: Push root module ID onto the scope stack ***
-    // This makes it the default parent scope for top-level items visited next.
-    state.current_definition_scope.push(root_module_id);
-
     // 3. Create the root module node using the derived path and name
     // Determine visibility: Public only for crate root (main.rs/lib.rs), Inherited otherwise
     let root_visibility = if logical_module_path == ["crate"] {
@@ -170,8 +155,8 @@ pub fn analyze_file_phase2(
         crate::parser::types::VisibilityKind::Inherited
     };
 
-    state.code_graph.modules.push(ModuleNode {
-        id: root_module_id,
+    let root_module_info = ModuleNodeInfo {
+        id: root_module_node_id,
         name: root_module_name,      // Use derived name
         visibility: root_visibility, // Use determined visibility
         attributes: Vec::new(),
@@ -189,7 +174,17 @@ pub fn analyze_file_phase2(
             // cfgs removed from here, belongs on ModuleNode
         },
         cfgs: file_cfgs, // Store raw file-level CFGs on the ModuleNode
-    });
+    };
+
+    state
+        .code_graph
+        .modules
+        .push(ModuleNode::new(root_module_info));
+
+    let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
+    // *** NEW STEP: Push root module ID onto the scope stack ***
+    // This makes it the default parent scope for top-level items visited next.
+    state.current_definition_scope.push(root_module_pid);
 
     // 4. Create and run the visitor
     let mut visitor = code_visitor::CodeVisitor::new(&mut state);
@@ -263,11 +258,11 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
     for (rel, count) in rel_map {
         if count > 1 {
             // Use the helper methods to get base NodeIds for logging
-            log::debug!(target: "temp",
-                "{} | {}: {} -> {} | {:?}", // Log the full relation variant for kind info
+            log::debug!(target: LOG_TARGET_RELS,
+                "{} | {}: {} | {}", // Log the full relation variant for kind info
                 "Duplicate!".log_header(),
-                rel.source_node_id().to_string().log_id(),
-                rel.target_node_id().to_string().log_id(),
+                "Count".log_step(),
+                count.to_string().log_error(),
                 rel, // Log the whole enum variant
             );
         }

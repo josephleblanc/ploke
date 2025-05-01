@@ -1,8 +1,10 @@
-use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::{TypeId, TypeKind}; // Import TypeKind from ploke_core
 
 use serde::{Deserialize, Serialize};
 
 use std::fmt;
+
+use super::nodes::GenericParamNodeId;
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
@@ -23,7 +25,7 @@ pub struct TypeNode {
 /// function call, or as part of another definition like for a struct's fields.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GenericParamNode {
-    pub id: NodeId,
+    pub id: GenericParamNodeId,
     pub kind: GenericParamKind,
 }
 

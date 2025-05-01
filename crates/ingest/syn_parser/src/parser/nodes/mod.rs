@@ -9,10 +9,16 @@ mod traits;
 mod type_alias;
 mod union;
 mod value;
-pub mod ids; // Declare the new ids module
-
+// private ids and methods here
+mod ids;
+// ----- ids public re-exports -----
+// Does not directly expose any direct access to NodeId
+pub use ids::*;
+// -----------------------------
 use std::borrow::Borrow;
 use std::fmt::Display;
+
+pub use super::graph::GraphNode;
 
 use crate::{
     error::SynParserError,
@@ -20,8 +26,7 @@ use crate::{
 };
 
 use super::{graph::GraphAccess, types::VisibilityKind};
-use log::debug;
-use ploke_core::{NodeId, TypeId};
+use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
@@ -29,8 +34,8 @@ pub use enums::{EnumNode, VariantNode};
 pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
-pub use macros::{MacroKind, MacroNode, MacroRuleNode, ProcMacroKind};
-pub use module::{ModuleKind, ModuleNode, ModuleNodeId};
+pub use macros::{MacroKind, MacroNode, ProcMacroKind};
+pub use module::{ModuleKind, ModuleNode};
 pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
@@ -49,472 +54,6 @@ pub(crate) use traits::TraitNodeInfo;
 pub(crate) use type_alias::TypeAliasNodeInfo;
 pub(crate) use union::UnionNodeInfo;
 pub(crate) use value::{ConstNodeInfo, StaticNodeInfo};
-
-// ----- utility macro -----
-// Differentiators for primary id types
-// We don't actualy use these anywhere yet. You can see that `ModuleNodeId` is commented out
-// because there is a separate implementation of that. We started using ModuleNodeId during the
-// creation of the ModuleTree.
-use crate::define_node_id_wrapper;
-define_node_id_wrapper!(EnumNodeId);
-define_node_id_wrapper!(FunctionNodeId); // For standalone functions
-define_node_id_wrapper!(MethodNodeId); // For associated functions/methods
-define_node_id_wrapper!(ImplNodeId);
-define_node_id_wrapper!(ImportNodeId);
-// define_node_id_wrapper!(ModuleNodeId); // Keep commented out if manual impl exists
-define_node_id_wrapper!(StructNodeId);
-define_node_id_wrapper!(TraitNodeId);
-define_node_id_wrapper!(TypeAliasNodeId);
-define_node_id_wrapper!(UnionNodeId);
-// Removed ValueNodeId
-define_node_id_wrapper!(ConstNodeId); // Added
-define_node_id_wrapper!(StaticNodeId); // Added
-define_node_id_wrapper!(FieldNodeId);
-define_node_id_wrapper!(VariantNodeId);
-define_node_id_wrapper!(ParamNodeId); // For ParamData
-define_node_id_wrapper!(GenericParamNodeId);
-define_node_id_wrapper!(MacroNodeId);
-
-// For more explicit differntiation within Phase 3 module tree processing
-define_node_id_wrapper!(ReexportNodeId);
-
-// --- Category ID Enums ---
-
-use ploke_core::ItemKind; // Need ItemKind for kind() methods
-
-pub trait PrimaryNodeMarker {}
-
-impl PrimaryNodeMarker for FunctionNode {}
-impl PrimaryNodeMarker for StructNode {}
-impl PrimaryNodeMarker for UnionNode {}
-impl PrimaryNodeMarker for EnumNode {}
-impl PrimaryNodeMarker for TypeAliasNode {}
-impl PrimaryNodeMarker for TraitNode {}
-impl PrimaryNodeMarker for ImplNode {}
-impl PrimaryNodeMarker for ConstNode {}
-impl PrimaryNodeMarker for StaticNode {}
-impl PrimaryNodeMarker for MacroNode {}
-impl PrimaryNodeMarker for ImportNode {}
-impl PrimaryNodeMarker for ModuleNode {}
-
-// AI:
-pub use private_node_id::ExampleNodeId;
-mod private_node_id {
-    use crate::parser::graph::GraphAccess;
-    use ploke_core::NodeId;
-    use std::hash::{Hash, Hasher}; // Public trait
-
-    // --- ID Structs (Field private) ---
-    #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord)]
-    pub struct ExampleNodeId(NodeId);
-    // ... others ...
-    // --- Internal Base ID Access ---
-    trait HasBaseId {
-        fn base_id(&self) -> NodeId;
-    }
-    impl HasBaseId for ExampleNodeId {
-        fn base_id(&self) -> NodeId {
-            self.0
-        }
-    }
-    pub trait TypedId {}
-    pub trait PrimaryNodeIdTrait {}
-    mod private_traits {
-        pub(super) trait Sealed {}
-    }
-    // ... others ...
-
-    // --- Manual Trait Impls (Hash, Eq, Ord) ---
-    // impl Hash for ExampleNodeId {
-    //     /* ... */
-    //  AI: Unneeded, we can use derive
-    // }
-    // impl PartialEq for ExampleNodeId {
-    //     /* ... */
-    // AI: Unneeded, we can use derive
-    // }
-    // impl Eq for ExampleNodeId {
-    //  AI: Unneeded, we can use derive
-    // }
-    // ... others ...
-
-    // --- Marker Trait Impls ---
-    impl TypedId for ExampleNodeId {}
-    impl PrimaryNodeIdTrait for ExampleNodeId {}
-    // ... others ...
-
-    // --- TypedNodeIdGet Trait Def & Impls ---
-    pub trait TypedNodeIdGet /* ... */ {
-        /* ... */
-    } // Define here or re-export public one
-    impl private_traits::Sealed for ExampleNodeId {}
-    impl TypedNodeIdGet for ExampleNodeId {
-        /* ... calls graph.get_struct(self) ... */
-    }
-    // ... others ...
-
-    // --- Restricted Constructors ---
-    impl ExampleNodeId {
-        pub(super) fn create(id: NodeId) -> Self {
-            Self(id)
-        }
-    }
-    // ... others ...
-
-    // --- Heterogeneous Key (Option 1 Example) ---
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub enum AnyNodeId {
-        Struct(ExampleNodeId), /* ... */
-    }
-
-    // --- Graph Storage & Access Impl (Potentially needed here if using base NodeId keys) ---
-    // If CodeGraph uses HashMap<NodeId, _>, its impl GraphAccess might need to be here
-    // to call HasBaseId::base_id().
-    // pub(crate) mod graph_impl {
-    //     use super::*;
-    //     use crate::parser::graph::CodeGraph; // Assuming CodeGraph struct is defined elsewhere
-    //
-    //     impl crate::parser::graph::GraphAccess for CodeGraph {
-    //         fn get_struct(&self, id: StructNodeId) -> Option<&StructNode> {
-    //             let base_id = id.base_id(); // CALL INTERNAL METHOD
-    //             self.internal_storage.get(&base_id).and_then(|node| node.as_struct())
-    //         }
-    //         // ... other getters ...
-    //     }
-    // }
-}
-// AI: So the above works just fine. I'm not sure why you're being all dramatic about this. It
-// seems fairly simple to implement. AI?
-
-/// Represents the ID of any node type that can typically be defined directly
-/// within a module scope (primary items).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum PrimaryNodeId {
-    Function(FunctionNodeId),
-    Struct(StructNodeId),
-    Enum(EnumNodeId),
-    Union(UnionNodeId),
-    TypeAlias(TypeAliasNodeId),
-    Trait(TraitNodeId),
-    Impl(ImplNodeId),
-    Const(ConstNodeId),   // Changed from Value
-    Static(StaticNodeId), // Added
-    Macro(MacroNodeId),
-    Import(ImportNodeId),
-    Module(ModuleNodeId),
-}
-
-impl PrimaryNodeId {
-    /// Returns the underlying base NodeId.
-    pub fn base_id(&self) -> NodeId {
-        match *self {
-            PrimaryNodeId::Function(id) => id.into_inner(),
-            PrimaryNodeId::Struct(id) => id.into_inner(),
-            PrimaryNodeId::Enum(id) => id.into_inner(),
-            PrimaryNodeId::Union(id) => id.into_inner(),
-            PrimaryNodeId::TypeAlias(id) => id.into_inner(),
-            PrimaryNodeId::Trait(id) => id.into_inner(),
-            PrimaryNodeId::Impl(id) => id.into_inner(),
-            PrimaryNodeId::Const(id) => id.into_inner(), // Changed from Value
-            PrimaryNodeId::Static(id) => id.into_inner(), // Added
-            PrimaryNodeId::Macro(id) => id.into_inner(),
-            PrimaryNodeId::Import(id) => id.into_inner(),
-            PrimaryNodeId::Module(id) => id.into_inner(),
-        }
-    }
-
-    // Optional: Get the ItemKind directly
-    pub fn kind(&self) -> ItemKind {
-        match self {
-            PrimaryNodeId::Function(_) => ItemKind::Function,
-            PrimaryNodeId::Struct(_) => ItemKind::Struct,
-            PrimaryNodeId::Enum(_) => ItemKind::Enum,
-            PrimaryNodeId::Union(_) => ItemKind::Union,
-            PrimaryNodeId::TypeAlias(_) => ItemKind::TypeAlias,
-            PrimaryNodeId::Trait(_) => ItemKind::Trait,
-            PrimaryNodeId::Impl(_) => ItemKind::Impl,
-            PrimaryNodeId::Const(_) => ItemKind::Const, // Changed from Value
-            PrimaryNodeId::Static(_) => ItemKind::Static, // Added
-            PrimaryNodeId::Macro(_) => ItemKind::Macro,
-            PrimaryNodeId::Import(_) => ItemKind::Import,
-            PrimaryNodeId::Module(_) => ItemKind::Module,
-        }
-    }
-}
-
-/// Represents the ID of any node type that can be an associated item
-/// within an `impl` or `trait` block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
-pub enum AssociatedItemId {
-    Method(MethodNodeId),       // Associated function/method (changed from Function)
-    TypeAlias(TypeAliasNodeId), // Associated type
-    Const(ConstNodeId),         // Associated const
-}
-
-impl AssociatedItemId {
-    /// Returns the underlying base NodeId.
-    pub fn base_id(&self) -> NodeId {
-        match *self {
-            AssociatedItemId::Method(id) => id.into_inner(), // Changed from Function
-            AssociatedItemId::TypeAlias(id) => id.into_inner(),
-            AssociatedItemId::Const(id) => id.into_inner(),
-        }
-    }
-
-    // Optional: Get the ItemKind directly
-    pub fn kind(&self) -> ItemKind {
-        match self {
-            AssociatedItemId::Method(_) => ItemKind::Method, // Changed from Function
-            AssociatedItemId::TypeAlias(_) => ItemKind::TypeAlias,
-            AssociatedItemId::Const(_) => ItemKind::Const,
-        }
-    }
-}
-
-// --- From Implementations for Category Enums ---
-
-impl From<FunctionNodeId> for PrimaryNodeId {
-    // Standalone Function
-    fn from(id: FunctionNodeId) -> Self {
-        PrimaryNodeId::Function(id)
-    }
-}
-impl From<StructNodeId> for PrimaryNodeId {
-    fn from(id: StructNodeId) -> Self {
-        PrimaryNodeId::Struct(id)
-    }
-}
-impl From<EnumNodeId> for PrimaryNodeId {
-    fn from(id: EnumNodeId) -> Self {
-        PrimaryNodeId::Enum(id)
-    }
-}
-impl From<UnionNodeId> for PrimaryNodeId {
-    fn from(id: UnionNodeId) -> Self {
-        PrimaryNodeId::Union(id)
-    }
-}
-impl From<TypeAliasNodeId> for PrimaryNodeId {
-    fn from(id: TypeAliasNodeId) -> Self {
-        PrimaryNodeId::TypeAlias(id)
-    }
-}
-impl From<TraitNodeId> for PrimaryNodeId {
-    fn from(id: TraitNodeId) -> Self {
-        PrimaryNodeId::Trait(id)
-    }
-}
-impl From<ImplNodeId> for PrimaryNodeId {
-    fn from(id: ImplNodeId) -> Self {
-        PrimaryNodeId::Impl(id)
-    }
-}
-// Removed From<ValueNodeId>
-impl From<ConstNodeId> for PrimaryNodeId {
-    fn from(id: ConstNodeId) -> Self {
-        PrimaryNodeId::Const(id)
-    }
-} // Added
-impl From<StaticNodeId> for PrimaryNodeId {
-    fn from(id: StaticNodeId) -> Self {
-        PrimaryNodeId::Static(id)
-    }
-} // Added
-impl From<MacroNodeId> for PrimaryNodeId {
-    fn from(id: MacroNodeId) -> Self {
-        PrimaryNodeId::Macro(id)
-    }
-}
-impl From<ImportNodeId> for PrimaryNodeId {
-    fn from(id: ImportNodeId) -> Self {
-        PrimaryNodeId::Import(id)
-    }
-}
-impl From<ModuleNodeId> for PrimaryNodeId {
-    fn from(id: ModuleNodeId) -> Self {
-        PrimaryNodeId::Module(id)
-    }
-}
-
-// Removed From<FunctionNodeId> for AssociatedItemId
-impl From<MethodNodeId> for AssociatedItemId {
-    // Method
-    fn from(id: MethodNodeId) -> Self {
-        AssociatedItemId::Method(id)
-    }
-}
-impl From<TypeAliasNodeId> for AssociatedItemId {
-    fn from(id: TypeAliasNodeId) -> Self {
-        AssociatedItemId::TypeAlias(id)
-    }
-}
-// Removed From<ValueNodeId>
-impl From<ConstNodeId> for AssociatedItemId {
-    fn from(id: ConstNodeId) -> Self {
-        AssociatedItemId::Const(id)
-    }
-} // Added
-
-// --- Node Struct Definitions ---
-// Logging target
-const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
-
-/// Core trait for all graph nodes
-pub trait GraphNode {
-    fn id(&self) -> NodeId;
-    fn visibility(&self) -> &VisibilityKind;
-    fn name(&self) -> &str;
-    fn cfgs(&self) -> &[String];
-
-    // --- Default implementations for downcasting ---
-    fn as_function(&self) -> Option<&FunctionNode> {
-        // Standalone function
-        None
-    }
-    fn as_method(&self) -> Option<&MethodNode> {
-        // Associated function/method
-        None
-    }
-    fn as_struct(&self) -> Option<&StructNode> {
-        None
-    }
-    fn as_enum(&self) -> Option<&EnumNode> {
-        None
-    }
-    fn as_union(&self) -> Option<&UnionNode> {
-        None
-    }
-    fn as_type_alias(&self) -> Option<&TypeAliasNode> {
-        None
-    }
-    fn as_trait(&self) -> Option<&TraitNode> {
-        None
-    }
-    fn as_impl(&self) -> Option<&ImplNode> {
-        None
-    }
-    fn as_module(&self) -> Option<&ModuleNode> {
-        None
-    }
-    fn as_const(&self) -> Option<&ConstNode> {
-        // Added
-        None
-    }
-    fn as_static(&self) -> Option<&StaticNode> {
-        // Added
-        None
-    }
-    fn as_macro(&self) -> Option<&MacroNode> {
-        None
-    }
-    fn as_import(&self) -> Option<&ImportNode> {
-        None
-    }
-    fn kind_matches(&self, kind: ItemKind) -> bool {
-        match kind {
-            ItemKind::Function => self.as_function().is_some(), // Matches standalone functions
-            ItemKind::Method => self.as_method().is_some(), // Matches associated functions/methods
-            ItemKind::Struct => self.as_struct().is_some(),
-            ItemKind::Enum => self.as_enum().is_some(),
-            ItemKind::Union => self.as_union().is_some(),
-            ItemKind::TypeAlias => self.as_type_alias().is_some(),
-            ItemKind::Trait => self.as_trait().is_some(),
-            ItemKind::Impl => self.as_impl().is_some(),
-            ItemKind::Module => self.as_module().is_some(),
-            ItemKind::Const => self.as_const().is_some(), // Updated
-            ItemKind::Static => self.as_static().is_some(), // Updated
-            ItemKind::Macro => self.as_macro().is_some(),
-            ItemKind::Import => self.as_import().is_some(),
-            ItemKind::ExternCrate => {
-                // kind of a hack job. needs cleaner solution
-                if let Some(import_node) = self.as_import() {
-                    // Use if let for safety
-                    import_node.is_extern_crate()
-                } else {
-                    false
-                }
-            }
-
-            // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam
-            // are not directly represented as top-level GraphNode types this way.
-            _ => false,
-        }
-    }
-
-    fn kind(&self) -> ItemKind {
-        // Check for Method first as it might overlap with Function if not careful
-        if self.as_method().is_some() {
-            ItemKind::Method // Method is more specific
-        } else if self.as_function().is_some() {
-            ItemKind::Function // Standalone function
-        } else if self.as_struct().is_some() {
-            ItemKind::Struct
-        } else if self.as_enum().is_some() {
-            ItemKind::Enum
-        } else if self.as_union().is_some() {
-            ItemKind::Union
-        } else if self.as_type_alias().is_some() {
-            ItemKind::TypeAlias
-        } else if self.as_trait().is_some() {
-            ItemKind::Trait
-        } else if self.as_impl().is_some() {
-            ItemKind::Impl
-        } else if self.as_module().is_some() {
-            ItemKind::Module
-        } else if self.as_macro().is_some() {
-            ItemKind::Macro
-        } else if self.as_import().is_some() {
-            // Check for extern crate specifically within import
-            if self.kind_matches(ItemKind::ExternCrate) {
-                ItemKind::ExternCrate
-            } else {
-                ItemKind::Import
-            }
-        } else if self.as_static().is_some() {
-            // Updated check order
-            ItemKind::Static
-        } else if self.as_const().is_some() {
-            // Updated check order
-            ItemKind::Const
-        } else {
-            // This panic indicates a GraphNode implementation is missing a corresponding
-            // 'as_xxx' method or the kind() logic here is incomplete.
-            panic!(
-                "Unknown GraphNode kind encountered. Name: {}, ID: {}",
-                self.name(),
-                self.id()
-            )
-        }
-
-        // ItemKind::Field | ItemKind::Variant | ItemKind::GenericParam | ItemKind::ExternCrate
-        // are not directly represented as top-level GraphNode types this way.
-    }
-
-    fn log_node_debug(&self) {
-        debug!(target: LOG_TARGET_NODE,
-            "{} {: <12} {: <20} | {: <12} | {: <15}",
-            "NodeInfo".log_header(),
-            self.name().log_name(),
-            self.id().to_string().log_id(),
-            self.kind().log_vis_debug(),
-            self.visibility().log_name_debug(),
-        );
-    }
-
-    fn log_node_error(&self) {
-        log::error!(target: LOG_TARGET_NODE,
-            "{} {} {: <12} {: <20} | {: <12} | {: <15}",
-            "ERROR".log_error(),
-            "NodeInfo".log_header(),
-            self.name().log_name(),
-            self.id().to_string().log_id(),
-            self.kind().log_vis_debug(),
-            self.visibility().log_name_debug(),
-        );
-    }
-
-    // Add others like VariantNode, FieldNode if they implement GraphNode directly
-}
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
@@ -680,12 +219,12 @@ impl GraphNode for TypeDefNode {
         }
     }
 
-    fn id(&self) -> NodeId {
+    fn any_id(&self) -> AnyNodeId {
         match self {
-            TypeDefNode::Struct(struct_node) => struct_node.id(),
-            TypeDefNode::Enum(enum_node) => enum_node.id(),
-            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.id(),
-            TypeDefNode::Union(union_node) => union_node.id(),
+            TypeDefNode::Struct(struct_node) => struct_node.any_id(),
+            TypeDefNode::Enum(enum_node) => enum_node.any_id(),
+            TypeDefNode::TypeAlias(type_alias_node) => type_alias_node.any_id(),
+            TypeDefNode::Union(union_node) => union_node.any_id(),
         }
     }
     fn cfgs(&self) -> &[String] {

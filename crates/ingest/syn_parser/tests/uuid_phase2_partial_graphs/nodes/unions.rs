@@ -1,7 +1,7 @@
 use crate::common::paranoid::find_union_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeKind};
+use ploke_core::{TypeKind};
 use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 // Import UnionNode specifically

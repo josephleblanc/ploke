@@ -14,6 +14,16 @@ pub enum CodeVisitorError {
         item_name: String,
         item_kind: ItemKind,
     },
+    /// Failed to convert AnyNodeId to a specific typed ID during visitation.
+    #[error(
+        "Failed to convert AnyNodeId to {expected_type} for item '{item_name}' ({item_kind:?})"
+    )]
+    IdConversionFailed {
+        item_name: String,
+        item_kind: ItemKind,
+        expected_type: &'static str, // e.g., "ImportNodeId"
+        source_error: crate::parser::nodes::AnyNodeIdConversionError, // Keep original error info
+    },
     // Add other visitor-specific errors here if needed
 }
 

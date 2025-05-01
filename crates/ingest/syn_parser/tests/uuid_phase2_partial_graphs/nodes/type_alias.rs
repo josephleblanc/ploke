@@ -1,5 +1,5 @@
 use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{NodeId, TypeId, TypeKind};
+use ploke_core::{TypeId, TypeKind};
 use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 // Import TypeAliasNode specifically

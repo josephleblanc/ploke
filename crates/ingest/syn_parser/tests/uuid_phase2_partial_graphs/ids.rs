@@ -2,7 +2,7 @@
 mod phase2_id_tests {
     use crate::common::{find_function_by_name, run_phase1_phase2};
     use ploke_common::fixtures_crates_dir;
-    use ploke_core::{NodeId, TrackingHash, TypeId};
+    use ploke_core::{TrackingHash, TypeId};
     use std::{collections::HashMap, path::PathBuf};
     use syn_parser::{
         discovery::run_discovery_phase, // Import CrateContext

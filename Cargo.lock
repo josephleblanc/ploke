@@ -2120,12 +2120,23 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
+ "syn_parser_macros",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "toml",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "syn_parser_macros"
+version = "0.1.0"
+dependencies = [
+ "ploke-core",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

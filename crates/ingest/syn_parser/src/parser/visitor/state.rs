@@ -1,10 +1,8 @@
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::{AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId}; // Import AnyNodeIdConversionError, GenericParamNodeId
 use crate::parser::nodes::PrimaryNodeId;
+use crate::parser::nodes::{AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId}; // Import AnyNodeIdConversionError, GenericParamNodeId
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
-use log::debug;
-// Removed cfg_expr::Expression import
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
@@ -13,7 +11,7 @@ use super::type_processing::get_or_create_type;
 
 use {
     crate::parser::nodes::ParamData,
-    ploke_core::{NodeId, TrackingHash, TypeId},
+    ploke_core::{TrackingHash, TypeId},
     std::path::PathBuf,
     uuid::Uuid,
 };
@@ -71,41 +69,6 @@ impl VisitorState {
             cfg_stack: Vec::new(),
         }
     }
-
-    /// Helper to generate a synthetic NodeId using the current visitor state.
-    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
-    /// Accepts the calculated hash bytes of the effective CFG strings.
-    // pub(crate) fn generate_synthetic_node_id(
-    //     &self,
-    //     name: &str,
-    //     item_kind: ItemKind,
-    //     cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
-    // ) -> NodeId {
-    //     // Get the last pushed scope ID as the parent, if available
-    //     let parent_scope_id = self.current_definition_scope.last().copied();
-    //
-    //     debug!(target: LOG_TARGET_NODE_ID,
-    //         "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
-    //         name, item_kind
-    //     );
-    //     debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  parent_scope_id: {:?}", parent_scope_id);
-    //     debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
-    //
-    //     NodeId::generate_synthetic(
-    //         self.crate_namespace,
-    //         &self.current_file_path,
-    //         &self.current_module_path, // Current module path acts as relative path context
-    //         name,
-    //         item_kind,
-    //         parent_scope_id, // Pass the parent scope ID from the stack
-    //         cfg_bytes,       // Pass the provided CFG bytes
-    //     )
-    // }
 
     pub(crate) fn generate_tracking_hash(
         &self,
@@ -205,12 +168,11 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self
-                        .generate_synthetic_node_id(
-                            &format!("generic_type_{}", ident), // Use a distinct name format
-                            ItemKind::GenericParam,
-                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        );
+                    let generated_any_id = self.generate_synthetic_node_id(
+                        &format!("generic_type_{}", ident), // Use a distinct name format
+                        ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                    );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
                         .map_err(|e: AnyNodeIdConversionError| {
@@ -243,12 +205,11 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self
-                        .generate_synthetic_node_id(
-                            &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
-                            ItemKind::GenericParam,
-                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        );
+                    let generated_any_id = self.generate_synthetic_node_id(
+                        &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
+                        ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                    );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
                         .map_err(|e: AnyNodeIdConversionError| {
@@ -276,12 +237,11 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self
-                        .generate_synthetic_node_id(
-                            &format!("generic_const_{}", const_param.ident), // Use a distinct name format
-                            ItemKind::GenericParam,
-                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                        );
+                    let generated_any_id = self.generate_synthetic_node_id(
+                        &format!("generic_const_{}", const_param.ident), // Use a distinct name format
+                        ItemKind::GenericParam,
+                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                    );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
                         .map_err(|e: AnyNodeIdConversionError| {

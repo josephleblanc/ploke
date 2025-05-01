@@ -1,4 +1,4 @@
-use ploke_core::{NodeId, TrackingHash};
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
@@ -10,22 +10,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // Represents a macro definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
-pub struct MacroNode {
-    pub id: MacroNodeId, // Use typed ID
-    pub name: String,
-        span: (usize, usize),
-        visibility: VisibilityKind,
-        kind: MacroKind,
-        attributes: Vec<Attribute>,
-        docstring: Option<String>,
-        body: Option<String>,
-        tracking_hash: Option<TrackingHash>,
-        cfgs: Vec<String>,
-    }
-}
-
-// Represents a macro definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct MacroNode {
     pub id: MacroNodeId, // Use typed ID
     pub name: String,
@@ -44,30 +28,14 @@ impl MacroNode {
     pub fn macro_id(&self) -> MacroNodeId {
         self.id
     }
-
-    /// Creates a new `MacroNode` from `MacroNodeInfo`.
-    pub(crate) fn new(info: MacroNodeInfo) -> Self {
-        Self {
-            id: MacroNodeId(info.id), // Wrap the raw ID here
-            name: info.name,
-            span: info.span,
-            visibility: info.visibility,
-            kind: info.kind,
-            attributes: info.attributes,
-            docstring: info.docstring,
-            body: info.body,
-            tracking_hash: info.tracking_hash,
-            cfgs: info.cfgs,
-        }
-    }
 }
 
 impl GraphNode for MacroNode {
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {
@@ -89,13 +57,7 @@ impl HasAttributes for MacroNode {
     }
 }
 
-// Represents a macro rule (Note: Currently unused in MacroNode, consider removal if not needed)
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct MacroRuleNode {
-    pub id: NodeId,
-    pub pattern: String,
-    pub expansion: String,
-}
+// Removed MacroRuleNode for now (complex to implement)
 
 // Different kinds of macros
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

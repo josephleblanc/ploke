@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod determinism_tests {
     use crate::common::run_phase1_phase2; // Assuming this helper exists and works
-    use ploke_core::{NodeId, TypeId};
+    use ploke_core::{TypeId};
     use std::collections::{HashMap, HashSet};
     use syn_parser::parser::nodes::*;
     use syn_parser::parser::{graph::CodeGraph, types::TypeNode};

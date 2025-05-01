@@ -770,7 +770,6 @@ pub trait LogErrorConversion {
     fn log_generic_param_id_conversion_error(
         &self,
         generic_param_name: &str,
-        generic_param_name: &str,
         item_kind: ItemKind, // Add item_kind for context
         error: AnyNodeIdConversionError,
     );
@@ -778,7 +777,7 @@ pub trait LogErrorConversion {
     /// Logs an error when AnyNodeId fails to convert to ImportNodeId.
     fn log_import_id_conversion_error(
         &self,
-        import_name: &str, // Name or placeholder like "<glob>" or "*"
+        import_name: &str,      // Name or placeholder like "<glob>" or "*"
         import_path: &[String], // The path leading to the import
         error: AnyNodeIdConversionError,
     );

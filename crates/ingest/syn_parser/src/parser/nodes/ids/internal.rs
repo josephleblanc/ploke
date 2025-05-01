@@ -11,7 +11,7 @@ use crate::parser::visitor::VisitorState;
 use super::*;
 use crate::utils::LOG_TARGET_NODE_ID;
 use log::debug;
-use ploke_core::NodeId; // Removed IdConversionError import
+use ploke_core::{NodeId, TypeKind}; // Removed IdConversionError import
 use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::error::Error;
@@ -116,21 +116,38 @@ impl GeneratesAnyNodeId for VisitorState {
             ItemKind::Static => StaticNodeId(node_id).into(),
             ItemKind::Macro => MacroNodeId(node_id).into(),
             ItemKind::Import => ImportNodeId(node_id).into(),
-            // Note: ExternCrate doesn't have its own NodeId type currently,
-            // it might be handled differently or need a dedicated ID if required.
-            // For now, let's panic or handle it as an error if encountered here,
-            // assuming synthetic IDs aren't generated for ExternCrate.
-            // If they *are* needed, a ReexportNodeId or a new ExternCrateNodeId might be appropriate.
-            ItemKind::ExternCrate => {
-                // Using ReexportNodeId as a placeholder, adjust if ExternCrate needs specific handling
-                // or if this case should actually panic/error out.
-                // Consider if ExternCrate items should ever have *synthetic* IDs generated.
-                // They are usually top-level items directly from `syn`.
-                // If this path is reachable, it might indicate an issue elsewhere.
-                log::warn!(target: LOG_TARGET_NODE_ID, "Generating synthetic ID for unexpected ItemKind::ExternCrate for '{}'. Using ReexportNodeId.", name);
-                ReexportNodeId(node_id).into() // Placeholder - review if this is correct
-            }
+            // TODO: Decide what to do about handling ExternCrate. We kind of do want everything to
+            // have a NodeId of some kind, and this will do for now, but we also want to
+            // distinguish between an ExternCrate statement and something else... probably.
+            ItemKind::ExternCrate => ImportNodeId(node_id).into(),
         }
+    }
+}
+
+pub(in crate::parser) trait GenerateTypeId {
+    /// Helper to generate a synthetic NodeId using the current visitor state.
+    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
+    /// Accepts the calculated hash bytes of the effective CFG strings.
+    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId;
+}
+
+impl GenerateTypeId for VisitorState {
+    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId {
+        // 2. Get the current parent scope ID from the state.
+        //    Assume it's always present because the root module ID is pushed first.
+        let parent_scope_id = self.current_definition_scope.last().copied().expect(
+            "Visitorself's current_definition_scope should not be empty during type processing",
+        );
+
+        // 3. Generate the new Synthetic Type ID using structural info AND parent scope
+        let new_id = TypeId::generate_synthetic(
+            self.crate_namespace,
+            &self.current_file_path,
+            type_kind,                       // Pass the determined TypeKind
+            related_types,                   // Pass the determined related TypeIds
+            Some(parent_scope_id.base_id()), // Pass the non-optional parent scope ID wrapped in Some
+        );
+        new_id
     }
 }
 
@@ -516,8 +533,12 @@ define_internal_node_id!(
 );
 
 // For more explicit differntiation within Phase 3 module tree processing
-define_internal_node_id!(struct ReexportNodeId { markers: [] }); // No specific category yet, just TypedId
-                                                                 // --- Category ID Enums ---
+define_internal_node_id!(
+    struct ReexportNodeId {
+        markers: [],
+    }
+); // No specific category yet, just TypedId
+   // --- Category ID Enums ---
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 

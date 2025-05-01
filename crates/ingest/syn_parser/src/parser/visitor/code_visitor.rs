@@ -411,68 +411,41 @@ impl<'a> CodeVisitor<'a> {
             .modules
             .iter_mut() // Need mutable access to add to items list
             .find(|m| m.path == self.state.current_module_path); // Find module matching current path
-       let parent_mod_id_opt = match parent_module_opt {
-           Some(parent_mod) => {
-               match &mut parent_mod.module_def {
-                   ModuleKind::Inline { items, .. } => {
-                       items.push(node_id);
-                       Some(parent_mod.id)
-                   }
-                   ModuleKind::FileBased { items, .. } => {
-                       items.push(node_id);
-                       Some(parent_mod.id)
-                   }
-                   ModuleKind::Declaration { .. } => {
-                       // Cannot add items to a declaration, log error and return Err
-                       let err = CodeVisitorError::RegistrationFailed {
-                           item_name: item_name.to_string(),
-                           item_kind,
-                       };
-                       log::error!(
-                           target: LOG_TARGET_TRACE,
-                           "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
-                           item_name, item_kind, parent_mod.name, parent_mod.id
-                       );
-                       return Err(err); // Return error
-                   }
-               }
-           }
-           None => {
-               // Log error and return Err if parent module not found
-               let err = CodeVisitorError::RegistrationFailed {
-                   item_name: item_name.to_string(),
-                   item_kind,
-               };
-               log::error!(
-               target: LOG_TARGET_TRACE,
-               "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Item not added to module list.",
-               item_name, item_kind, self.state.current_module_path
-               );
-               return Err(err); // Return error
-           }
-       };
-       // Wrap successful result in Ok
-       // The previous logic already returned Err in the failure cases,
-       // so if we reach here, parent_mod_id_opt must be Some.
-       if let Some(parent_mod_id) = parent_mod_id_opt {
-           Ok((node_id, parent_mod_id))
-       } else {
-           // This path should be unreachable due to the explicit returns above,
-           // but handle it defensively.
-           let err = CodeVisitorError::RegistrationFailed {
-               item_name: item_name.to_string(),
-               item_kind,
-           };
-            log::error!(
-               target: LOG_TARGET_TRACE,
-               "Unexpected error: Reached end of register_new_node_id without a valid parent module ID for item '{}' ({:?}).",
-               item_name, item_kind
-           );
-           Err(err)
-       }
-   }
+        let parent_mod_id_opt = match parent_module_opt {
+            Some(parent_mod) => {
+                match &mut parent_mod.module_def {
+                    ModuleKind::Inline { items, .. } => {
+                        items.push(node_id);
+                        Some(parent_mod.id)
+                    }
+                    ModuleKind::FileBased { items, .. } => {
+                        items.push(node_id);
+                        Some(parent_mod.id)
+                    }
+                    ModuleKind::Declaration { .. } => {
+                        // Cannot add items to a declaration, log warning
+                        log::warn!(
+                            target: LOG_TARGET_TRACE,
+                            "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
+                            item_name, item_kind, parent_mod.name, parent_mod.id
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                log::warn!(
+                target: LOG_TARGET_TRACE,
+                "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Item not added to module list.",
+                item_name, item_kind, self.state.current_module_path
+                );
+                None
+            }
+        };
+        parent_mod_id_opt.map(|parent_mod_id| (node_id, parent_mod_id))
+    }
 
-   // Helper to push scope and log (using trace!)
+    // Helper to push scope and log (using trace!)
     fn push_scope(&mut self, name: &str, id: AnyNodeId, cfgs: Vec<String>) {
         self.state.current_definition_scope.push(id);
         self.state

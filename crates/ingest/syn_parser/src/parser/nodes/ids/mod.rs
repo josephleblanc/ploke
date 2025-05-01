@@ -21,10 +21,17 @@ pub use internal::{
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
-pub use internal::{AssociatedItemIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
+pub use internal::{
+    AsAnyNodeId, AssociatedItemIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId,
+};
 // Re-export the getter trait (make it crate-visible)
 pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
 // Re-export category enums
 pub use internal::{AnyNodeId, AssociatedItemId, PrimaryNodeId};
 // --- macro rules ---
+// --- error types ---
+pub use internal::{AnyNodeIdConversionError, TryFromAssociatedItemError, TryFromPrimaryError};
+
+// --- semi-private ---
+pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};

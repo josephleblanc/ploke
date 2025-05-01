@@ -1,5 +1,5 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::{NodeId, TrackingHash};
+use ploke_core::{TrackingHash};
 use serde::{Deserialize, Serialize};
 use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
@@ -11,22 +11,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // Represents a union definition
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
-pub struct UnionNode {
-    pub id: UnionNodeId, // Use typed ID
-    pub name: String,
-        span: (usize, usize),
-        visibility: VisibilityKind,
-        fields: Vec<FieldNode>,
-        generic_params: Vec<GenericParamNode>,
-        attributes: Vec<Attribute>,
-        docstring: Option<String>,
-        tracking_hash: Option<TrackingHash>,
-        cfgs: Vec<String>,
-    }
-}
-
-// Represents a union definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct UnionNode {
     pub id: UnionNodeId, // Use typed ID
     pub name: String,
@@ -45,30 +29,14 @@ impl UnionNode {
     pub fn union_id(&self) -> UnionNodeId {
         self.id
     }
-
-    /// Creates a new `UnionNode` from `UnionNodeInfo`.
-    pub(crate) fn new(info: UnionNodeInfo) -> Self {
-        Self {
-            id: UnionNodeId(info.id), // Wrap the raw ID here
-            name: info.name,
-            span: info.span,
-            visibility: info.visibility,
-            fields: info.fields,
-            generic_params: info.generic_params,
-            attributes: info.attributes,
-            docstring: info.docstring,
-            tracking_hash: info.tracking_hash,
-            cfgs: info.cfgs,
-        }
-    }
 }
 
 impl GraphNode for UnionNode {
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+    fn visibility(&self) ->&VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {

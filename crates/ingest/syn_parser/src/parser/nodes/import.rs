@@ -11,19 +11,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 /// Represents all import/export semantics in the code graph, including:
 /// - Regular `use` statements
 /// - `pub use` re-exports
-        source_path: Vec<String>,
-        kind: ImportKind,
-        visible_name: String,
-        original_name: Option<String>,
-        is_glob: bool,
-        is_self_import: bool,
-        cfgs: Vec<String>,
-    }
-}
-
-/// Represents all import/export semantics in the code graph, including:
-/// - Regular `use` statements
-/// - `pub use` re-exports
 /// - Extern crate declarations
 /// - Future import-like constructs
 ///
@@ -127,21 +114,6 @@ impl ImportNode {
         self.id
     }
 
-    /// Creates a new `ImportNode` from `ImportNodeInfo`.
-    pub(crate) fn new(info: ImportNodeInfo) -> Self {
-        Self {
-            id: ImportNodeId(info.id), // Wrap the raw ID here
-            span: info.span,
-            source_path: info.source_path,
-            kind: info.kind,
-            visible_name: info.visible_name,
-            original_name: info.original_name,
-            is_glob: info.is_glob,
-            is_self_import: info.is_self_import,
-            cfgs: info.cfgs,
-        }
-    }
-
     pub fn source_path(&self) -> &[String] {
         &self.source_path
     }
@@ -236,16 +208,16 @@ impl ImportNode {
 }
 
 impl GraphNode for ImportNode {
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
 
-    fn visibility(&self) -> VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         // The visibility of the *use statement itself* determines its effect.
         // `extern crate` is effectively private to the module.
         match &self.kind {
-            ImportKind::UseStatement(vis) => vis.clone(),
-            ImportKind::ExternCrate => VisibilityKind::Inherited,
+            ImportKind::UseStatement(vis) => &vis,
+            ImportKind::ExternCrate => &VisibilityKind::Inherited,
             // ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
         }
     }

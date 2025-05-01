@@ -32,7 +32,7 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 thiserror = { workspace = true }                          # version 2
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
-syn_parser_macros = { path = "../syn_parser_macros" } # Add dependency on the proc macro crate
+syn_parser_macros = { path = "../syn_parser_macros" }     # Add dependency on the proc macro crate
 
 # Added for Phase 1 Discovery (Optional)
 toml = { version = "0.8" }
@@ -52,10 +52,17 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-feature_a = []     # Add feature_a used by fixture
-feature_b = []     # Add feature_b used by test
+default = ["type_bearing_ids", "validate", "reexport"]
+feature_a = []                                         # Add feature_a used by fixture
+feature_b = []                                         # Add feature_b used by test
 verbose_debug = []
 temp_target = []
+
+# temporary transition cfg to allow comparison of
+# functionality with previous, non-type-bearing implementation. Will eventually
+# completely replace the original implementation, at which time this cfg should
+# be removed.
+type_bearing_ids = []
 validate = []
 mod_tree_cfg = []
 reexport = []

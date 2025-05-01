@@ -1,5 +1,5 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::{NodeId, TypeId};
+use ploke_core::{TypeId};
 use serde::{Deserialize, Serialize};
 use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
@@ -11,20 +11,6 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // Represents an implementation block
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
-pub struct ImplNode {
-    pub id: ImplNodeId, // Use typed ID
-    pub self_type: TypeId,
-        span: (usize, usize),
-        trait_type: Option<TypeId>,
-        methods: Vec<MethodNode>, // Changed from FunctionNode
-        generic_params: Vec<GenericParamNode>,
-        cfgs: Vec<String>,
-        // Note: Associated consts/types would need to be added here if handled
-    }
-}
-
-// Represents an implementation block
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
     pub self_type: TypeId,
@@ -43,24 +29,11 @@ impl ImplNode {
     pub fn impl_id(&self) -> ImplNodeId {
         self.id
     }
-
-    /// Creates a new `ImplNode` from `ImplNodeInfo`.
-    pub(crate) fn new(info: ImplNodeInfo) -> Self {
-        Self {
-            id: ImplNodeId(info.id), // Wrap the raw ID here
-            self_type: info.self_type,
-            span: info.span,
-            trait_type: info.trait_type,
-            methods: info.methods,
-            generic_params: info.generic_params,
-            cfgs: info.cfgs,
-        }
-    }
 }
 
 impl GraphNode for ImplNode {
-    fn visibility(&self) -> VisibilityKind {
-        VisibilityKind::Public // Impls don't have inherent visibility in the same way items do
+    fn visibility(&self) -> &VisibilityKind {
+        &VisibilityKind::Public // Impls don't have inherent visibility in the same way items do
     }
 
     fn name(&self) -> &str {
@@ -69,8 +42,8 @@ impl GraphNode for ImplNode {
         "impl block"
     }
 
-    fn id(&self) -> NodeId {
-        self.id.into_inner() // Return base NodeId
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
     fn cfgs(&self) -> &[String] {
         &self.cfgs
