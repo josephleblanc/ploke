@@ -109,7 +109,8 @@ pub enum SynParserError {
     #[error(transparent)]
     VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
 
-                                            // Add the new error type here, making use of `thiserror` for simplicity where possible AI!
+    #[error(transparent)]
+    RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
