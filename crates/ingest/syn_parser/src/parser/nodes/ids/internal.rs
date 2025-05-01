@@ -100,25 +100,36 @@ impl GeneratesAnyNodeId for VisitorState {
         );
 
         match item_kind {
-            // AI: Fill out the following `todo!()` items similarly to the first example I've filled
-            // in. AI!
             ItemKind::Function => FunctionNodeId(node_id).into(),
-            ItemKind::Method => todo!(),
-            ItemKind::Struct => todo!(),
-            ItemKind::Enum => todo!(),
-            ItemKind::Union => todo!(),
-            ItemKind::TypeAlias => todo!(),
-            ItemKind::Trait => todo!(),
-            ItemKind::Impl => todo!(),
-            ItemKind::Module => todo!(),
-            ItemKind::Field => todo!(),
-            ItemKind::Variant => todo!(),
-            ItemKind::GenericParam => todo!(),
-            ItemKind::Const => todo!(),
-            ItemKind::Static => todo!(),
-            ItemKind::Macro => todo!(),
-            ItemKind::Import => todo!(),
-            ItemKind::ExternCrate => todo!(),
+            ItemKind::Method => MethodNodeId(node_id).into(),
+            ItemKind::Struct => StructNodeId(node_id).into(),
+            ItemKind::Enum => EnumNodeId(node_id).into(),
+            ItemKind::Union => UnionNodeId(node_id).into(),
+            ItemKind::TypeAlias => TypeAliasNodeId(node_id).into(),
+            ItemKind::Trait => TraitNodeId(node_id).into(),
+            ItemKind::Impl => ImplNodeId(node_id).into(),
+            ItemKind::Module => ModuleNodeId(node_id).into(),
+            ItemKind::Field => FieldNodeId(node_id).into(),
+            ItemKind::Variant => VariantNodeId(node_id).into(),
+            ItemKind::GenericParam => GenericParamNodeId(node_id).into(),
+            ItemKind::Const => ConstNodeId(node_id).into(),
+            ItemKind::Static => StaticNodeId(node_id).into(),
+            ItemKind::Macro => MacroNodeId(node_id).into(),
+            ItemKind::Import => ImportNodeId(node_id).into(),
+            // Note: ExternCrate doesn't have its own NodeId type currently,
+            // it might be handled differently or need a dedicated ID if required.
+            // For now, let's panic or handle it as an error if encountered here,
+            // assuming synthetic IDs aren't generated for ExternCrate.
+            // If they *are* needed, a ReexportNodeId or a new ExternCrateNodeId might be appropriate.
+            ItemKind::ExternCrate => {
+                // Using ReexportNodeId as a placeholder, adjust if ExternCrate needs specific handling
+                // or if this case should actually panic/error out.
+                // Consider if ExternCrate items should ever have *synthetic* IDs generated.
+                // They are usually top-level items directly from `syn`.
+                // If this path is reachable, it might indicate an issue elsewhere.
+                log::warn!(target: LOG_TARGET_NODE_ID, "Generating synthetic ID for unexpected ItemKind::ExternCrate for '{}'. Using ReexportNodeId.", name);
+                ReexportNodeId(node_id).into() // Placeholder - review if this is correct
+            }
         }
     }
 }
