@@ -122,13 +122,16 @@ macro_rules! define_category_enum {
                 }
             }
 
+        // AI: Having some trouble with the error type on this macro.
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
                 type Error = $ErrorType; // Use the provided error type
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        _ => Err($ErrorType),
+                        _ => Err($ErrorType), // AI: compiler error here - expected expr, found
+        // type
+        // AI!
                     }
                 }
             }
@@ -419,7 +422,6 @@ impl std::fmt::Display for TryFromAssociatedItemError {
     }
 }
 impl std::error::Error for TryFromAssociatedItemError {}
-
 
 pub trait PrimaryNodeMarker {}
 
