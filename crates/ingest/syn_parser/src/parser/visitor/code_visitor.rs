@@ -148,11 +148,22 @@ impl<'a> CodeVisitor<'a> {
                     error!(target: LOG_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
-                // If registration succeeded, unwrap and proceed
-                let (import_any_id, _) = registration_result.unwrap();
-                let import_typed_id: ImportNodeId = import_any_id.try_into().unwrap();
+               // If registration succeeded, unwrap and proceed
+               let (import_any_id, _) = registration_result.unwrap();
+               let import_typed_id: ImportNodeId = import_any_id.try_into().map_err(|e| {
+                   // Use the logging trait method
+                   self.state
+                       .log_import_id_conversion_error(&checked_name, &full_path, e);
+                   // Return the specific CodeVisitorError variant
+                   CodeVisitorError::IdConversionFailed {
+                       item_name: checked_name.clone(),
+                       item_kind: ItemKind::Import,
+                       expected_type: "ImportNodeId",
+                       source_error: e,
+                   }
+               })?; // Use ? to propagate the error
 
-                let import_node = ImportNode {
+               let import_node = ImportNode {
                     id: import_typed_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
@@ -187,11 +198,22 @@ impl<'a> CodeVisitor<'a> {
                     };
                     error!(target: LOG_TARGET_TRACE, "{}", err);
                     return Err(err);
-                }
-                let (import_any_id, _) = registration_result.unwrap();
-                let import_node_id: ImportNodeId = import_any_id.try_into().unwrap();
+               }
+               let (import_any_id, _) = registration_result.unwrap();
+               let import_node_id: ImportNodeId = import_any_id.try_into().map_err(|e| {
+                   // Use the logging trait method
+                   self.state
+                       .log_import_id_conversion_error(&visible_name, &base_path, e); // Use base_path for context here
+                   // Return the specific CodeVisitorError variant
+                   CodeVisitorError::IdConversionFailed {
+                       item_name: visible_name.clone(),
+                       item_kind: ItemKind::Import,
+                       expected_type: "ImportNodeId",
+                       source_error: e,
+                   }
+               })?; // Use ? to propagate the error
 
-                // The source path uses the original name.
+               // The source path uses the original name.
                 let mut source_path = base_path; // Take ownership
                 source_path.push(original_name.clone());
 
@@ -223,28 +245,44 @@ impl<'a> CodeVisitor<'a> {
                         item_kind: ItemKind::Import,
                     };
                     error!(target: LOG_TARGET_TRACE, "{}", err);
-                    return Err(err);
-                }
-                let (import_any_id, _) = registration_result.unwrap();
+                   return Err(err);
+               }
+               let (import_any_id, _) = registration_result.unwrap();
+               // Convert AnyNodeId to the specific ImportNodeId
+               let import_typed_id: ImportNodeId = import_any_id.try_into().map_err(|e| {
+                   // Use the logging trait method
+                   self.state
+                       .log_import_id_conversion_error("<glob>", &base_path, e); // Use placeholder and base_path
+                   // Return the specific CodeVisitorError variant
+                   CodeVisitorError::IdConversionFailed {
+                       item_name: "<glob>".to_string(),
+                       item_kind: ItemKind::Import,
+                       expected_type: "ImportNodeId",
+                       source_error: e,
+                   }
+               })?; // Use ? to propagate the error
 
-                // Use the original base_path
-                let full_path = base_path; // Take ownership
 
-                let import_info = ImportNodeInfo {
-                    id: import_any_id,
-                    source_path: full_path,
-                    kind: ImportKind::UseStatement(vis_kind.to_owned()),
-                    visible_name: "*".to_string(),
-                    original_name: None,
-                    is_glob: true,
-                    span: glob.extract_span_bytes(),
-                    is_self_import: false,
-                    cfgs: Vec::new(), // CFGs are handled at the ItemUse level
-                };
-                // Return a Vec containing just this single import node.
-                Ok(vec![ImportNode::new(import_info)])
-            }
-            syn::UseTree::Group(group) => {
+               // Use the original base_path
+               let full_path = base_path; // Take ownership
+
+               // Construct ImportNode directly, removing ImportNodeInfo
+               let import_node = ImportNode {
+                   id: import_typed_id, // Use the typed ID
+                   source_path: full_path,
+                   kind: ImportKind::UseStatement(vis_kind.to_owned()),
+                   visible_name: "*".to_string(), // Glob imports use "*" as the visible name placeholder
+                   original_name: None,
+                   is_glob: true,
+                   span: glob.extract_span_bytes(),
+                   is_self_import: false,
+                   cfgs: Vec::new(), // CFGs are handled at the ItemUse level
+               };
+
+               // Return a Vec containing just this single import node.
+               Ok(vec![import_node]) // Return the directly constructed node
+           }
+           syn::UseTree::Group(group) => {
                 // Recursive case: A group import like `use std::{fs, io};`
                 let mut group_imports = Vec::new();
                 for item in &group.items {
