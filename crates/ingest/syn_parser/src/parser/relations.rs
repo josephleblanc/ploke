@@ -172,8 +172,44 @@ impl SyntacticRelation {
             .ok()
             .and_then(|m_child| self.resolved_by_decl(m_child))
     }
-    // Implement a `target()` and `source()` method AI!
+
+    /// Returns the source NodeId of the relation as a generic TypeId.
+    pub fn source(&self) -> TypeId {
+        match *self {
+            SyntacticRelation::Contains { source, .. } => source.into(),
+            SyntacticRelation::ResolvesToDefinition { source, .. } => source.into(),
+            SyntacticRelation::CustomPath { source, .. } => source.into(),
+            SyntacticRelation::Sibling { source, .. } => source.into(),
+            SyntacticRelation::ModuleImports { source, .. } => source.into(),
+            SyntacticRelation::ReExports { source, .. } => source.into(),
+            SyntacticRelation::StructField { source, .. } => source.into(),
+            SyntacticRelation::UnionField { source, .. } => source.into(),
+            SyntacticRelation::VariantField { source, .. } => source.into(),
+            SyntacticRelation::EnumVariant { source, .. } => source.into(),
+            SyntacticRelation::ImplAssociatedItem { source, .. } => source.into(),
+            SyntacticRelation::TraitAssociatedItem { source, .. } => source.into(),
+        }
+    }
+
+    /// Returns the target NodeId of the relation as a generic TypeId.
+    pub fn target(&self) -> TypeId {
+        match *self {
+            SyntacticRelation::Contains { target, .. } => target.into(),
+            SyntacticRelation::ResolvesToDefinition { target, .. } => target.into(),
+            SyntacticRelation::CustomPath { target, .. } => target.into(),
+            SyntacticRelation::Sibling { target, .. } => target.into(),
+            SyntacticRelation::ModuleImports { target, .. } => target.into(),
+            SyntacticRelation::ReExports { target, .. } => target.into(),
+            SyntacticRelation::StructField { target, .. } => target.into(),
+            SyntacticRelation::UnionField { target, .. } => target.into(),
+            SyntacticRelation::VariantField { target, .. } => target.into(),
+            SyntacticRelation::EnumVariant { target, .. } => target.into(),
+            SyntacticRelation::ImplAssociatedItem { target, .. } => target.into(),
+            SyntacticRelation::TraitAssociatedItem { target, .. } => target.into(),
+        }
+    }
 }
+
 impl std::fmt::Display for SyntacticRelation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
