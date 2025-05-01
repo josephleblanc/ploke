@@ -111,6 +111,9 @@ pub enum SynParserError {
 
     #[error(transparent)]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
+
+    #[error(transparent)]
+    AnyNodeIdConversion(#[from] crate::parser::nodes::ids::internal::AnyNodeIdConversionError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]

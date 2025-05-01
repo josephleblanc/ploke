@@ -8,9 +8,10 @@ use crate::parser::graph::GraphNode;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
-use ploke_core::{IdConversionError, NodeId};
+use ploke_core::NodeId; // Removed IdConversionError import
 use std::borrow::Borrow;
 use std::convert::TryFrom;
+use std::error::Error;
 use std::fmt::Display;
 
 // ----- Traits -----
@@ -724,19 +725,30 @@ impl From<ReexportNodeId> for AnyNodeId {
     }
 }
 
+// --- Error Type for AnyNodeId Conversion ---
+
+/// Error type for failed TryFrom<AnyNodeId> conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AnyNodeIdConversionError;
+
+impl std::fmt::Display for AnyNodeIdConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AnyNodeId variant mismatch during conversion")
+    }
+}
+impl Error for AnyNodeIdConversionError {}
+
 // --- TryFrom<AnyNodeId> Implementations for Specific IDs ---
 
 macro_rules! impl_try_from_any_node_id {
     ($SpecificId:ty, $Variant:ident) => {
         impl TryFrom<AnyNodeId> for $SpecificId {
-            type Error = IdConversionError;
+            type Error = AnyNodeIdConversionError; // Use the new error type
             #[inline]
             fn try_from(value: AnyNodeId) -> Result<Self, Self::Error> {
                 match value {
                     AnyNodeId::$Variant(id) => Ok(id),
-                    _ => Err(IdConversionError), // Implement a new error type AI!
-
-                                                 // Also add a new conversion in error.rs AI!
+                    _ => Err(AnyNodeIdConversionError), // Return the new error type
                 }
             }
         }
@@ -769,13 +781,13 @@ impl_try_from_any_node_id!(ReexportNodeId, Reexport);
 // --- Generic TryInto<T> Implementation for AnyNodeId ---
 
 // Now, implement TryInto<T> using the TryFrom implementations above.
-// The bound `T: TryFrom<AnyNodeId, Error = IdConversionError>` ensures this only compiles
+// The bound `T: TryFrom<AnyNodeId, Error = AnyNodeIdConversionError>` ensures this only compiles
 // for types T that we've provided a TryFrom<AnyNodeId> implementation for.
 impl<T> TryInto<T> for AnyNodeId
 where
-    T: TypedId + TryFrom<AnyNodeId, Error = IdConversionError>,
+    T: TypedId + TryFrom<AnyNodeId, Error = AnyNodeIdConversionError>, // Use new error type in bound
 {
-    type Error = IdConversionError;
+    type Error = AnyNodeIdConversionError; // Use new error type
 
     #[inline]
     fn try_into(self) -> Result<T, Self::Error> {
