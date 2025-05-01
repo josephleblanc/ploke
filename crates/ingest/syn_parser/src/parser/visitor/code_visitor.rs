@@ -413,14 +413,23 @@ impl<'a> CodeVisitor<'a> {
             .find(|m| m.path == self.state.current_module_path); // Find module matching current path
         let parent_mod_id_opt = match parent_module_opt {
             Some(parent_mod) => {
+                // Try to convert the generated AnyNodeId to PrimaryNodeId
+                let primary_node_id_opt: Option<PrimaryNodeId> = node_id.try_into().ok();
+
                 match &mut parent_mod.module_def {
                     ModuleKind::Inline { items, .. } => {
-                        items.push(node_id);
-                        Some(parent_mod.id)
+                        // Only add if it's a PrimaryNodeId
+                        if let Some(primary_id) = primary_node_id_opt {
+                            items.push(primary_id);
+                        }
+                        Some(parent_mod.id) // Always return the parent ID
                     }
                     ModuleKind::FileBased { items, .. } => {
-                        items.push(node_id);
-                        Some(parent_mod.id)
+                        // Only add if it's a PrimaryNodeId
+                        if let Some(primary_id) = primary_node_id_opt {
+                            items.push(primary_id);
+                        }
+                        Some(parent_mod.id) // Always return the parent ID
                     }
                     ModuleKind::Declaration { .. } => {
                         // Cannot add items to a declaration, log warning
@@ -429,7 +438,8 @@ impl<'a> CodeVisitor<'a> {
                             "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
                             item_name, item_kind, parent_mod.name, parent_mod.id
                         );
-                        None
+                        // Still return the parent ID, even though item wasn't added to list
+                        Some(parent_mod.id)
                     }
                 }
             }
