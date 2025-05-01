@@ -11,6 +11,7 @@ use super::*;
 use ploke_core::NodeId;
 use std::borrow::Borrow;
 use std::fmt::Display;
+use std::convert::TryFrom; // Need to import TryFrom
 
 // ----- Traits -----
 
@@ -36,6 +37,8 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
 ///   - `pub fn base_id(&self) -> NodeId`: Calls `base_id()` on the inner typed ID.
 ///   - `pub fn kind(&self) -> ItemKind` (optional): Returns the corresponding `ItemKind`.
 /// - `impl From<SpecificIdType> for EnumName` for each variant.
+/// - `impl TryFrom<EnumName> for SpecificIdType` for each variant.
+/// - `impl Display for EnumName`.
 ///
 /// # Usage
 /// ```ignore
@@ -101,7 +104,7 @@ macro_rules! define_category_enum {
                         // Include the variant name using stringify! and delegate formatting of the ID
                         $EnumName::$Variant(id) => write!(f,
                             "{}({})",
-                            stringify!($EnumName::$Variant),
+                            stringify!($Variant),
                             id,
                         ),
                     )*
@@ -109,13 +112,22 @@ macro_rules! define_category_enum {
             }
         }
 
-        // AI: Let's add a `TryFrom<$EnumName> for $IdType` here AI!
-
         $(
             impl From<$IdType> for $EnumName {
                 #[inline]
                 fn from(id: $IdType) -> Self {
                     $EnumName::$Variant(id)
+                }
+            }
+
+            // Implement TryFrom<$EnumName> for $IdType
+            impl TryFrom<$EnumName> for $IdType {
+                type Error = TryFromPrimaryError; // Using the existing error type for simplicity
+                fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
+                    match value {
+                        $EnumName::$Variant(id) => Ok(id),
+                        _ => Err(TryFromPrimaryError),
+                    }
                 }
             }
         )*
@@ -129,7 +141,7 @@ macro_rules! define_category_enum {
             $(
                 $Variant($IdType),
             )*
-        }; // <-- Added semicolon
+        };
 
         impl $EnumName {
             /// Returns the underlying base NodeId using the internal `base_id` method
@@ -152,7 +164,7 @@ macro_rules! define_category_enum {
                         // Include the variant name using stringify! and delegate formatting of the ID
                         $EnumName::$Variant(id) => write!(f,
                             "{}({})",
-                            stringify!($EnumName::$Variant),
+                            stringify!($Variant),
                             id
                         ),
                     )*
@@ -166,7 +178,18 @@ macro_rules! define_category_enum {
                     $EnumName::$Variant(id)
                 }
             }
-        )*; // <-- Add semicolon HERE
+
+            // Implement TryFrom<$EnumName> for $IdType
+            impl TryFrom<$EnumName> for $IdType {
+                type Error = TryFromPrimaryError; // Using the existing error type for simplicity
+                fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
+                    match value {
+                        $EnumName::$Variant(id) => Ok(id),
+                        _ => Err(TryFromPrimaryError),
+                    }
+                }
+            }
+        )*;
     };
 }
 
@@ -291,7 +314,7 @@ macro_rules! define_internal_node_id {
 // Now use the *new* internal macro with markers
 define_internal_node_id!(
     struct EnumNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
@@ -301,70 +324,69 @@ define_internal_node_id!(
 ); // For standalone functions
 define_internal_node_id!(
     struct MethodNodeId {
-        markers: [AssociatedItemIdTrait], // Removed trailing comma
+        markers: [AssociatedItemIdTrait],
     }
 ); // For associated functions/methods
 define_internal_node_id!(
     struct ImplNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct ImportNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct ModuleNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 ); // Use the macro now
 define_internal_node_id!(
     struct StructNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct TraitNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 define_internal_node_id!(struct TypeAliasNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct UnionNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
-// Removed ValueNodeId
 define_internal_node_id!(struct ConstNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct StaticNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 ); // Added
 define_internal_node_id!(
     struct FieldNodeId {
-        markers: [SecondaryNodeIdTrait], // Removed trailing comma
+        markers: [SecondaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct VariantNodeId {
-        markers: [SecondaryNodeIdTrait], // Removed trailing comma
+        markers: [SecondaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct ParamNodeId {
-        markers: [SecondaryNodeIdTrait], // Removed trailing comma
+        markers: [SecondaryNodeIdTrait],
     }
 ); // For ParamData
 define_internal_node_id!(
     struct GenericParamNodeId {
-        markers: [SecondaryNodeIdTrait], // Removed trailing comma
+        markers: [SecondaryNodeIdTrait],
     }
 );
 define_internal_node_id!(
     struct MacroNodeId {
-        markers: [PrimaryNodeIdTrait], // Removed trailing comma
+        markers: [PrimaryNodeIdTrait],
     }
 );
 
@@ -421,10 +443,10 @@ pub trait SecondaryNodeIdTrait: TypedId {} // Marker for secondary node IDs (fie
 
 // Add other category marker traits as needed
 
-/// Private module for the sealing pattern. Prevents external crates or modules                    
-/// from implementing traits intended only for internal ID types (like TypedNodeIdGet).            
+/// Private module for the sealing pattern. Prevents external crates or modules
+/// from implementing traits intended only for internal ID types (like TypedNodeIdGet).
 mod private_traits {
-    /// The sealing trait. Cannot be named or implemented outside this module.                     
+    /// The sealing trait. Cannot be named or implemented outside this module.
     pub(super) trait Sealed {}
 }
 // --- TypedNodeIdGet Implementations ---
@@ -452,126 +474,8 @@ impl_typed_node_id_get!(ModuleNodeId, get_module);
 // Note: ReexportNodeId does *not* get an impl.
 
 // --- TryFrom Implementations for PrimaryNodeId Variants ---
-
-impl TryFrom<PrimaryNodeId> for FunctionNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Function(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for StructNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Struct(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for EnumNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Enum(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for UnionNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Union(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for TypeAliasNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::TypeAlias(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for TraitNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Trait(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for ImplNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Impl(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for ConstNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Const(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for StaticNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Static(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for MacroNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Macro(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for ImportNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Import(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
-
-impl TryFrom<PrimaryNodeId> for ModuleNodeId {
-    type Error = TryFromPrimaryError;
-    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
-        match value {
-            PrimaryNodeId::Module(id) => Ok(id),
-            _ => Err(TryFromPrimaryError),
-        }
-    }
-}
+// These are now generated by the macro define_category_enum!
+// Removed manual implementations
 
 // --- Generated Category Enums ---
 
