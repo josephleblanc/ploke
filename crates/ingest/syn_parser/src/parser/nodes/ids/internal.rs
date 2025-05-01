@@ -245,7 +245,6 @@ macro_rules! define_internal_node_id {
                 &self.0
             }
         }
-        // AI: Implement `TryFrom<PrimaryNodeId>` for $NewTypeId AI!
 
 
         // Implement the base TypedId trait for all generated IDs
@@ -344,6 +343,18 @@ define_internal_node_id!(struct ReexportNodeId { markers: [] }); // No specific 
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 
+/// Error type for failed TryFrom<PrimaryNodeId> conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromPrimaryError;
+
+impl std::fmt::Display for TryFromPrimaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PrimaryNodeId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromPrimaryError {}
+
+
 pub trait PrimaryNodeMarker {}
 
 impl PrimaryNodeMarker for FunctionNode {}
@@ -409,6 +420,129 @@ impl_typed_node_id_get!(ModuleNodeId, get_module);
 
 // Other IDs
 // Note: ReexportNodeId does *not* get an impl.
+
+// --- TryFrom Implementations for PrimaryNodeId Variants ---
+
+impl TryFrom<PrimaryNodeId> for FunctionNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Function(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for StructNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Struct(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for EnumNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Enum(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for UnionNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Union(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for TypeAliasNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::TypeAlias(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for TraitNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Trait(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for ImplNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Impl(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for ConstNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Const(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for StaticNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Static(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for MacroNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Macro(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for ImportNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Import(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
+impl TryFrom<PrimaryNodeId> for ModuleNodeId {
+    type Error = TryFromPrimaryError;
+    fn try_from(value: PrimaryNodeId) -> Result<Self, Self::Error> {
+        match value {
+            PrimaryNodeId::Module(id) => Ok(id),
+            _ => Err(TryFromPrimaryError),
+        }
+    }
+}
+
 
 // --- Generated Category Enums ---
 
