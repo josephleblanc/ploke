@@ -734,7 +734,9 @@ macro_rules! impl_try_from_any_node_id {
             fn try_from(value: AnyNodeId) -> Result<Self, Self::Error> {
                 match value {
                     AnyNodeId::$Variant(id) => Ok(id),
-                    _ => Err(IdConversionError), // Assuming IdConversionError is defined in ploke_core and suitable
+                    _ => Err(IdConversionError), // Implement a new error type AI!
+
+                                                 // Also add a new conversion in error.rs AI!
                 }
             }
         }
@@ -764,7 +766,6 @@ impl_try_from_any_node_id!(GenericParamNodeId, GenericParam);
 // Other IDs
 impl_try_from_any_node_id!(ReexportNodeId, Reexport);
 
-
 // --- Generic TryInto<T> Implementation for AnyNodeId ---
 
 // Now, implement TryInto<T> using the TryFrom implementations above.
@@ -781,7 +782,6 @@ where
         T::try_from(self)
     }
 }
-
 
 // --- Node Struct Definitions ---
 // Logging target
