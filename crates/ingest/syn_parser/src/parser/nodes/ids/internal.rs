@@ -128,8 +128,8 @@ macro_rules! define_category_enum {
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        // Instantiate the error type (assuming it's a unit-like struct)
-                        _ => Err($ErrorType),
+                        // Instantiate the error type using Default
+                        _ => Err($ErrorType::default()),
                     }
                 }
             }
@@ -188,8 +188,8 @@ macro_rules! define_category_enum {
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        // Instantiate the error type (assuming it's a unit-like struct)
-                        _ => Err($ErrorType),
+                        // Instantiate the error type using Default
+                        _ => Err($ErrorType::default()),
                     }
                 }
             }
@@ -411,6 +411,12 @@ impl std::fmt::Display for TryFromPrimaryError {
 }
 impl std::error::Error for TryFromPrimaryError {}
 
+impl Default for TryFromPrimaryError {
+    fn default() -> Self {
+        TryFromPrimaryError
+    }
+}
+
 /// Error type for failed TryFrom<AssociatedItemId> conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TryFromAssociatedItemError;
@@ -421,6 +427,12 @@ impl std::fmt::Display for TryFromAssociatedItemError {
     }
 }
 impl std::error::Error for TryFromAssociatedItemError {}
+
+impl Default for TryFromAssociatedItemError {
+    fn default() -> Self {
+        TryFromAssociatedItemError
+    }
+}
 
 pub trait PrimaryNodeMarker {}
 
