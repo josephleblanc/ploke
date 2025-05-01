@@ -122,16 +122,14 @@ macro_rules! define_category_enum {
                 }
             }
 
-        // AI: Having some trouble with the error type on this macro.
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
                 type Error = $ErrorType; // Use the provided error type
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        _ => Err($ErrorType), // AI: compiler error here - expected expr, found
-        // type
-        // AI!
+                        // Instantiate the error type (assuming it's a unit-like struct)
+                        _ => Err($ErrorType),
                     }
                 }
             }
@@ -190,6 +188,7 @@ macro_rules! define_category_enum {
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
+                        // Instantiate the error type (assuming it's a unit-like struct)
                         _ => Err($ErrorType),
                     }
                 }
