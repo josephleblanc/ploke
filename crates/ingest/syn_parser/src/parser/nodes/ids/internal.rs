@@ -403,6 +403,7 @@ use ploke_core::ItemKind; // Need ItemKind for kind() methods
 /// Error type for failed TryFrom<PrimaryNodeId> conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TryFromPrimaryError;
+// AI: These are the error types. Your fix didn't do anything AI!
 
 impl std::fmt::Display for TryFromPrimaryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
