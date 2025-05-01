@@ -11,7 +11,7 @@ use super::*;
 use ploke_core::NodeId;
 use std::borrow::Borrow;
 use std::convert::TryFrom;
-use std::fmt::Display; // Need to import TryFrom
+use std::fmt::Display;
 
 // ----- Traits -----
 
@@ -37,7 +37,7 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
 ///   - `pub fn base_id(&self) -> NodeId`: Calls `base_id()` on the inner typed ID.
 ///   - `pub fn kind(&self) -> ItemKind` (optional): Returns the corresponding `ItemKind`.
 /// - `impl From<SpecificIdType> for EnumName` for each variant.
-/// - `impl TryFrom<EnumName> for SpecificIdType` for each variant.
+/// - `impl TryFrom<EnumName> for SpecificIdType` for each variant, using a specified error type.
 /// - `impl Display for EnumName`.
 ///
 /// # Usage
@@ -45,6 +45,7 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
 /// define_category_enum!(
 ///     #[doc = "Represents primary node IDs."] // Optional outer attributes
 ///     PrimaryNodeId, // Enum Name
+///     TryFromPrimaryError, // Error type for TryFrom
 ///     ItemKind, // Include kind() method that returns this type
 ///     [ // List of variants: (VariantName, SpecificIdType, ItemKindValue)
 ///         (Function, FunctionNodeId, ItemKind::Function),
@@ -55,6 +56,7 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
 ///
 /// define_category_enum!(
 ///     AnyNodeId, // Enum Name
+///     TryFromAnyNodeError, // Error type for TryFrom
 ///     // No ItemKind specified, so kind() method won't be generated
 ///     [ // List of variants: (VariantName, SpecificIdType)
 ///         (Function, FunctionNodeId),
@@ -65,7 +67,7 @@ pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
 /// ```
 macro_rules! define_category_enum {
     // Matcher for enums WITH an associated ItemKind method
-    ($(#[$outer:meta])* $EnumName:ident, $KindType:ty, [ $( ($Variant:ident, $IdType:ty, $ItemKindVal:expr) ),* $(,)? ] ) => {
+    ($(#[$outer:meta])* $EnumName:ident, $ErrorType:ty, $KindType:ty, [ $( ($Variant:ident, $IdType:ty, $ItemKindVal:expr) ),* $(,)? ] ) => {
         $(#[$outer])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
         pub enum $EnumName {
@@ -122,13 +124,11 @@ macro_rules! define_category_enum {
 
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
-                type Error = TryFromPrimaryError; // Let's use a different error type for each enum
-        // since using this one would be confusing - we call the macro on PrimaryNodeId but we
-        // don't want to use that error even when other enums are defined by this macro AI!
+                type Error = $ErrorType; // Use the provided error type
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        _ => Err(TryFromPrimaryError),
+                        _ => Err($ErrorType),
                     }
                 }
             }
@@ -136,7 +136,7 @@ macro_rules! define_category_enum {
     };
 
     // Matcher for enums WITHOUT an associated ItemKind method (like AnyNodeId)
-    ($(#[$outer:meta])* $EnumName:ident, [ $( ($Variant:ident, $IdType:ty) ),* $(,)? ] ) => {
+    ($(#[$outer:meta])* $EnumName:ident, $ErrorType:ty, [ $( ($Variant:ident, $IdType:ty) ),* $(,)? ] ) => {
         $(#[$outer])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
         pub enum $EnumName {
@@ -183,11 +183,11 @@ macro_rules! define_category_enum {
 
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
-                type Error = TryFromPrimaryError; // Using the existing error type for simplicity
+                type Error = $ErrorType; // Use the provided error type
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
-                        _ => Err(TryFromPrimaryError),
+                        _ => Err($ErrorType),
                     }
                 }
             }
@@ -409,6 +409,18 @@ impl std::fmt::Display for TryFromPrimaryError {
 }
 impl std::error::Error for TryFromPrimaryError {}
 
+/// Error type for failed TryFrom<AssociatedItemId> conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromAssociatedItemError;
+
+impl std::fmt::Display for TryFromAssociatedItemError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AssociatedItemId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromAssociatedItemError {}
+
+
 pub trait PrimaryNodeMarker {}
 
 impl PrimaryNodeMarker for FunctionNode {}
@@ -484,6 +496,7 @@ impl_typed_node_id_get!(ModuleNodeId, get_module);
 define_category_enum!(
     #[doc = "Represents the ID of any node type that can typically be defined directly within a module scope (primary items)."]
     PrimaryNodeId,
+    TryFromPrimaryError, // Pass the specific error type
     ItemKind,
     [
         (Function, FunctionNodeId, ItemKind::Function),
@@ -504,6 +517,7 @@ define_category_enum!(
 define_category_enum!(
     #[doc = "Represents the ID of any node type that can be an associated item within an `impl` or `trait` block."]
     AssociatedItemId,
+    TryFromAssociatedItemError, // Pass the specific error type
     ItemKind,
     [
         (Method, MethodNodeId, ItemKind::Method),
