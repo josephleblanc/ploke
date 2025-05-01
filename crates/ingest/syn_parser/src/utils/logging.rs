@@ -755,6 +755,7 @@ pub trait LogDataStructure {
             existing_id.to_string().log_id(),
             "This implies a non-unique canonical path was generated or indexed incorrectly.".log_comment()
         );
+    }
 }
 
 // --- New Trait for Error Logging ---
@@ -794,7 +795,6 @@ impl LogErrorConversion for VisitorState {
         // Consider adding more context like parent_scope_id if helpful
     }
 }
-
 
 /// Helper struct to hold context for accessibility logging.
 pub(crate) struct AccLogCtx<'a> {
@@ -853,8 +853,8 @@ pub(crate) struct CfgLogCtx<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub module_path: &'a [String], // Use slice for efficiency
-    pub module_cfgs: Vec<String>, // Changed to owned Vec<String>
-    // module_attrs: &'a [Attribute],
+    pub module_cfgs: &'a [String], // Changed to owned Vec<String>
+                                   // module_attrs: &'a [Attribute],
 }
 
 #[allow(dead_code, reason = "useful later for cfg-aware handling")]
@@ -866,7 +866,7 @@ impl<'a> CfgLogCtx<'a> {
             module_name: &module_node.name,
             module_path: &module_node.path,
             module_cfgs: module_node.cfgs(), // Assign the owned Vec<String> directly
-            // module_attrs: &module_node.attributes(),
+                                             // module_attrs: &module_node.attributes(),
         }
     }
 }

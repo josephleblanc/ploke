@@ -110,10 +110,7 @@ pub enum SynParserError {
     VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
 
     #[error(transparent)]
-    RelationConversion(#[from] crate::parser::relations::RelationConversionError),
-
-    #[error(transparent)]
-    AnyNodeIdConversion(#[from] crate::parser::nodes::ids::internal::AnyNodeIdConversionError),
+    AnyNodeIdConversion(#[from] crate::parser::nodes::AnyNodeIdConversionError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]

@@ -1,18 +1,23 @@
+// TODO: Consider using a builder pattern for these nodes. The way we repeat code for the
+// ImportNodeIds is just so painful.
+
 use super::attribute_processing::extract_attributes;
 use super::attribute_processing::extract_cfg_strings;
 use super::attribute_processing::extract_docstring;
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
 use crate::parser::graph::GraphAccess;
+use crate::parser::nodes::AnyNodeId;
 use crate::parser::nodes::AssociatedItemId;
 use crate::parser::nodes::ConstNode;
-use crate::parser::nodes::MacroNodeId;
+use crate::parser::nodes::GenerateTypeId;
+use crate::parser::nodes::GeneratesAnyNodeId;
+use crate::parser::nodes::ImportNodeId;
 use crate::parser::nodes::MethodNode;
 use crate::parser::nodes::ModuleNode;
-use crate::parser::nodes::ModuleNodeId; // Keep
-use crate::parser::nodes::PrimaryNodeId; // Keep
-use crate::parser::nodes::StaticNode; // Keep
-use crate::parser::nodes::StructNodeId;
+use crate::parser::nodes::ModuleNodeId;
+use crate::parser::nodes::PrimaryNodeId;
+use crate::parser::nodes::StaticNode;
 use crate::parser::nodes::StructNodeInfo;
 // Keep
 // Remove StructNodeInfo import, it's generated implicitly now
@@ -55,7 +60,7 @@ use crate::parser::ExtractSpan;
 use crate::error::CodeVisitorError; // Import the new error type
 use crate::parser::nodes::ModuleKind;
 use ploke_core::ItemKind;
-use ploke_core::{NodeId, TypeId};
+use ploke_core::TypeId;
 
 use colored::*;
 use log::{error, trace}; // Import error macro
@@ -144,10 +149,11 @@ impl<'a> CodeVisitor<'a> {
                     return Err(err);
                 }
                 // If registration succeeded, unwrap and proceed
-                let (import_base_id, _) = registration_result.unwrap();
+                let (import_any_id, _) = registration_result.unwrap();
+                let import_typed_id: ImportNodeId = import_any_id.try_into().unwrap();
 
-                let import_info = ImportNodeInfo {
-                    id: import_base_id,
+                let import_node = ImportNode {
+                    id: import_typed_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: checked_name,
@@ -158,11 +164,10 @@ impl<'a> CodeVisitor<'a> {
                     cfgs: Vec::new(), // CFGs are handled at the ItemUse level
                 };
                 // Return a Vec containing just this single import node.
-                Ok(vec![ImportNode::new(import_info)])
+                Ok(vec![import_node])
             }
             syn::UseTree::Rename(rename) => {
                 // Base case: Renaming an imported item.
-                let mut full_path_for_id = base_path.clone(); // Clone for ID registration if needed
                 let original_name = rename.ident.to_string();
                 let visible_name = rename.rename.to_string(); // The 'as' name
 
@@ -183,15 +188,16 @@ impl<'a> CodeVisitor<'a> {
                     error!(target: LOG_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
-                let (import_base_id, _) = registration_result.unwrap();
+                let (import_any_id, _) = registration_result.unwrap();
+                let import_node_id: ImportNodeId = import_any_id.try_into().unwrap();
 
                 // The source path uses the original name.
                 let mut source_path = base_path; // Take ownership
                 source_path.push(original_name.clone());
 
-                let import_info = ImportNodeInfo {
-                    id: import_base_id,
-                    source_path: full_path,
+                let import_node = ImportNode {
+                    id: import_node_id,
+                    source_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name,
                     original_name: Some(original_name), // The original name before 'as'
@@ -201,7 +207,7 @@ impl<'a> CodeVisitor<'a> {
                     cfgs: Vec::new(), // CFGs are handled at the ItemUse level
                 };
                 // Return a Vec containing just this single import node.
-                Ok(vec![ImportNode::new(import_info)])
+                Ok(vec![import_node])
             }
             syn::UseTree::Glob(glob) => {
                 // Base case: A glob import.
@@ -219,13 +225,13 @@ impl<'a> CodeVisitor<'a> {
                     error!(target: LOG_TARGET_TRACE, "{}", err);
                     return Err(err);
                 }
-                let (import_base_id, _) = registration_result.unwrap();
+                let (import_any_id, _) = registration_result.unwrap();
 
                 // Use the original base_path
                 let full_path = base_path; // Take ownership
 
                 let import_info = ImportNodeInfo {
-                    id: import_base_id,
+                    id: import_any_id,
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
                     visible_name: "*".to_string(),
@@ -286,13 +292,13 @@ impl<'a> CodeVisitor<'a> {
         }
     }
     // Removed #[cfg(feature = "verbose_debug")]
-    fn debug_mod_stack_push(&mut self, name: String, node_id: NodeId) {
+    fn debug_mod_stack_push(&mut self, name: String, pr_id: PrimaryNodeId) {
         if let Some(current_mod) = self
             .state
             .code_graph
             .modules // Remove extra .code_graph.modules
             .iter()
-            .find(|m| m.items().is_some_and(|items| items.contains(&node_id)))
+            .find(|m| m.items().is_some_and(|items| items.contains(&pr_id)))
         {
             let items_str = current_mod
                 .items()
@@ -308,16 +314,16 @@ impl<'a> CodeVisitor<'a> {
             trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH ITEM] Mod: {} -> Item: {} ({}) | Items now: [{}]",
                 current_mod.name.cyan(),
                 name.yellow(),
-                node_id.to_string().magenta(),
+                pr_id.to_string().magenta(),
                 items_str.dimmed()
             );
         } else {
             // Log warning instead of panic
-            log::warn!(target: LOG_TARGET_TRACE, "Could not find containing module for node with name {}, id {}", name, node_id);
+            log::warn!(target: LOG_TARGET_TRACE, "Could not find containing module for node with name {}, id {}", name, pr_id);
         }
     }
     // Removed #[cfg(feature = "verbose_debug")]
-    fn debug_new_id(&mut self, name: &str, node_id: NodeId) {
+    fn debug_new_id(&mut self, name: &str, node_id: AnyNodeId) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
             trace!(target: LOG_TARGET_TRACE, "  [NEW ID] In Mod: {} -> Item: {} ({})",
                 current_mod.name.cyan(),
@@ -353,7 +359,7 @@ impl<'a> CodeVisitor<'a> {
         item_name: &str,
         item_kind: ItemKind,
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
-    ) -> Option<(NodeId, ModuleNodeId)> {
+    ) -> Option<(AnyNodeId, ModuleNodeId)> {
         // Return base ID and parent ModuleNodeId
         // 1. Generate the Synthetic NodeId using the state helper, passing CFG bytes
         let node_id = self
@@ -361,17 +367,23 @@ impl<'a> CodeVisitor<'a> {
             .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
 
         // 2. Find the parent module based on the *current path* and add the item ID.
-        let parent_module_id = self
+        let parent_module_opt = self
             .state
             .code_graph
             .modules
             .iter_mut() // Need mutable access to add to items list
-            .find(|m| m.path == self.state.current_module_path) // Find module matching current path
-            .map(|parent_mod| {
-                // Add item ID to the module's definition
+            .find(|m| m.path == self.state.current_module_path); // Find module matching current path
+        let parent_mod_id_opt = match parent_module_opt {
+            Some(parent_mod) => {
                 match &mut parent_mod.module_def {
-                    ModuleKind::Inline { items, .. } => items.push(node_id),
-                    ModuleKind::FileBased { items, .. } => items.push(node_id),
+                    ModuleKind::Inline { items, .. } => {
+                        items.push(node_id);
+                        Some(parent_mod.id)
+                    }
+                    ModuleKind::FileBased { items, .. } => {
+                        items.push(node_id);
+                        Some(parent_mod.id)
+                    }
                     ModuleKind::Declaration { .. } => {
                         // Cannot add items to a declaration, log warning
                         log::warn!(
@@ -379,27 +391,41 @@ impl<'a> CodeVisitor<'a> {
                             "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
                             item_name, item_kind, parent_mod.name, parent_mod.id
                         );
+                        None
                     }
                 }
-                self.debug_mod_stack_push(item_name.to_owned(), node_id);
-                parent_mod.module_id() // Return the typed ModuleNodeId
-            });
-
-        if parent_module_id.is_none() {
-            // This case should ideally not happen after the root module is created.
-            log::warn!(
+            }
+            None => {
+                log::warn!(
                 target: LOG_TARGET_TRACE,
                 "Could not find parent module for item '{}' ({:?}) using current_module_path {:?}. Item not added to module list.",
                 item_name, item_kind, self.state.current_module_path
-            );
-            None
-        } else {
-            Some((node_id, parent_module_id.unwrap())) // Return base ID and parent typed ID
-        }
+                );
+                None
+            }
+        };
+        parent_mod_id_opt.map(|parent_mod_id| (node_id, parent_mod_id))
+        // .map(|parent_mod| {
+        //     // Add item ID to the module's definition
+        //     match &mut parent_mod.module_def {
+        //         ModuleKind::Inline { items, .. } => items.push(node_id),
+        //         ModuleKind::FileBased { items, .. } => items.push(node_id),
+        //         ModuleKind::Declaration { .. } => {
+        //             // Cannot add items to a declaration, log warning
+        //             log::warn!(
+        //                 target: LOG_TARGET_TRACE,
+        //                 "Attempted to add item '{}' ({:?}) to a module declaration node '{}' ({}). Item not added to list.",
+        //                 item_name, item_kind, parent_mod.name, parent_mod.id
+        //             );
+        //         }
+        //     }
+        //     self.debug_mod_stack_push(item_name.to_owned(), node_id);
+        //     parent_mod.module_id() // Return the typed ModuleNodeId
+        // });
     }
 
     // Helper to push scope and log (using trace!)
-    fn push_scope(&mut self, name: &str, id: NodeId, cfgs: Vec<String>) {
+    fn push_scope(&mut self, name: &str, id: AnyNodeId, cfgs: Vec<String>) {
         self.state.current_definition_scope.push(id);
         self.state
             .cfg_stack
@@ -421,7 +447,6 @@ impl<'a> CodeVisitor<'a> {
         );
     }
 }
-
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
@@ -451,8 +476,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let registration_result =
             self.register_new_node_id(&macro_name, ItemKind::Macro,
                 cfg_bytes.as_deref()).unwrap_or_else(|| todo!("Implement proper error handling. We can't return a result inside the visitor implementation but we can log the error."));
-            let (macro_base_id, parent_mod_id) = registration_result;
-            self.debug_new_id(&macro_name, macro_base_id);
+            let (macro_any_id, parent_mod_id) = registration_result;
+            self.debug_new_id(&macro_name, macro_any_id);
             let span = func.extract_span_bytes();
             let proc_macro_kind = if func
                 .attrs
@@ -474,7 +499,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let body = Some(func.block.to_token_stream().to_string());
 
             let macro_info = MacroNodeInfo {
-                id: macro_base_id,
+                id: macro_any_id,
                 name: macro_name.clone(),
                 visibility: self.state.convert_visibility(&func.vis),
                 kind: MacroKind::ProcedureMacro {
@@ -517,16 +542,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             if registration_result.is_none() {
                 return;
             } // Skip if parent module not found
-            let (fn_base_id, parent_mod_id) = registration_result.unwrap();
+            let (fn_any_id, parent_mod_id) = registration_result.unwrap();
 
-            self.debug_new_id(&fn_name, fn_base_id); // Now uses trace!
+            self.debug_new_id(&fn_name, fn_any_id); // Now uses trace!
 
             let byte_range = func.span().byte_range();
             let span = (byte_range.start, byte_range.end);
 
             // Push the function's base ID onto the scope stack BEFORE processing types/generics
             // Use helper function for logging
-            self.push_scope(&fn_name, fn_base_id, provisional_effective_cfgs);
+            self.push_scope(&fn_name, fn_any_id, provisional_effective_cfgs);
 
             // Process function parameters
             let mut parameters = Vec::new();
@@ -563,7 +588,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Create info struct and then the node
             let function_info = FunctionNodeInfo {
-                id: fn_base_id,
+                id: fn_any_id,
                 name: fn_name.clone(),
                 span,
                 visibility: self.state.convert_visibility(&func.vis),
@@ -587,7 +612,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
             self.state.code_graph.relations.push(relation);
 
-            // Continue visiting the function body (fn_base_id is already off the stack)
+            // Continue visiting the function body (fn_any_id is already off the stack)
             visit::visit_item_fn(self, func);
         } // End else block for regular functions
     }
@@ -613,9 +638,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (struct_base_id, parent_mod_id) = registration_result.unwrap();
+        let (struct_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&struct_name, struct_base_id); // Now uses trace!
+        self.debug_new_id(&struct_name, struct_any_id); // Now uses trace!
 
         let byte_range = item_struct.span().byte_range();
         let span = (byte_range.start, byte_range.end);
@@ -624,7 +649,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Use helper function for logging
         self.push_scope(
             &struct_name,
-            struct_base_id,
+            struct_any_id,
             provisional_effective_cfgs.clone(),
         ); // Clone cfgs for push
 
@@ -647,7 +672,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Generate base ID for the field
             // Note: Fields are contained within the struct, not directly in the module,
             // so we don't use register_new_node_id here.
-            let field_base_id = self.state.generate_synthetic_node_id(
+            let field_any_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
                     .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
@@ -660,12 +685,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 &field_name
                     .clone()
                     .unwrap_or("unnamed_struct_field".to_string()),
-                field_base_id,
+                field_any_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
 
             let field_info = FieldNodeInfo {
-                id: field_base_id,
+                id: field_any_id,
                 name: field_name,
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
@@ -688,7 +713,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create the struct node
         let struct_node_info = StructNodeInfo {
-            id: struct_base_id, // Use base ID
+            id: struct_any_id, // Use base ID
             name: struct_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_struct.vis),
@@ -755,9 +780,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (type_alias_base_id, parent_mod_id) = registration_result.unwrap();
+        let (type_alias_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&type_alias_name, type_alias_base_id); // Now uses trace!
+        self.debug_new_id(&type_alias_name, type_alias_any_id); // Now uses trace!
 
         let span = item_type.extract_span_bytes();
 
@@ -765,7 +790,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Type aliases don't introduce a new CFG scope, so pass current scope cfgs
         self.push_scope(
             &type_alias_name,
-            type_alias_base_id,
+            type_alias_any_id,
             self.state.current_scope_cfgs.clone(),
         );
 
@@ -785,7 +810,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let type_alias_info = TypeAliasNodeInfo {
-            id: type_alias_base_id,
+            id: type_alias_any_id,
             name: type_alias_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_type.vis),
@@ -816,7 +841,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.relations.push(contains_relation);
 
         // Type aliases don't define a new CFG scope for children.
-        // Continue visiting (type_alias_base_id is already off the definition stack)
+        // Continue visiting (type_alias_any_id is already off the definition stack)
         visit::visit_item_type(self, item_type);
     }
 
@@ -841,9 +866,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (union_base_id, parent_mod_id) = registration_result.unwrap();
+        let (union_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&union_name, union_base_id); // Now uses trace!
+        self.debug_new_id(&union_name, union_any_id); // Now uses trace!
 
         let span = item_union.extract_span_bytes();
 
@@ -851,7 +876,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Use helper function for logging
         self.push_scope(
             &union_name,
-            union_base_id,
+            union_any_id,
             provisional_effective_cfgs.clone(),
         ); // Clone cfgs for push
 
@@ -872,7 +897,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // --- End CFG Handling ---
 
             // Generate base ID for the field
-            let field_base_id = self.state.generate_synthetic_node_id(
+            let field_any_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
                     .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
@@ -883,12 +908,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 &field_name
                     .clone()
                     .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
-                field_base_id,
+                field_any_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);
 
             let field_info = FieldNodeInfo {
-                id: field_base_id,
+                id: field_any_id,
                 name: field_name,
                 type_id,
                 visibility: self.state.convert_visibility(&field.vis),
@@ -913,7 +938,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let union_info = UnionNodeInfo {
-            id: union_base_id,
+            id: union_any_id,
             name: union_name.clone(),
             span, // Add span here
             visibility: self.state.convert_visibility(&item_union.vis),
@@ -980,9 +1005,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (enum_base_id, parent_mod_id) = registration_result.unwrap();
+        let (enum_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&enum_name, enum_base_id); // Now uses trace!
+        self.debug_new_id(&enum_name, enum_any_id); // Now uses trace!
 
         let span = item_enum.extract_span_bytes();
 
@@ -1004,7 +1029,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // --- End CFG Handling ---
 
             // Generate base ID for the variant
-            let variant_base_id = self.state.generate_synthetic_node_id(
+            let variant_any_id = self.state.generate_synthetic_node_id(
                 &variant_name,
                 ItemKind::Variant,
                 variant_cfg_bytes.as_deref(), // Pass variant's CFG bytes
@@ -1014,7 +1039,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Variants don't introduce a new CFG scope, pass current (enum's) scope cfgs
             self.push_scope(
                 &variant_name,
-                variant_base_id,
+                variant_any_id,
                 self.state.current_scope_cfgs.clone(),
             );
 
@@ -1039,7 +1064,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         // --- End CFG Handling ---
 
                         // Generate base ID for the field
-                        let field_base_id = self.state.generate_synthetic_node_id(
+                        let field_any_id = self.state.generate_synthetic_node_id(
                             &field_name
                                 .clone()
                                 .unwrap_or_else(|| format!("unnamed_field_in_{}", variant_name)),
@@ -1050,12 +1075,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             &field_name
                                 .clone()
                                 .unwrap_or("unnamed_enum_field".to_string()),
-                            field_base_id,
+                            field_any_id,
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
 
                         let field_info = FieldNodeInfo {
-                            id: field_base_id,
+                            id: field_any_id,
                             name: field_name,
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
@@ -1086,16 +1111,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         // --- End CFG Handling ---
 
                         // Generate base ID for the field
-                        let field_base_id = self.state.generate_synthetic_node_id(
+                        let field_any_id = self.state.generate_synthetic_node_id(
                             &field_name_placeholder, // Use placeholder for ID generation
                             ItemKind::Field,
                             field_cfg_bytes.as_deref(),
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
-                        self.debug_new_id("unnamed_enum_field", field_base_id);
+                        self.debug_new_id("unnamed_enum_field", field_any_id);
 
                         let field_info = FieldNodeInfo {
-                            id: field_base_id,
+                            id: field_any_id,
                             name: None,
                             type_id,
                             visibility: self.state.convert_visibility(&field.vis),
@@ -1123,7 +1148,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Create info struct and then the node
             let variant_info = VariantNodeInfo {
-                id: variant_base_id,
+                id: variant_any_id,
                 name: variant_name,
                 fields: fields.clone(), // Clone the collected FieldNode Vec
                 discriminant,
@@ -1149,7 +1174,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Push the enum's base ID onto the scope stack BEFORE processing its generics
         // Use helper function for logging
-        self.push_scope(&enum_name, enum_base_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
+        self.push_scope(&enum_name, enum_any_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
@@ -1165,7 +1190,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let enum_info = EnumNodeInfo {
-            id: enum_base_id,
+            id: enum_any_id,
             name: enum_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_enum.vis),
@@ -1232,9 +1257,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (impl_base_id, parent_mod_id) = registration_result.unwrap();
+        let (impl_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&impl_name, impl_base_id); // Log with the generated name, now uses trace!
+        self.debug_new_id(&impl_name, impl_any_id); // Log with the generated name, now uses trace!
 
         // Process self type,
         // // Case 1: Simple struct
@@ -1252,7 +1277,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Pushing parent node base id to stack BEFORE generating self type.
         // Use helper function for logging
-        self.push_scope(&impl_name, impl_base_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
+        self.push_scope(&impl_name, impl_any_id, provisional_effective_cfgs.clone()); // Clone cfgs for push
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -1288,19 +1313,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Generate base ID for the method
                 // Methods are contained within the impl, not directly in the module.
-                let method_base_id = self.state.generate_synthetic_node_id(
+                let method_any_id = self.state.generate_synthetic_node_id(
                     &method_name,
                     ItemKind::Method, // Use Method kind
                     method_cfg_bytes.as_deref(),
                 );
 
-                self.debug_new_id(&method_name, method_base_id); // Now uses trace!
+                self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
                 // Push the method's base ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (impl's) scope cfgs
                 self.push_scope(
                     &method_name,
-                    method_base_id,
+                    method_any_id,
                     self.state.current_scope_cfgs.clone(),
                 );
 
@@ -1340,7 +1365,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Create info struct and then the node
                 let method_info = MethodNodeInfo {
-                    id: method_base_id,
+                    id: method_any_id,
                     name: method_name.clone(),
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&method.vis),
@@ -1374,7 +1399,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let impl_info = ImplNodeInfo {
-            id: impl_base_id,
+            id: impl_any_id,
             span: item_impl.extract_span_bytes(),
             self_type: self_type_id,
             trait_type: trait_type_id,
@@ -1449,9 +1474,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (trait_base_id, parent_mod_id) = registration_result.unwrap();
+        let (trait_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&trait_name, trait_base_id); // Now uses trace!
+        self.debug_new_id(&trait_name, trait_any_id); // Now uses trace!
 
         // Process methods
         let mut methods = Vec::new();
@@ -1472,19 +1497,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // --- End CFG Handling ---
 
                 // Generate base ID for the method definition within the trait
-                let method_base_id = self.state.generate_synthetic_node_id(
+                let method_any_id = self.state.generate_synthetic_node_id(
                     &method_name,
                     ItemKind::Method, // Use Method kind
                     method_cfg_bytes.as_deref(),
                 );
 
-                self.debug_new_id(&method_name, method_base_id); // Now uses trace!
+                self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
                 // Push the method's base ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
                 self.push_scope(
                     &method_name,
-                    method_base_id,
+                    method_any_id,
                     self.state.current_scope_cfgs.clone(),
                 );
 
@@ -1526,7 +1551,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Create info struct and then the node
                 let method_info = MethodNodeInfo {
-                    id: method_base_id,
+                    id: method_any_id,
                     name: method_name,
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
@@ -1560,7 +1585,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Use helper function for logging
         self.push_scope(
             &trait_name,
-            trait_base_id,
+            trait_any_id,
             provisional_effective_cfgs.clone(),
         ); // Clone cfgs for push
 
@@ -1607,7 +1632,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let trait_info = TraitNodeInfo {
-            id: trait_base_id,
+            id: trait_any_id,
             name: trait_name.clone(),
             span: item_trait.extract_span_bytes(),
             visibility: self.state.convert_visibility(&item_trait.vis),
@@ -1689,13 +1714,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (module_base_id, parent_mod_id) = registration_result.unwrap();
+        let (module_any_id, parent_mod_id) = registration_result.unwrap();
 
         self.debug_mod_stack(); // Now uses trace!
 
         let span = module.extract_span_bytes();
 
-        self.debug_new_id(&module_name, module_base_id); // Now uses trace!
+        self.debug_new_id(&module_name, module_any_id); // Now uses trace!
 
         // Save current path before entering module
         let parent_path = self.state.current_module_path.clone();
@@ -1722,7 +1747,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let module_info = ModuleNodeInfo {
-            id: module_base_id,
+            id: module_any_id,
             name: module_name.clone(),
             path: self.state.current_module_path.clone(),
             visibility: self.state.convert_visibility(&module.vis),
@@ -1760,7 +1785,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.relations.push(contains_relation);
 
         // Push the module's scope using the helper *before* visiting children
-        self.push_scope(&module_name, module_base_id, provisional_effective_cfgs);
+        self.push_scope(&module_name, module_any_id, provisional_effective_cfgs);
 
         // Continue visiting children.
         visit::visit_item_mod(self, module);
@@ -1902,16 +1927,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         }
-        let (import_base_id, parent_mod_id) = registration_result.unwrap();
+        let (import_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&visible_name, import_base_id); // Log with visible name, now uses trace!
+        self.debug_new_id(&visible_name, import_any_id); // Log with visible name, now uses trace!
 
         let crate_name = extern_crate.ident.to_string();
 
         let span = extern_crate.extract_span_bytes();
 
         let import_info = ImportNodeInfo {
-            id: import_base_id,
+            id: import_any_id,
             span,
             source_path: vec![crate_name.clone()],
             kind: ImportKind::ExternCrate,
@@ -2002,9 +2027,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (const_base_id, parent_mod_id) = registration_result.unwrap();
+        let (const_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&const_name, const_base_id); // Now uses trace!
+        self.debug_new_id(&const_name, const_any_id); // Now uses trace!
 
         let span = item_const.extract_span_bytes();
 
@@ -2021,7 +2046,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let const_info = ConstNodeInfo {
-            id: const_base_id,
+            id: const_any_id,
             name: const_name,
             span, // Add span here
             visibility: self.state.convert_visibility(&item_const.vis),
@@ -2078,9 +2103,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (static_base_id, parent_mod_id) = registration_result.unwrap();
+        let (static_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&static_name, static_base_id); // Now uses trace!
+        self.debug_new_id(&static_name, static_any_id); // Now uses trace!
 
         let span = item_static.extract_span_bytes();
 
@@ -2096,7 +2121,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let static_info = StaticNodeInfo {
-            id: static_base_id,
+            id: static_any_id,
             name: static_name,
             span, // Add span here
             visibility: self.state.convert_visibility(&item_static.vis),
@@ -2180,9 +2205,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         if registration_result.is_none() {
             return;
         } // Skip if parent module not found
-        let (macro_base_id, parent_mod_id) = registration_result.unwrap();
+        let (macro_any_id, parent_mod_id) = registration_result.unwrap();
 
-        self.debug_new_id(&macro_name, macro_base_id); // Now uses trace!
+        self.debug_new_id(&macro_name, macro_any_id); // Now uses trace!
 
         let span = item_macro.extract_span_bytes();
 
@@ -2192,7 +2217,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Create info struct and then the node
         let macro_info = MacroNodeInfo {
-            id: macro_base_id,
+            id: macro_any_id,
             name: macro_name,
             span, // Add span here
             visibility,
