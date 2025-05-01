@@ -10,8 +10,8 @@ use crate::parser::graph::GraphNode;
 use super::*;
 use ploke_core::NodeId;
 use std::borrow::Borrow;
-use std::fmt::Display;
-use std::convert::TryFrom; // Need to import TryFrom
+use std::convert::TryFrom;
+use std::fmt::Display; // Need to import TryFrom
 
 // ----- Traits -----
 
@@ -122,7 +122,9 @@ macro_rules! define_category_enum {
 
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
-                type Error = TryFromPrimaryError; // Using the existing error type for simplicity
+                type Error = TryFromPrimaryError; // Let's use a different error type for each enum
+        // since using this one would be confusing - we call the macro on PrimaryNodeId but we
+        // don't want to use that error even when other enums are defined by this macro AI!
                 fn try_from(value: $EnumName) -> Result<Self, Self::Error> {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
