@@ -189,7 +189,7 @@ macro_rules! define_category_enum {
                     match value {
                         $EnumName::$Variant(id) => Ok(id),
                         // Instantiate the error type (assuming it's a unit-like struct)
-                        _ => Err($ErrorType),
+                        _ => Err($ErrorType), // Fix it AI!
                     }
                 }
             }
