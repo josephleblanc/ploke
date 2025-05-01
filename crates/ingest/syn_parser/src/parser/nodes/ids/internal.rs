@@ -724,13 +724,64 @@ impl From<ReexportNodeId> for AnyNodeId {
     }
 }
 
-impl<T: TypedId> TryInto<T> for AnyNodeId {
+// --- TryFrom<AnyNodeId> Implementations for Specific IDs ---
+
+macro_rules! impl_try_from_any_node_id {
+    ($SpecificId:ty, $Variant:ident) => {
+        impl TryFrom<AnyNodeId> for $SpecificId {
+            type Error = IdConversionError;
+            #[inline]
+            fn try_from(value: AnyNodeId) -> Result<Self, Self::Error> {
+                match value {
+                    AnyNodeId::$Variant(id) => Ok(id),
+                    _ => Err(IdConversionError), // Assuming IdConversionError is defined in ploke_core and suitable
+                }
+            }
+        }
+    };
+}
+
+// Primary Nodes
+impl_try_from_any_node_id!(FunctionNodeId, Function);
+impl_try_from_any_node_id!(StructNodeId, Struct);
+impl_try_from_any_node_id!(EnumNodeId, Enum);
+impl_try_from_any_node_id!(UnionNodeId, Union);
+impl_try_from_any_node_id!(TypeAliasNodeId, TypeAlias);
+impl_try_from_any_node_id!(TraitNodeId, Trait);
+impl_try_from_any_node_id!(ImplNodeId, Impl);
+impl_try_from_any_node_id!(ConstNodeId, Const);
+impl_try_from_any_node_id!(StaticNodeId, Static);
+impl_try_from_any_node_id!(MacroNodeId, Macro);
+impl_try_from_any_node_id!(ImportNodeId, Import);
+impl_try_from_any_node_id!(ModuleNodeId, Module);
+// Associated Items
+impl_try_from_any_node_id!(MethodNodeId, Method);
+// Secondary Nodes
+impl_try_from_any_node_id!(FieldNodeId, Field);
+impl_try_from_any_node_id!(VariantNodeId, Variant);
+impl_try_from_any_node_id!(ParamNodeId, Param);
+impl_try_from_any_node_id!(GenericParamNodeId, GenericParam);
+// Other IDs
+impl_try_from_any_node_id!(ReexportNodeId, Reexport);
+
+
+// --- Generic TryInto<T> Implementation for AnyNodeId ---
+
+// Now, implement TryInto<T> using the TryFrom implementations above.
+// The bound `T: TryFrom<AnyNodeId, Error = IdConversionError>` ensures this only compiles
+// for types T that we've provided a TryFrom<AnyNodeId> implementation for.
+impl<T> TryInto<T> for AnyNodeId
+where
+    T: TypedId + TryFrom<AnyNodeId, Error = IdConversionError>,
+{
     type Error = IdConversionError;
 
+    #[inline]
     fn try_into(self) -> Result<T, Self::Error> {
-        // Implement this AI!
+        T::try_from(self)
     }
 }
+
 
 // --- Node Struct Definitions ---
 // Logging target
