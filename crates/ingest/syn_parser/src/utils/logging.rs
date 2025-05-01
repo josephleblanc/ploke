@@ -770,7 +770,16 @@ pub trait LogErrorConversion {
     fn log_generic_param_id_conversion_error(
         &self,
         generic_param_name: &str,
+        generic_param_name: &str,
         item_kind: ItemKind, // Add item_kind for context
+        error: AnyNodeIdConversionError,
+    );
+
+    /// Logs an error when AnyNodeId fails to convert to ImportNodeId.
+    fn log_import_id_conversion_error(
+        &self,
+        import_name: &str, // Name or placeholder like "<glob>" or "*"
+        import_path: &[String], // The path leading to the import
         error: AnyNodeIdConversionError,
     );
 }
@@ -793,6 +802,24 @@ impl LogErrorConversion for VisitorState {
             self.current_module_path.join("::").log_path()
         );
         // Consider adding more context like parent_scope_id if helpful
+    }
+
+    fn log_import_id_conversion_error(
+        &self,
+        import_name: &str,
+        import_path: &[String],
+        _error: AnyNodeIdConversionError, // Error itself doesn't carry much info yet
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for import '{}' (path: [{}]) in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "ImportNodeId".log_id(),
+            import_name.log_name(),
+            import_path.join("::").log_path(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
     }
 }
 
