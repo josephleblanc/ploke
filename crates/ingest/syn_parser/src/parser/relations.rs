@@ -174,6 +174,7 @@ impl SyntacticRelation {
     }
 
     /// Returns the source NodeId of the relation as a generic TypeId.
+    // AI: No, they should return the typed ids that are used in each variant AI!
     pub fn source(&self) -> TypeId {
         match *self {
             SyntacticRelation::Contains { source, .. } => source.into(),
