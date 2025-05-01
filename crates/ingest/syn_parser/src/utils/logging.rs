@@ -5,6 +5,9 @@ pub(crate) const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log tar
 pub(crate) const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
 pub(crate) const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
 pub(crate) const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
+pub(crate) const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
+pub(crate) const LOG_TARGET_RELS: &str = "rels"; // Define log target for relation checks
+pub(crate) const LOG_TARGET_NODE_ID: &str = "node_id";
 
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
@@ -96,7 +99,7 @@ use std::{
 
 use crate::parser::{
     nodes::{GraphNode, ModuleKind, ModuleNode, ModuleNodeId},
-    relations::Relation,
+    relations::SyntacticRelation,
     types::VisibilityKind,
 };
 
@@ -238,12 +241,12 @@ pub trait LogDataStructure {
             "BFS ".log_header(),
             step.white().italic(),
             g_node.name().log_name(),
-            g_node.id().to_string().log_id(),
+            g_node.any_id().to_string().log_id(),
             g_node.kind().log_vis_debug(),
             g_node.visibility().log_name_debug(),
         )
     }
-    fn log_bfs_path(&self, id: NodeId, path: &[String], step: &str) {
+    fn log_bfs_path(&self, id: ModuleNodeId, path: &[String], step: &str) {
         debug!( target: LOG_TARGET_BFS,
             "{} {: <14} {: <12} {: <20} | {: <12}",
             "BFS ".log_header(),
@@ -326,13 +329,11 @@ pub trait LogDataStructure {
             result.unwrap_or("✓").log_vis()
         );
     }
-    fn log_relation(&self, relation: Relation, note: Option<&str>) {
+    fn log_relation(&self, relation: SyntacticRelation, note: Option<&str>) {
         debug!(target: LOG_TARGET_PATH_ATTR,
-            "{} {}: {} → {} {}",
+            "{} | {} | {}",
             "Relation".log_header(),
-            format!("{:?}", relation.kind).log_name(),
-            relation.source.to_string().log_id(),
-            relation.target.to_string().log_id(),
+            relation,
             note.map(|n| format!("({})", n)).unwrap_or_default().log_vis()
         );
     }
@@ -504,27 +505,19 @@ pub trait LogDataStructure {
     }
 
     fn log_spp_check_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Check if root");
+        self.log_bfs_path(current_mod_id, path_to_item, "Check if root");
     }
 
     fn log_spp_found_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Found root!");
+        self.log_bfs_path(current_mod_id, path_to_item, "Found root!");
     }
 
     fn log_spp_explore_containment(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            current_mod_id.into_inner(),
-            path_to_item,
-            "Explore Up (Containment)",
-        );
+        self.log_bfs_path(current_mod_id, path_to_item, "Explore Up (Containment)");
     }
 
     fn log_spp_explore_reexports(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            current_mod_id.into_inner(),
-            path_to_item,
-            "Explore Up (Re-exports)",
-        );
+        self.log_bfs_path(current_mod_id, path_to_item, "Explore Up (Re-exports)");
     }
 
     // --- Logging Helpers for explore_up_via_containment ---
@@ -554,7 +547,7 @@ pub trait LogDataStructure {
     }
 
     fn log_spp_containment_queue_parent(&self, parent_mod_id: ModuleNodeId, new_path: &[String]) {
-        self.log_bfs_path(parent_mod_id.into_inner(), new_path, "Queueing Parent");
+        self.log_bfs_path(parent_mod_id, new_path, "Queueing Parent");
     }
 
     fn log_spp_containment_parent_visited(&self, parent_mod_id: ModuleNodeId) {
@@ -577,11 +570,7 @@ pub trait LogDataStructure {
     // --- Logging Helpers for explore_up_via_reexports ---
 
     fn log_spp_reexport_start(&self, target_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            target_id.into_inner(),
-            path_to_item,
-            "Start Re-export Explore",
-        );
+        self.log_bfs_path(target_id, path_to_item, "Start Re-export Explore");
     }
 
     fn log_spp_reexport_missing_import_node(&self, import_node_id: NodeId) {
@@ -607,7 +596,7 @@ pub trait LogDataStructure {
         new_path: &[String],
     ) {
         self.log_bfs_step(import_node, "Queueing Re-exporting Module");
-        self.log_bfs_path(reexporting_mod_id.into_inner(), new_path, "  New Path");
+        self.log_bfs_path(reexporting_mod_id, new_path, "  New Path");
     }
 
     fn log_spp_reexport_module_visited(&self, reexporting_mod_id: ModuleNodeId) {
@@ -835,7 +824,7 @@ impl<'a> CfgLogCtx<'a> {
     /// Creates a new context for logging path attribute processing.
     fn new(module_node: &'a ModuleNode) -> Self {
         Self {
-            module_id: ModuleNodeId::new(module_node.id()),
+            module_id: todo!("Need to update this logging struct CfgLogCtx"),
             module_name: &module_node.name,
             module_path: &module_node.path,
             module_cfgs: module_node.cfgs(),

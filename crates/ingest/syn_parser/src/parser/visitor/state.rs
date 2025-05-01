@@ -1,4 +1,6 @@
 use crate::parser::graph::CodeGraph;
+use crate::parser::nodes::GeneratesAnyNodeId; // NEW: Import helper
+use crate::parser::nodes::PrimaryNodeId;
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use log::debug;
 // Removed cfg_expr::Expression import
@@ -6,7 +8,7 @@ use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use super::calculate_cfg_hash_bytes;
-use super::type_processing::get_or_create_type; // NEW: Import helper
+use super::type_processing::get_or_create_type;
 
 use {
     crate::parser::nodes::ParamData,
@@ -14,8 +16,6 @@ use {
     std::path::PathBuf,
     uuid::Uuid,
 };
-const LOG_TARGET: &str = "node_id";
-
 
 pub struct VisitorState {
     pub(crate) code_graph: CodeGraph,
@@ -31,7 +31,7 @@ pub struct VisitorState {
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
     pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
     // Stack tracking the NodeId of the current definition scope (e.g., struct, fn, impl, trait)
-    pub(crate) current_definition_scope: Vec<NodeId>,
+    pub(crate) current_definition_scope: Vec<PrimaryNodeId>,
     // --- NEW CFG Tracking Fields ---
     /// The combined raw CFG strings inherited from the current scope (file, module, struct, etc.)
     pub(crate) current_scope_cfgs: Vec<String>,
@@ -52,7 +52,7 @@ impl VisitorState {
                 traits: Vec::new(),
                 relations: Vec::new(),
                 modules: Vec::new(),
-                consts: Vec::new(), // Initialize consts
+                consts: Vec::new(),  // Initialize consts
                 statics: Vec::new(), // Initialize statics
                 macros: Vec::new(),
                 use_statements: Vec::new(),
@@ -74,37 +74,37 @@ impl VisitorState {
     /// Helper to generate a synthetic NodeId using the current visitor state.
     /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
-    pub(crate) fn generate_synthetic_node_id(
-        &self,
-        name: &str,
-        item_kind: ItemKind,
-        cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
-    ) -> NodeId {
-        // Get the last pushed scope ID as the parent, if available
-        let parent_scope_id = self.current_definition_scope.last().copied();
-
-        debug!(target: LOG_TARGET,
-            "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
-            name, item_kind
-        );
-        debug!(target: LOG_TARGET, "  crate_namespace: {}", self.crate_namespace);
-        debug!(target: LOG_TARGET, "  file_path: {:?}", self.current_file_path);
-        debug!(target: LOG_TARGET, "  relative_path: {:?}", self.current_module_path);
-        debug!(target: LOG_TARGET, "  item_name: {}", name);
-        debug!(target: LOG_TARGET, "  item_kind: {:?}", item_kind);
-        debug!(target: LOG_TARGET, "  parent_scope_id: {:?}", parent_scope_id);
-        debug!(target: LOG_TARGET, "  cfg_bytes: {:?}", cfg_bytes);
-
-        NodeId::generate_synthetic(
-            self.crate_namespace,
-            &self.current_file_path,
-            &self.current_module_path, // Current module path acts as relative path context
-            name,
-            item_kind,
-            parent_scope_id, // Pass the parent scope ID from the stack
-            cfg_bytes,       // Pass the provided CFG bytes
-        )
-    }
+    // pub(crate) fn generate_synthetic_node_id(
+    //     &self,
+    //     name: &str,
+    //     item_kind: ItemKind,
+    //     cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
+    // ) -> NodeId {
+    //     // Get the last pushed scope ID as the parent, if available
+    //     let parent_scope_id = self.current_definition_scope.last().copied();
+    //
+    //     debug!(target: LOG_TARGET_NODE_ID,
+    //         "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
+    //         name, item_kind
+    //     );
+    //     debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  parent_scope_id: {:?}", parent_scope_id);
+    //     debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
+    //
+    //     NodeId::generate_synthetic(
+    //         self.crate_namespace,
+    //         &self.current_file_path,
+    //         &self.current_module_path, // Current module path acts as relative path context
+    //         name,
+    //         item_kind,
+    //         parent_scope_id, // Pass the parent scope ID from the stack
+    //         cfg_bytes,       // Pass the provided CFG bytes
+    //     )
+    // }
 
     pub(crate) fn generate_tracking_hash(
         &self,
@@ -204,11 +204,16 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_type_{}", ident), // Use a distinct name format
-                        ItemKind::GenericParam,
-                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                    );
+                    let param_node_id = self
+                        .generate_synthetic_node_id(
+                            &format!("generic_type_{}", ident), // Use a distinct name format
+                            ItemKind::GenericParam,
+                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                        )
+                        .try_into()
+                        .map_err(|e| e) // AI: add an error logging message here
+                        .unwrap(); // AI: Don't mess with the unwrap
+                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
 
                     params.push(GenericParamNode {
                         id: param_node_id,
@@ -230,11 +235,16 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
-                        ItemKind::GenericParam,
-                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                    );
+                    let param_node_id = self
+                        .generate_synthetic_node_id(
+                            &format!("generic_lifetime_{}", lifetime_def.lifetime.ident), // Use a distinct name format
+                            ItemKind::GenericParam,
+                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                        )
+                        .try_into()
+                        .map_err(|e| e) // AI: add an error logging message here
+                        .unwrap(); // AI: Don't mess with the unwrap
+                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
 
                     params.push(GenericParamNode {
                         id: param_node_id,
@@ -251,11 +261,20 @@ impl VisitorState {
                     let generic_cfg_bytes = calculate_cfg_hash_bytes(&self.current_scope_cfgs);
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
-                    let param_node_id = self.generate_synthetic_node_id(
-                        &format!("generic_const_{}", const_param.ident), // Use a distinct name format
-                        ItemKind::GenericParam,
-                        generic_cfg_bytes.as_deref(), // Pass calculated bytes
-                    );
+                    let param_node_id = self
+                        .generate_synthetic_node_id(
+                            &format!("generic_const_{}", const_param.ident), // Use a distinct name format
+                            ItemKind::GenericParam,
+                            generic_cfg_bytes.as_deref(), // Pass calculated bytes
+                        )
+                        .try_into()
+                        .map_err(|e| e) // AI: add an error logging message here
+                        .unwrap(); // AI: Don't mess with the unwrap
+                                   // AI: Implement proper error handling! This represents an invalid state. We probably want to add an error but this will do for now.
+                                   // AI: For all of the instructions in these comments, use the methods available
+                                   // in `logging.rs` where possible, or create a new one trait+method for
+                                   // VisitorState if necessary. The method used for logging should use our
+                                   // colorscheme methods, and should capture valuable info from `self` AI!
 
                     params.push(GenericParamNode {
                         id: param_node_id,
