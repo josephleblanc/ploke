@@ -504,13 +504,76 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 .chain(item_cfgs.iter().cloned())
                 .collect();
             let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+
+            // Register the new node ID and handle potential failure
             let registration_result =
-            self.register_new_node_id(&macro_name, ItemKind::Macro,
-                cfg_bytes.as_deref()).unwrap_or_else(|| todo!("Implement proper error handling. We can't return a result inside the visitor implementation but we can log the error."));
-            let (macro_any_id, parent_mod_id) = registration_result;
-            self.debug_new_id(&macro_name, macro_any_id);
-            let span = func.extract_span_bytes();
-            let proc_macro_kind = if func
+                self.register_new_node_id(&macro_name, ItemKind::Macro, cfg_bytes.as_deref());
+
+            if let Some((macro_any_id, parent_mod_id)) = registration_result {
+                self.debug_new_id(&macro_name, macro_any_id);
+
+                // Attempt to convert AnyNodeId to MacroNodeId
+                match macro_any_id.try_into() {
+                    Ok(typed_macro_id) => {
+                        // Conversion successful, proceed with node creation
+                        let span = func.extract_span_bytes();
+                        let proc_macro_kind = if func
+                            .attrs
+                            .iter()
+                            .any(|attr| attr.path().is_ident("proc_macro_derive"))
+                        {
+                            ProcMacroKind::Derive
+                        } else if func
+                            .attrs
+                            .iter()
+                            .any(|attr| attr.path().is_ident("proc_macro_attribute"))
+                        {
+                            ProcMacroKind::Attribute
+                        } else {
+                            ProcMacroKind::Function
+                        };
+                        let docstring = extract_docstring(&func.attrs);
+                        let attributes = extract_attributes(&func.attrs);
+                        let body = Some(func.block.to_token_stream().to_string());
+
+                        // Construct MacroNode directly
+                        let macro_node = MacroNode {
+                            id: typed_macro_id, // Use typed ID
+                            name: macro_name.clone(),
+                            visibility: self.state.convert_visibility(&func.vis),
+                            kind: MacroKind::ProcedureMacro {
+                                kind: proc_macro_kind,
+                            },
+                            attributes,
+                            docstring,
+                            body,
+                            span,
+                            tracking_hash: Some(
+                                self.state.generate_tracking_hash(&func.to_token_stream()),
+                            ),
+                            cfgs: item_cfgs, // Use item_cfgs here
+                        };
+
+                        self.state.code_graph.macros.push(macro_node);
+                        let relation = SyntacticRelation::Contains {
+                            source: parent_mod_id,
+                            target: PrimaryNodeId::from(typed_macro_id), // Use category enum
+                        };
+                        self.state.code_graph.relations.push(relation);
+                    }
+                    Err(e) => {
+                        // Log conversion error and skip this item
+                        self.state.log_macro_id_conversion_error(&macro_name, e);
+                    }
+                }
+            } else {
+                // Log registration failure
+                log::error!(target: LOG_TARGET_TRACE, "Failed to register node ID for proc macro '{}'. Skipping.", macro_name);
+            }
+            // Don't visit the body of the proc macro function itself with visit_item_fn
+        } else {
+            // --- Handle Regular Functions ---
+            let fn_name = func.sig.ident.to_string();
                 .attrs
                 .iter()
                 .any(|attr| attr.path().is_ident("proc_macro_derive"))
@@ -525,32 +588,45 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             } else {
                 ProcMacroKind::Function
             };
-            let docstring = extract_docstring(&func.attrs);
-            let attributes = extract_attributes(&func.attrs);
-            let body = Some(func.block.to_token_stream().to_string());
+                        };
+                        let docstring = extract_docstring(&func.attrs);
+                        let attributes = extract_attributes(&func.attrs);
+                        let body = Some(func.block.to_token_stream().to_string());
 
-            let macro_info = MacroNodeInfo {
-                id: macro_any_id,
-                name: macro_name.clone(),
-                visibility: self.state.convert_visibility(&func.vis),
-                kind: MacroKind::ProcedureMacro {
-                    kind: proc_macro_kind,
-                },
-                attributes,
-                docstring,
-                body,
-                span,
-                tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-                cfgs: item_cfgs,
-            };
-            let macro_node = MacroNode::new(macro_info);
-            let typed_macro_id = macro_node.macro_id();
-            self.state.code_graph.macros.push(macro_node);
-            let relation = SyntacticRelation::Contains {
-                source: parent_mod_id,
-                target: PrimaryNodeId::from(typed_macro_id), // Use category enum
-            };
-            self.state.code_graph.relations.push(relation);
+                        // Construct MacroNode directly
+                        let macro_node = MacroNode {
+                            id: typed_macro_id, // Use typed ID
+                            name: macro_name.clone(),
+                            visibility: self.state.convert_visibility(&func.vis),
+                            kind: MacroKind::ProcedureMacro {
+                                kind: proc_macro_kind,
+                            },
+                            attributes,
+                            docstring,
+                            body,
+                            span,
+                            tracking_hash: Some(
+                                self.state.generate_tracking_hash(&func.to_token_stream()),
+                            ),
+                            cfgs: item_cfgs, // Use item_cfgs here
+                        };
+
+                        self.state.code_graph.macros.push(macro_node);
+                        let relation = SyntacticRelation::Contains {
+                            source: parent_mod_id,
+                            target: PrimaryNodeId::from(typed_macro_id), // Use category enum
+                        };
+                        self.state.code_graph.relations.push(relation);
+                    }
+                    Err(e) => {
+                        // Log conversion error and skip this item
+                        self.state.log_macro_id_conversion_error(&macro_name, e);
+                    }
+                }
+            } else {
+                // Log registration failure
+                log::error!(target: LOG_TARGET_TRACE, "Failed to register node ID for proc macro '{}'. Skipping.", macro_name);
+            }
             // Don't visit the body of the proc macro function itself with visit_item_fn
         } else {
             // --- Handle Regular Functions ---
@@ -570,22 +646,103 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Register the new node ID and get parent module ID
             let registration_result =
                 self.register_new_node_id(&fn_name, ItemKind::Function, cfg_bytes.as_deref());
-            if registration_result.is_none() {
-                return;
-            } // Skip if parent module not found
-            let (fn_any_id, parent_mod_id) = registration_result.unwrap();
 
-            self.debug_new_id(&fn_name, fn_any_id); // Now uses trace!
+            // Handle registration failure or proceed
+            if let Some((fn_any_id, parent_mod_id)) = registration_result {
+                self.debug_new_id(&fn_name, fn_any_id); // Now uses trace!
 
-            let byte_range = func.span().byte_range();
-            let span = (byte_range.start, byte_range.end);
+                // Attempt to convert AnyNodeId to FunctionNodeId
+                match fn_any_id.try_into() {
+                    Ok(typed_fn_id) => {
+                        // Conversion successful, proceed with node creation
+                        let byte_range = func.span().byte_range();
+                        let span = (byte_range.start, byte_range.end);
 
-            // Push the function's base ID onto the scope stack BEFORE processing types/generics
-            // Use helper function for logging
-            self.push_scope(&fn_name, fn_any_id, provisional_effective_cfgs);
+                        // Push the function's *typed* ID onto the scope stack BEFORE processing types/generics
+                        // Use helper function for logging
+                        self.push_scope(
+                            &fn_name,
+                            PrimaryNodeId::from(typed_fn_id), // Use typed ID
+                            provisional_effective_cfgs,
+                        );
 
-            // Process function parameters
-            let mut parameters = Vec::new();
+                        // Process function parameters
+                        let mut parameters = Vec::new();
+                        for arg in &func.sig.inputs {
+                            if let Some(param) = self.state.process_fn_arg(arg) {
+                                // RelationKind::FunctionParameter removed. TypeId is stored in ParamData.
+                                parameters.push(param);
+                            }
+                        }
+
+                        // Extract return type if it exists
+                        let return_type = match &func.sig.output {
+                            ReturnType::Default => None,
+                            ReturnType::Type(_, ty) => {
+                                let type_id = get_or_create_type(self.state, ty);
+                                // RelationKind::FunctionReturn removed. TypeId is stored in FunctionNode.return_type.
+                                Some(type_id)
+                            }
+                        };
+
+                        // Process generic parameters
+                        let generic_params = self.state.process_generics(&func.sig.generics);
+
+                        // Pop the function's ID from the scope stack AFTER processing types/generics
+                        // Use helper function for logging
+                        self.pop_scope(&fn_name);
+
+                        // Extract doc comments and other attributes
+                        let docstring = extract_docstring(&func.attrs);
+                        let attributes = extract_attributes(&func.attrs);
+
+                        // Extract function body as a string
+                        let body = Some(func.block.to_token_stream().to_string());
+
+                        // Construct FunctionNode directly
+                        let function_node = FunctionNode {
+                            id: typed_fn_id, // Use typed ID
+                            name: fn_name.clone(),
+                            span,
+                            visibility: self.state.convert_visibility(&func.vis),
+                            parameters,
+                            return_type,
+                            generic_params,
+                            attributes,
+                            docstring,
+                            body,
+                            tracking_hash: Some(
+                                self.state.generate_tracking_hash(&func.to_token_stream()),
+                            ),
+                            cfgs: item_cfgs, // Use item_cfgs here
+                        };
+
+                        self.state.code_graph.functions.push(function_node);
+
+                        // Create and add the Contains relation
+                        let relation = SyntacticRelation::Contains {
+                            source: parent_mod_id,
+                            target: PrimaryNodeId::from(typed_fn_id), // Use category enum
+                        };
+                        self.state.code_graph.relations.push(relation);
+
+                        // Continue visiting the function body (typed_fn_id is already off the stack)
+                        visit::visit_item_fn(self, func);
+                    }
+                    Err(e) => {
+                        // Log conversion error and skip this item
+                        self.state.log_function_id_conversion_error(&fn_name, e);
+                    }
+                }
+            } else {
+                // Log registration failure
+                log::error!(target: LOG_TARGET_TRACE, "Failed to register node ID for function '{}'. Skipping.", fn_name);
+            }
+        } // End else block for regular functions
+    }
+
+    // Visit struct definitions
+    fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
             for arg in &func.sig.inputs {
                 if let Some(param) = self.state.process_fn_arg(arg) {
                     // RelationKind::FunctionParameter removed. TypeId is stored in ParamData.
@@ -614,37 +771,48 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let docstring = extract_docstring(&func.attrs);
             let attributes = extract_attributes(&func.attrs);
 
-            // Extract function body as a string
-            let body = Some(func.block.to_token_stream().to_string());
+                        // Extract function body as a string
+                        let body = Some(func.block.to_token_stream().to_string());
 
-            // Create info struct and then the node
-            let function_info = FunctionNodeInfo {
-                id: fn_any_id,
-                name: fn_name.clone(),
-                span,
-                visibility: self.state.convert_visibility(&func.vis),
-                parameters,
-                return_type,
-                generic_params,
-                attributes,
-                docstring,
-                body,
-                tracking_hash: Some(self.state.generate_tracking_hash(&func.to_token_stream())),
-                cfgs: item_cfgs,
-            };
-            let function_node = FunctionNode::new(function_info);
-            let typed_fn_id = function_node.function_id();
-            self.state.code_graph.functions.push(function_node);
+                        // Construct FunctionNode directly
+                        let function_node = FunctionNode {
+                            id: typed_fn_id, // Use typed ID
+                            name: fn_name.clone(),
+                            span,
+                            visibility: self.state.convert_visibility(&func.vis),
+                            parameters,
+                            return_type,
+                            generic_params,
+                            attributes,
+                            docstring,
+                            body,
+                            tracking_hash: Some(
+                                self.state.generate_tracking_hash(&func.to_token_stream()),
+                            ),
+                            cfgs: item_cfgs, // Use item_cfgs here
+                        };
 
-            // Create and add the Contains relation
-            let relation = SyntacticRelation::Contains {
-                source: parent_mod_id,
-                target: PrimaryNodeId::from(typed_fn_id), // Use category enum
-            };
-            self.state.code_graph.relations.push(relation);
+                        self.state.code_graph.functions.push(function_node);
 
-            // Continue visiting the function body (fn_any_id is already off the stack)
-            visit::visit_item_fn(self, func);
+                        // Create and add the Contains relation
+                        let relation = SyntacticRelation::Contains {
+                            source: parent_mod_id,
+                            target: PrimaryNodeId::from(typed_fn_id), // Use category enum
+                        };
+                        self.state.code_graph.relations.push(relation);
+
+                        // Continue visiting the function body (typed_fn_id is already off the stack)
+                        visit::visit_item_fn(self, func);
+                    }
+                    Err(e) => {
+                        // Log conversion error and skip this item
+                        self.state.log_function_id_conversion_error(&fn_name, e);
+                    }
+                }
+            } else {
+                // Log registration failure
+                log::error!(target: LOG_TARGET_TRACE, "Failed to register node ID for function '{}'. Skipping.", fn_name);
+            }
         } // End else block for regular functions
     }
 

@@ -781,6 +781,20 @@ pub trait LogErrorConversion {
         import_path: &[String], // The path leading to the import
         error: AnyNodeIdConversionError,
     );
+
+    /// Logs an error when AnyNodeId fails to convert to FunctionNodeId.
+    fn log_function_id_conversion_error(
+        &self,
+        function_name: &str,
+        error: AnyNodeIdConversionError,
+    );
+
+    /// Logs an error when AnyNodeId fails to convert to MacroNodeId.
+    fn log_macro_id_conversion_error(
+        &self,
+        macro_name: &str,
+        error: AnyNodeIdConversionError,
+    );
 }
 
 impl LogErrorConversion for VisitorState {
@@ -816,6 +830,38 @@ impl LogErrorConversion for VisitorState {
             "ImportNodeId".log_id(),
             import_name.log_name(),
             import_path.join("::").log_path(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+    }
+
+    fn log_function_id_conversion_error(
+        &self,
+        function_name: &str,
+        _error: AnyNodeIdConversionError,
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for function '{}' in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "FunctionNodeId".log_id(),
+            function_name.log_name(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+    }
+
+    fn log_macro_id_conversion_error(
+        &self,
+        macro_name: &str,
+        _error: AnyNodeIdConversionError,
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for macro '{}' in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "MacroNodeId".log_id(),
+            macro_name.log_name(),
             self.current_file_path.display().to_string().log_path(),
             self.current_module_path.join("::").log_path()
         );
