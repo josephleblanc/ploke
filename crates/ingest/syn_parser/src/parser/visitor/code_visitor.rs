@@ -1339,9 +1339,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
-                // Push the method's base ID onto the scope stack BEFORE processing its types/generics
-                // Methods don't introduce a new CFG scope, pass current (impl's) scope cfgs
-                self.push_scope(&method_name, method_any_id, &self.state.current_scope_cfgs);
+                // Convert method ID and push scope
+                let method_typed_id: crate::parser::nodes::MethodNodeId =
+                    method_any_id.try_into().unwrap();
+                self.push_scope(
+                    &method_name,
+                    AssociatedItemId::from(method_typed_id), // Use AssociatedItemId for scope
+                    &self.state.current_scope_cfgs,
+                );
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1559,9 +1564,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     .as_ref()
                     .map(|block| block.to_token_stream().to_string());
 
-                // Create info struct and then the node
-                let method_info = MethodNode {
-                    id: method_any_id,
+                // Construct MethodNode directly
+                let method_node = MethodNode {
+                    id: method_typed_id, // Use typed ID (assuming method_typed_id is defined earlier)
                     name: method_name,
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
@@ -1577,7 +1582,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ),
                     cfgs: method_item_cfgs,
                 };
-                let method_node = MethodNode::new(method_info);
                 methods.push(method_node);
             }
             // TODO: Handle syn::TraitItem::Const and syn::TraitItem::Type here
