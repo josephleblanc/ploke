@@ -10,15 +10,19 @@ use crate::parser::graph::GraphAccess;
 use crate::parser::nodes::AnyNodeId;
 use crate::parser::nodes::AssociatedItemId;
 use crate::parser::nodes::ConstNode;
+use crate::parser::nodes::EnumNodeId;
 use crate::parser::nodes::FieldNodeId;
 use crate::parser::nodes::GenerateTypeId;
 use crate::parser::nodes::GeneratesAnyNodeId;
+use crate::parser::nodes::ImplNodeId;
 use crate::parser::nodes::ImportNodeId;
 use crate::parser::nodes::MethodNode;
+use crate::parser::nodes::MethodNodeId;
 use crate::parser::nodes::ModuleNode;
 use crate::parser::nodes::ModuleNodeId;
 use crate::parser::nodes::PrimaryNodeId;
 use crate::parser::nodes::StaticNode;
+use crate::parser::nodes::StaticNodeId;
 use crate::parser::nodes::StructNode;
 use crate::parser::nodes::StructNodeId;
 use crate::parser::nodes::TraitNodeId;
@@ -1058,7 +1062,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Variants don't introduce a new CFG scope, pass current (enum's) scope cfgs
             self.push_scope(
                 &variant_name,
-                variant_node_id.into(),
+                // TODO: Implement SecondaryNodeId and update CodeVisitor to have another field
+                // with the secondary node scope. Update create a `push_secondary_scope` and
+                // `pop_secondary_scope` to manage this state. Any nodes created within the scope
+                // of the variant should receive the node_id as part of their node id generation.
+                SecondaryNodeId::from(variant_node_id),
                 &self.state.current_scope_cfgs,
             );
 
@@ -1190,9 +1198,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             }
         }
 
+        let enum_node_id: EnumNodeId = enum_any_id.try_into().unwrap();
         // Push the enum's base ID onto the scope stack BEFORE processing its generics
         // Use helper function for logging
-        self.push_scope(&enum_name, enum_any_id, &provisional_effective_cfgs); // Clone cfgs for push
+        self.push_scope(&enum_name, enum_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
@@ -1207,8 +1216,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let attributes = extract_attributes(&item_enum.attrs);
 
         // Create info struct and then the node
-        let enum_info = EnumNode {
-            id: enum_any_id,
+        let enum_node = EnumNode {
+            id: enum_node_id,
             name: enum_name.clone(),
             span,
             visibility: self.state.convert_visibility(&item_enum.vis),
@@ -1222,13 +1231,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ),
             cfgs: item_cfgs.clone(),
         };
-        let enum_node = EnumNode::new(enum_info);
-        let typed_enum_id = enum_node.enum_id();
 
         // Now add the EnumVariant relations using variants from the created enum_node
         for variant_node in &enum_node.variants {
             let relation = SyntacticRelation::EnumVariant {
-                source: typed_enum_id,
+                source: enum_node_id,
                 target: variant_node.variant_id(),
             };
             self.state.code_graph.relations.push(relation);
@@ -1243,7 +1250,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation for the enum itself
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(typed_enum_id), // Use category enum
+            target: PrimaryNodeId::from(enum_node_id), // Use category enum
         };
         self.state.code_graph.relations.push(contains_relation);
 
@@ -1295,7 +1302,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Pushing parent node base id to stack BEFORE generating self type.
         // Use helper function for logging
-        self.push_scope(&impl_name, impl_any_id, &provisional_effective_cfgs); // Clone cfgs for push
+        let impl_node_id: ImplNodeId = impl_any_id.try_into().unwrap();
+        self.push_scope(&impl_name, impl_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -1340,9 +1348,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
                 // Convert method ID and push scope
-                let method_typed_id: crate::parser::nodes::MethodNodeId =
-                    method_any_id.try_into().unwrap();
+                let method_typed_id: MethodNodeId = method_any_id.try_into().unwrap();
                 self.push_scope(
+                    // TODO: Update the `CodeVisitor` to have another field for associated node id
+                    // for scope management. See comment on `&variant_name,` for more info on how
+                    // to update.
                     &method_name,
                     AssociatedItemId::from(method_typed_id), // Use AssociatedItemId for scope
                     &self.state.current_scope_cfgs,
@@ -1383,8 +1393,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let body = Some(method.block.to_token_stream().to_string());
 
                 // Create info struct and then the node
-                let method_info = MethodNode {
-                    id: method_any_id,
+                let method_node_id = method_any_id.try_into().unwrap();
+                let method_node = MethodNode {
+                    id: method_node_id,
                     name: method_name.clone(),
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&method.vis),
@@ -1399,7 +1410,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     ),
                     cfgs: method_item_cfgs,
                 };
-                let method_node = MethodNode::new(method_info);
                 methods.push(method_node);
             }
             // TODO: Handle syn::ImplItem::Const and syn::ImplItem::Type here
@@ -1417,8 +1427,8 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let generic_params = self.state.process_generics(&item_impl.generics);
 
         // Create info struct and then the node
-        let impl_info = ImplNode {
-            id: impl_any_id,
+        let impl_node = ImplNode {
+            id: impl_node_id,
             span: item_impl.extract_span_bytes(),
             self_type: self_type_id,
             trait_type: trait_type_id,
@@ -1426,7 +1436,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             generic_params,
             cfgs: item_cfgs,
         };
-        let impl_node = ImplNode::new(impl_info);
         let typed_impl_id = impl_node.impl_id();
 
         // Now add the ImplAssociatedItem relations using methods from the created impl_node
@@ -1524,9 +1533,17 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 self.debug_new_id(&method_name, method_any_id); // Now uses trace!
 
+                let method_node_id: MethodNodeId = method_any_id.try_into().unwrap();
                 // Push the method's base ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
-                self.push_scope(&method_name, method_any_id, &self.state.current_scope_cfgs);
+                self.push_scope(
+                    // TODO: Update the `CodeVisitor` to have another field for associated node id
+                    // for scope management. See comment on `&variant_name,` for more info on how
+                    // to update.
+                    &method_name,
+                    AssociatedItemId::from(method_node_id),
+                    &self.state.current_scope_cfgs,
+                );
 
                 // Process method parameters
                 let mut parameters = Vec::new();
@@ -1564,9 +1581,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     .as_ref()
                     .map(|block| block.to_token_stream().to_string());
 
+                let method_node_id = method_any_id.try_into().unwrap();
                 // Construct MethodNode directly
                 let method_node = MethodNode {
-                    id: method_typed_id, // Use typed ID (assuming method_typed_id is defined earlier)
+                    id: method_node_id, // Use typed ID (assuming method_typed_id is defined earlier)
                     name: method_name,
                     span: method.extract_span_bytes(),
                     visibility: self.state.convert_visibility(&item_trait.vis), // Trait items inherit trait visibility
