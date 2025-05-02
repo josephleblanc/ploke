@@ -754,13 +754,12 @@ pub trait GraphAccess {
     /// Finds a trait node by its ID, searching both public and private traits,
     /// returning an error if not found or if duplicates exist across both lists.
     fn get_trait_checked(&self, id: TraitNodeId) -> Result<&TraitNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.traits().iter().filter(|t| t.id == id); // Compare TraitNodeId == TraitNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     // --- ModuleNode Getters ---
@@ -772,13 +771,12 @@ pub trait GraphAccess {
 
     /// Finds a module node by its ID, returning an error if not found or if duplicates exist.
     fn get_module_checked(&self, id: ModuleNodeId) -> Result<&ModuleNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.modules().iter().filter(|m| m.id == id); // Compare ModuleNodeId == ModuleNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
 
@@ -791,13 +789,12 @@ pub trait GraphAccess {
 
     /// Finds a const node by its ID, returning an error if not found or if duplicates exist.
     fn get_const_checked(&self, id: ConstNodeId) -> Result<&ConstNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.consts().iter().filter(|c| c.id == id); // Compare ConstNodeId == ConstNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     // --- StaticNode Getters ---
@@ -809,13 +806,12 @@ pub trait GraphAccess {
 
     /// Finds a static node by its ID, returning an error if not found or if duplicates exist.
     fn get_static_checked(&self, id: StaticNodeId) -> Result<&StaticNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.statics().iter().filter(|s| s.id == id); // Compare StaticNodeId == StaticNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
 
@@ -828,13 +824,12 @@ pub trait GraphAccess {
 
     /// Finds a macro node by its ID, returning an error if not found or if duplicates exist.
     fn get_macro_checked(&self, id: MacroNodeId) -> Result<&MacroNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.macros().iter().filter(|m| m.id == id); // Compare MacroNodeId == MacroNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     // --- ImportNode Getters ---
@@ -847,13 +842,12 @@ pub trait GraphAccess {
     /// Finds an import node by its ID (searches `use_statements`),
     /// returning an error if not found or if duplicates exist.
     fn get_import_checked(&self, id: ImportNodeId) -> Result<&ImportNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.use_statements().iter().filter(|u| u.id == id); // Compare ImportNodeId == ImportNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 }
 
