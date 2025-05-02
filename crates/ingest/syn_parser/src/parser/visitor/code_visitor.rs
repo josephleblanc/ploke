@@ -1591,12 +1591,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let associated_consts: Vec<ConstNode> = Vec::new(); // TODO: Populate this
         let associated_types: Vec<TypeAliasNode> = Vec::new(); // TODO: Populate this
 
-        // Push the trait's base ID onto the scope stack BEFORE processing its generics/supertraits
-        // Use helper function for logging
-        let trait_typed_id: StructNodeId = trait_any_id.try_into().unwrap();
+        // Convert trait ID and push scope
+        let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
         self.push_scope(
             &trait_name,
-            trait_typed_id.into(),
+            PrimaryNodeId::from(trait_typed_id), // Use PrimaryNodeId for scope
             &provisional_effective_cfgs,
         ); // Clone cfgs for push
 
@@ -1641,14 +1640,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_trait.attrs);
         let attributes = extract_attributes(&item_trait.attrs);
 
-        let trait_node_id: TraitNodeId = trait_any_id.try_into().unwrap();
-        // Create info struct and then the node
+        // Construct TraitNode directly
         let trait_node = TraitNode {
-            id: trait_node_id,
+            id: trait_typed_id, // Use typed ID
             name: trait_name.clone(),
             span: item_trait.extract_span_bytes(),
             visibility: self.state.convert_visibility(&item_trait.vis),
-            methods,
+            methods, // Use collected methods
             generic_params,
             super_traits: super_traits.clone(),
             attributes,
@@ -1663,7 +1661,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Now add the TraitAssociatedItem relations using methods from the created trait_node
         for method_node in &trait_node.methods {
             let relation = SyntacticRelation::TraitAssociatedItem {
-                source: trait_node_id,
+                source: trait_typed_id, // Use typed trait ID
                 target: AssociatedItemId::from(method_node.method_id()),
             };
             self.state.code_graph.relations.push(relation);
@@ -1671,7 +1669,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for const_node in &associated_consts {
             // TODO: Populate associated_consts
             let relation = SyntacticRelation::TraitAssociatedItem {
-                source: trait_node_id,
+                source: trait_typed_id, // Use typed trait ID
                 target: AssociatedItemId::from(const_node.const_id()),
             };
             self.state.code_graph.relations.push(relation);
@@ -1679,7 +1677,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for type_node in &associated_types {
             // TODO: Populate associated_types
             let relation = SyntacticRelation::TraitAssociatedItem {
-                source: trait_node_id,
+                source: trait_typed_id, // Use typed trait ID
                 target: AssociatedItemId::from(type_node.type_alias_id()),
             };
             self.state.code_graph.relations.push(relation);
@@ -1691,7 +1689,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation for the trait itself
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(trait_node_id), // Use category enum
+            target: PrimaryNodeId::from(trait_typed_id), // Use typed trait ID
         };
         self.state.code_graph.relations.push(contains_relation);
 
@@ -1755,28 +1753,31 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             },
         };
 
-        let module_node_id: ModuleNodeId = module_any_id.try_into().unwrap();
-        // Create info struct and then the node
+        // Convert module ID
+        let module_typed_id: ModuleNodeId = module_any_id.try_into().unwrap();
+
+        // Construct ModuleNode directly
         let module_node = ModuleNode {
-            id: module_node_id,
+            id: module_typed_id, // Use typed ID
             name: module_name.clone(),
-            path: self.state.current_module_path.clone(),
+            path: self.state.current_module_path.clone(), // Path before restoring parent
             visibility: self.state.convert_visibility(&module.vis),
             attributes: extract_attributes(&module.attrs),
             docstring: extract_docstring(&module.attrs),
-            imports: Vec::new(),
-            exports: Vec::new(),
+            imports: Vec::new(), // Imports added later in visit_item_use/extern_crate
+            exports: Vec::new(), // Exports handled during resolution phase
             span,
             tracking_hash: Some(self.state.generate_tracking_hash(&module.to_token_stream())),
             module_def,
             cfgs: item_cfgs,
         };
-        // Restore parent path after processing module
+
+        // Restore parent path *after* creating the node with its path
         self.state.current_module_path = parent_path;
 
+        // Log stack changes
         self.state.current_module.push(module_node.name.clone());
         self.log_push("current module", &self.state.current_module);
-
         self.state
             .current_module_path
             .push(module_node.name.clone());
@@ -1788,12 +1789,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation for the module itself
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(module_node_id), // Use category enum
+            target: PrimaryNodeId::from(module_typed_id), // Use typed module ID
         };
         self.state.code_graph.relations.push(contains_relation);
 
         // Push the module's scope using the helper *before* visiting children
-        self.push_scope(&module_name, module_any_id, &provisional_effective_cfgs);
+        self.push_scope(
+            &module_name,
+            PrimaryNodeId::from(module_typed_id), // Use PrimaryNodeId for scope
+            &provisional_effective_cfgs,
+        );
 
         // Continue visiting children.
         visit::visit_item_mod(self, module);
@@ -1940,28 +1945,27 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.debug_new_id(&visible_name, import_any_id); // Log with visible name, now uses trace!
 
         let crate_name = extern_crate.ident.to_string();
-
         let span = extern_crate.extract_span_bytes();
 
-        let import_info = ImportNode {
-            id: import_any_id,
+        // Convert import ID
+        let typed_import_id: ImportNodeId = import_any_id.try_into().unwrap();
+
+        // Construct ImportNode directly
+        let import_node = ImportNode {
+            id: typed_import_id, // Use typed ID
             span,
             source_path: vec![crate_name.clone()],
             kind: ImportKind::ExternCrate,
-            // Name used by `use` statements
             visible_name: extern_crate
                 .rename
                 .as_ref()
                 .map(|(_, id)| id.to_string())
                 .unwrap_or_else(|| crate_name.clone()),
-            // Original name, only Some if item is renamed, otherwise None
             original_name: extern_crate.rename.as_ref().map(|_| crate_name.clone()),
             is_glob: false,
             is_self_import: false,
             cfgs: item_cfgs,
         };
-        let import_node = ImportNode::new(import_info);
-        let typed_import_id = import_node.import_id();
 
         // Add the node to the graph and module list
         if let Some(module) = self
@@ -2052,11 +2056,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_const.attrs);
         let attributes = extract_attributes(&item_const.attrs);
 
-        // Create info struct and then the node
-        let const_info = ConstNode {
-            id: const_any_id,
+        // Convert const ID
+        let typed_const_id: crate::parser::nodes::ConstNodeId = const_any_id.try_into().unwrap();
+
+        // Construct ConstNode directly
+        let const_node = ConstNode {
+            id: typed_const_id, // Use typed ID
             name: const_name,
-            span, // Add span here
+            span,
             visibility: self.state.convert_visibility(&item_const.vis),
             type_id,
             value,
@@ -2068,8 +2075,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ),
             cfgs: item_cfgs,
         };
-        let const_node = ConstNode::new(const_info);
-        let typed_const_id = const_node.const_id();
 
         // Add the constant node to the graph
         self.state.code_graph.consts.push(const_node);
@@ -2077,7 +2082,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(typed_const_id), // Use category enum
+            target: PrimaryNodeId::from(typed_const_id), // Use typed const ID
         };
         self.state.code_graph.relations.push(contains_relation);
 
@@ -2127,11 +2132,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_static.attrs);
         let attributes = extract_attributes(&item_static.attrs);
 
-        // Create info struct and then the node
-        let static_info = StaticNode {
-            id: static_any_id,
+        // Convert static ID
+        let typed_static_id: StaticNodeId = static_any_id.try_into().unwrap();
+
+        // Construct StaticNode directly
+        let static_node = StaticNode {
+            id: typed_static_id, // Use typed ID
             name: static_name,
-            span, // Add span here
+            span,
             visibility: self.state.convert_visibility(&item_static.vis),
             type_id,
             is_mutable: matches!(item_static.mutability, syn::StaticMutability::Mut(_)),
@@ -2144,8 +2152,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ),
             cfgs: item_cfgs,
         };
-        let static_node = StaticNode::new(static_info);
-        let typed_static_id = static_node.static_id();
 
         // Add the static node to the graph
         self.state.code_graph.statics.push(static_node);
@@ -2153,7 +2159,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(typed_static_id), // Use category enum
+            target: PrimaryNodeId::from(typed_static_id), // Use typed static ID
         };
         self.state.code_graph.relations.push(contains_relation);
 
@@ -2223,14 +2229,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let docstring = extract_docstring(&item_macro.attrs);
         let attributes = extract_attributes(&item_macro.attrs);
 
-        // Create info struct and then the node
-        let macro_info = MacroNode {
-            id: macro_any_id,
+        // Convert macro ID
+        let typed_macro_id: crate::parser::nodes::MacroNodeId = macro_any_id.try_into().unwrap();
+
+        // Construct MacroNode directly
+        let macro_node = MacroNode {
+            id: typed_macro_id, // Use typed ID
             name: macro_name,
-            span, // Add span here
+            span,
             visibility,
             kind: MacroKind::DeclarativeMacro,
-            // rules field removed
             attributes,
             docstring,
             body,
@@ -2240,8 +2248,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             ),
             cfgs: item_cfgs,
         };
-        let macro_node = MacroNode::new(macro_info);
-        let typed_macro_id = macro_node.macro_id();
 
         // Add the macro node to the graph
         self.state.code_graph.macros.push(macro_node);
@@ -2249,7 +2255,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Add the Contains relation
         let contains_relation = SyntacticRelation::Contains {
             source: parent_mod_id,
-            target: PrimaryNodeId::from(typed_macro_id), // Use category enum
+            target: PrimaryNodeId::from(typed_macro_id), // Use typed macro ID
         };
         self.state.code_graph.relations.push(contains_relation);
 
