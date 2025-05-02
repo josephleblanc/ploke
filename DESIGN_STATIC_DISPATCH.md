@@ -10,9 +10,9 @@ Our strictly typed ID system (e.g., `ModuleNodeId`, `FunctionNodeId`, `PrimaryNo
 
 1.  **Distinct Types:** Each specific ID (e.g., `FunctionNodeId`) is a unique type (a newtype wrapper).
 2.  **Marker Traits:** Traits like `PrimaryNodeIdTrait`, `AssociatedItemNodeIdTrait` categorize these specific IDs.
-3.  **Generic Functions:** We write generic functions that operate on IDs, using trait bounds to constrain the types they accept. For example:
+3.  **Generic Functions:** We write generic functions that operate on IDs, using trait bounds to constrain the types they accept. For example, `SyntacticRelation::contains_target` allows finding a contained item *if* it matches the requested type `T`:
     ```rust
-    // Example from relations.rs
+    // Simplified Example from relations.rs
     impl SyntacticRelation {
         // T must be a type that implements PrimaryNodeIdTrait
         pub fn contains_target<T: PrimaryNodeIdTrait>(&self, src: ModuleNodeId) -> Option<T> {
@@ -20,11 +20,37 @@ Our strictly typed ID system (e.g., `ModuleNodeId`, `FunctionNodeId`, `PrimaryNo
                 Self::Contains { source: s, target } if *s == src => {
                     // target is PrimaryNodeId
                     // Attempt conversion using TryFrom<PrimaryNodeId> for T
-                    T::try_from(*target).ok()
+                    T::try_from(*target).ok() // Returns Some(T) or None
                 }
                 _ => None,
             }
         }
+    }
+    ```
+    This pattern is then used idiomatically within iterator chains, often relying on type inference rather than explicit turbofish notation:
+    ```rust
+    // Example combining generic functions and iterators (like find_methods_in_module_improved)
+    fn find_methods_in_module_improved(
+        graph: &impl GraphAccess,
+        module_id: ModuleNodeId,
+    ) -> impl Iterator<Item = MethodNodeId> + '_ {
+        // Find ImplNodeIds contained in the module (infers T=ImplNodeId for contains_target)
+        let impl_ids = graph
+            .relations()
+            .iter()
+            .filter_map(move |rel| rel.contains_target(module_id));
+
+        // For each ImplNodeId, find its associated MethodNodeIds using flat_map
+        impl_ids.flat_map(move |impl_id| { // Use flat_map for one-to-many
+            graph.relations().iter().filter_map(move |rel| match rel {
+                SyntacticRelation::ImplAssociatedItem { source, target } if *source == impl_id => {
+                    // target is AssociatedItemNodeId
+                    // try_into() infers target type MethodNodeId from flat_map's expected output
+                    (*target).try_into().ok() // Convert Result to Option for filter_map
+                }
+                _ => None,
+            })
+        }) // Returns a lazy Iterator<Item = MethodNodeId>
     }
     ```
 
@@ -39,11 +65,22 @@ When the Rust compiler encounters a call to a generic function like `contains_ta
 
 The compiler generates separate, optimized code for each concrete type the generic function is used with (e.g., one version for `FunctionNodeId`, another for `StructNodeId`, etc.).
 
+## The Role of Type Inference (Avoiding Turbofish)
+
+A key ergonomic benefit of this approach is that explicit type annotations using the "turbofish" syntax (e.g., `::<FunctionNodeId>`) are often **unnecessary** at the call site. Rust's type inference engine is usually powerful enough to deduce the concrete type `T` for the generic parameter based on the surrounding context:
+
+*   **Return Type Context:** If the result is assigned to a variable with an explicit type (`let result: Option<FunctionNodeId> = ...`), the compiler infers `T`.
+*   **Function Argument Context:** If the result is passed to another function expecting a specific type (`process_function(result)` where `process_function` takes `FunctionNodeId`), the compiler infers `T`.
+*   **Method Call Context:** If a method specific to the concrete type is called on the result.
+*   **Iterator Chains & Closures:** The expected input/output types of subsequent operations in an iterator chain or closure often constrain `T`. For example, if `try_into()` is used and the resulting `Ok(value)` is needed where a `ModuleNodeId` is expected (like in the `find_methods_in_module_improved` example's `flat_map`), the compiler infers that `try_into()` must attempt conversion *to* `ModuleNodeId`.
+
+Turbofish (`::<>`) is only required when the compiler encounters ambiguity and cannot uniquely determine the concrete type `T` from the context alone. Our design leverages specific function signatures, trait bounds, and expected usage patterns to maximize the success of type inference, leading to cleaner and more readable code without sacrificing type safety.
+
 ## Benefits
 
 1.  **Compile-Time Type Safety:** The compiler guarantees that only valid ID types (those satisfying the trait bounds) can be used with the generic function. Type mismatches are caught early. The use of `TryFrom` within the function ensures that even if a `PrimaryNodeId` is passed, it's explicitly checked against the *requested* specific type `T`.
 2.  **Performance:** Static dispatch avoids the runtime overhead associated with dynamic dispatch (like vtable lookups). The specialized, monomorphized code can often be inlined and optimized further by the compiler, leading to performance comparable to hand-written non-generic code.
-3.  **Clarity of Intent:** Generic functions with clear trait bounds explicitly document the *capabilities* required of the types they operate on. When calling such a function with a specific type argument (e.g., `::<FunctionNodeId>`), the intent is unambiguous.
+3.  **Clarity of Intent:** Generic functions with clear trait bounds explicitly document the *capabilities* required of the types they operate on. When calling such a function, type inference often makes the specific type argument implicit, yet the compiler still enforces the correct constraints, ensuring clarity without verbosity.
 
 ## Contrast with Dynamic Dispatch
 
