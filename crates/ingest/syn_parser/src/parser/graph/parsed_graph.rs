@@ -19,6 +19,8 @@ pub struct ParsedCodeGraph {
     crate_context: Option<CrateContext>,
 }
 
+// Create a specific graph kind of error here AI!
+
 impl ParsedCodeGraph {
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
@@ -233,6 +235,18 @@ impl ParsedCodeGraph {
 
     pub fn crate_context(&self) -> Option<&CrateContext> {
         self.crate_context.as_ref()
+    }
+
+    pub fn get_root_module_checked(&self) -> Result<ModuleNode, SynParserError> {
+        let root_fp = self
+            .crate_context
+            .map(|context| context.root_path)
+            .iter()
+            .exactly_one()
+            .map_err(todo!("more specific error type here"))?;
+        self.find_module_by_file_path_checked(root_fp)
+            .map_err(todo!("More specific error type here"))
+        // Can you fill out this function AI!
     }
 }
 

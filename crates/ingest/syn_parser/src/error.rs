@@ -30,6 +30,8 @@ pub enum CodeVisitorError {
 /// Custom error type for the syn_parser crate.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
+    // Add the you made in parsed_graph.rs here, using thiserror conversions for simplicity where
+    // possible AI!
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),
