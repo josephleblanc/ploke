@@ -4,6 +4,21 @@ use std::{collections::HashSet, path::PathBuf};
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
 use super::*;
+use thiserror::Error; // Add thiserror
+
+// Create a specific graph kind of error here AI!
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum ParsedGraphError {
+    #[error("Crate context is missing, cannot determine root path.")]
+    MissingCrateContext,
+    #[error("Internal error: Expected exactly one crate context, found multiple.")]
+    MultipleCrateContexts, // Should not happen with Option, but good practice
+    #[error("Root module file path '{0}' not found in graph.")]
+    RootFileNotFound(PathBuf),
+    #[error("Duplicate root module file path '{0}' found in graph.")]
+    DuplicateRootFile(PathBuf),
+}
+
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ParsedCodeGraph {
@@ -238,15 +253,30 @@ impl ParsedCodeGraph {
     }
 
     pub fn get_root_module_checked(&self) -> Result<ModuleNode, SynParserError> {
-        let root_fp = self
+        // Ensure crate_context exists
+        let context = self
             .crate_context
-            .map(|context| context.root_path)
-            .iter()
-            .exactly_one()
-            .map_err(todo!("more specific error type here"))?;
-        self.find_module_by_file_path_checked(root_fp)
-            .map_err(todo!("More specific error type here"))
-        // Can you fill out this function AI!
+            .as_ref() // Borrow the context
+            .ok_or(ParsedGraphError::MissingCrateContext)?;
+
+        // Get the root path from the context
+        let root_path = &context.root_path;
+
+        // Find the module by its file path.
+        // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
+        // We just need to clone the result if Ok.
+        self.find_module_by_file_path_checked(root_path)
+            .map(|node| node.clone()) // Clone the found ModuleNode
+            // Note: No specific mapping needed here, as find_module_by_file_path_checked
+            // already returns appropriate SynParserError variants (NotFound wrapped in InternalState, DuplicateNode).
+            // If more specific errors were desired (like RootFileNotFound), we could map the error:
+            // .map_err(|e| match e {
+            //     SynParserError::InternalState(_) => // Assuming this wraps NotFound for file paths
+            //         ParsedGraphError::RootFileNotFound(root_path.clone()).into(),
+            //     SynParserError::DuplicateNode(_) => // Assuming this wraps duplicate file paths
+            //         ParsedGraphError::DuplicateRootFile(root_path.clone()).into(),
+            //     other_err => other_err, // Propagate other errors
+            // })
     }
 }
 

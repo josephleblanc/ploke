@@ -28,13 +28,17 @@ pub enum CodeVisitorError {
 }
 
 /// Custom error type for the syn_parser crate.
+use crate::parser::graph::parsed_graph::ParsedGraphError; // Import the new error type
+
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
-    // Add the you made in parsed_graph.rs here, using thiserror conversions for simplicity where
-    // possible AI!
+
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),
+
+    #[error(transparent)]
+    ParsedGraphError(#[from] ParsedGraphError), // Add the new error variant
 
     /// Indicates that a requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
