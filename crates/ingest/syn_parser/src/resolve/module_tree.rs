@@ -339,7 +339,7 @@ pub struct ResolvedItemInfo {
     /// The NodeId of the item ultimately resolved to by the public path.
     /// For internal items, this is the ID of the definition node (e.g., FunctionNode, StructNode).
     /// For external items, this is the ID of the `ImportNode` representing the `pub use`.
-    pub resolved_id: NodeId,
+    pub resolved_id: AnyNodeId, // Changed: Use AnyNodeId
 
     /// Provides context about the nature of the `resolved_id`.
     pub target_kind: ResolvedTargetKind,
@@ -356,7 +356,7 @@ pub enum ResolvedTargetKind {
     InternalDefinition {
         /// The NodeId of the actual definition node (e.g., FunctionNode, StructNode).
         /// This will always match the outer `resolved_id` in this variant.
-        definition_id: NodeId,
+        definition_id: AnyNodeId, // Changed: Use AnyNodeId
     },
     /// The `resolved_id` points to an `ImportNode` that re-exports an item
     /// from an external crate.
@@ -624,13 +624,13 @@ impl ModuleTree {
     /// number of relations originating from `source_id`.
     pub fn get_relations_from<F>(
         &self,
-        source_id: &NodeId,
+        source_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
         F: Fn(&TreeRelation) -> bool, // Closure takes &TreeRelation, returns bool
     {
-        self.relations_by_source.get(source_id).map(|indices| {
+        self.relations_by_source.get(source_id).map(|indices| { // Changed: Use AnyNodeId key
             // If source_id not in map, return empty
             indices
                 .iter()
@@ -645,10 +645,10 @@ impl ModuleTree {
     }
     pub fn get_iter_relations_from<'a>(
         &'a self,
-        source_id: &NodeId,
+        source_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_source.get(source_id).map(|indices| {
+        self.relations_by_source.get(source_id).map(|indices| { // Changed: Use AnyNodeId key
             // If source_id not in map, return empty
             indices.iter().filter_map(|&index| {
                 self.tree_relations
@@ -659,8 +659,8 @@ impl ModuleTree {
         })
     }
 
-    pub fn get_all_relations_from(&self, source_id: &NodeId) -> Option<Vec<&TreeRelation>> {
-        self.relations_by_source.get(source_id).map(|indices| {
+    pub fn get_all_relations_from(&self, source_id: &AnyNodeId) -> Option<Vec<&TreeRelation>> { // Changed: Parameter is AnyNodeId
+        self.relations_by_source.get(source_id).map(|indices| { // Changed: Use AnyNodeId key
             // If source_id not in map, return empty
             indices
                 .iter()
@@ -678,13 +678,13 @@ impl ModuleTree {
     /// (Doc comments similar to get_relations_from)
     pub fn get_relations_to<F>(
         &self,
-        target_id: &NodeId,
+        target_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
         relation_filter: F, // Closure parameter
     ) -> Option<Vec<&TreeRelation>>
     where
         F: Fn(&TreeRelation) -> bool, // Closure takes &TreeRelation, returns bool
     {
-        self.relations_by_target.get(target_id).map(|indices| {
+        self.relations_by_target.get(target_id).map(|indices| { // Changed: Use AnyNodeId key
             indices
                 .iter()
                 .filter_map(|&index| {
@@ -695,8 +695,8 @@ impl ModuleTree {
                 .collect()
         })
     }
-    pub fn get_all_relations_to(&self, target_id: &NodeId) -> Option<Vec<&TreeRelation>> {
-        self.relations_by_target.get(target_id).map(|indices| {
+    pub fn get_all_relations_to(&self, target_id: &AnyNodeId) -> Option<Vec<&TreeRelation>> { // Changed: Parameter is AnyNodeId
+        self.relations_by_target.get(target_id).map(|indices| { // Changed: Use AnyNodeId key
             // If source_id not in map, return empty
             indices
                 .iter()
@@ -707,10 +707,10 @@ impl ModuleTree {
 
     pub fn get_iter_relations_to<'a>(
         &'a self,
-        target_id: &NodeId,
+        target_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
         kind: &'a RelationKind, // Closure parameter
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_target.get(target_id).map(|indices| {
+        self.relations_by_target.get(target_id).map(|indices| { // Changed: Use AnyNodeId key
             // Use relations_by_target
             // If source_id not in map, return empty
             indices.iter().filter_map(|&index| {
@@ -925,14 +925,14 @@ impl ModuleTree {
                 return Ok(file_path);
             }
 
-            // 4. If inline, find *its* parent module ID using NodeId
+            // 4. If inline, find *its* parent module ID using AnyNodeId
             let inline_parent_relations = self
-                .get_relations_to(current_mod_id.as_inner(), |tr| {
+                .get_relations_to(&current_mod_id.into(), |tr| { // Changed: Convert ModuleNodeId to AnyNodeId
                     // Use inner NodeId
                     tr.relation().kind == RelationKind::Contains
                 })
                 .ok_or_else(|| {
-                    ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
+                    ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner()) // Error uses inner NodeId
                 })?; // Error if inline has no parent
 
             // Extract the potential parent ID *before* reassigning current_mod_id
@@ -970,7 +970,7 @@ impl ModuleTree {
     pub fn resolve_pending_path_attrs(&mut self) -> Result<(), ModuleTreeError> {
         self.log_resolve_entry_exit(true); // Log entry
 
-        let module_ids = match self.pending_path_attrs.take() {
+        let module_ids: Vec<ModuleNodeId> = match self.pending_path_attrs.take() { // Changed: Type annotation
             Some(pending_ids) => {
                 if pending_ids.is_empty() {
                     self.log_resolve_pending_status(None);
@@ -2849,23 +2849,105 @@ impl ModuleTree {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", format!("{:?}", rel.kind).log_name());
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Source:");
-        self.log_node_id_verbose(rel.source); // Use helper for NodeId
+        self.log_node_id_verbose(rel.source.into()); // Changed: Convert NodeId to AnyNodeId
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Target:");
-        self.log_node_id_verbose(rel.target); // Use helper for NodeId
+        self.log_node_id_verbose(rel.target.into()); // Changed: Convert NodeId to AnyNodeId
     }
 
     /// Logs detailed information about a NodeId for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups within the ModuleTree.
-    pub(crate) fn log_node_id_verbose(&self, node_id: NodeId) {
-        let mod_id = ModuleNodeId::new(node_id);
-        // let graph_id = node_id; // No longer needed
+    pub(crate) fn log_node_id_verbose(&self, node_id: AnyNodeId) { // Changed: Parameter is AnyNodeId
+        // Try to convert AnyNodeId to ModuleNodeId for module lookup
+        let mod_id_result: Result<ModuleNodeId, _> = node_id.try_into();
 
-        if let Some(module) = self.modules.get(&mod_id) {
-            // Log ModuleNode details
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Module".log_spring_green());
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Name: {}", module.name.log_name());
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Path: {}", module.path.join("::").log_path());
+        if let Ok(mod_id) = mod_id_result {
+            if let Some(module) = self.modules.get(&mod_id) { // Changed: Use typed ID key
+                // Log ModuleNode details
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Module".log_spring_green());
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Name: {}", module.name.log_name());
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Path: {}", module.path.join("::").log_path());
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Visibility: {}", format!("{:?}", module.visibility).log_vis());
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Kind: {}", crate::utils::logging::get_module_def_kind_str(module).log_orange());
+                if let Some(fp) = module.file_path() {
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      File Path: {}", fp.display().to_string().log_path());
+                }
+                if let Some(span) = module.inline_span() {
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Inline Span: {:?}", span);
+                }
+                if let Some(span) = module.declaration_span() {
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Decl Span: {:?}", span);
+                }
+                if !module.cfgs.is_empty() {
+                    debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      CFGs: {}", module.cfgs.join(", ").log_magenta());
+                }
+            } else {
+                // Node ID was convertible to ModuleNodeId but not found in map
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Module (Not Found in Map)".log_comment());
+            }
+        } else {
+            // Node is not a module found in self.modules
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    ID: {} ({})", node_id.to_string().log_id(), "Node (Non-Module)".log_comment());
+        }
+
+        // Check pending imports/exports using AnyNodeId
+        let is_in_pending_import = self
+            .pending_imports
+            .iter()
+            .any(|p| p.import_node().id.as_any() == node_id); // Changed: Compare AnyNodeId
+        if is_in_pending_import {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
+        }
+        if let Some(exports) = self.pending_exports.as_deref() {
+            let is_in_pending_export = exports.iter().any(|p| p.export_node().id.as_any() == node_id); // Changed: Compare AnyNodeId
+            if is_in_pending_export {
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
+            }
+        }
+
+        // Log relations FROM this node using AnyNodeId
+        if let Some(relations_from) = self.get_all_relations_from(&node_id) { // Changed: Use AnyNodeId
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
+            for rel_ref in relations_from {
+                // Target is always NodeId now
+                let target_id: AnyNodeId = rel_ref.relation().target.into(); // Changed: Convert target NodeId to AnyNodeId
+                let target_id_str = target_id.to_string().log_id();
+                // Try to get target name if it's a module
+                let target_name = ModuleNodeId::try_from(target_id) // Changed: TryFrom AnyNodeId
+                    .ok()
+                    .and_then(|mid| self.modules.get(&mid))
+                    .map(|m| m.name.as_str());
+                let target_display = target_name
+                    .map(|n| n.log_name().to_string())
+                    .unwrap_or_else(|| target_id_str.to_string());
+
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), target_display);
+            }
+        } else {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
+        }
+
+        // Log relations TO this node using AnyNodeId
+        if let Some(relations_to) = self.get_all_relations_to(&node_id) { // Changed: Use AnyNodeId
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
+            for rel_ref in relations_to {
+                // Source is always NodeId now
+                let source_id: AnyNodeId = rel_ref.relation().source.into(); // Changed: Convert source NodeId to AnyNodeId
+                let source_id_str = source_id.to_string().log_id();
+                // Try to get source name if it's a module
+                let source_name = ModuleNodeId::try_from(source_id) // Changed: TryFrom AnyNodeId
+                    .ok()
+                    .and_then(|mid| self.modules.get(&mid))
+                    .map(|m| m.name.as_str());
+                let source_display = source_name
+                    .map(|n| n.log_name().to_string())
+                    .unwrap_or_else(|| source_id_str.to_string());
+
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.relation().kind).log_name(), source_display);
+            }
+        } else {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
+        }
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Visibility: {}", format!("{:?}", module.visibility).log_vis());
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Kind: {}", crate::utils::logging::get_module_def_kind_str(module).log_orange());
             if let Some(fp) = module.file_path() {
