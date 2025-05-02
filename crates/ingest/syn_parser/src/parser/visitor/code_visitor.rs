@@ -456,7 +456,7 @@ impl<'a> CodeVisitor<'a> {
     }
 
     // Helper to push scope and log (using trace!)
-    fn push_scope(&mut self, name: &str, id: AnyNodeId, cfgs: Vec<String>) {
+    fn push_scope(&mut self, name: &str, id: PrimaryNodeId, cfgs: Vec<String>) {
         self.state.current_definition_scope.push(id);
         self.state
             .cfg_stack
