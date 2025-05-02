@@ -319,7 +319,7 @@ pub struct PruningResult {
     pub pruned_module_ids: HashSet<ModuleNodeId>,
     /// IDs of all items (including the modules themselves and items they contained)
     /// that were associated with the pruned modules.
-    pub pruned_item_ids: HashSet<NodeId>,
+    pub pruned_item_ids: HashSet<AnyNodeId>, // Changed: Use AnyNodeId
     /// The actual TreeRelation instances that were removed from the ModuleTree.
     pub pruned_relations: Vec<TreeRelation>,
 }
@@ -552,7 +552,7 @@ impl ModuleTree {
     }
 
     /// Returns a reference to the internal path index mapping canonical paths to NodeIds.
-    pub fn path_index(&self) -> &HashMap<NodePath, NodeId> {
+    pub fn path_index(&self) -> &HashMap<NodePath, AnyNodeId> { // Changed: Return map with AnyNodeId value
         &self.path_index
     }
 
@@ -890,19 +890,19 @@ impl ModuleTree {
     /// is missing from the tree, or the root module is unexpectedly not file-based.
     pub fn find_defining_file_path_ref_seq(
         &self,
-        node_id: NodeId,
+        node_id: AnyNodeId, // Changed: Parameter is AnyNodeId
     ) -> Result<&Path, ModuleTreeError> {
         // let graph_id = node_id; // No longer needed
 
-        // 1. Find the immediate parent module ID using NodeId
+        // 1. Find the immediate parent module ID using AnyNodeId
         let parent_relations = self
-            .get_relations_to(&node_id, |tr| tr.relation().kind == RelationKind::Contains)
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error
+            .get_relations_to(&node_id, |tr| tr.relation().kind == RelationKind::Contains) // Changed: Use AnyNodeId
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Changed: Use AnyNodeId in error
 
         let mut current_mod_id = parent_relations
             .first()
-            .map(|tr| ModuleNodeId::new(tr.relation().source)) // Source is NodeId
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Use specific error if relation missing
+            .map(|tr| ModuleNodeId::new(tr.relation().source)) // Source is NodeId, convert to ModuleNodeId
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Changed: Use AnyNodeId in error
 
         let mut cycle_guard = 0;
         // 2. Traverse upwards until a file-based module is found
