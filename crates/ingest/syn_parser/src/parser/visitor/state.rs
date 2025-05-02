@@ -1,6 +1,10 @@
+// TODO: Go through the #needslinking tags in comments to make real links to other doc comments.
+
 use crate::parser::graph::CodeGraph;
-use crate::parser::nodes::PrimaryNodeId;
-use crate::parser::nodes::{AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId}; // Import AnyNodeIdConversionError, GenericParamNodeId
+use crate::parser::nodes::{
+    AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId, SecondaryNodeId,
+}; // Import AnyNodeIdConversionError, GenericParamNodeId
+use crate::parser::nodes::{AssociatedItemNodeId, PrimaryNodeId};
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
 use ploke_core::ItemKind;
@@ -29,18 +33,20 @@ pub struct VisitorState {
     // USER response: Agreed, should re-evaluate post-refactor of uuid system.
     pub(crate) current_module_path: Vec<String>, // e.g., ["crate", "parser", "visitor"]
     pub(crate) current_module: Vec<String>,      // Stack of module IDs/names? Needs clarification.
-    // Stack tracking the NodeId of the current definition scope (e.g., struct, fn, impl, trait)
-    pub(crate) current_definition_scope: Vec<PrimaryNodeId>,
-    // --- NEW CFG Tracking Fields ---
-    /// The combined raw CFG strings inherited from the current scope (file, module, struct, etc.)
+    /// Stack tracking the NodeId of the current primary node definition scope (e.g., struct, fn, impl, trait)
+    pub(crate) current_primary_defn_scope: Vec<PrimaryNodeId>,
+    /// Stack tracking the NodeId of the current secondary node definition scope (e.g., enum
+    /// variant). See the `push_secondary_scope` method for more. #needslinking
+    pub(crate) current_secondary_defn_scope: Vec<SecondaryNodeId>,
+    /// Stack tracking the NodeId of the current primary node definition scope (e.g., struct, fn, impl, trait)
+    pub(crate) current_assoc_defn_scope: Vec<AssociatedItemNodeId>,
+    /// The combined raw CFG strings inherited from the current scope (file, module, struct, field, etc.)
     pub(crate) current_scope_cfgs: Vec<String>,
     /// Stack to save/restore `current_scope_cfgs` when entering/leaving scopes.
     pub(crate) cfg_stack: Vec<Vec<String>>,
 }
 
 impl VisitorState {
-    // TODO: Update constructor signature when integrating with Phase 1/`analyze_files_parallel`
-    // It will need to accept crate_namespace and current_file_path.
     pub(crate) fn new(crate_namespace: Uuid, current_file_path: PathBuf) -> Self {
         Self {
             code_graph: CodeGraph {
@@ -63,10 +69,12 @@ impl VisitorState {
             // type_map removed
             current_module_path: Vec::new(),
             current_module: Vec::new(),
-            current_definition_scope: Vec::new(), // Initialize empty scope stack
+            current_primary_defn_scope: Vec::new(), // Initialize empty scope stack
             // Initialize new CFG fields
             current_scope_cfgs: Vec::new(),
             cfg_stack: Vec::new(),
+            current_secondary_defn_scope: Vec::new(),
+            current_assoc_defn_scope: Vec::new(),
         }
     }
 

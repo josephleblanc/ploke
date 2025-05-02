@@ -43,17 +43,13 @@ pub use union::UnionNode;
 pub use value::{ConstNode, StaticNode};
 
 // Re-export the generated *NodeInfo structs for internal use within the crate
-pub(crate) use enums::{EnumNodeInfo, VariantNodeInfo};
-pub(crate) use function::{FunctionNodeInfo, MethodNodeInfo};
-pub(crate) use impls::ImplNodeInfo;
-pub(crate) use import::ImportNodeInfo;
-pub(crate) use macros::MacroNodeInfo;
+// NOTE: 2025-05-02:
+// - Deleted all other *NodeInfo types, since we now use ids/internal.rs for NodeId gen through
+// visitor methods.
+// - Re: ModuleNodeInfo Still using this in the special case of creating the root module. We may
+// want to refactor the way the root module is created in `visitor/mod.rs`. Leaving it here for
+// now.
 pub(crate) use module::ModuleNodeInfo;
-pub(crate) use structs::{FieldNodeInfo, StructNodeInfo};
-pub(crate) use traits::TraitNodeInfo;
-pub(crate) use type_alias::TypeAliasNodeInfo;
-pub(crate) use union::UnionNodeInfo;
-pub(crate) use value::{ConstNodeInfo, StaticNodeInfo};
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq

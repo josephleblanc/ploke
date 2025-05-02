@@ -1,61 +1,45 @@
 // TODO: Consider using a builder pattern for these nodes. The way we repeat code for the
 // ImportNodeIds is just so painful.
+// TODO: Start moving the logic for processing secondary/associated nodes into their own
+// visit_item_* methods,
+// e.g.
+// fn visit_trait_item_fn(&mut self, i: &'ast syn::TraitItemFn)
+// fn visit_trait_item_const(&mut self, i: &'ast syn::TraitItemConst)
+// fn visit_impl_item_fn(&mut self, i: &'ast syn::ImplItemFn)
+// fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst)
 
-use super::attribute_processing::extract_attributes;
-use super::attribute_processing::extract_cfg_strings;
-use super::attribute_processing::extract_docstring;
+use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
 use super::state::VisitorState;
 use super::type_processing::get_or_create_type;
 use crate::parser::graph::GraphAccess;
-use crate::parser::nodes::AnyNodeId;
-use crate::parser::nodes::AssociatedItemId;
-use crate::parser::nodes::ConstNode;
-use crate::parser::nodes::EnumNodeId;
-use crate::parser::nodes::FieldNodeId;
-use crate::parser::nodes::GenerateTypeId;
 use crate::parser::nodes::GeneratesAnyNodeId;
-use crate::parser::nodes::ImplNodeId;
-use crate::parser::nodes::ImportNodeId;
-use crate::parser::nodes::MethodNode;
-use crate::parser::nodes::MethodNodeId;
-use crate::parser::nodes::ModuleNode;
-use crate::parser::nodes::ModuleNodeId;
-use crate::parser::nodes::PrimaryNodeId;
-use crate::parser::nodes::StaticNode;
-use crate::parser::nodes::StaticNodeId;
-use crate::parser::nodes::StructNode;
-use crate::parser::nodes::StructNodeId;
-use crate::parser::nodes::TraitNodeId;
-use crate::parser::nodes::TypeAliasNodeId;
-use crate::parser::nodes::UnionNodeId;
-use crate::parser::nodes::VariantNodeId;
-// Keep
-// Remove StructNode import, it's generated implicitly now
+// NodeId wrapper types for individual node types
 use crate::parser::nodes::{
-    EnumNode,
-    FieldNode,
-    FunctionNode,
-    ImplNode,
-    ImportKind,
-    ImportNode,
-    MacroKind,
-    MacroNode,
-    ProcMacroKind,
-    TraitNode,     // Add generated info struct imports
-    TypeAliasNode, // Add generated info struct imports
-    TypeDefNode,
-    UnionNode,   // Add generated info struct imports
-    VariantNode, // Add generated info struct imports
+    EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, MethodNodeId, ModuleNodeId, StaticNodeId,
+    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
+// Wrapper enums for catogories of individual node id wrapper types.
+use crate::parser::nodes::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+// Nodes
+use crate::parser::nodes::{
+    ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
+    ModuleNode, StaticNode, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode,
+    VariantNode,
+};
+// Kinds of nodes
+use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
+// Imported Kinds from ploke-core
+use ploke_core::ItemKind;
+
 use crate::parser::relations::*;
 use crate::parser::types::*;
 use crate::parser::visitor::calculate_cfg_hash_bytes;
 use crate::parser::ExtractSpan;
 
 use crate::error::CodeVisitorError; // Import the new error type
-use crate::parser::nodes::ModuleKind;
 use crate::utils::logging::LogErrorConversion as _;
-use ploke_core::ItemKind;
+use crate::utils::LogStyleDebug;
+use itertools::Itertools;
 use ploke_core::TypeId;
 
 use colored::*;
@@ -295,7 +279,6 @@ impl<'a> CodeVisitor<'a> {
         }
     }
 
-    // Removed #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack(&mut self) {
         if let Some(current_mod) = self.state.code_graph.modules.last() {
             let modules: Vec<(String, String)> = self // Changed to String tuples for display
@@ -306,25 +289,32 @@ impl<'a> CodeVisitor<'a> {
                 .map(|m| (m.id.to_string(), m.name.clone())) // Convert ID to string
                 .collect();
 
+            // Adjusted to only show first/last 3 items. This field gets a bit big and might not be
+            // very helful for debugging (long lists of Uuids clutter everything), but maybe the
+            // first/last 3 will be helpful.
+            // Might want to switch it back to old version depending on usefulness
             let items_str = current_mod
                 .items()
                 .map(|items| {
                     items
                         .iter()
-                        .map(|id| id.to_string())
-                        .collect::<Vec<_>>()
+                        // new lines for condensed items
+                        .take(3)
+                        .into_iter()
+                        .chain(current_mod.items().into_iter().rev().take(3).flatten())
+                        // end new condensed items changes
+                        .map(|id| id.log_id_debug())
                         .join(", ")
                 })
                 .unwrap_or_else(|| "<None>".to_string());
 
             trace!(target: LOG_TARGET_TRACE, "{}", "--- Module Stack Debug ---".dimmed());
             trace!(target: LOG_TARGET_TRACE, "  Current Mod: {} ({})", current_mod.name.cyan(), current_mod.id.to_string().magenta());
-            trace!(target: LOG_TARGET_TRACE, "  Items: [{}]", items_str.yellow());
+            trace!(target: LOG_TARGET_TRACE, "  Items: [{}]", items_str);
             trace!(target: LOG_TARGET_TRACE, "  All Modules: {:?}", modules); // Keep this simple for now
             trace!(target: LOG_TARGET_TRACE, "{}", "--------------------------".dimmed());
         }
     }
-    // Removed #[cfg(feature = "verbose_debug")]
     fn debug_mod_stack_push(&mut self, name: String, pr_id: PrimaryNodeId) {
         if let Some(current_mod) = self
             .state
@@ -393,6 +383,15 @@ impl<'a> CodeVisitor<'a> {
         item_kind: ItemKind,
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> Option<(AnyNodeId, ModuleNodeId)> {
+        // TODO: Now that we have typed ids and can match on the kind of the id, we may be able to
+        // locate all relation creation here. The tight coupling of id generation to relation
+        // creation was set aside in favor of creating more node ids previously due to our desire
+        // to keep the `Contains` relation only between the module and it's contained items. The
+        // problem with generating the relations here was that we needed to use a `Contains`
+        // relation for `ModuleNode`->any primary node (including other modules), and needed to
+        // generate ids for, e.g. a struct FieldNode which does not have a `Contains` relation but
+        // rather a `Struct`
+
         // Return base ID and parent ModuleNodeId
         // 1. Generate the Synthetic NodeId using the state helper, passing CFG bytes
         let node_id = self
@@ -450,22 +449,81 @@ impl<'a> CodeVisitor<'a> {
         parent_mod_id_opt.map(|parent_mod_id| (node_id, parent_mod_id))
     }
 
-    // Helper to push scope and log (using trace!)
-    fn push_scope(&mut self, name: &str, id: PrimaryNodeId, cfgs: &[String]) {
-        self.state.current_definition_scope.push(id);
+    /// Helper to push primary scope and log (using trace!)
+    /// 'primary scope' here means a primary node, which may be defined directly within a module
+    fn push_primary_scope(&mut self, name: &str, id: PrimaryNodeId, cfgs: &[String]) {
+        self.state.current_primary_defn_scope.push(id);
         self.state
             .cfg_stack
-            .push(self.state.current_scope_cfgs.clone());
+            .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
+                                                          // primary, secondary, associated, etc.
+        self.state.current_scope_cfgs = cfgs.to_vec();
+        trace!(target: LOG_TARGET_TRACE, ">>> Entering Primary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+    }
+
+    /// Helper to push secondary scope and log (using trace!)
+    /// 'secondary scope' here means a secondary node, which cannot be defined directly within a
+    /// module, but may be defined within a primary node, such as a struct field, emum variant, etc
+    ///
+    /// This is useful for including the hashed NodeId of, e.g. a VariantNode, in the hash
+    /// generation of the variant's field's NodeIds.
+    fn push_secondary_scope(&mut self, name: &str, id: SecondaryNodeId, cfgs: &[String]) {
+        self.state.current_secondary_defn_scope.push(id);
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
+                                                          // primary, secondary, associated, etc.
+        self.state.current_scope_cfgs = cfgs.to_vec();
+        trace!(target: LOG_TARGET_TRACE, ">>> Entering Secondary Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
+    }
+
+    /// Helper function to push associated scope and log (using trace!)
+    /// 'associated scope' here means an item that may be defined directly within an impl block,
+    /// such as a method, associated function, associated const, etc.
+    ///
+    /// This is useful for including the hashed NodeId of, e.g. an associated constant, in the hash
+    /// generation of the associated constant's items (such as the generic parameters)
+    fn push_assoc_scope(&mut self, name: &str, id: AssociatedItemNodeId, cfgs: &[String]) {
+        self.state.current_assoc_defn_scope.push(id);
+        self.state
+            .cfg_stack
+            .push(self.state.current_scope_cfgs.clone()); // current_scope_cfgs shared among
+                                                          // primary, secondary, associated, etc.
         self.state.current_scope_cfgs = cfgs.to_vec();
         trace!(target: LOG_TARGET_TRACE, ">>> Entering Scope: {} ({}) | CFGs: {:?}", name.cyan(), id.to_string().magenta(), self.state.current_scope_cfgs);
     }
 
     // Helper to pop scope and log (using trace!)
-    fn pop_scope(&mut self, name: &str) {
-        let popped_id = self.state.current_definition_scope.pop();
+    fn pop_primary_scope(&mut self, name: &str) {
+        let popped_id = self.state.current_primary_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
-        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default();
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
+                                                                                        // primary, secondary, associated, etc.
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+            name.cyan(),
+            popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
+            popped_cfgs,
+            self.state.current_scope_cfgs
+        );
+    }
+    fn pop_secondary_scope(&mut self, name: &str) {
+        let popped_id = self.state.current_secondary_defn_scope.pop();
+        let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
+                                                                                        // primary, secondary, associated, etc.
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+            name.cyan(),
+            popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
+            popped_cfgs,
+            self.state.current_scope_cfgs
+        );
+    }
+    fn pop_assoc_scope(&mut self, name: &str) {
+        let popped_id = self.state.current_assoc_defn_scope.pop();
+        let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
+        self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
+                                                                                        // primary, secondary, associated, etc.
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Assoc Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -473,6 +531,7 @@ impl<'a> CodeVisitor<'a> {
         );
     }
 }
+
 #[allow(clippy::needless_lifetimes)]
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
@@ -483,12 +542,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 || attr.path().is_ident("proc_macro_attribute")
         });
 
-        // TODO: Validate Correctness:
-        // This if block runs, then so does the following code.
-        // Are we processing the proc_macro functions twice?
-        // We don't want to deal with the more complex aspects of macros, but do want to note their
-        // location, name, and other metadata that might be useful for the RAG to get easy wins.
-        // Use if/else to prevent double processing
         if is_proc_macro {
             let macro_name = func.sig.ident.to_string();
             let scope_cfgs = self.state.current_scope_cfgs.clone();
@@ -577,7 +630,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let fn_typed_id: PrimaryNodeId = fn_any_id.into().unwrap();
             // Push the function's base ID onto the scope stack BEFORE processing types/generics
             // Use helper function for logging
-            self.push_scope(&fn_name, fn_typed_id, &provisional_effective_cfgs);
+            self.push_primary_scope(&fn_name, fn_typed_id, &provisional_effective_cfgs);
 
             // Process function parameters
             let mut parameters = Vec::new();
@@ -603,7 +656,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Pop the function's ID from the scope stack AFTER processing types/generics
             // Use helper function for logging
-            self.pop_scope(&fn_name);
+            self.pop_primary_scope(&fn_name);
 
             // Extract doc comments and other attributes
             let docstring = extract_docstring(&func.attrs);
@@ -672,7 +725,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Push the struct's base ID onto the scope stack BEFORE processing fields/generics
         // Use helper function for logging
         let struct_typed_id: StructNodeId = struct_any_id.try_into().unwrap();
-        self.push_scope(
+        self.push_primary_scope(
             &struct_name,
             struct_typed_id.into(),
             &provisional_effective_cfgs,
@@ -780,7 +833,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         visit::visit_item_struct(self, item_struct);
 
         // Pop the struct's scope using the helper
-        self.pop_scope(&struct_name);
+        self.pop_primary_scope(&struct_name);
     }
 
     // Visit type alias definitions
@@ -813,7 +866,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Push the type alias's base ID onto the scope stack BEFORE processing type/generics
         // Type aliases don't introduce a new CFG scope, so pass current scope cfgs
         let type_alias_node_id: TypeAliasNodeId = type_alias_any_id.try_into().unwrap();
-        self.push_scope(
+        self.push_primary_scope(
             &type_alias_name,
             type_alias_node_id.into(),
             &self.state.current_scope_cfgs,
@@ -827,7 +880,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Pop the type alias's ID from the scope stack AFTER processing type/generics
         // Use helper function for logging
-        self.pop_scope(&type_alias_name);
+        self.pop_primary_scope(&type_alias_name);
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_type.attrs);
@@ -898,7 +951,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Push the union's base ID onto the scope stack BEFORE processing fields/generics
         // Use helper function for logging
         let union_typed_id: StructNodeId = union_any_id.try_into().unwrap();
-        self.push_scope(
+        self.push_primary_scope(
             &union_name,
             union_typed_id.into(),
             &provisional_effective_cfgs,
@@ -954,7 +1007,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pop the union's ID from the scope stack AFTER processing fields/generics
         // Note: This pop happens *before* visiting children, which might be incorrect
         // if generics/where clauses need the union scope. Let's move the pop after visit.
-        // self.state.current_definition_scope.pop(); // Moved below
+        // self.state.current_primary_defn_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_union.attrs);
@@ -1003,7 +1056,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         visit::visit_item_union(self, item_union);
 
         // Pop the union's scope using the helper *after* visiting children
-        self.pop_scope(&union_name);
+        self.pop_primary_scope(&union_name);
     }
 
     // Visit enum definitions
@@ -1060,7 +1113,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let variant_node_id: VariantNodeId = variant_any_id.try_into().unwrap();
             // Push the variant's base ID onto the scope stack BEFORE processing its fields
             // Variants don't introduce a new CFG scope, pass current (enum's) scope cfgs
-            self.push_scope(
+            self.push_secondary_scope(
                 &variant_name,
                 // TODO: Implement SecondaryNodeId and update CodeVisitor to have another field
                 // with the secondary node scope. Update create a `push_secondary_scope` and
@@ -1165,7 +1218,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
             // Pop the variant's ID from the scope stack AFTER processing its fields
             // Use helper function for logging
-            self.pop_scope(&variant_name);
+            self.pop_secondary_scope(&variant_name);
 
             // Extract discriminant if any
             let discriminant = variant
@@ -1201,7 +1254,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let enum_node_id: EnumNodeId = enum_any_id.try_into().unwrap();
         // Push the enum's base ID onto the scope stack BEFORE processing its generics
         // Use helper function for logging
-        self.push_scope(&enum_name, enum_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
+        self.push_primary_scope(&enum_name, enum_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
@@ -1209,7 +1262,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pop the enum's ID from the scope stack AFTER processing its generics
         // Note: This pop happens *before* visiting children, which might be incorrect
         // if generics/where clauses need the enum scope. Let's move the pop after visit.
-        // self.state.current_definition_scope.pop(); // Moved below
+        // self.state.current_primary_defn_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_enum.attrs);
@@ -1258,7 +1311,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         visit::visit_item_enum(self, item_enum);
 
         // Pop the enum's scope using the helper *after* visiting children
-        self.pop_scope(&enum_name);
+        self.pop_primary_scope(&enum_name);
     }
 
     // Visit impl blocks
@@ -1303,7 +1356,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pushing parent node base id to stack BEFORE generating self type.
         // Use helper function for logging
         let impl_node_id: ImplNodeId = impl_any_id.try_into().unwrap();
-        self.push_scope(&impl_name, impl_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
+        self.push_primary_scope(&impl_name, impl_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
         let self_type_id = get_or_create_type(self.state, &item_impl.self_ty);
 
         // Process trait type if it's a trait impl
@@ -1349,12 +1402,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Convert method ID and push scope
                 let method_typed_id: MethodNodeId = method_any_id.try_into().unwrap();
-                self.push_scope(
+                self.push_assoc_scope(
                     // TODO: Update the `CodeVisitor` to have another field for associated node id
                     // for scope management. See comment on `&variant_name,` for more info on how
                     // to update.
                     &method_name,
-                    AssociatedItemId::from(method_typed_id), // Use AssociatedItemId for scope
+                    AssociatedItemNodeId::from(method_typed_id), // Use AssociatedItemNodeId for scope
                     &self.state.current_scope_cfgs,
                 );
 
@@ -1383,7 +1436,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_scope(&method_name);
+                self.pop_secondary_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1442,7 +1495,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for method_node in &impl_node.methods {
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
-                target: AssociatedItemId::from(method_node.method_id()),
+                target: AssociatedItemNodeId::from(method_node.method_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1450,7 +1503,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // TODO: Populate associated_consts
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
-                target: AssociatedItemId::from(const_node.const_id()),
+                target: AssociatedItemNodeId::from(const_node.const_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1458,7 +1511,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // TODO: Populate associated_types
             let relation = SyntacticRelation::ImplAssociatedItem {
                 source: typed_impl_id,
-                target: AssociatedItemId::from(type_node.type_alias_id()),
+                target: AssociatedItemNodeId::from(type_node.type_alias_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1474,11 +1527,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.relations.push(contains_relation);
 
         // Continue visiting children (methods handled above, visit generics/where)
-        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
+        // Note: CFG scope is pushed/popped by push_*_scope/pop_*_scope helpers
         visit::visit_item_impl(self, item_impl);
 
         // Pop the impl's scope using the helper *after* visiting children
-        self.pop_scope(&impl_name);
+        self.pop_primary_scope(&impl_name);
     }
 
     // Visit trait definitions
@@ -1536,12 +1589,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 let method_node_id: MethodNodeId = method_any_id.try_into().unwrap();
                 // Push the method's base ID onto the scope stack BEFORE processing its types/generics
                 // Methods don't introduce a new CFG scope, pass current (trait's) scope cfgs
-                self.push_scope(
+                self.push_assoc_scope(
                     // TODO: Update the `CodeVisitor` to have another field for associated node id
                     // for scope management. See comment on `&variant_name,` for more info on how
                     // to update.
                     &method_name,
-                    AssociatedItemId::from(method_node_id),
+                    AssociatedItemNodeId::from(method_node_id),
                     &self.state.current_scope_cfgs,
                 );
 
@@ -1569,7 +1622,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                 // Pop the method's ID from the scope stack AFTER processing its types/generics
                 // Use helper function for logging
-                self.pop_scope(&method_name);
+                self.pop_secondary_scope(&method_name);
 
                 // Extract doc comments and other attributes for methods
                 let docstring = extract_docstring(&method.attrs);
@@ -1615,7 +1668,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Convert trait ID and push scope
         let trait_typed_id: TraitNodeId = trait_any_id.try_into().unwrap();
-        self.push_scope(
+        self.push_primary_scope(
             &trait_name,
             PrimaryNodeId::from(trait_typed_id), // Use PrimaryNodeId for scope
             &provisional_effective_cfgs,
@@ -1656,7 +1709,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Pop the trait's ID from the scope stack AFTER processing its generics/supertraits
         // Note: This pop happens *before* visiting children, which might be incorrect
         // if generics/where clauses need the trait scope. Let's move the pop after visit.
-        // self.state.current_definition_scope.pop(); // Moved below
+        // self.state.current_primary_defn_scope.pop(); // Moved below
 
         // Extract doc comments and other attributes
         let docstring = extract_docstring(&item_trait.attrs);
@@ -1684,7 +1737,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for method_node in &trait_node.methods {
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
-                target: AssociatedItemId::from(method_node.method_id()),
+                target: AssociatedItemNodeId::from(method_node.method_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1692,7 +1745,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // TODO: Populate associated_consts
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
-                target: AssociatedItemId::from(const_node.const_id()),
+                target: AssociatedItemNodeId::from(const_node.const_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1700,7 +1753,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // TODO: Populate associated_types
             let relation = SyntacticRelation::TraitAssociatedItem {
                 source: trait_typed_id, // Use typed trait ID
-                target: AssociatedItemId::from(type_node.type_alias_id()),
+                target: AssociatedItemNodeId::from(type_node.type_alias_id()),
             };
             self.state.code_graph.relations.push(relation);
         }
@@ -1716,11 +1769,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.relations.push(contains_relation);
 
         // Continue visiting children (methods handled above, visit generics/where/supertraits)
-        // Note: CFG scope is pushed/popped by push_scope/pop_scope helpers
+        // Note: CFG scope is pushed/popped by push_*_scope/pop_*_scope helpers
         visit::visit_item_trait(self, item_trait);
 
         // Pop the trait's scope using the helper *after* visiting children
-        self.pop_scope(&trait_name);
+        self.pop_primary_scope(&trait_name);
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
@@ -1816,7 +1869,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         self.state.code_graph.relations.push(contains_relation);
 
         // Push the module's scope using the helper *before* visiting children
-        self.push_scope(
+        self.push_primary_scope(
             &module_name,
             PrimaryNodeId::from(module_typed_id), // Use PrimaryNodeId for scope
             &provisional_effective_cfgs,
@@ -1826,7 +1879,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         visit::visit_item_mod(self, module);
 
         // Pop the module's scope using the helper *after* visiting children
-        self.pop_scope(&module_name);
+        self.pop_primary_scope(&module_name);
 
         let popped_mod = self.state.current_module.pop();
         // Removed #[cfg] block
@@ -2068,7 +2121,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let span = item_const.extract_span_bytes();
 
         // Process the type
-        // Process the type (no need to push/pop scope for this)
         let type_id = get_or_create_type(self.state, &item_const.ty);
 
         // Extract the value expression as a string
@@ -2110,11 +2162,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // add this state management if recursing into the children of the const node, which
         // should... only happen if we are parding `syn::Expr`?
-        // self.state.current_definition_scope.push(const_id);
+        // self.state.current_primary_defn_scope.push(const_id);
         // Continue visiting
         visit::visit_item_const(self, item_const);
         // pop parent id onto stack, appropriate state management
-        // self.state.current_definition_scope.pop();
+        // self.state.current_primary_defn_scope.pop();
     }
 
     // Visit static items
@@ -2189,10 +2241,10 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // add this state management if recursing into the children of the const node, which
         // should... only happen if we are parding `syn::Expr`?
         // push parent id onto stack for type processing
-        // self.state.current_definition_scope.push(static_id);
+        // self.state.current_primary_defn_scope.push(static_id);
         visit::visit_item_static(self, item_static);
         // pop parent id onto stack, appropriate state management
-        // self.state.current_definition_scope.pop();
+        // self.state.current_primary_defn_scope.pop();
     }
 
     // Visit macro definitions (macro_rules!)

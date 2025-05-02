@@ -1,7 +1,9 @@
 # ADR-013: Using Newtypes for Typed Node Identifiers
 
 ## Status
-ACCEPTED
+ACCEPTED 2025-05-01
+
+Note: Implementation Significantly altered due to [ADR-014: Strict Private Encapsulation...]
 
 ## Context
 The code graph contains various types of nodes (Modules, Functions, Structs, Fields, Imports, etc.), each identified by a `NodeId` (currently a wrapper around `Uuid`). Relations connect these nodes. Using a raw `NodeId` for all connections makes it possible to create semantically invalid relations at runtime (e.g., a `Field` relation originating from a `FunctionNodeId` instead of a `StructNodeId` or `VariantNodeId`). We need stronger type safety to prevent such invalid connections at compile time.
@@ -34,3 +36,5 @@ These typed IDs will be used in the fields of node structs (where appropriate) a
 - C-NEWTYPE: Newtypes provide static distinctions.
 - Type safety: Leverages the type system effectively.
 [CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A
+
+[ADR-014: Strict Private Encapsulation...]:./ADR-014-strict-private-typed-ids.md

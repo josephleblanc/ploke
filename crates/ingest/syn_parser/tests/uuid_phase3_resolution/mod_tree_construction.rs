@@ -700,8 +700,11 @@ fn test_module_tree_is_accessible() {
             if relevant_ids.contains(&source_id) || relevant_ids.contains(&target_id) {
                 // Format the relation for logging
                 // Use graph.find_node to get names, fallback to "?"
-                let source_name = graph.find_node(source_id).map(|n| n.name()).unwrap_or("?");
-                let target_name = graph.find_node(target_id).map(|n| n.name()).unwrap_or("?");
+                // Old implementation
+                // let source_name = graph.find_node(source_id).map(|n| n.name()).unwrap_or("?");
+                // let target_name = graph.find_node(target_id).map(|n| n.name()).unwrap_or("?");
+                let source_name = todo!();
+                let target_name = todo!();
                 debug!(target: "mod_tree_vis", "  Found Relation: {} ({}) --{:?}--> {} ({})",
                     source_name.yellow(),
                     source_id.to_string().magenta(),

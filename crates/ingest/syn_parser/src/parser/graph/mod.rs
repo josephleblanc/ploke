@@ -8,6 +8,7 @@ use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 
 pub use code_graph::CodeGraph;
 use colored::Colorize;
+use itertools::Itertools;
 use log::{debug, trace};
 pub use parsed_graph::ParsedCodeGraph;
 use petgraph::graph::Node;
@@ -89,12 +90,12 @@ pub trait GraphAccess {
             if let Some(module_source_node) = source.as_module() {
                 debug!("{:#?}", module_source_node);
             }
-            for (i, module ) in self.modules().iter().filter(|m| m.id() == source.id()).enumerate() {
+            for (i, module ) in self.modules().iter().filter(|m| m.any_id() == source.any_id()).enumerate() {
                 debug!("{}: {} | {}", "Counting source:".log_header(), i, module.name());
             }
 
 
-            for (i, module ) in self.modules().iter().filter(|m| m.id() == target.id()).enumerate() {
+            for (i, module ) in self.modules().iter().filter(|m| m.id.as_any() == target.any_id()).enumerate() {
                 debug!("{}: {} | {}", "Counting target:".log_header(), i, module.name());
             }
 
@@ -102,105 +103,88 @@ pub trait GraphAccess {
         unique_rels.len() == rels.len()
     }
 
-fn debug_relationships(&self) {
-    let unique_rels = self.relations().iter().fold(Vec::new(), |mut acc, r| {
-        if !acc.contains(r) {
-            acc.push(*r)
-        }
-        acc
-    });
-    let has_duplicate = unique_rels.len() == self.relations().len();
-    log::debug!(target: "temp",
-        "{} {} {}: {} | {}: {} | {}: {}",
-        "Relations are unique?".log_header(),
-        if has_duplicate {
-            "Yes!".log_spring_green().bold()
-        } else {
-            "NOOOO".log_error()
-        },
-        "Unique".log_step(),
-        unique_rels.len().to_string().log_magenta_debug(),
-        "Total".log_step(),
-        self.relations().len().to_string().log_magenta_debug(),
-        "Difference".log_step(),
-        (self.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
-    );
-    let rel_map: HashMap<SyntacticRelation, usize> = // Use updated type
-        self
-            .relations()
-            .iter()
-            .copied()
-            .fold(HashMap::new(), |mut hmap, r| {
-                match hmap.entry(r) {
-                    std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
-                        let existing_count = occupied_entry.get();
-                        occupied_entry.insert(existing_count + 1);
-                    }
-                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert(1);
-                    }
-                };
-                hmap
-            });
-    for (rel, count) in rel_map {
-        if count > 1 {
-            // Use helper methods to get base NodeIds
-            log::debug!(target: "temp",
-                "{} | {}: {} | {} -> {} | {:?}", // Log the full relation variant
-                "Duplicate!".log_header(),
-                "Count".log_step(),
-                count.to_string().log_error(),
-                rel.source().to_string().log_id(),
-                rel.target().to_string().log_id(),
-                rel, // Log the specific variant
-            );
+    fn debug_relationships(&self) {
+        let unique_rels = self.relations().iter().fold(Vec::new(), |mut acc, r| {
+            if !acc.contains(r) {
+                acc.push(*r)
+            }
+            acc
+        });
+        let has_duplicate = unique_rels.len() == self.relations().len();
+        log::debug!(target: "temp",
+            "{} {} {}: {} | {}: {} | {}: {}",
+            "Relations are unique?".log_header(),
+            if has_duplicate {
+                "Yes!".log_spring_green().bold()
+            } else {
+                "NOOOO".log_error()
+            },
+            "Unique".log_step(),
+            unique_rels.len().to_string().log_magenta_debug(),
+            "Total".log_step(),
+            self.relations().len().to_string().log_magenta_debug(),
+            "Difference".log_step(),
+            (self.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
+        );
+        let rel_map: HashMap<SyntacticRelation, usize> = // Use updated type
+            self
+                .relations()
+                .iter()
+                .copied()
+                .fold(HashMap::new(), |mut hmap, r| {
+                    match hmap.entry(r) {
+                        std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                            let existing_count = occupied_entry.get();
+                            occupied_entry.insert(existing_count + 1);
+                        }
+                        std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(1);
+                        }
+                    };
+                    hmap
+                });
+        for (rel, count) in rel_map {
+            if count > 1 {
+                // Use helper methods to get base NodeIds
+                log::debug!(target: "temp",
+                    "{} | {}: {} | {} -> {} | {:?}", // Log the full relation variant
+                    "Duplicate!".log_header(),
+                    "Count".log_step(),
+                    count.to_string().log_error(),
+                    rel.source().to_string().log_id(),
+                    rel.target().to_string().log_id(),
+                    rel, // Log the specific variant
+                );
+            }
         }
     }
 
-}
-    fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
-        self.find_module_by_path(&["crate".to_string()])
-            .ok_or(SynParserError::RootModuleNotFound)
-    }
+    #[cfg(feature = "type_bearing_ids")]
+    fn get_child_modules(&self, module_id: ModuleNodeId) -> impl Iterator< Item = &ModuleNode >  {
+        use itertools::Itertools;
 
-    /// Filters and allocates a new Vec for direct children of module id.
-    fn get_child_modules(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+        let mut ids = self.ids_contained_by(module_id);
+        self.modules().iter().filter(move |m| ids.contains(&m.id.to_pid())).into_iter()
+    }
+    #[cfg(feature = "type_bearing_ids")]
+    fn ids_contained_by(&self, module_id: ModuleNodeId) -> impl Iterator<Item = PrimaryNodeId>  {
         self.relations()
             .iter()
-            .filter_map(|rel| match rel {
-                // Match only Contains originating from the target module
-                SyntacticRelation::Contains { source, target }
-                    if source.as_inner() == &module_id =>
-                {
-                    // Check if the target is a Module
-                    match target {
-                        PrimaryNodeId::Module(target_mod_id) => {
-                            self.get_module(*target_mod_id)
-                        }
-                        _ => None, // Target is not a module
-                    }
-                }
-                _ => None, // Not a Contains relation from the source module
-            })
-            .collect()
+            .filter_map(move |rel| rel.contains_target(module_id))
     }
 
-    fn get_child_modules_inline(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+    fn get_child_modules_inline(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
         self.get_child_modules(module_id)
-            .into_iter()
             .filter(|m| matches!(m.module_def, ModuleKind::Inline { .. }))
-            .collect()
     }
 
-    fn get_child_modules_decl(&self, module_id: NodeId) -> Vec<&ModuleNode> {
+    fn get_child_modules_decl(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
         self.get_child_modules(module_id)
-            .into_iter()
             .filter(|m| matches!(m.module_def, ModuleKind::Declaration { .. }))
-            .collect()
     }
 
     /// Finds a module node by its full path.
-    fn find_module_by_path(&self, path: &[String]) -> Option<&ModuleNode> {
+    fn find_module_by_path_unchecked(&self, path: &[String]) -> Option<&ModuleNode> {
         self.modules().iter().find(|m| m.path == path)
     }
     /// Finds a module node by its full path, returning an error if not found or if duplicates exist.
@@ -294,6 +278,36 @@ fn debug_relationships(&self) {
         first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
     }
 
+    fn get_item_module_path(&self, item_id: PrimaryNodeId) -> Vec<String> {
+        // Find the module that contains this item
+        let containing_relation = self
+            .relations()
+            .iter()
+            .find(|rel| rel.source_contains(item_id).is_some());
+
+        if let Some(SyntacticRelation::Contains { source, .. }) = containing_relation {
+            self.modules()
+                .iter()
+                .filter(|m| m.is_file_based() || m.is_inline())
+                .find(|m| m.id == *source) // Compare NodeId == NodeId
+                .map(|m| m.path.clone())
+                // NOTE: Might have a problem here regarding the root directory, which should be
+                // the only directory without a parent module. However, we don't want to just
+                // assume that the only module without a parent directory is the root. See if this
+                // lead to errors, revisit later.
+                .expect("Invalid state: Primary Node not contained by Module") // Should not happen if relation exists
+        } else {
+            // Item not in any module (crate root) or source wasn't a Node
+            vec!["crate".to_string()];
+            // WARNING: Intentional panic! temporary for testing. DO NOT REMOVE UNTIL THIS CAUSES
+            // RUNTIME ERROR.
+            panic!(
+                "Adding a panic here since this should never happen. We'll likely change this to an
+            `Err` and have this function return a Result, but I want to see if we encounter any
+            occurrances of this, and if passing an error is the right way to handle it."
+            );
+        }
+    }
     /// Finds a module node by its file path relative to the crate root,
     /// returning an error if not found or if duplicates exist.
     ///
@@ -314,7 +328,7 @@ fn debug_relationships(&self) {
         let first = matches.next();
         if let Some(_second) = matches.next() {
             // If duplicates found, return DuplicateNode error using the ID of the first match
-            return Err(SynParserError::DuplicateNode(first.unwrap().id()));
+            return Err(SynParserError::DuplicateNode(first.unwrap().any_id()));
         }
         // If only one or zero found, proceed.
         first.ok_or_else(|| {
@@ -324,6 +338,7 @@ fn debug_relationships(&self) {
             ))
         })
     }
+
 
     fn resolve_type(&self, type_id: TypeId) -> Option<&TypeNode> {
         self.type_graph().iter().find(|t| t.id == type_id)
@@ -337,7 +352,7 @@ fn debug_relationships(&self) {
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `StructNode` if a matching `TypeDefNode::Struct` is found.
-    fn get_struct(&self, id: StructNodeId) -> Option<&StructNode> {
+    fn get_struct_unchecked(&self, id: StructNodeId) -> Option<&StructNode> {
         self.defined_types().iter().find_map(|def| match def {
             TypeDefNode::Struct(s) if s.id == id => Some(s), // Compare StructNodeId == StructNodeId
             _ => None,
@@ -352,23 +367,22 @@ fn debug_relationships(&self) {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     fn get_struct_checked(&self, id: StructNodeId) -> Result<&StructNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
             TypeDefNode::Struct(s) if s.id == id => Some(s), // Compare StructNodeId == StructNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     /// Finds an enum node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `EnumNode` if a matching `TypeDefNode::Enum` is found.
-    fn get_enum(&self, id: EnumNodeId) -> Option<&EnumNode> {
+    fn get_enum_unchecked(&self, id: EnumNodeId) -> Option<&EnumNode> {
         self.defined_types().iter().find_map(|def| match def {
             TypeDefNode::Enum(e) if e.id == id => Some(e), // Compare EnumNodeId == EnumNodeId
             _ => None,
@@ -383,23 +397,22 @@ fn debug_relationships(&self) {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     fn get_enum_checked(&self, id: EnumNodeId) -> Result<&EnumNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
             TypeDefNode::Enum(e) if e.id == id => Some(e), // Compare EnumNodeId == EnumNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     /// Finds a type alias node by its ID.
     ///
     /// Iterates through the defined types and returns a reference to the
     /// `TypeAliasNode` if a matching `TypeDefNode::TypeAlias` is found.
-    fn get_type_alias(&self, id: TypeAliasNodeId) -> Option<&TypeAliasNode> {
+    fn get_type_alias_unchecked(&self, id: TypeAliasNodeId) -> Option<&TypeAliasNode> {
         self.defined_types().iter().find_map(|def| match def {
             TypeDefNode::TypeAlias(t) if t.id == id => Some(t), // Compare TypeAliasNodeId == TypeAliasNodeId
             _ => None,
@@ -414,16 +427,15 @@ fn debug_relationships(&self) {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     fn get_type_alias_checked(&self, id: TypeAliasNodeId) -> Result<&TypeAliasNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
             TypeDefNode::TypeAlias(t) if t.id == id => Some(t), // Compare TypeAliasNodeId == TypeAliasNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id))
     }
 
     /// Finds a union node by its ID.
@@ -445,42 +457,41 @@ fn debug_relationships(&self) {
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
     fn get_union_checked(&self, id: UnionNodeId) -> Result<&UnionNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.defined_types().iter().filter_map(|def| match def {
             TypeDefNode::Union(u) if u.id == id => Some(u), // Compare UnionNodeId == UnionNodeId
             _ => None,
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     /// Gets the full module path for an item by searching through all modules
     /// Returns ["crate"] if item not found in any module (should only happ for crate root items)
     fn debug_print_all_visible(&self) {
         // New implementation using NodeId
-        let mut all_ids: Vec<(&str, NodeId)> = vec![];
-        all_ids.extend(self.functions().iter().map(|n| (n.name(), n.id()))); // Standalone functions
+        let mut all_ids: Vec<(&str, AnyNodeId)> = vec![];
+        all_ids.extend(self.functions().iter().map(|n| (n.name(), n.id.as_any()))); // Standalone functions
         all_ids.extend(self.impls().iter().flat_map(|n| { // Methods within impls
-            n.methods.iter().map(move |m| (m.name(), m.id()))
+            n.methods.iter().map(move |m| (m.name(), m.id.as_any()))
         }));
         all_ids.extend(self.traits().iter().flat_map(|n| { // Methods within traits (if stored directly)
              // Assuming TraitNode also has a 'methods' field similar to ImplNode
              // If not, adjust accordingly or remove this part if methods aren't stored on TraitNode
-             n.methods.iter().map(move |m| (m.name(), m.id()))
+             n.methods.iter().map(move |m| (m.name(), m.id.as_any()))
         }));
-        all_ids.extend(self.modules().iter().map(|n| (n.name(), n.id())));
-        all_ids.extend(self.consts().iter().map(|n| (n.name(), n.id()))); // Use consts()
-        all_ids.extend(self.statics().iter().map(|n| (n.name(), n.id()))); // Use statics()
+        all_ids.extend(self.modules().iter().map(|n| (n.name(), n.id.as_any())));
+        all_ids.extend(self.consts().iter().map(|n| (n.name(), n.id.as_any()))); // Use consts()
+        all_ids.extend(self.statics().iter().map(|n| (n.name(), n.id.as_any()))); // Use statics()
         // Removed values()
-        all_ids.extend(self.macros().iter().map(|n| (n.name(), n.id())));
+        all_ids.extend(self.macros().iter().map(|n| (n.name(), n.id.as_any())));
         all_ids.extend(self.defined_types().iter().map(|def| match def {
-            TypeDefNode::Struct(s) => (s.name(), s.id()),
-            TypeDefNode::Enum(e) => (e.name(), e.id()),
-            TypeDefNode::TypeAlias(a) => (a.name(), a.id()),
-            TypeDefNode::Union(u) => (u.name(), u.id()),
+            TypeDefNode::Struct(s) => (s.name(), s.id.as_any()),
+            TypeDefNode::Enum(e) => (e.name(), e.id.as_any()),
+            TypeDefNode::TypeAlias(a) => (a.name(), a.id.as_any()),
+            TypeDefNode::Union(u) => (u.name(), u.id.as_any()),
         }));
         // Add other fields similarly...
 
@@ -492,108 +503,80 @@ fn debug_relationships(&self) {
         // } // Removed corresponding closing brace if block was removed
     }
 
-    fn get_item_module_path(&self, item_id: NodeId) -> Vec<String> {
+
+    fn find_containing_mod(&self, item_id: PrimaryNodeId) -> &ModuleNode {
         // Find the module that contains this item
-        let containing_relation = self.relations().iter().find(|rel| match rel {
-            SyntacticRelation::Contains { target, .. } => target.base_id() == item_id,
-            _ => false,
-        });
+        let module_id_maybe: Option< ModuleNodeId > = self.relations().iter()
+            .find_map(|rel| rel.source_contains(item_id));
 
-        if let Some(SyntacticRelation::Contains { source, .. }) = containing_relation {
-            self.modules()
-                .iter()
-                .filter(|m| m.is_file_based() || m.is_inline())
-                .find(|m| m.id == *source) // Compare NodeId == NodeId
-                .map(|m| m.path.clone())
-                .unwrap_or_else(|| vec!["crate".to_string()]) // Should not happen if relation exists
-        } else {
-            // Item not in any module (crate root) or source wasn't a Node
-            vec!["crate".to_string()];
-            // WARNING: Intentional panic! temporary for testing. DO NOT REMOVE UNTIL THIS CAUSES
-            // RUNTIME ERROR.
-            panic!( "Adding a panic here since this should never happen. We'll likely change this to an
-            `Err` and have this function return a Result, but I want to see if we encounter any
-            occurrances of this, and if passing an error is the right way to handle it." );
-        }
-    }
-
-    fn get_item_module(&self, item_id: NodeId) -> &ModuleNode {
-        // Find the module that contains this item
-        let containing_relation = self.relations().iter().find(|rel| match rel {
-            SyntacticRelation::Contains { target, .. } => target.base_id() == item_id,
-            _ => false,
-        });
-
-        if let Some(SyntacticRelation::Contains { source, .. }) = containing_relation {
+        if let Some(module_id) = module_id_maybe {
             // Get the module's path
             self.modules()
                 .iter()
-                .find(|m| m.id == *source)
+                .find(|m| m.id == module_id)
                 .unwrap_or_else(|| panic!("No containing module found"))
         } else {
             panic!("No containing module found");
         }
     }
 
-    fn find_containing_mod_id(&self, node_id: NodeId) -> Option<NodeId> {
-        self.relations().iter().find_map(|rel| match rel {
-            SyntacticRelation::Contains { source, target } if target.base_id() == node_id => {
-                Some(source.into_inner())
-            }
-            _ => None,
-        })
+    // A simple wrapper around source_contains. Might remove later.
+    fn find_containing_mod_id(&self, any_id: PrimaryNodeId) -> Option<ModuleNodeId> {
+        self.relations().iter().find_map(|r| r.source_contains(any_id))
     }
 
-    fn find_node(&self, item_id: NodeId) -> Option<&dyn GraphNode> {
+    // Not sure how I want to deal with this. Leaving it for now. It is only being used in a couple
+    // places and they all have `todo!()` on them now.
+    fn find_any_node(&self, item_id: AnyNodeId) -> Option<&dyn GraphNode> {
         // Check all node collections for matching ID
         self.functions()
             .iter()
-            .find(|n| n.id() == item_id)
+            .find(|n| n.id.as_any() == item_id)
             .map(|n| n as &dyn GraphNode)
             .or_else(|| -> Option<&dyn GraphNode> {
                 self.defined_types().iter().find_map(|n| match n {
-                    TypeDefNode::Struct(s) if s.id() == item_id => Some(s as &dyn GraphNode),
-                    TypeDefNode::Enum(e) if e.id() == item_id => Some(e as &dyn GraphNode),
-                    TypeDefNode::TypeAlias(t) if t.id() == item_id => Some(t as &dyn GraphNode),
-                    TypeDefNode::Union(u) if u.id() == item_id => Some(u as &dyn GraphNode),
+                    TypeDefNode::Struct(s) if s.id.as_any() == item_id => Some(s as &dyn GraphNode),
+                    TypeDefNode::Enum(e) if e.id.as_any() == item_id => Some(e as &dyn GraphNode),
+                    TypeDefNode::TypeAlias(t) if t.id.as_any() == item_id => Some(t as &dyn GraphNode),
+                    TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
                     _ => None,
                 })
             })
             .or_else(|| {
                 self.traits()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.modules()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Consts
                 self.consts()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Statics
                 self.statics()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| {
                 self.macros()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
             .or_else(|| { // Search Methods within Impls
                 self.impls().iter().find_map(|i| {
                     i.methods
                         .iter()
-                        .find(|m| m.id() == item_id)
+                        .find(|m| m.id.as_any() == item_id)
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
@@ -601,7 +584,7 @@ fn debug_relationships(&self) {
                 self.traits().iter().find_map(|t| {
                     t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
                         .iter()
-                        .find(|m| m.id() == item_id)
+                        .find(|m| m.id.as_any() == item_id)
                         .map(|m| m as &dyn GraphNode) // Cast MethodNode
                 })
             })
@@ -609,15 +592,15 @@ fn debug_relationships(&self) {
             .or_else(|| {
                 self.use_statements()
                     .iter()
-                    .find(|n| n.id() == item_id)
+                    .find(|n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode)
             })
     }
 
     /// Finds a node by its ID, returning a `Result` with a reference to the node
     /// as a `dyn GraphNode`, or a `SynParserError::NotFound` if the node is not found.
-    fn find_node_checked(&self, item_id: NodeId) -> Result<&dyn GraphNode, SynParserError> {
-        self.find_node(item_id)
+    fn find_any_node_checked(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
+        self.find_any_node(item_id)
             .ok_or(SynParserError::NotFound(item_id))
     }
 
@@ -628,75 +611,75 @@ fn debug_relationships(&self) {
     /// - `Ok(&dyn GraphNode)` if exactly one match is found.
     /// - `Err(SynParserError::NotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateNode)` if more than one match is found.
-    fn find_node_unique(&self, item_id: NodeId) -> Result<&dyn GraphNode, SynParserError> {
+    fn find_node_unique(&self, item_id: AnyNodeId) -> Result<&dyn GraphNode, SynParserError> {
         // Chain iterators over all node collections, filter by ID, and map to &dyn GraphNode
         let mut matches_iter = self
             .functions()
             .iter()
-            .filter(move |n| n.id == item_id)
+            .filter(move |n| n.id.as_any() == item_id)
             .map(|n| n as &dyn GraphNode)
             .inspect(|n| {
         trace!(target: LOG_TARGET_GRAPH_FIND, "    Search graph for: {} ({}): {} | {}", 
-            item_id.to_string().log_id(),
+            item_id.as_any().to_string().log_id(),
             n.name().log_name(),
             n.kind().log_spring_green_debug(),
             n.visibility().log_vis_debug(),
         );
             })
             .chain(self.defined_types().iter().filter_map(move |n| match n {
-                TypeDefNode::Struct(s) if s.id == item_id => Some(s as &dyn GraphNode),
-                TypeDefNode::Enum(e) if e.id == item_id => Some(e as &dyn GraphNode),
-                TypeDefNode::TypeAlias(t) if t.id == item_id => Some(t as &dyn GraphNode),
-                TypeDefNode::Union(u) if u.id == item_id => Some(u as &dyn GraphNode),
+                TypeDefNode::Struct(s) if s.id.as_any() == item_id => Some(s as &dyn GraphNode),
+                TypeDefNode::Enum(e) if e.id.as_any() == item_id => Some(e as &dyn GraphNode),
+                TypeDefNode::TypeAlias(t) if t.id.as_any() == item_id => Some(t as &dyn GraphNode),
+                TypeDefNode::Union(u) if u.id.as_any() == item_id => Some(u as &dyn GraphNode),
                 _ => None,
             }))
             .chain(
                 self.traits()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(
                 self.modules()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain( // Search Consts
                 self.consts()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain( // Search Statics
                 self.statics()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
             .chain(
                 self.macros()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             )
              .chain(self.impls().iter().flat_map(move |i| { // Search Methods in Impls
                 i.methods
                     .iter()
-                    .filter(move |m| m.id == item_id)
+                    .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
              .chain(self.traits().iter().flat_map(move |t| { // Search Methods in Traits
                 t.methods // Assuming TraitNode has 'methods' Vec<MethodNode>
                     .iter()
-                    .filter(move |m| m.id == item_id)
+                    .filter(move |m| m.id.as_any() == item_id)
                     .map(|m| m as &dyn GraphNode)
             }))
            // --- Add ImportNode search ---
             .chain(
                 self.use_statements()
                     .iter()
-                    .filter(move |n| n.id == item_id)
+                    .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),
             );
 
@@ -707,104 +690,24 @@ fn debug_relationships(&self) {
 
         match (first, second) {
             (Some(node), None) => Ok(node), // Exactly one match found
-            (None, _) => Err(SynParserError::NotFound(item_id)), // No matches found
-            (Some(_), Some(_)) => Err(SynParserError::DuplicateNode(item_id)), // More than one match found
+            (None, _) => Err(SynParserError::NotFound(item_id.as_any())), // No matches found
+            (Some(_), Some(_)) => Err(SynParserError::DuplicateNode(item_id.as_any())), // More than one match found
         }
     }
 
 
-    fn get_nodes_by_ids(&self, ids: &[NodeId]) -> Vec<&dyn GraphNode> {
-        ids.iter().filter_map(|id| self.find_node(*id)).collect()
-    }
-
-    fn get_children(&self, node_id: NodeId) -> Vec<NodeId> {
+    fn get_children_iter<T: PrimaryNodeIdTrait>(&self, module_id: ModuleNodeId) -> impl Iterator<Item = T>  {
         self.relations()
             .iter()
-            .filter_map(|rel| match rel {
-                SyntacticRelation::Contains { source, target } if source.as_inner() == &node_id => {
-                    Some(target.base_id())
-                }
-                _ => None,
-            })
-            .collect()
+            .copied()
+            .filter_map(move |rel| rel.contains_target(module_id))
     }
 
-    fn module_contains_node(&self, module_id: NodeId, item_id: NodeId) -> bool {
+    fn module_contains_node(&self, module_id: ModuleNodeId, item_id: PrimaryNodeId) -> bool {
         // Check if module directly contains the item
-        self.modules()
-            .iter()
-            .find(|m| m.id == module_id)
-            .map(|module| module.items().is_some_and(|m| m.contains(&item_id)));
-
-        // Check if module contains the item through nested modules
-        self.relations().iter().any(|rel| match rel {
-            SyntacticRelation::Contains { source, target } => {
-                source.as_inner() == &module_id && target.base_id() == item_id
-            }
-            _ => false,
-        })
+        self.ids_contained_by(module_id).contains(&item_id)
     }
 
-    // TODO: Improve this. It is old code and needs to be refactored to be more idiomatic and
-    // checked for correctness.
-    #[allow(dead_code, reason = "Useful in upcoming uuid changes for Phase 3")]
-    fn check_use_statements(&self, item_id: NodeId, context_module: &[String]) -> VisibilityResult {
-        let context_module_id = match self.find_module_by_path(context_module) {
-            Some(m) => m.id,
-            None => {
-                panic!("Trying to access another workspace.")
-            }
-        };
-
-        // Get all ModuleImports relations for this context module
-        let import_relations = self.relations().iter().filter_map(|rel| match rel {
-            SyntacticRelation::ModuleImports { source, target }
-                if source.as_inner() == &context_module_id =>
-            {
-                Some(target.into_inner()) // Get the ImportNodeId's base NodeId
-            }
-            _ => None,
-        });
-
-        // Iterate over the NodeIds of the ImportNodes
-        for import_node_id in import_relations {
-            // We need the ImportNode itself to check its path/kind, not just the ID here.
-            // Let's adjust the logic below to work with the module's imports list directly.
-
-            // Check if this is a glob import - This logic needs rethinking.
-            // A glob import (`use some::path::*;`) doesn't have a single target ID.
-            // We need to check the `ImportNode`'s kind/path.
-
-            // Direct import match - This also needs the ImportNode's path info.
-            // if import_node_id == item_id { // This comparison is likely incorrect
-            //     return VisibilityResult::Direct;
-            // }
-        }
-
-        let item = match self.find_node(item_id) {
-            Some(item) => item,
-            None => {
-                panic!("Node not in graph");
-            }
-        };
-
-        // Get current module's use statements
-        let current_module = self.modules().iter().find(|m| m.path == context_module);
-
-        if let Some(module) = current_module {
-            for use_stmt in &module.imports {
-                // Check if use statement brings the item into scope
-                if use_stmt.source_path.ends_with(&[item.name().to_string()]) {
-                    return VisibilityResult::NeedsUse(use_stmt.source_path.clone());
-                }
-            }
-        }
-
-        // Default to private if no matching use statement found
-        VisibilityResult::OutOfScope {
-            allowed_scopes: None,
-        }
-    }
 
     // --- FunctionNode Getters ---
 
@@ -815,14 +718,14 @@ fn debug_relationships(&self) {
 
     /// Finds a function node by its ID, returning an error if not found or if duplicates exist.
     fn get_function_checked(&self, id: FunctionNodeId) -> Result<&FunctionNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.functions().iter().filter(|f| f.id == id); // Compare FunctionNodeId == FunctionNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
+
 
     // --- ImplNode Getters ---
 
@@ -833,13 +736,12 @@ fn debug_relationships(&self) {
 
     /// Finds an impl node by its ID, returning an error if not found or if duplicates exist.
     fn get_impl_checked(&self, id: ImplNodeId) -> Result<&ImplNode, SynParserError> {
-        let base_id = id.into_inner(); // Get base ID for error reporting
         let mut matches = self.impls().iter().filter(|i| i.id == id); // Compare ImplNodeId == ImplNodeId
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(base_id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(base_id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     // --- TraitNode Getters ---

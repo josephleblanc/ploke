@@ -184,7 +184,7 @@ pub fn analyze_file_phase2(
     let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
     // *** NEW STEP: Push root module ID onto the scope stack ***
     // This makes it the default parent scope for top-level items visited next.
-    state.current_definition_scope.push(root_module_pid);
+    state.current_primary_defn_scope.push(root_module_pid);
 
     // 4. Create and run the visitor
     let mut visitor = code_visitor::CodeVisitor::new(&mut state);

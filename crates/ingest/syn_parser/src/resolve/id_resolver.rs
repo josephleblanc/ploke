@@ -62,7 +62,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         debug!(target: LOG_TARGET, "  {} Resolving node: {} ({}) at path: {}",
             "->".log_comment(),
             graph_node.name().log_name(),
-            graph_node.id().to_string().log_id(),
+            graph_node.any_id().to_string().log_id(),
             node_path.to_string().log_path()
         );
 
@@ -193,92 +193,5 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                     }
                 }
             })
-        // .map(|result| { // Original commented-out code
-        //     result.map(|(np, module, items)| items.iter().map(|item| (np, module, item))) // Original commented-out code
-        // });
-        // self.graph
-        //     .functions()
-        //     .iter()
-        //     .map(|f| (f.name(), f.id()))
-        //     .chain(self.graph.impls().iter().map(|imp| (imp.name(), imp.id())))
-        //     .map(|(name, id)| {
-        //         let result = self
-        //             .module_tree
-        //             .get_containing_mod_checked(&GraphId::Node(id), RelationKind::Contains);
-        //         result.map(|tr| (name, id, tr))
-        //     }).map(| result | result.map(|(name, id, tr)| {
-        //         let containing_module = tr.relation().source;
-        //         let fileself.module_tree.get_module_checked(containing_module)
-        //     }
-        //
-        //     ) );
-        //
-        // todo!();
-
-        // .graph.functions().iter().map(|f| f);
-
-        // IdInfo::new(
-        //     todo!(), // file_path,
-        //     todo!(), // logical_item_path,
-        //     todo!(), // cfgs,
-        //     todo!(), // item_kind
-
-        // --- Placeholder Logic ---
-        // The actual implementation will involve chaining iterators over different node types.
-        // Example structure:
-        // self.graph.functions().iter().map(|func_node| {
-        //     let synthetic_id = func_node.id;
-        //     self.resolve_single_node(synthetic_id, func_node) // Helper returns Result<(NodeId, CanonId), Error>
-        // })
-        // .chain(self.graph.defined_types().iter().map(|type_def_node| {
-        //     let synthetic_id = type_def_node.id();
-        //     self.resolve_single_node(synthetic_id, type_def_node)
-        // }))
-        // .chain(...) // for other node types (modules, impls, traits, values, macros, imports)
-
-        // For now, return an empty iterator that satisfies the type signature.
-        // std::iter::empty()
-
-        // --- Original Placeholder Logic (for reference during implementation) ---
-        // let mut resolved_ids = HashMap::new();
-        // Iterate through self.graph.functions(), self.graph.defined_types(), etc.
-        // For each node:
-        // 1. Get its synthetic NodeId.
-        // 2. Determine its canonical path using self.module_tree.
-        //    - This involves finding the containing module and walking up the tree.
-        //    - Need helper functions in ModuleTree or here to get the canonical path Vec<String>.
-        // 3. Get other necessary info (file_path, item_kind, cfgs).
-        // 4. Create IdInfo struct.
-        // 5. Call CanonId::generate_resolved(self.namespace, id_info).
-        // 6. Insert into resolved_ids map.
-
-        // Example (Conceptual - Needs Real Implementation):
-        // for func_node in self.graph.functions() {
-        //     let synthetic_id = func_node.id; // Assuming this is the synthetic NodeId
-        //     let canonical_path = self.determine_canonical_path(synthetic_id)?; // Placeholder
-        //     let id_info = IdInfo { /* ... populate ... */ };
-        //     let canon_id = CanonId::generate_resolved(self.namespace, id_info)?;
-        //     resolved_ids.insert(synthetic_id, canon_id);
-        // }
-        // ... repeat for other node types ...
-        // --- End Placeholder ---
     }
-
-    // Placeholder for a helper function to resolve a single node
-    // fn resolve_single_node(
-    //     &self,
-    //     synthetic_id: NodeId,
-    //     node: &dyn GraphNode, // Need access to the node itself
-    // ) -> Result<(NodeId, CanonId), IdConversionError> {
-    //     let canonical_path = self.determine_canonical_path(synthetic_id)?; // Placeholder
-    //     let id_info = IdInfo { /* ... populate ... */ };
-    //     let canon_id = CanonId::generate_resolved(self.namespace, id_info)?;
-    //     Ok((synthetic_id, canon_id))
-    // }
-
-    // Placeholder for a helper function to determine canonical path (might live in ModuleTree or here)
-    // fn determine_canonical_path(&self, node_id: NodeId) -> Result<Vec<String>, IdConversionError> {
-    //     // ... logic to find containing module and build path ...
-    //     Ok(vec!["crate".to_string(), "some_mod".to_string(), "item_name".to_string()]) // Dummy path
-    // }
 }

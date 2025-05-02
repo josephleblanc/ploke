@@ -1,7 +1,6 @@
-use crate::parser::graph::GraphAccess;
+use crate::parser::{graph::GraphAccess, nodes::AnyNodeId};
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
-use ploke_core::NodeId;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -18,7 +17,7 @@ use crate::{
             self, extract_path_attr_from_node, GraphNode, ImportNode, ModuleNode, ModuleNodeId,
             NodePath,
         },
-        relations::{Relation, RelationKind},
+        relations::SyntacticRelation,
         types::VisibilityKind,
         ParsedCodeGraph,
     },
@@ -30,8 +29,6 @@ use crate::{
 
 #[cfg(test)]
 pub mod test_interface {
-
-    use ploke_core::NodeId;
 
     use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo};
     use crate::parser::{nodes::GraphNode, ParsedCodeGraph};
@@ -215,8 +212,8 @@ pub enum ModuleTreeError {
     DuplicatePath {
         // Change to a struct variant
         path: NodePath,
-        existing_id: NodeId,
-        conflicting_id: NodeId,
+        existing_id: AnyNodeId,
+        conflicting_id: AnyNodeId,
     },
     #[error("Duplicate definition module_id '{module_id}' found in module tree. Existing path attribute: {existing_path}, Conflicting path attribute: {conflicting_path}")]
     DuplicatePathAttribute {
@@ -236,7 +233,7 @@ pub enum ModuleTreeError {
     NodePathValidation(Box<SynParserError>), // Box the recursive type
 
     #[error("Containing module not found for node ID: {0}")]
-    ContainingModuleNotFound(NodeId), // Added error variant
+    ContainingModuleNotFound(AnyNodeId), // Added error variant
 
     // NEW: Variant holding a collection of UnlinkedModuleInfo
     // Corrected format string - the caller logs the count/details
@@ -244,7 +241,7 @@ pub enum ModuleTreeError {
     FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
 
     #[error("Item with ID {0} is not publicly accessible from the crate root.")]
-    ItemNotPubliclyAccessible(NodeId), // New error variant for SPP
+    ItemNotPubliclyAccessible(AnyNodeId), // New error variant for SPP
 
     #[error("Node error: {0}")]
     NodeError(#[from] nodes::NodeError), // Add #[from] for NodeError
@@ -261,13 +258,13 @@ pub enum ModuleTreeError {
     #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
     ConflictingReExportPath {
         path: NodePath,
-        existing_id: NodeId,
-        conflicting_id: NodeId,
+        existing_id: AnyNodeId,
+        conflicting_id: AnyNodeId,
     },
 
     // --- NEW VARIANT ---
     #[error("Re-export chain starting from {start_node_id} exceeded maximum depth (32). Potential cycle or excessively deep re-export.")]
-    ReExportChainTooLong { start_node_id: NodeId },
+    ReExportChainTooLong { start_node_id: AnyNodeId },
 
     #[error("Implement me!")]
     UnresolvedPathAttr(Box<ModuleTreeError>), // Placeholder, fill in with contextual information
@@ -283,21 +280,21 @@ pub enum ModuleTreeError {
 
     // --- NEW VARIANT ---
     #[error("Shortest public path resolution failed for external item re-export: {0}")]
-    ExternalItemNotResolved(NodeId),
+    ExternalItemNotResolved(AnyNodeId),
 
     #[error("No relations found for node {0}: {1}")]
-    NoRelationsFound(NodeId, String),
+    NoRelationsFound(AnyNodeId, String),
     #[error("No relations found for node {0}")]
-    NoRelationsFoundForId(NodeId), // Placeholder, trying out copy-only values
+    NoRelationsFoundForId(AnyNodeId), // Placeholder, trying out copy-only values
     #[error("Could not resolve target for re-export '{path}'. Import Node ID: {import_node_id:?}")]
     UnresolvedReExportTarget {
-        import_node_id: Option<NodeId>,
+        import_node_id: Option<AnyNodeId>,
         path: NodePath, // The original path that failed to resolve
     },
 
     // --- NEW VARIANT ---
     #[error("Invalid internal state: pending_exports was None when adding module {module_id}")]
-    InvalidStatePendingExportsMissing { module_id: NodeId },
+    InvalidStatePendingExportsMissing { module_id: ModuleNodeId },
     #[error("Internal state error: {0}")]
     InternalState(String),
     #[error("Warning: {0}")]
@@ -305,7 +302,7 @@ pub enum ModuleTreeError {
 
     // --- NEW VARIANT ---
     #[error("Recursion limit ({limit}) exceeded while finding defining file path for node {start_node_id}")]
-    RecursionLimitExceeded { start_node_id: NodeId, limit: u8 },
+    RecursionLimitExceeded { start_node_id: AnyNodeId, limit: u8 },
 }
 
 /// Holds the IDs and relations pruned from the ModuleTree.

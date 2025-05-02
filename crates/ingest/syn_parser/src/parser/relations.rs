@@ -1,6 +1,6 @@
 // Import specific typed IDs AND the new category enums
 use crate::parser::nodes::{
-    AssociatedItemId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
+    AssociatedItemNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
     ImportNodeId, MacroNodeId, ModuleNodeId, ParamNodeId, PrimaryNodeId, ReexportNodeId,
     StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
@@ -25,17 +25,27 @@ pub enum RelationConversionError {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SyntacticRelation {
     //-----------------------------------------------------------------------
-    // Module Structure & Definition Relations (Primarily from ModuleTree)
+    //                Module Structure & Definition Relations
     //-----------------------------------------------------------------------
+
+    // ----------------------------------
+    // ----- Created in CodeVisitor -----
+    // ----------------------------------
     /// Module contains another node (function, struct, enum, impl, trait, module, import, etc.).
+    /// Created in CodeVisitor
     /// Source: ModuleNodeId
     /// Target: PrimaryNodeId (Restricts target to primary item types)
+    // #
     Contains {
         source: ModuleNodeId,
         target: PrimaryNodeId,
     },
 
+    // ---------------------------------
+    // ----- Created in ModuleTree -----
+    // ---------------------------------
     /// Module declaration resolves to its definition.
+    /// Created in CodeVisitor
     /// Source: ModuleNodeId (Declaration)
     /// Target: ModuleNodeId (Definition)
     ResolvesToDefinition {
@@ -61,7 +71,7 @@ pub enum SyntacticRelation {
     },
 
     //-----------------------------------------------------------------------
-    // Import/Export Relations (Primarily from ModuleTree & Visitor)
+    //                      Import/Export Relations
     //-----------------------------------------------------------------------
     /// Module contains an import statement.
     /// Source: ModuleNodeId
@@ -116,18 +126,21 @@ pub enum SyntacticRelation {
 
     /// Impl block contains an associated item (method, type, const).
     /// Source: ImplNodeId
-    /// Target: AssociatedItemId (Restricts target to valid associated item types)
+    /// Target: AssociatedItemNodeId (Restricts target to valid associated item types)
+    // NOTE: Note yet implemented (2025-05-02)
+    //
     ImplAssociatedItem {
         source: ImplNodeId,
-        target: AssociatedItemId,
+        target: AssociatedItemNodeId,
     },
 
     /// Trait definition contains an associated item (method, type, const).
     /// Source: TraitNodeId
-    /// Target: AssociatedItemId (Restricts target to valid associated item types)
+    /// Target: AssociatedItemNodeId (Restricts target to valid associated item types)
+    // NOTE: Note yet implemented (2025-05-02)
     TraitAssociatedItem {
         source: TraitNodeId,
-        target: AssociatedItemId,
+        target: AssociatedItemNodeId,
     },
 }
 
@@ -144,9 +157,15 @@ impl SyntacticRelation {
             _ => None,
         }
     }
-    pub fn contains_target<T: From<PrimaryNodeId>>(&self, src: ModuleNodeId) -> Option<T> {
+    // pub fn contains_target<T: From<PrimaryNodeId>>(&self, src: ModuleNodeId) -> Option<T> {
+    //     match self {
+    //         Self::Contains { source: s, target } if *s == src => Some(T::from(*target)),
+    //         _ => None,
+    //     }
+    // }
+    pub fn contains_target<T: PrimaryNodeIdTrait>(&self, src: ModuleNodeId) -> Option<T> {
         match self {
-            Self::Contains { source: s, target } if *s == src => Some(T::from(*target)),
+            Self::Contains { source: s, target } if *s == src => T::try_from(*target).ok(),
             _ => None,
         }
     }

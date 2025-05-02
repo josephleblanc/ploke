@@ -1,7 +1,7 @@
 # ADR-014: Strict Encapsulation for Typed Node Identifiers
 
 ## Status
-ACCEPTED
+ACCEPTED 2025-05-02
 
 ## Context
 ADR-013 introduced typed node identifiers (e.g., `ModuleNodeId`, `FunctionNodeId`) using newtypes around the base `NodeId` to improve compile-time safety. The initial implementation proposed using `pub(crate)` visibility for escape hatches (`.into_inner()`, `.as_inner()`) to allow necessary internal access to the base `NodeId` (for hashing, indexing, error reporting).

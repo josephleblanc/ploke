@@ -1,5 +1,5 @@
-use crate::resolve::module_tree::ModuleTreeError;
-use ploke_core::{IdConversionError, NodeId, TypeId};
+use crate::{parser::nodes::AnyNodeId, resolve::module_tree::ModuleTreeError};
+use ploke_core::{IdConversionError, TypeId};
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
@@ -36,11 +36,11 @@ pub enum SynParserError {
 
     /// Indicates that a requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
-    NotFound(NodeId),
+    NotFound(AnyNodeId),
 
     /// Indicates that multiple nodes were found when exactly one was expected.
     #[error("Duplicate node found for ID {0} when only one was expected.")]
-    DuplicateNode(NodeId),
+    DuplicateNode(AnyNodeId),
 
     #[error("Duplicate node found for ModuleNode in ModuleTree construction: {0:?} ")]
     DuplicateInModuleTree(Box<ModuleNode>), // Box the large ModuleNode
@@ -89,8 +89,8 @@ pub enum SynParserError {
     ModuleTreeDuplicateDefnPath {
         // New variant
         path: String, // Store path as String for simplicity in SynParserError
-        existing_id: NodeId,
-        conflicting_id: NodeId,
+        existing_id: AnyNodeId,
+        conflicting_id: AnyNodeId,
     },
 
     /// Indicates a duplicate module ID was encountered when building the ModuleTree.
@@ -98,7 +98,7 @@ pub enum SynParserError {
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
     #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
-    ModuletreeRelationNotFound(NodeId, String),
+    ModuletreeRelationNotFound(AnyNodeId, String),
     // Removed ModuleKindinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
     // ModuleKindinitionNotFound(String), // Store path string representation
@@ -114,7 +114,7 @@ pub enum SynParserError {
 
     /// Indicates that shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
-    ExternalItemNotResolved(NodeId),
+    ExternalItemNotResolved(AnyNodeId),
 
     #[error(transparent)]
     VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
@@ -293,7 +293,7 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::NoRelationsFoundForId(node_id) => {
                 // Indicates an item expected to have relations (like containment) was found without any.
                 SynParserError::InternalState(format!(
-                    "No relations found for NodeId {} during ModuleTree processing.",
+                    "No relations found for AnyNodeId {} during ModuleTree processing.",
                     node_id
                 ))
             }

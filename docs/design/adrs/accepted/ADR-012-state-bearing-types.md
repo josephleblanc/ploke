@@ -1,7 +1,7 @@
 # ADR-012: Using State-Bearing Types for Graph Processing Stages
 
 ## Status
-ACCEPTED
+ACCEPTED 2025-04-28
 
 ## Context
 The code graph undergoes several processing stages (parsing, merging, validation, resolution). Functions operating at later stages often rely on invariants established by earlier stages (e.g., name resolution requires a validated graph with unique node IDs). Passing the same graph type (e.g., `CodeGraph`) through all stages makes it possible to accidentally call a function with a graph that hasn't completed the necessary prerequisite steps, leading to runtime errors or incorrect results. We need a mechanism to enforce the correct sequence of operations and ensure functions receive graph data that meets their preconditions.

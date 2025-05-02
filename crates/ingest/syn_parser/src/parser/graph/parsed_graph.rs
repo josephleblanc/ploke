@@ -96,7 +96,7 @@ impl ParsedCodeGraph {
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
-        // Removed values append
+                                                             // Removed values append
         self.graph.macros.append(&mut other.graph.macros);
         self.graph
             .use_statements
@@ -257,7 +257,8 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.traits
     }
 
-    fn relations(&self) -> &[SyntacticRelation] { // Updated type
+    fn relations(&self) -> &[SyntacticRelation] {
+        // Updated type
         &self.graph.relations
     }
 
@@ -266,11 +267,13 @@ impl GraphAccess for ParsedCodeGraph {
     }
 
     // Removed values()
-    fn consts(&self) -> &[ConstNode] { // Added
+    fn consts(&self) -> &[ConstNode] {
+        // Added
         &self.graph.consts
     }
 
-    fn statics(&self) -> &[StaticNode] { // Added
+    fn statics(&self) -> &[StaticNode] {
+        // Added
         &self.graph.statics
     }
 
@@ -302,7 +305,8 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.traits
     }
 
-    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> { // Updated type
+    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> {
+        // Updated type
         &mut self.graph.relations
     }
 
@@ -311,11 +315,13 @@ impl GraphAccess for ParsedCodeGraph {
     }
 
     // Removed values_mut()
-    fn consts_mut(&mut self) -> &mut Vec<ConstNode> { // Added
+    fn consts_mut(&mut self) -> &mut Vec<ConstNode> {
+        // Added
         &mut self.graph.consts
     }
 
-    fn statics_mut(&mut self) -> &mut Vec<StaticNode> { // Added
+    fn statics_mut(&mut self) -> &mut Vec<StaticNode> {
+        // Added
         &mut self.graph.statics
     }
 

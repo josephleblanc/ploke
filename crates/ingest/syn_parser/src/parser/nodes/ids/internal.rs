@@ -12,7 +12,6 @@ use super::*;
 use crate::utils::LOG_TARGET_NODE_ID;
 use log::debug;
 use ploke_core::{NodeId, TypeKind}; // Removed IdConversionError import
-use std::borrow::Borrow;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
@@ -24,26 +23,24 @@ use std::fmt::Display;
 ///
 /// This trait is implemented internally for each specific ID type that represents
 /// a node directly stored and retrievable in the `GraphAccess` implementor.
-pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
-    // Added Copy bound as IDs are Copy
-    // Added Sealed bound to prevent external implementations
-    fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode>;
-}
+// pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
+//     // Added Copy bound as IDs are Copy
+//     // Added Sealed bound to prevent external implementations
+//     fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode>;
+// }
 
 /// Convenience trait to help be more explicit about converting into AnyNodeId.
 /// Relies on `Into<AnyNodeId>` being implemented on the base type on a case by case basis.
 pub trait AsAnyNodeId
 where
-    Self: TypedId + Into<AnyNodeId> + Sized + Copy,
+    Self: AnyTypedId + Into<AnyNodeId> + Copy,
 {
-    fn as_any(self) -> AnyNodeId;
-}
-
-impl<T: TypedId + Into<AnyNodeId>> AsAnyNodeId for T {
     fn as_any(self) -> AnyNodeId {
         self.into()
     }
 }
+
+impl<T> AsAnyNodeId for T where T: AnyTypedId + Into<AnyNodeId> {}
 
 // TODO: Reach true certainty regarding scoping of `NodeId` generation by making this trait
 // private.
@@ -54,7 +51,7 @@ impl<T: TypedId + Into<AnyNodeId>> AsAnyNodeId for T {
 // have it be a sibling or perhaps child of `visitor.rs`. Worth considering. Not today.
 pub(in crate::parser) trait GeneratesAnyNodeId {
     /// Helper to generate a synthetic NodeId using the current visitor state.
-    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
+    /// Uses the last ID pushed onto `current_primary_defn_scope` as the parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
     fn generate_synthetic_node_id(
         &self,
@@ -71,8 +68,8 @@ impl GeneratesAnyNodeId for VisitorState {
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> AnyNodeId {
         // Get the last pushed scope ID as the parent, if available
-        let parent_scope_id = self
-            .current_definition_scope
+        let primary_parent_scope_id = self
+            .current_primary_defn_scope
             .last()
             .copied()
             .map(|p_id| p_id.base_id());
@@ -86,7 +83,7 @@ impl GeneratesAnyNodeId for VisitorState {
         debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
         debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
         debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
-        debug!(target: LOG_TARGET_NODE_ID, "  parent_scope_id: {:?}", parent_scope_id);
+        debug!(target: LOG_TARGET_NODE_ID, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
         debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
 
         let node_id = NodeId::generate_synthetic(
@@ -95,8 +92,8 @@ impl GeneratesAnyNodeId for VisitorState {
             &self.current_module_path, // Current module path acts as relative path context
             name,
             item_kind,
-            parent_scope_id, // Pass the parent scope ID from the stack
-            cfg_bytes,       // Pass the provided CFG bytes
+            primary_parent_scope_id, // Pass the parent scope ID from the stack
+            cfg_bytes,               // Pass the provided CFG bytes
         );
 
         match item_kind {
@@ -126,19 +123,28 @@ impl GeneratesAnyNodeId for VisitorState {
 
 pub(in crate::parser) trait GenerateTypeId {
     /// Helper to generate a synthetic NodeId using the current visitor state.
-    /// Uses the last ID pushed onto `current_definition_scope` as the parent scope ID.
+    /// Uses the last ID pushed onto `current_primary_defn_scope` as the parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
     fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId;
 }
-
 impl GenerateTypeId for VisitorState {
     fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId {
         // 2. Get the current parent scope ID from the state.
         //    Assume it's always present because the root module ID is pushed first.
-        let parent_scope_id = self.current_definition_scope.last().copied().expect(
-            "Visitorself's current_definition_scope should not be empty during type processing",
+        let parent_scope_id = self.current_primary_defn_scope.iter()
+            .copied()
+            .map(|pid| pid.as_any())
+            .chain(
+                self.current_secondary_defn_scope.iter() 
+                    .map(|sid| sid.as_any())
+            )
+            .chain(
+                self.current_assoc_defn_scope.iter()
+                    .map(|aid| aid.as_any())
+            )
+            .last().expect(
+            "Invalid State: Visitor.self's current_primary_defn_scope should not be empty during type processing",
         );
-
         // 3. Generate the new Synthetic Type ID using structural info AND parent scope
         let new_id = TypeId::generate_synthetic(
             self.crate_namespace,
@@ -223,6 +229,7 @@ macro_rules! define_category_enum {
                 }
             }
         }
+
         // --- Display Implementation ---
         impl std::fmt::Display for $EnumName {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -249,6 +256,8 @@ macro_rules! define_category_enum {
                 }
             }
         }
+
+        impl AnyTypedId for $EnumName {}
 
         impl TryFrom<AnyNodeId> for $EnumName {
             type Error = $ErrorType; // Use the provided error type
@@ -349,28 +358,28 @@ macro_rules! define_category_enum {
     };
 }
 
-/// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
-///
-/// # Usage
-/// ```ignore
-/// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
-/// impl_typed_node_id_get!(StructNodeId, get_struct);
-/// ```
-macro_rules! impl_typed_node_id_get {
-    ($IdType:ty, $GetterMethod:ident) => {
-        // Implement the private sealing trait first
-        impl private_traits::Sealed for $IdType {}
-        // Implement the getter trait
-        impl TypedNodeIdGet for $IdType {
-            #[inline]
-            fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
-                graph
-                    .$GetterMethod(*self)
-                    .map(|node| node as &dyn GraphNode)
-            }
-        }
-    };
-}
+///// Macro to implement the `TypedNodeIdGet` trait for a specific ID type.
+/////
+///// # Usage
+///// ```ignore
+///// // Implements TypedNodeIdGet for StructNodeId using graph.get_struct()
+///// impl_typed_node_id_get!(StructNodeId, get_struct);
+///// ```
+// macro_rules! impl_typed_node_id_get {
+//     ($IdType:ty, $GetterMethod:ident) => {
+//         // Implement the private sealing trait first
+//         impl private_traits::Sealed for $IdType {}
+//         // Implement the getter trait
+//         impl TypedNodeIdGet for $IdType {
+//             #[inline]
+//             fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode> {
+//                 graph
+//                     .$GetterMethod(*self)
+//                     .map(|node| node as &dyn GraphNode)
+//             }
+//         }
+//     };
+// }
 
 // ----- Internal Macro for Typed IDs -----
 
@@ -459,6 +468,7 @@ macro_rules! define_internal_node_id {
 
         // Implement the base TypedId trait for all generated IDs
         // Ensure the TypedId trait is defined in this scope or accessible via path
+        impl $crate::parser::nodes::ids::internal::AnyTypedId for $NewTypeId {}
         impl $crate::parser::nodes::ids::internal::TypedId for $NewTypeId {}
 
         // Implement specified marker traits
@@ -480,7 +490,7 @@ define_internal_node_id!(
 ); // For standalone functions
 define_internal_node_id!(
     struct MethodNodeId {
-        markers: [AssociatedItemIdTrait],
+        markers: [AssociatedItemNodeIdTrait],
     }
 ); // For associated functions/methods
 define_internal_node_id!(
@@ -508,13 +518,13 @@ define_internal_node_id!(
         markers: [PrimaryNodeIdTrait],
     }
 );
-define_internal_node_id!(struct TypeAliasNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
+define_internal_node_id!(struct TypeAliasNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemNodeIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct UnionNodeId {
         markers: [PrimaryNodeIdTrait],
     }
 );
-define_internal_node_id!(struct ConstNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemIdTrait] }); // Can be both primary and associated
+define_internal_node_id!(struct ConstNodeId { markers: [PrimaryNodeIdTrait, AssociatedItemNodeIdTrait] }); // Can be both primary and associated
 define_internal_node_id!(
     struct StaticNodeId {
         markers: [PrimaryNodeIdTrait],
@@ -532,9 +542,16 @@ define_internal_node_id!(
 );
 define_internal_node_id!(
     struct ParamNodeId {
-        markers: [SecondaryNodeIdTrait],
+        markers: [], // removed SecondaryNodeIdTrait since we are experimenting with not using
+    // Nodeid for this
     }
 ); // For ParamData
+
+// define_internal_node_id!(
+//     struct ParamNodeId {
+//         markers: [SecondaryNodeIdTrait],
+//     }
+// ); // For ParamData
 define_internal_node_id!(
     struct GenericParamNodeId {
         markers: [SecondaryNodeIdTrait],
@@ -553,6 +570,7 @@ define_internal_node_id!(
     }
 ); // No specific category yet, just TypedId
    // --- Category ID Enums ---
+
 
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 
@@ -573,13 +591,30 @@ impl Default for TryFromPrimaryError {
     }
 }
 
-/// Error type for failed TryFrom<AssociatedItemId> conversions.
+/// Error type for failed TryFrom<PrimaryNodeId> conversions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TryFromSecondaryError;
+
+impl std::fmt::Display for TryFromSecondaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SecondaryNodeId variant mismatch")
+    }
+}
+impl std::error::Error for TryFromSecondaryError {}
+
+impl Default for TryFromSecondaryError {
+    fn default() -> Self {
+        TryFromSecondaryError
+    }
+}
+
+/// Error type for failed TryFrom<AssociatedItemNodeId> conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TryFromAssociatedItemError;
 
 impl std::fmt::Display for TryFromAssociatedItemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "AssociatedItemId variant mismatch")
+        write!(f, "AssociatedItemNodeId variant mismatch")
     }
 }
 impl std::error::Error for TryFromAssociatedItemError {}
@@ -605,10 +640,10 @@ impl PrimaryNodeMarker for MacroNode {}
 impl PrimaryNodeMarker for ImportNode {}
 impl PrimaryNodeMarker for ModuleNode {}
 
-// --- Marker Traits ---
-// Define the marker traits themselves here.
-// Implementations are generated by the define_internal_node_id! macro.
-pub trait TypedId:
+// Trait for all typed ids and all typed id categories.
+// This helps to ensure all of the following properties hold for all typed ids and categories of
+// typed ids.
+pub trait AnyTypedId:
     Copy
     + std::fmt::Debug
     + std::hash::Hash
@@ -620,9 +655,28 @@ pub trait TypedId:
     + Sync
 {
 } // Base trait for all typed IDs - Added common bounds
-pub trait PrimaryNodeIdTrait: TypedId {} // Marker for primary node IDs
-pub trait AssociatedItemIdTrait: TypedId {} // Marker for associated item IDs
-pub trait SecondaryNodeIdTrait: TypedId {} // Marker for secondary node IDs (fields, params, etc.)
+
+// Marker traits for the categories of typed ids themselves
+pub trait TypedId: AnyTypedId {} // Base trait for all typed IDs - Added common bounds
+pub trait CategoricalTypedId: AnyTypedId {}
+
+// --- Marker Traits ---
+// Define the marker traits themselves here.
+// Implementations are generated by the define_internal_node_id! macro.
+// Marker traits for categories of typed ids
+pub trait PrimaryNodeIdTrait: AnyTypedId + TryFrom<PrimaryNodeId> + Into<PrimaryNodeId> {
+    fn to_pid(self) -> PrimaryNodeId {
+        self.into()
+    }
+} // Marker for primary node IDs
+pub trait AssociatedItemNodeIdTrait: AnyTypedId + TryFrom<AssociatedItemNodeId> {} // Marker for associated item IDs
+pub trait SecondaryNodeIdTrait: AnyTypedId + TryFrom<SecondaryNodeId> {} // Marker for secondary node IDs (fields, params, etc.)
+
+// impl<T> TryFrom<PrimaryNodeId> for T 
+//     where T: PrimaryNodeIdTrait + PrimaryNodeId
+// {
+//
+// }
 
 // Add other category marker traits as needed
 
@@ -634,18 +688,18 @@ mod private_traits {
 }
 // --- TypedNodeIdGet Implementations ---
 // Primary Nodes
-impl_typed_node_id_get!(FunctionNodeId, get_function);
-impl_typed_node_id_get!(StructNodeId, get_struct);
-impl_typed_node_id_get!(EnumNodeId, get_enum);
-impl_typed_node_id_get!(UnionNodeId, get_union);
-impl_typed_node_id_get!(TypeAliasNodeId, get_type_alias);
-impl_typed_node_id_get!(TraitNodeId, get_trait);
-impl_typed_node_id_get!(ImplNodeId, get_impl);
-impl_typed_node_id_get!(ConstNodeId, get_const);
-impl_typed_node_id_get!(StaticNodeId, get_static);
-impl_typed_node_id_get!(MacroNodeId, get_macro);
-impl_typed_node_id_get!(ImportNodeId, get_import);
-impl_typed_node_id_get!(ModuleNodeId, get_module);
+// impl_typed_node_id_get!(FunctionNodeId, get_function);
+// impl_typed_node_id_get!(StructNodeId, get_struct);
+// impl_typed_node_id_get!(EnumNodeId, get_enum);
+// impl_typed_node_id_get!(UnionNodeId, get_union);
+// impl_typed_node_id_get!(TypeAliasNodeId, get_type_alias);
+// impl_typed_node_id_get!(TraitNodeId, get_trait);
+// impl_typed_node_id_get!(ImplNodeId, get_impl);
+// impl_typed_node_id_get!(ConstNodeId, get_const);
+// impl_typed_node_id_get!(StaticNodeId, get_static);
+// impl_typed_node_id_get!(MacroNodeId, get_macro);
+// impl_typed_node_id_get!(ImportNodeId, get_import);
+// impl_typed_node_id_get!(ModuleNodeId, get_module);
 
 // Associated Items (Methods are retrieved via their parent Impl/Trait, not directly)
 // Note: MethodNodeId does *not* get an impl, as there's no `graph.get_method(MethodNodeId)`
@@ -682,10 +736,25 @@ define_category_enum!(
         (Module, ModuleNodeId, ItemKind::Module),
     ]
 );
+// Adding this for simplicity, since I think it should work to help us be generic over both the
+// category and any elements of the category. Might break though.
+impl PrimaryNodeIdTrait for PrimaryNodeId {}
+
+define_category_enum!(
+    #[doc = "Represents the ID of any node type that can be defined within a Primary Node and may define items within their owns scope, such as a struct's FieldNode and a Variant's FieldNode's"]
+    SecondaryNodeId,
+    TryFromSecondaryError, // Pass the specific error type
+    ItemKind,
+    [
+        (Variant, VariantNodeId, ItemKind::Variant),
+        (Field, FieldNodeId, ItemKind::Field),
+        (GenericParam, GenericParamNodeId, ItemKind::GenericParam),
+    ]
+);
 
 define_category_enum!(
     #[doc = "Represents the ID of any node type that can be an associated item within an `impl` or `trait` block."]
-    AssociatedItemId,
+    AssociatedItemNodeId,
     TryFromAssociatedItemError, // Pass the specific error type
     ItemKind,
     [

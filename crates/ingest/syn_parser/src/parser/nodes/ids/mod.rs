@@ -7,7 +7,7 @@
 // Declare the private internal module
 mod internal;
 // Removed: mod utility_macros;
-pub(self) use super::*;
+use super::*;
 // Removed: pub(self) use utility_macros::*;
 // ----- Re-exports -----
 // We will re-export the specific ID types, marker traits, category enums,
@@ -21,17 +21,23 @@ pub use internal::{
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
-pub use internal::{
-    AsAnyNodeId, AssociatedItemIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId,
-};
+pub use internal::{AssociatedItemNodeIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
+// Re-exported convenience trait (same functionality as Into<AnyNodeId>)
+// Helps be more explicit about conversions to `AnyNodeId`
+pub use internal::AsAnyNodeId;
+
 // Re-export the getter trait (make it crate-visible)
-pub(crate) use internal::TypedNodeIdGet;
+// pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
 // Re-export category enums
-pub use internal::{AnyNodeId, AssociatedItemId, PrimaryNodeId};
+pub use internal::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
 // --- macro rules ---
 // --- error types ---
-pub use internal::{AnyNodeIdConversionError, TryFromAssociatedItemError, TryFromPrimaryError};
+pub use internal::{
+    AnyNodeIdConversionError, TryFromAssociatedItemError, TryFromPrimaryError,
+    TryFromSecondaryError,
+};
 
 // --- semi-private ---
+// Would like to make these more private someday
 pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
