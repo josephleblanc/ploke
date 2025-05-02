@@ -250,6 +250,19 @@ macro_rules! define_category_enum {
             }
         }
 
+        impl TryFrom<AnyNodeId> for $EnumName {
+            type Error = $ErrorType; // Use the provided error type
+            fn try_from(value: AnyNodeId) -> Result<Self, Self::Error> {
+                match value {
+                    $(
+                        AnyNodeId::$Variant(id) => Ok($EnumName::$Variant(id)),
+                    )*
+                    // Instantiate the error type using Default
+                    _ => Err(<$ErrorType>::default()),
+                }
+            }
+        }
+
         $(
 
 
@@ -259,6 +272,7 @@ macro_rules! define_category_enum {
                     $EnumName::$Variant(id)
                 }
             }
+
 
             // Implement TryFrom<$EnumName> for $IdType
             impl TryFrom<$EnumName> for $IdType {
@@ -428,19 +442,19 @@ macro_rules! define_internal_node_id {
         // within the `ids` module that needs to operate on the base ID without
         // consuming the wrapper. However, calling `base_id()` might be clearer.
         // Keep them commented out unless a clear need arises.
-        impl std::borrow::Borrow<NodeId> for $NewTypeId {
-            #[inline]
-            fn borrow(&self) -> &NodeId {
-                &self.0
-            }
-        }
-        //
-        impl AsRef<NodeId> for $NewTypeId {
-            #[inline]
-            fn as_ref(&self) -> &NodeId {
-                &self.0
-            }
-        }
+        // impl std::borrow::Borrow<NodeId> for $NewTypeId {
+        //     #[inline]
+        //     fn borrow(&self) -> &NodeId {
+        //         &self.0
+        //     }
+        // }
+        // //
+        // impl AsRef<NodeId> for $NewTypeId {
+        //     #[inline]
+        //     fn as_ref(&self) -> &NodeId {
+        //         &self.0
+        //     }
+        // }
 
 
         // Implement the base TypedId trait for all generated IDs
