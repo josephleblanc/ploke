@@ -1,4 +1,7 @@
-use crate::parser::{graph::GraphAccess, nodes::AnyNodeId};
+use crate::parser::{
+    graph::GraphAccess,
+    nodes::{AnyNodeId, ImportNodeId},
+};
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use serde::{Deserialize, Serialize};
@@ -31,18 +34,21 @@ use crate::{
 pub mod test_interface {
 
     use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo};
-    use crate::parser::{nodes::GraphNode, ParsedCodeGraph};
+    use crate::parser::{
+        nodes::{AnyNodeId, GraphNode, PrimaryNodeId},
+        ParsedCodeGraph,
+    };
 
     impl ModuleTree {
         pub fn test_shortest_public_path(
             &self,
-            item_id: NodeId,
+            item_id: PrimaryNodeId,
             graph: &ParsedCodeGraph,
         ) -> Result<ResolvedItemInfo, ModuleTreeError> {
             self.shortest_public_path(item_id, graph)
         }
 
-        pub fn test_log_node_id_verbose(&self, node_id: NodeId) {
+        pub fn test_log_node_id_verbose(&self, node_id: AnyNodeId) {
             self.log_node_id_verbose(node_id);
         }
 
@@ -69,7 +75,7 @@ pub struct ModuleTree {
     /// HashMap appropriate for many -> few possible mapping
     /// Contains all `NodeId` items except module declarations due to
     /// path collision with defining module.
-    path_index: HashMap<NodePath, NodeId>,
+    path_index: HashMap<NodePath, AnyNodeId>,
     /// Maps declaration module IDs with `#[path]` attributes pointing outside the crate's
     /// `src` directory to the resolved absolute external path. These paths do not have
     /// corresponding `ModuleNode` definitions within the analyzed crate context.
@@ -78,10 +84,10 @@ pub struct ModuleTree {
     /// Reverse lookup, but can't be in the same HashMap as the modules that define them, since
     /// they both have the same `path`. This should be the only case in which two items have the
     /// same path.
-    decl_index: HashMap<NodePath, NodeId>,
+    decl_index: HashMap<NodePath, ModuleNodeId>,
     tree_relations: Vec<TreeRelation>,
     /// re-export index for faster lookup during visibility resolution.
-    reexport_index: HashMap<NodePath, NodeId>,
+    reexport_index: HashMap<NodePath, ImportNodeId>,
     /// Stores resolved absolute paths for modules declared with `#[path]` attributes
     /// that point to files *within* the crate's `src` directory.
     /// Key: ID of the declaration module (`mod foo;`).
@@ -95,11 +101,11 @@ pub struct ModuleTree {
     /// Index mapping a source `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the source.
     /// Used for efficient lookup of outgoing relations.
-    relations_by_source: HashMap<NodeId, Vec<usize>>,
+    relations_by_source: HashMap<AnyNodeId, Vec<usize>>,
     /// Index mapping a target `NodeId` to a list of indices
     /// into the `tree_relations` vector where that ID appears as the target.
     /// Used for efficient lookup of incoming relations.
-    relations_by_target: HashMap<NodeId, Vec<usize>>,
+    relations_by_target: HashMap<AnyNodeId, Vec<usize>>,
 }
 
 /// Indicates a file-level module whose path has been resolved from a declaration that has the
@@ -129,10 +135,10 @@ pub struct PendingImport {
 }
 
 impl PendingImport {
-    pub(crate) fn from_import(import: ImportNode, containing_mod_id: NodeId) -> Self {
+    pub(crate) fn from_import(import: ImportNode, containing_mod_id: ModuleNodeId) -> Self {
         // Make crate-visible if needed internally
         PendingImport {
-            containing_mod_id: ModuleNodeId::new(containing_mod_id),
+            containing_mod_id: containing_mod_id,
             import_node: import,
         }
     }
@@ -156,10 +162,10 @@ pub struct PendingExport {
 
 impl PendingExport {
     #[allow(unused_variables)]
-    pub(crate) fn from_export(export: ImportNode, containing_module_id: NodeId) -> Self {
+    pub(crate) fn from_export(export: ImportNode, containing_module_id: ModuleNodeId) -> Self {
         // Make crate-visible if needed internally
         PendingExport {
-            containing_mod_id: ModuleNodeId::new(containing_module_id),
+            containing_mod_id: containing_module_id,
             export_node: export,
         }
     }
@@ -177,21 +183,21 @@ impl PendingExport {
 
 /// Relations useful in the module tree.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TreeRelation(Relation); // Keep inner field private
+pub struct TreeRelation(SyntacticRelation); // Keep inner field private
 
 impl TreeRelation {
-    pub fn new(relation: Relation) -> Self {
+    pub fn new(relation: SyntacticRelation) -> Self {
         Self(relation)
     }
 
     /// Returns a reference to the inner `Relation`.
-    pub fn relation(&self) -> &Relation {
+    pub fn relation(&self) -> &SyntacticRelation {
         &self.0
     }
 }
 
-impl From<Relation> for TreeRelation {
-    fn from(value: Relation) -> Self {
+impl From<SyntacticRelation> for TreeRelation {
+    fn from(value: SyntacticRelation) -> Self {
         Self::new(value)
     }
 }
@@ -201,7 +207,7 @@ impl LogDataStructure for ModuleTree {}
 // Struct to hold info about unlinked modules
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnlinkedModuleInfo {
-    pub module_id: NodeId,
+    pub module_id: ModuleNodeId,
     pub definition_path: NodePath, // Store the path that couldn't be linked
 }
 
