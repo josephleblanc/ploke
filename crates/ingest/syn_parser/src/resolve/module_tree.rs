@@ -1,8 +1,8 @@
 use crate::parser::{
     graph::GraphAccess,
     nodes::{
-        AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId, PrimaryNodeIdTrait, ReexportNodeId,
-        TryFromPrimaryError,
+        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, ImportNodeId, PrimaryNodeId,
+        PrimaryNodeIdTrait, ReexportNodeId, TryFromPrimaryError,
     },
 };
 pub use colored::Colorize;
@@ -1747,12 +1747,11 @@ impl ModuleTree {
                     // Note: The target_node_id is relation.target
                     let target_node_id = match relation.target() {
                         id => id,
-                        // Target is always NodeId now
-                        // _ => {
-                        //     log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "ReExport relation target is not a NodeId: {:?}", relation);
-                        //     // Decide how to handle this unexpected case, maybe continue or return error
-                        //     continue;
-                        // }
+                        _ => {
+                            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "ReExport relation target is not a NodeId: {:?}", relation);
+                            // Decide how to handle this unexpected case, maybe continue or return error
+                            continue;
+                        }
                     };
 
                     self.log_relation(relation, Some("ReExport Target Resolved")); // Log before potential error
@@ -1762,8 +1761,8 @@ impl ModuleTree {
                     // Update the reexport_index: public_path -> target_node_id
                     self.add_reexport_checked(public_reexport_path, reexport)?;
 
-                    self.add_rel_checked(relation.into())?;
                     // If index update succeeded, add relation using the unchecked method
+                    // TODO: Revisit this, not sure this is sound.
                     self.add_rel(relation.into());
                 }
                 Err(e) => {
