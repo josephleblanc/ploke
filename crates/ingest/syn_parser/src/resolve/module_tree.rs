@@ -479,8 +479,8 @@ impl ModuleTree {
                     // Path already exists
                     let existing_id = *entry.get();
                     return Err(ModuleTreeError::DuplicatePath {
-                        path: node_path, // Use the cloned path
-                        existing_id: existing_id.as_any(), // This is ModuleNodeId, convert
+                        path: node_path,                         // Use the cloned path
+                        existing_id: existing_id.as_any(),       // This is ModuleNodeId, convert
                         conflicting_id: conflicting_id.as_any(), // This is ModuleNodeId, convert
                     });
                 }
@@ -496,8 +496,8 @@ impl ModuleTree {
                     // Path already exists
                     let existing_id = *entry.get(); // This is AnyNodeId
                     return Err(ModuleTreeError::DuplicatePath {
-                        path: node_path, // Use the cloned path
-                        existing_id, // Keep as AnyNodeId
+                        path: node_path,                         // Use the cloned path
+                        existing_id,                             // Keep as AnyNodeId
                         conflicting_id: conflicting_id.as_any(), // Convert ModuleNodeId to AnyNodeId
                     });
                 }
@@ -1928,11 +1928,12 @@ impl ModuleTree {
 
         for (i, segment) in remaining_segments.iter().enumerate() {
             // Determine the module to search within for this segment
+            let node_path = NodePath::try_from(path_segments.to_vec())?;
             let search_in_module_id = match resolved_any_id {
                 Some(any_id) => ModuleNodeId::try_from(any_id).map_err(|_| {
                     // The previously resolved item was not a module, cannot continue path
                     ModuleTreeError::UnresolvedReExportTarget {
-                        path: NodePath::try_from(path_segments.to_vec())?,
+                        path: node_path,
                         import_node_id: None, // Indicate failure due to non-module segment
                     }
                 })?,
@@ -2548,10 +2549,11 @@ impl ModuleTree {
             // Use the original_path (derived from file system) as the key to remove.
             let def_mod_any_id = def_mod_id.as_any(); // Get AnyNodeId
             if let Some(removed_id) = self.path_index.remove(&original_path) {
+                let rem_id = removed_id.try_into()?; // This is AnyNodeId
                 if removed_id != def_mod_any_id {
                     // Compare AnyNodeId
                     self.log_update_path_index_remove_inconsistency(
-                        removed_id, // This is AnyNodeId
+                        rem_id, // This is AnyNodeId
                         &original_path,
                         def_mod_id,
                     );
@@ -2571,10 +2573,11 @@ impl ModuleTree {
             {
                 if existing_id != def_mod_any_id {
                     // Compare AnyNodeId
+                    let ex_id = existing_id.try_into()?;
                     self.log_update_path_index_insert_conflict(
                         &canonical_path,
                         def_mod_id,
-                        existing_id, // This is AnyNodeId
+                        ex_id, // This is AnyNodeId
                     );
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
@@ -2811,7 +2814,7 @@ impl ModuleTree {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
-                self.log_relation_verbose(*rel.rel());
+                self.log_relation_verbose(*rel);
             }
             acc
         });

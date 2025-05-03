@@ -627,7 +627,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let byte_range = func.span().byte_range();
             let span = (byte_range.start, byte_range.end);
 
-            let fn_typed_id: PrimaryNodeId = fn_any_id.into().unwrap();
+            let fn_typed_id: PrimaryNodeId = fn_any_id.try_into().unwrap();
             // Push the function's base ID onto the scope stack BEFORE processing types/generics
             // Use helper function for logging
             self.push_primary_scope(&fn_name, fn_typed_id, &provisional_effective_cfgs);
