@@ -539,16 +539,6 @@ impl ModuleTree {
         Ok(())
     }
 
-    pub fn add_relations_batch_checked(
-        &mut self,
-        relations: &[SyntacticRelation],
-    ) -> Result<(), ModuleTreeError> {
-        for rel in relations.iter() {
-            self.add_rel_checked((*rel).into())?;
-        }
-        Ok(())
-    }
-
     pub fn root(&self) -> ModuleNodeId {
         self.root
     }
@@ -1693,7 +1683,8 @@ impl ModuleTree {
                     self.add_reexport_checked(public_reexport_path, target_node_id)?;
 
                     self.add_rel_checked(relation.into())?;
-                    // If index update succeeded, add relation to the batch
+                    // If index update succeeded, add relation using the unchecked method
+                    self.add_rel(relation.into());
                 }
                 Err(e) => {
                     // Decide error handling: Propagate first error or collect all?
