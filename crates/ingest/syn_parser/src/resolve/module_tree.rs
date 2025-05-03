@@ -1,7 +1,7 @@
 use crate::parser::{
     graph::GraphAccess,
     nodes::{
-        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, ImportNodeId, PrimaryNodeId,
+        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, GraphNode, ImportNodeId, PrimaryNodeId,
         PrimaryNodeIdTrait, ReexportNodeId, TryFromPrimaryError,
     },
 };
@@ -1175,7 +1175,9 @@ impl ModuleTree {
 
         let item_any_id = item_pid.as_any();
         // Use map_err for SynParserError -> ModuleTreeError conversion
-        let item_node = graph.find_node_unique(item_any_id).map_err(ModuleTreeError::from)?;
+        let item_node = graph
+            .find_node_unique(item_any_id)
+            .map_err(ModuleTreeError::from)?;
         if !item_node.visibility().is_pub() {
             // If the item's own visibility isn't Public, it can never be reached.
             self.log_spp_item_not_public(item_node);
@@ -1245,7 +1247,10 @@ impl ModuleTree {
 
                 // Let's refine the target_kind determination:
                 // Use map_err for SynParserError -> ModuleTreeError conversion
-                let (resolved_id, target_kind) = match graph.find_node_unique(item_any_id).map_err(ModuleTreeError::from)?.as_import()
+                let (resolved_id, target_kind) = match graph
+                    .find_node_unique(item_any_id)
+                    .map_err(ModuleTreeError::from)?
+                    .as_import()
                 {
                     // If the original item_any_id points to an ImportNode (meaning it was a re-export)
                     Some(import_node) => {
@@ -1270,7 +1275,9 @@ impl ModuleTree {
                                 .get_iter_relations_from(&import_node.id.as_any()) // Use AnyNodeId
                                 .and_then(|mut iter| {
                                     iter.find_map(|tr| match tr.rel() {
-                                        SyntacticRelation::ReExports { target, .. } => Some(*target), // Target is PrimaryNodeId
+                                        SyntacticRelation::ReExports { target, .. } => {
+                                            Some(*target)
+                                        } // Target is PrimaryNodeId
                                         _ => None,
                                     })
                                 })
@@ -1296,17 +1303,15 @@ impl ModuleTree {
 
                 // Determine definition_name
                 // Use map_err for SynParserError -> ModuleTreeError conversion
-                let definition_name = if let ResolvedTargetKind::InternalDefinition {
-                    definition_id,
-                } = target_kind
-                {
-                    let def_node = graph
-                        .find_node_unique(definition_id)
-                        .map_err(ModuleTreeError::from)?;
-                    def_node
-                        .name()
-                        .ne(&public_name)
-                        .then(|| def_node.name().to_string())
+                let definition_name =
+                    if let ResolvedTargetKind::InternalDefinition { definition_id } = target_kind {
+                        let def_node = graph
+                            .find_node_unique(definition_id)
+                            .map_err(ModuleTreeError::from)?;
+                        def_node
+                            .name()
+                            .ne(&public_name)
+                            .then(|| def_node.name().to_string())
                     } else {
                         None // Not an internal definition
                     };
@@ -1667,54 +1672,55 @@ impl ModuleTree {
             // self.log_rel(relation, None);
 
             new_relations.push(relation.into()); // NOTE: `relation` is not defined here, this block seems broken.
-            // Add to reexport_index
-            // FIXME: This block is likely broken due to `as_inner` and `get_item_module_path` issues.
-            //        Commenting out until `get_item_module_path` is refactored or this cfg block removed.
-            /*
-            if let Some(reexport_name) = export_node.source_path.last() {
-                // ERROR: Uses as_inner() and potentially broken get_item_module_path
-                let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
-                // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
-                if export_node.is_renamed() {
-                    // if renamed, use visible_name for path extension
-                    // TODO: Keep a list of renamed modules specifically to track possible
-                    // collisions.
-                    reexport_path.push(export_node.visible_name.clone());
-                } else {
-                    // otherwise, use standard name
-                    reexport_path.push(reexport_name.clone());
-                }
+                                                 // Add to reexport_index
+                                                 // FIXME: This block is likely broken due to `as_inner` and `get_item_module_path` issues.
+                                                 //        Commenting out until `get_item_module_path` is refactored or this cfg block removed.
+                                                 /*
+                                                 if let Some(reexport_name) = export_node.source_path.last() {
+                                                     // ERROR: Uses as_inner() and potentially broken get_item_module_path
+                                                     let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
+                                                     // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
+                                                     if export_node.is_renamed() {
+                                                         // if renamed, use visible_name for path extension
+                                                         // TODO: Keep a list of renamed modules specifically to track possible
+                                                         // collisions.
+                                                         reexport_path.push(export_node.visible_name.clone());
+                                                     } else {
+                                                         // otherwise, use standard name
+                                                         reexport_path.push(reexport_name.clone());
+                                                     }
 
-                let node_path = NodePath::try_from(reexport_path)
-                    .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+                                                     let node_path = NodePath::try_from(reexport_path)
+                                                         .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
-                let debug_node_path = node_path.clone();
+                                                     let debug_node_path = node_path.clone();
 
-                // Check for duplicate re-exports at the same path
-                match self.reexport_index.entry(node_path) {
-                    std::collections::hash_map::Entry::Occupied(entry) => {
-                        // NOTE: Could filter for cfg here, to make graph cfg aware in a
-                        // relatively easy way.
-                        let existing_id = *entry.get();
-                        if existing_id != export_node.id {
-                            // Found a different NodeId already registered for this exact path.
-                            return Err(ModuleTreeError::ConflictingReExportPath {
-                                path: debug_node_path, // Use the cloned path
-                                existing_id,
-                                conflicting_id: export_node.id,
-                            });
-                        }
-                        // If it's the same ID, do nothing (idempotent)
-                    }
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        // Path is free, insert the new re-export ID.
-                        entry.insert(export_node.id); // ERROR: export_node.id is ImportNodeId, reexport_index expects ReexportNodeId
-                    }
-                }
-            }
-            */
+                                                     // Check for duplicate re-exports at the same path
+                                                     match self.reexport_index.entry(node_path) {
+                                                         std::collections::hash_map::Entry::Occupied(entry) => {
+                                                             // NOTE: Could filter for cfg here, to make graph cfg aware in a
+                                                             // relatively easy way.
+                                                             let existing_id = *entry.get();
+                                                             if existing_id != export_node.id {
+                                                                 // Found a different NodeId already registered for this exact path.
+                                                                 return Err(ModuleTreeError::ConflictingReExportPath {
+                                                                     path: debug_node_path, // Use the cloned path
+                                                                     existing_id,
+                                                                     conflicting_id: export_node.id,
+                                                                 });
+                                                             }
+                                                             // If it's the same ID, do nothing (idempotent)
+                                                         }
+                                                         std::collections::hash_map::Entry::Vacant(entry) => {
+                                                             // Path is free, insert the new re-export ID.
+                                                             entry.insert(export_node.id); // ERROR: export_node.id is ImportNodeId, reexport_index expects ReexportNodeId
+                                                         }
+                                                     }
+                                                 }
+                                                 */
         }
-        for new_tr in new_relations { // NOTE: new_relations might be empty due to commented block
+        for new_tr in new_relations {
+            // NOTE: new_relations might be empty due to commented block
             self.add_rel(new_tr);
         }
 
@@ -1796,7 +1802,7 @@ impl ModuleTree {
         // Changed return type
         let source_mod_id = export.containing_mod_id();
         let export_node = export.export_node();
-        let export_node_id = export_node.id(); // Get ImportNodeId
+        let export_node_id = export_node.id; // Get ImportNodeId
 
         // Always use the original source_path to find the target item
         let target_path_segments = export_node.source_path();
@@ -1837,7 +1843,9 @@ impl ModuleTree {
                 segments_to_resolve,
                 graph, // Pass graph access
             )
-            .map_err(|e| self.wrap_resolution_error(e, export_node_id, target_path_segments))?;
+            .map_err(|e| {
+                self.wrap_resolution_error(e, export_node_id.as_any(), target_path_segments)
+            })?;
 
         // --- If target_any_id was found ---
 
@@ -1848,7 +1856,8 @@ impl ModuleTree {
             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Re-export target {} resolved to a non-primary node type ({:?}), which is invalid for ReExports relation.", target_any_id, target_any_id);
             // Explicitly handle NodePath conversion error instead of unwrap_or_default
             let path_for_error = NodePath::try_from(target_path_segments.to_vec())
-                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
+                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?; // Impropoer error
+            // conversion in closure AI!
             ModuleTreeError::UnresolvedReExportTarget {
                 path: path_for_error, // Provide path context
                 import_node_id: Some(export_node_id.as_any()), // Provide import node context
@@ -2086,7 +2095,8 @@ impl ModuleTree {
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if *target == (*module_id).into() => // Dereference before into()
+                        if *target == (*module_id).into() =>
+                    // Dereference before into()
                     {
                         Some(*source) // Source is already ModuleNodeId
                     }
