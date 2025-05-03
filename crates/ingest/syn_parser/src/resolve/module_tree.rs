@@ -2,6 +2,7 @@ use crate::parser::{
     graph::GraphAccess,
     nodes::{
         AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId, PrimaryNodeIdTrait, ReexportNodeId,
+        TryFromPrimaryError,
     },
 };
 pub use colored::Colorize;
@@ -313,6 +314,8 @@ pub enum ModuleTreeError {
     // --- NEW VARIANT ---
     #[error("Recursion limit ({limit}) exceeded while finding defining file path for node {start_node_id}")]
     RecursionLimitExceeded { start_node_id: AnyNodeId, limit: u8 },
+    #[error("Error Converting from {0}")]
+    TypedIdConversionError(#[from] TryFromPrimaryError),
 }
 
 /// Holds the IDs and relations pruned from the ModuleTree.
@@ -1157,18 +1160,25 @@ impl ModuleTree {
     ///   the resolved ID (definition or re-export), and target kind information.
     /// * `Err(ModuleTreeError)`: If the item is not found, not publicly accessible,
     ///   or if inconsistencies are detected in the graph/tree structure.
+    // TODO: Refactor with more restrictive type parameters.
+    // This function will only work for primary node types as is. That is good. We can have a
+    // separate function that can use this as a helper after we have found the containing primary
+    // node, and use that. If necessary we can compose the two into a third function that will work
+    // for all node types.
     pub fn shortest_public_path(
         &self,
-        item_any_id: AnyNodeId, // Changed: Input is AnyNodeId
+        item_pid: PrimaryNodeId, // Changed: Input is AnyNodeId
         graph: &ParsedCodeGraph,
     ) -> Result<ResolvedItemInfo, ModuleTreeError> {
         // --- 1. Initial Setup ---
 
+        let item_any_id = item_pid.as_any();
         let item_node = graph.find_node_unique(item_any_id)?; // Use AnyNodeId for lookup
         if !item_node.visibility().is_pub() {
             // If the item's own visibility isn't Public, it can never be reached.
             self.log_spp_item_not_public(item_node);
-            return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_any_id)); // Use AnyNodeId in error
+            return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_any_id));
+            // Use AnyNodeId in error
         }
         let item_name = item_node.name().to_string();
 
@@ -1180,7 +1190,7 @@ impl ModuleTree {
             .ok_or_else(|| ModuleTreeError::no_relations_found(item_node))?
             .find_map(|tr| match tr.rel() {
                 // Find the first 'Contains' relation targeting the item_any_id
-                SyntacticRelation::Contains { source, target } if *target == item_any_id => {
+                SyntacticRelation::Contains { source, target } if *target == item_pid => {
                     Some(*source) // Source is ModuleNodeId
                 }
                 _ => None,
@@ -1188,7 +1198,8 @@ impl ModuleTree {
             .ok_or_else(|| {
                 // Item isn't contained in any module? Maybe it's the root module itself?
                 if let Some(module_node) = item_node.as_module() {
-                    if module_node.id.as_any() == self.root.as_any() { // Compare AnyNodeId
+                    if module_node.id == self.root {
+                        // Compare AnyNodeId
                         // Special case: asking for the path to the root module itself
                         return Ok(ResolvedItemInfo {
                             path: NodePath::new_unchecked(vec!["crate".to_string()]),
@@ -1202,15 +1213,15 @@ impl ModuleTree {
                     }
                 }
                 // Otherwise, it's an error or uncontained item
-                ModuleTreeError::ContainingModuleNotFound(item_any_id) // Use AnyNodeId in error
-            })?;
+                Err(ModuleTreeError::ContainingModuleNotFound(item_any_id)) // Use AnyNodeId in error
+            })?; // Problem with error conversion here AI!
 
         let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
         let mut visited: HashSet<ModuleNodeId> = HashSet::new();
 
         // Enqueue the *parent* module. Path starts with the item's name.
-        queue.push_back((parent_mod_id, vec![item_name]));
-        visited.insert(parent_mod_id);
+        queue.push_back((initial_parent_mod_id, vec![item_name]));
+        visited.insert(initial_parent_mod_id);
 
         // --- 2. BFS Loop ---
         while let Some((current_mod_id, path_to_item)) = queue.pop_front() {
@@ -1257,7 +1268,7 @@ impl ModuleTree {
                             // We need to find the target of the ReExports relation from this import_node.
                             let reexport_target_id = self
                                 .get_iter_relations_from(&import_node.id.as_any()) // Use AnyNodeId
-                                .and_then(|iter| {
+                                .and_then(|mut iter| {
                                     iter.find_map(|tr| match tr.rel() {
                                         SyntacticRelation::ReExports { target, .. } => Some(*target), // Target is PrimaryNodeId
                                         _ => None,
@@ -1404,7 +1415,6 @@ impl ModuleTree {
             });
 
         if let Some(parent_mod_id) = parent_mod_id_opt {
-
             // Check visibility: Is the declaration/inline module visible FROM the parent?
             // We need the parent module node to check its scope if visibility is restricted
             let parent_mod_node = self.get_module_checked(&parent_mod_id)?;
@@ -1504,7 +1514,6 @@ impl ModuleTree {
                 });
 
             if let Some(reexporting_mod_id) = container_mod_id_opt {
-
                 // IMPORTANT: Check if the *re-exporting module* itself is accessible
                 // This requires knowing *from where* we are checking. In BFS, we don't have
                 // a single "current location" in the same way as the downward search.
@@ -1880,7 +1889,8 @@ impl ModuleTree {
         base_module_id: ModuleNodeId,
         path_segments: &[String],
         graph: &ParsedCodeGraph, // Need graph access
-    ) -> Result<AnyNodeId, ModuleTreeError> { // Changed: Return AnyNodeId
+    ) -> Result<AnyNodeId, ModuleTreeError> {
+        // Changed: Return AnyNodeId
         if path_segments.is_empty() {
             return Err(ModuleTreeError::NodePathValidation(Box::new(
                 SynParserError::NodeValidation(
@@ -2383,12 +2393,12 @@ impl ModuleTree {
                         target: target_defn_id,  // Use ModuleNodeId directly
                     };
                     self.log_relation(relation, None); // Use new log helper
-                    // NOTE: Edge Case
-                    // It is actually valid to have a case of duplicate definitions. We'll
-                    // need to consider how to handle this case, since it is possible to have an
-                    // inline module with the `#[path]` attribute that contains items which shadow
-                    // the items in the linked file, in which case the shadowed items are ignored.
-                    // For now, just throw error.
+                                                       // NOTE: Edge Case
+                                                       // It is actually valid to have a case of duplicate definitions. We'll
+                                                       // need to consider how to handle this case, since it is possible to have an
+                                                       // inline module with the `#[path]` attribute that contains items which shadow
+                                                       // the items in the linked file, in which case the shadowed items are ignored.
+                                                       // For now, just throw error.
                     if let Some(dup) = targets_iter.next() {
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
                         "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
@@ -2539,7 +2549,8 @@ impl ModuleTree {
             // Use the original_path (derived from file system) as the key to remove.
             let def_mod_any_id = def_mod_id.as_any(); // Get AnyNodeId
             if let Some(removed_id) = self.path_index.remove(&original_path) {
-                if removed_id != def_mod_any_id { // Compare AnyNodeId
+                if removed_id != def_mod_any_id {
+                    // Compare AnyNodeId
                     self.log_update_path_index_remove_inconsistency(
                         removed_id, // This is AnyNodeId
                         &original_path,
@@ -2556,9 +2567,11 @@ impl ModuleTree {
             // Use the canonical_path (from the declaration) as the key, mapping to the definition ID (as AnyNodeId).
             if let Some(existing_id) = self
                 .path_index
-                .insert(canonical_path.clone(), def_mod_any_id) // Insert AnyNodeId
+                .insert(canonical_path.clone(), def_mod_any_id)
+            // Insert AnyNodeId
             {
-                if existing_id != def_mod_any_id { // Compare AnyNodeId
+                if existing_id != def_mod_any_id {
+                    // Compare AnyNodeId
                     self.log_update_path_index_insert_conflict(
                         &canonical_path,
                         def_mod_id,
@@ -2566,7 +2579,7 @@ impl ModuleTree {
                     );
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
-                        existing_id, // AnyNodeId
+                        existing_id,                    // AnyNodeId
                         conflicting_id: def_mod_any_id, // AnyNodeId
                     });
                 }
