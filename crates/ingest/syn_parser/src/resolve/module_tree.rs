@@ -1501,8 +1501,8 @@ impl ModuleTree {
                 .and_then(|iter| {
                     iter.find_map(|tr| match tr.rel() {
                         SyntacticRelation::Contains { source, target }
-                            if *target == import_node_id.to_pid() =>
-                        // Compare AnyNodeId directly
+                            if target.as_any() == import_node_id.as_any() =>
+                        // Compare AnyNodeId representations
                         {
                             Some(*source) // Source is ModuleNodeId
                         }
@@ -1554,24 +1554,6 @@ impl ModuleTree {
         // For now, let's assume public for testing, replace with real check
         self.get_effective_visibility(target_id)
             .is_some_and(|vis| vis.is_pub()) // TODO: Replace with full check
-    }
-
-    // Resolves visibility for target node as if it were a dependency.
-    // Only used as a helper in the shortest public path.
-    #[allow(unused_variables)]
-    pub fn resolve_visibility<T: GraphNode>(
-        &self,
-        node: &T,
-        graph: &ParsedCodeGraph,
-    ) -> Result<VisibilityKind, ModuleTreeError> {
-        let parent_module_vis = graph
-            .modules()
-            .iter()
-            .find(|m| m.items().is_some_and(|m| m.contains(&node.id))))
-            .map(|m| m.visibility())
-            // Use ok_or_else to handle Option and create the specific error
-            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node.id()))?;
-        todo!() // Rest of the visibility logic still needs implementation
     }
 
     /// Checks if an item (`target_item_id`) is reachable via a chain of `ReExports` relations
