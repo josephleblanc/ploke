@@ -1402,8 +1402,8 @@ impl ModuleTree {
             .and_then(|iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if target.base_id() == effective_source_id.base_id() =>
-                    // Compare base IDs in case target is AnyNodeId
+                        if *target == effective_source_id.as_any() =>
+                    // Compare AnyNodeId directly
                     {
                         Some(*source) // Source is ModuleNodeId
                     }
@@ -1501,8 +1501,8 @@ impl ModuleTree {
                 .and_then(|iter| {
                     iter.find_map(|tr| match tr.rel() {
                         SyntacticRelation::Contains { source, target }
-                            if target.base_id() == import_node_id.base_id() =>
-                        // Compare base IDs
+                            if *target == import_node_id.as_any() =>
+                        // Compare AnyNodeId directly
                         {
                             Some(*source) // Source is ModuleNodeId
                         }
