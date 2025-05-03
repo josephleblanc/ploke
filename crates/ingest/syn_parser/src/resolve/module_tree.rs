@@ -2092,7 +2092,8 @@ impl ModuleTree {
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if target.as_any() == module_id.as_any() => // Use as_any()
+                        if target.as_any() == module_id.as_any() =>
+                    // Use as_any()
                     {
                         Some(*source) // Source is already ModuleNodeId
                     }
@@ -2364,7 +2365,8 @@ impl ModuleTree {
             };
             let decl_module_node = self.modules.get(decl_module_id).ok_or_else(|| {
                 self.log_path_processing(&ctx, "Error", Some("Module not found"));
-                ModuleTreeError::ContainingModuleNotFound(decl_module_id.as_any()) // Use as_any()
+                ModuleTreeError::ContainingModuleNotFound(decl_module_id.as_any())
+                // Use as_any()
             })?;
 
             // Update context with module info
