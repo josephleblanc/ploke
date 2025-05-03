@@ -2081,6 +2081,13 @@ impl ModuleTree {
             })
     }
 
+    fn log_effective_vis_fallback(&self, module_def_id: ModuleNodeId) {
+        debug!(target: LOG_TARGET_VIS, "  {} No declaration found for file-based module {}. Falling back to definition visibility.",
+            "Fallback:".log_yellow(),
+            module_def_id.to_string().log_id()
+        );
+    }
+
     /// Checks if the `target` module is accessible from the `source` module based on visibility rules.
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
         // --- Determine Effective Visibility of the Target ---
