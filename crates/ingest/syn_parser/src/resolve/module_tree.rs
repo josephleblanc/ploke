@@ -540,7 +540,7 @@ impl ModuleTree {
         relations: &[SyntacticRelation],
     ) -> Result<(), ModuleTreeError> {
         for rel in relations.iter() {
-            self.add_relation_checked((*rel).into())?;
+            self.add_rel_checked((*rel).into())?;
         }
         Ok(())
     }
@@ -727,7 +727,8 @@ impl ModuleTree {
         &'a self,
         target_id: &AnyNodeId,
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_target.get(target_id).map(|indices| { // Use AnyNodeId key
+        self.relations_by_target.get(target_id).map(|indices| {
+            // Use AnyNodeId key
             // Map indices directly to relation references
             indices
                 .iter()
@@ -739,8 +740,8 @@ impl ModuleTree {
     pub fn add_rel(&mut self, tr: TreeRelation) {
         let new_index = self.tree_relations.len();
         let relation = tr.rel(); // Get the inner Relation
-        let source_id = relation.source; // Now NodeId
-        let target_id = relation.target; // Now NodeId
+        let source_id = relation.source;
+        let target_id = relation.target;
 
         self.tree_relations.push(tr);
 
@@ -758,7 +759,7 @@ impl ModuleTree {
     /// Adds a relation to the tree, first checking if the source and target nodes
     /// exist in the `modules` map.
     /// Returns `ModuleTreeError::ModuleNotFound` if a check fails.
-    pub fn add_relation_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
+    pub fn add_rel_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
         let relation = tr.rel();
         let source_id = relation.source; // Now NodeId
         let target_id = relation.target; // Now NodeId
@@ -803,7 +804,7 @@ impl ModuleTree {
     ///
     /// Note: This method performs *unchecked* insertion, meaning it does not verify
     /// if the source or target nodes of the relations exist within the `modules` map.
-    /// Use `add_relation_checked` if such checks are required for individual relations.
+    /// Use `add_rel_checked` if such checks are required for individual relations.
     ///
     /// # Arguments
     /// * `relations_iter`: An iterator that yields `Relation` items to be added.
@@ -1102,7 +1103,7 @@ impl ModuleTree {
 
         for module in modules
             .iter()
-            .filter(|m| m.is_file_based() && m.id() != *root_id.as_inner())
+            .filter(|m| m.is_file_based() && m.id != root_id)
         {
             // This is ["crate", "renamed_path", "actual_file"] for the file node
             let defn_path = module.defn_path();
@@ -1113,12 +1114,11 @@ impl ModuleTree {
             match self.decl_index.get(defn_path.as_slice()) {
                 Some(decl_id) => {
                     // Found declaration, create relation
-                    let resolves_to_rel = Relation {
-                        source: *decl_id,    // Declaration Node (NodeId)
-                        target: module.id(), // Definition Node (NodeId)
-                        kind: RelationKind::ResolvesToDefinition,
+                    let resolves_to_rel = SyntacticRelation::ResolvesToDefinition {
+                        source: *decl_id,  // Declaration Node (NodeId)
+                        target: module.id, // Definition Node (NodeId)
                     };
-                    self.log_rel(resolves_to_rel, None);
+                    self.log_relation(resolves_to_rel, None);
                     new_relations.push(resolves_to_rel.into());
                 }
                 None => {
@@ -1129,7 +1129,7 @@ impl ModuleTree {
 
                     // If path conversion succeeded, collect the unlinked info.
                     collected_unlinked.push(UnlinkedModuleInfo {
-                        module_id: module.id(),
+                        module_id: module.id,
                         definition_path: node_path,
                     });
                 }
@@ -1709,7 +1709,7 @@ impl ModuleTree {
                     // Update the reexport_index: public_path -> target_node_id
                     self.add_reexport_checked(public_reexport_path, target_node_id)?;
 
-                    self.add_relation_checked(relation.into())?;
+                    self.add_rel_checked(relation.into())?;
                     // If index update succeeded, add relation to the batch
                 }
                 Err(e) => {
