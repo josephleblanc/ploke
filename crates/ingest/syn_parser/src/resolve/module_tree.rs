@@ -1995,204 +1995,181 @@ impl ModuleTree {
             .next()
     }
 
-    /// Helper to get parent module ID (using existing ModuleTree fields)
+    /// Finds the parent `ModuleNodeId` of a given `ModuleNodeId`.
+    ///
+    /// Handles both inline modules (direct parent via `Contains`) and file-based modules
+    /// (finds the declaration via `ResolvesToDefinition`/`CustomPath`, then finds the declaration's parent).
     fn get_parent_module_id(&self, module_id: ModuleNodeId) -> Option<ModuleNodeId> {
-        self.tree_relations
-            .iter()
-            .find_map(|r| {
-                // Use NodeId directly
-                if r.rel().target == *module_id.as_inner() && r.rel().kind == RelationKind::Contains
-                {
-                    // Source is always NodeId now
-                    Some(ModuleNodeId::new(r.rel().source))
-                } else {
-                    None
+        // First, try finding a direct 'Contains' relation targeting this module_id.
+        // This covers inline modules and declarations contained directly.
+        let direct_parent = self.get_iter_relations_to(&module_id.into()).and_then(|iter| {
+            iter.find_map(|tr| match tr.rel() {
+                SyntacticRelation::Contains { source, target } if *target == module_id.into() => {
+                    Some(*source) // Source is already ModuleNodeId
                 }
+                _ => None,
+            })
+        });
+
+        if direct_parent.is_some() {
+            return direct_parent;
+        }
+
+        // If no direct parent found via Contains, check if `module_id` is a file-based definition.
+        // If so, find its declaration and then the declaration's parent.
+        self.get_iter_relations_to(&module_id.into()).and_then(|iter| {
+            iter.find_map(|tr| match tr.rel() {
+                // Find the relation linking a declaration *to* this definition
+                SyntacticRelation::ResolvesToDefinition { source: decl_id, target }
+                | SyntacticRelation::CustomPath { source: decl_id, target }
+                    if *target == module_id =>
+                {
+                    // Found the declaration ID (`decl_id`). Now find *its* parent.
+                    self.get_iter_relations_to(&decl_id.into()).and_then(|decl_iter| {
+                        decl_iter.find_map(|decl_tr| match decl_tr.rel() {
+                            SyntacticRelation::Contains { source: parent_id, target: contains_target }
+                                if contains_target.base_id() == decl_id.base_id() => // Compare base IDs just in case target is AnyNodeId
+                            {
+                                Some(*parent_id) // Parent is already ModuleNodeId
+                            }
+                            _ => None,
+                        })
+                    })
+                }
+                _ => None,
+            })
+        })
+    }
+
+    /// Determines the effective visibility of a module definition for access checks.
+    ///
+    /// For inline modules or the crate root, it's the visibility stored on the `ModuleNode` itself.
+    /// For file-based modules (that are not the root), it's the visibility of the corresponding
+    /// `mod name;` declaration statement found via `ResolvesToDefinition` or `CustomPath` relations.
+    /// If the declaration cannot be found (e.g., unlinked module file), it defaults to the
+    /// visibility stored on the definition node itself (which is typically `Inherited`).
+    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> {
+        let module_node = self.modules.get(&module_def_id)?; // Get the definition node
+
+        // Inline modules and the root module use their own declared visibility.
+        if module_node.is_inline() || module_def_id == self.root {
+            return Some(module_node.visibility());
+        }
+
+        // For file-based modules (not root), find the visibility of the declaration.
+        // Find incoming ResolvesToDefinition or CustomPath relations.
+        self.get_iter_relations_to(&module_def_id.into())
+            .and_then(|iter| {
+                iter.find_map(|tr| match tr.rel() {
+                    // Match relations pointing *to* this definition module
+                    SyntacticRelation::ResolvesToDefinition { source: decl_id, target }
+                    | SyntacticRelation::CustomPath { source: decl_id, target }
+                        if *target == module_def_id =>
+                    {
+                        // Found the declaration ID (`decl_id`). Get the declaration node.
+                        self.modules.get(decl_id).map(|decl_node| decl_node.visibility())
+                    }
+                    _ => None, // Ignore other relation kinds
+                })
             })
             .or_else(|| {
-                // Find the declaration for the current module_id
-                self.tree_relations.iter().find_map(|r_decl| {
-                    if r_decl.rel().target == *module_id.as_inner()
-                        && r_decl.rel().kind == RelationKind::ResolvesToDefinition
-                    {
-                        // Found the declaration (r_decl.source is the decl_id)
-                        // Now find the parent of the declaration
-                        self.tree_relations.iter().find_map(|r_cont| {
-                            if r_cont.rel().target == r_decl.rel().source // Target is the decl_id
-                                && r_cont.rel().kind == RelationKind::Contains
-                            {
-                                // Source is the parent of the declaration
-                                Some(ModuleNodeId::new(r_cont.rel().source))
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    }
-                })
+                // If no declaration relation was found (e.g., unlinked module file),
+                // fall back to the visibility defined on the module file itself.
+                // This usually defaults to Inherited/private.
+                self.log_effective_vis_fallback(module_def_id);
+                Some(module_node.visibility())
             })
     }
 
-    /// Determines the effective visibility of a module definition.
-    /// For inline modules or the root, it's the stored visibility.
-    /// For file-based modules, it's the visibility of the corresponding declaration.
-    fn get_effective_visibility(&self, module_def_id: ModuleNodeId) -> Option<&VisibilityKind> {
-        // Return Option<&VisibilityKind>
-        let module_node = self.modules.get(&module_def_id)?;
-
-        if module_node.is_inline() || module_def_id == self.root {
-            // Return a reference directly
-            Some(&module_node.visibility)
-        } else {
-            // File-based module (not root), find declaration visibility
-            let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
-                let rel = tr.rel();
-                if rel.target == module_def_id.into_inner()
-                    && rel.kind == RelationKind::ResolvesToDefinition
-                {
-                    Some(rel.source)
-                } else {
-                    None
-                }
-            });
-
-            decl_id_opt
-                .and_then(|decl_id| self.modules.get(&ModuleNodeId::new(decl_id)))
-                .map(|decl_node| &decl_node.visibility) // Return reference from decl_node
-                .or({
-                    // If declaration not found (e.g., unlinked), use definition's visibility
-                    Some(&module_node.visibility) // Return reference from module_node
-                })
-        }
-    }
-
-    /// Visibility check using existing types
+    /// Checks if the `target` module is accessible from the `source` module based on visibility rules.
     pub fn is_accessible(&self, source: ModuleNodeId, target: ModuleNodeId) -> bool {
-        // 1. Get the target definition node from the map
-        // --- Early Exit if Target Not Found ---
-        if !self.modules.contains_key(&target) {
-            // Create a temporary context just for this log message
-            let log_ctx = AccLogCtx::new(source, target, None, self);
-            self.log_access(&log_ctx, "Target Module Not Found", false);
-            return false;
-        }
-        // We know target exists now, safe to unwrap later if needed, but prefer get
-        let target_defn_node = self.modules.get(&target).unwrap(); // Safe unwrap
-
-        // --- Determine Effective Visibility ---
-        let effective_vis = if target_defn_node.is_inline() || target == self.root {
-            // For inline modules or the crate root, the stored visibility is the effective one
-            target_defn_node.visibility()
-        } else {
-            // For file-based modules (that aren't the root), find the corresponding declaration
-            let target_defn_id = target_defn_node.id();
-            let decl_id_opt = self.tree_relations.iter().find_map(|tr| {
-                let rel = tr.rel();
-                // Use NodeId directly
-                if rel.target == target_defn_id // Expects Decl -> Defn
-                    && rel.kind == RelationKind::ResolvesToDefinition
-                {
-                    // Source is always NodeId now
-                    Some(rel.source)
-                } else {
-                    None
-                }
-            });
-
-            match decl_id_opt {
-                Some(decl_id) => {
-                    // Found the declaration, get its visibility
-                    self.modules
-                        .get(&ModuleNodeId::new(decl_id))
-                        .map(|decl_node| decl_node.visibility())
-                        .unwrap_or_else(|| {
-                            // Should not happen if tree is consistent, but default to Inherited if decl node missing
-                            self.log_access_missing_decl_node(decl_id, target_defn_id);
-                            VisibilityKind::Inherited // Default to Inherited if decl node missing
-                        })
-                }
-                None => {
-                    // No declaration found (e.g., unlinked module file). Treat as private/inherited.
-                    // This aligns with how unlinked files behave.
-                    target_defn_node.visibility() // Use the definition's (likely Inherited) visibility
-                }
+        // --- Determine Effective Visibility of the Target ---
+        // Use the refactored helper function.
+        let effective_vis = match self.get_effective_visibility(target) {
+            Some(vis) => vis,
+            None => {
+                // Target module doesn't exist in the tree.
+                let log_ctx = AccLogCtx::new(source, target, None, self);
+                self.log_access(&log_ctx, "Target Module Not Found", false);
+                return false;
             }
         };
 
         // --- Create Log Context ---
-        // Pass Some(&effective_vis) which is Option<&VisibilityKind>
-        let log_ctx = AccLogCtx::new(source, target, Some(&effective_vis), self);
+        let log_ctx = AccLogCtx::new(source, target, Some(effective_vis), self);
 
-        // --- Perform Accessibility Check ---
-        let result = match effective_vis {
+        // --- Perform Accessibility Check based on Effective Visibility ---
+        match effective_vis {
             VisibilityKind::Public => {
                 self.log_access(&log_ctx, "Public Visibility", true);
-                true
+                true // Public is always accessible
             }
             VisibilityKind::Crate => {
-                let accessible = true; // Always true within the same tree/crate
-                self.log_access(&log_ctx, "Crate Visibility", accessible);
-                accessible
+                self.log_access(&log_ctx, "Crate Visibility", true);
+                true // Crate is always accessible within the same ModuleTree
             }
             VisibilityKind::Restricted(ref restricted_path_vec) => {
+                // Attempt to resolve the restriction path to a ModuleNodeId
                 let restriction_path = match NodePath::try_from(restricted_path_vec.clone()) {
                     Ok(p) => p,
                     Err(_) => {
                         self.log_access(&log_ctx, "Restricted Visibility (Invalid Path)", false);
-                        return false; // Invalid restriction path
-                    }
-                };
-                let restriction_module_id = match self.path_index.get(&restriction_path) {
-                    Some(id) => ModuleNodeId::new(*id),
-                    None => {
-                        self.log_access(&log_ctx, "Restricted Visibility (Path Not Found)", false);
-                        return false; // Restriction path doesn't exist in the index
+                        return false; // Invalid path format
                     }
                 };
 
-                // Check if the source module *is* the restriction module
+                // Find the module ID corresponding to the restriction path.
+                // Check both definition and declaration indices.
+                let restriction_module_id_opt = self
+                    .path_index // Check definitions first
+                    .get(&restriction_path)
+                    .and_then(|any_id| ModuleNodeId::try_from(*any_id).ok()) // Convert AnyNodeId
+                    .or_else(|| self.decl_index.get(&restriction_path).copied()); // Check declarations
+
+                let restriction_module_id = match restriction_module_id_opt {
+                    Some(id) => id,
+                    None => {
+                        self.log_access(&log_ctx, "Restricted Visibility (Path Not Found)", false);
+                        return false; // Restriction path doesn't resolve to a known module
+                    }
+                };
+
+                // Check 1: Is the source module the restriction module itself?
                 if source == restriction_module_id {
-                    self.log_access(
-                        &log_ctx,
-                        "Restricted Visibility (Source is Restriction)",
-                        true,
-                    );
+                    self.log_access(&log_ctx, "Restricted (Source is Restriction)", true);
                     return true;
                 }
 
-                // Check if the source module is a descendant of the restriction module
-                let mut current_ancestor = self.get_parent_module_id(source);
-                while let Some(ancestor_id) = current_ancestor {
+                // Check 2: Is the source module a descendant of the restriction module?
+                // Traverse upwards from the source using the refactored get_parent_module_id.
+                let mut current_ancestor_opt = self.get_parent_module_id(source);
+                while let Some(ancestor_id) = current_ancestor_opt {
                     self.log_access_restricted_check_ancestor(ancestor_id, restriction_module_id);
                     if ancestor_id == restriction_module_id {
-                        self.log_access(&log_ctx, "Restricted Visibility (Ancestor Match)", true);
+                        self.log_access(&log_ctx, "Restricted (Ancestor Match)", true);
                         return true; // Found restriction module in ancestors
                     }
                     if ancestor_id == self.root {
                         break; // Reached crate root without finding it
                     }
-                    current_ancestor = self.get_parent_module_id(ancestor_id);
+                    current_ancestor_opt = self.get_parent_module_id(ancestor_id); // Continue upwards
                 }
-                let accessible = false; // Not the module itself or a descendant
-                self.log_access(
-                    &log_ctx,
-                    "Restricted Visibility (Final - No Ancestor Match)",
-                    accessible,
-                );
-                accessible
+
+                // If loop finishes without finding the restriction module in ancestors
+                self.log_access(&log_ctx, "Restricted (No Ancestor Match)", false);
+                false
             }
             VisibilityKind::Inherited => {
                 // Inherited means private to the defining module.
-                // Access is allowed if the source *is* the target's parent,
-                // or if the source *is* the target itself.
-                let target_parent = self.get_parent_module_id(target);
-                let accessible = source == target || Some(source) == target_parent;
+                // Access is allowed ONLY if the source *is* the target's direct parent module.
+                // Note: `source == target` check is removed; an item cannot access itself via visibility,
+                // it's just in scope. Visibility applies to accessing items *from other modules*.
+                let target_parent_opt = self.get_parent_module_id(target);
+                let accessible = target_parent_opt == Some(source);
                 self.log_access(&log_ctx, "Inherited Visibility", accessible);
                 accessible
             }
-        };
-        result // Return the final calculated result
+        }
     }
 
     // Proposed new function signature and implementation
