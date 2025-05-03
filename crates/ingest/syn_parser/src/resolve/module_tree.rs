@@ -912,19 +912,18 @@ impl ModuleTree {
     // include the PrimaryNodeIdTrait here. We may wish to implement a new method that will find
     // the direct parent for any given node (e.g. Assoc nodes like MethodNode) or Secondary Nodes
     // like struct fields, to handle these cases.
-    pub fn find_defining_file_path_ref_seq<T: PrimaryNodeIdTrait>(
+    pub fn find_defining_file_path_ref_seq(
         &self,
-        typed_pid: T,
+        item_pid: PrimaryNodeId, // Changed: Accept PrimaryNodeId directly
     ) -> Result<&Path, ModuleTreeError> {
+        let item_any_id = item_pid.as_any(); // Convert to AnyNodeId for lookups/errors
+
         // 1. Find the immediate parent module ID using the relation index.
-        //    We still need this initial lookup as the input is AnyNodeId.
         let initial_parent_mod_id = self
-            .get_iter_relations_to(&typed_pid.as_any()) // Use iterator version
-            .ok_or(ModuleTreeError::NoRelationsFoundForId(typed_pid.as_any()))? // Use specific error
-            .find_map(|tr| tr.rel().source_contains(typed_pid))
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(
-                typed_pid.as_any(),
-            ))?; // Error if no Contains relation found
+            .get_iter_relations_to(&item_any_id) // Use AnyNodeId for lookup
+            .ok_or(ModuleTreeError::NoRelationsFoundForId(item_any_id))? // Use AnyNodeId in error
+            .find_map(|tr| tr.rel().source_contains(item_pid)) // Use helper with PrimaryNodeId
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(item_any_id))?; // Use AnyNodeId in error
 
         let mut current_mod_id = initial_parent_mod_id;
         let mut recursion_limit = 100; // Safety break
@@ -934,7 +933,7 @@ impl ModuleTree {
             recursion_limit -= 1;
             if recursion_limit <= 0 {
                 return Err(ModuleTreeError::RecursionLimitExceeded {
-                    start_node_id: typed_pid.as_any(), // Use the original input ID
+                    start_node_id: item_any_id, // Use AnyNodeId in error
                     limit: 100,
                 });
             }
