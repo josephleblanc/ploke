@@ -1863,7 +1863,7 @@ impl ModuleTree {
                 // Iterate by reference
                 // Target is always NodeId now
                 let target_id = rel.rel().target;
-                self.log_resolve_segment_rel(target_id);
+                self.log_resolve_segment_relation(target_id);
                 match graph.find_node_unique(target_id) {
                     Ok(target_node) => {
                         let name_matches = target_node.name() == segment;
@@ -2002,14 +2002,18 @@ impl ModuleTree {
     fn get_parent_module_id(&self, module_id: ModuleNodeId) -> Option<ModuleNodeId> {
         // First, try finding a direct 'Contains' relation targeting this module_id.
         // This covers inline modules and declarations contained directly.
-        let direct_parent = self.get_iter_relations_to(&module_id.into()).and_then(|iter| {
-            iter.find_map(|tr| match tr.rel() {
-                SyntacticRelation::Contains { source, target } if *target == module_id.into() => {
-                    Some(*source) // Source is already ModuleNodeId
-                }
-                _ => None,
-            })
-        });
+        let direct_parent = self
+            .get_iter_relations_to(&module_id.into())
+            .and_then(|iter| {
+                iter.find_map(|tr| match tr.rel() {
+                    SyntacticRelation::Contains { source, target }
+                        if *target == module_id.into() =>
+                    {
+                        Some(*source) // Source is already ModuleNodeId
+                    }
+                    _ => None,
+                })
+            });
 
         if direct_parent.is_some() {
             return direct_parent;
@@ -2017,28 +2021,37 @@ impl ModuleTree {
 
         // If no direct parent found via Contains, check if `module_id` is a file-based definition.
         // If so, find its declaration and then the declaration's parent.
-        self.get_iter_relations_to(&module_id.into()).and_then(|iter| {
-            iter.find_map(|tr| match tr.rel() {
-                // Find the relation linking a declaration *to* this definition
-                SyntacticRelation::ResolvesToDefinition { source: decl_id, target }
-                | SyntacticRelation::CustomPath { source: decl_id, target }
-                    if *target == module_id =>
-                {
-                    // Found the declaration ID (`decl_id`). Now find *its* parent.
-                    self.get_iter_relations_to(&decl_id.into()).and_then(|decl_iter| {
-                        decl_iter.find_map(|decl_tr| match decl_tr.rel() {
-                            SyntacticRelation::Contains { source: parent_id, target: contains_target }
-                                if contains_target.base_id() == decl_id.base_id() => // Compare base IDs just in case target is AnyNodeId
-                            {
-                                Some(*parent_id) // Parent is already ModuleNodeId
-                            }
-                            _ => None,
-                        })
-                    })
-                }
-                _ => None,
+        self.get_iter_relations_to(&module_id.into())
+            .and_then(|iter| {
+                iter.find_map(|tr| match tr.rel() {
+                    // Find the relation linking a declaration *to* this definition
+                    SyntacticRelation::ResolvesToDefinition {
+                        source: decl_id,
+                        target,
+                    }
+                    | SyntacticRelation::CustomPath {
+                        source: decl_id,
+                        target,
+                    } if *target == module_id => {
+                        // Found the declaration ID (`decl_id`). Now find *its* parent.
+                        self.get_iter_relations_to(&decl_id.into())
+                            .and_then(|decl_iter| {
+                                decl_iter.find_map(|decl_tr| match decl_tr.rel() {
+                                    SyntacticRelation::Contains {
+                                        source: parent_id,
+                                        target: contains_target,
+                                    } if contains_target.base_id() == decl_id.base_id() =>
+                                    // Compare base IDs just in case target is AnyNodeId
+                                    {
+                                        Some(*parent_id) // Parent is already ModuleNodeId
+                                    }
+                                    _ => None,
+                                })
+                            })
+                    }
+                    _ => None,
+                })
             })
-        })
     }
 
     /// Determines the effective visibility of a module definition for access checks.
@@ -2059,15 +2072,21 @@ impl ModuleTree {
         // For file-based modules (not root), find the visibility of the declaration.
         // Find incoming ResolvesToDefinition or CustomPath relations.
         self.get_iter_relations_to(&module_def_id.into())
-            .and_then(|iter| {
+            .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     // Match relations pointing *to* this definition module
-                    SyntacticRelation::ResolvesToDefinition { source: decl_id, target }
-                    | SyntacticRelation::CustomPath { source: decl_id, target }
-                        if *target == module_def_id =>
-                    {
+                    SyntacticRelation::ResolvesToDefinition {
+                        source: decl_id,
+                        target,
+                    }
+                    | SyntacticRelation::CustomPath {
+                        source: decl_id,
+                        target,
+                    } if *target == module_def_id => {
                         // Found the declaration ID (`decl_id`). Get the declaration node.
-                        self.modules.get(decl_id).map(|decl_node| decl_node.visibility())
+                        self.modules
+                            .get(decl_id)
+                            .map(|decl_node| decl_node.visibility())
                     }
                     _ => None, // Ignore other relation kinds
                 })
@@ -2159,7 +2178,8 @@ impl ModuleTree {
                     if ancestor_id == self.root {
                         break; // Reached crate root without finding it
                     }
-                    current_ancestor_opt = self.get_parent_module_id(ancestor_id); // Continue upwards
+                    current_ancestor_opt = self.get_parent_module_id(ancestor_id);
+                    // Continue upwards
                 }
 
                 // If loop finishes without finding the restriction module in ancestors
