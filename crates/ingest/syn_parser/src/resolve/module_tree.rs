@@ -1184,6 +1184,21 @@ impl ModuleTree {
 
         self.log_spp_start(item_node);
 
+        // Handle special case: asking for the path to the root module itself
+        if let Some(module_node) = item_node.as_module() {
+            if module_node.id == self.root {
+                return Ok(ResolvedItemInfo {
+                    path: NodePath::new_unchecked(vec!["crate".to_string()]),
+                    public_name: "crate".to_string(),
+                    resolved_id: item_any_id,
+                    target_kind: ResolvedTargetKind::InternalDefinition {
+                        definition_id: item_any_id,
+                    },
+                    definition_name: None,
+                });
+            }
+        }
+
         // Find the direct parent module ID using the index with AnyNodeId
         let initial_parent_mod_id = self
             .get_iter_relations_to(&item_any_id) // Use AnyNodeId for lookup
@@ -1195,26 +1210,8 @@ impl ModuleTree {
                 }
                 _ => None,
             })
-            .ok_or_else(|| {
-                // Item isn't contained in any module? Maybe it's the root module itself?
-                if let Some(module_node) = item_node.as_module() {
-                    if module_node.id == self.root {
-                        // Compare AnyNodeId
-                        // Special case: asking for the path to the root module itself
-                        return Ok(ResolvedItemInfo {
-                            path: NodePath::new_unchecked(vec!["crate".to_string()]),
-                            public_name: "crate".to_string(),
-                            resolved_id: item_any_id, // Use AnyNodeId
-                            target_kind: ResolvedTargetKind::InternalDefinition {
-                                definition_id: item_any_id, // Use AnyNodeId
-                            },
-                            definition_name: None,
-                        });
-                    }
-                }
-                // Otherwise, it's an error or uncontained item
-                Err(ModuleTreeError::ContainingModuleNotFound(item_any_id)) // Use AnyNodeId in error
-            })?; // Problem with error conversion here AI!
+            // If no 'Contains' relation found, return ContainingModuleNotFound error
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(item_any_id))?;
 
         let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
         let mut visited: HashSet<ModuleNodeId> = HashSet::new();
