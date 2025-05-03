@@ -838,9 +838,8 @@ impl ModuleTree {
         }
 
         // Iterate through the provided relations
-        for relation in relations_iter {
+        for tr in relations_iter {
             // Convert to TreeRelation (cheap wrapper)
-            let tr = TreeRelation::new(relation);
             let source_id = tr.rel().source(); // Get AnyNodeId
             let target_id = tr.rel().target(); // Get AnyNodeId
 
