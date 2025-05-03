@@ -1757,8 +1757,10 @@ impl ModuleTree {
 
                     self.log_relation(relation, Some("ReExport Target Resolved")); // Log before potential error
 
-                    let reexport = target_node_id.try_into()?; // Convert AnyNodeId to ReexportNodeId
-                                                               // Update the reexport_index: public_path -> target_node_id
+                    let reexport = target_node_id.try_into()?; // Still not correct AI!
+
+                    // Convert AnyNodeId to ReexportNodeId
+                    // Update the reexport_index: public_path -> target_node_id
                     self.add_reexport_checked(public_reexport_path, reexport)?;
 
                     self.add_rel_checked(relation.into())?;
