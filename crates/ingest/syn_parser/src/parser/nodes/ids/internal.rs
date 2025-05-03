@@ -575,7 +575,7 @@ define_internal_node_id!(
 use ploke_core::ItemKind; // Need ItemKind for kind() methods
 
 /// Error type for failed TryFrom<PrimaryNodeId> conversions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]
 pub struct TryFromPrimaryError;
 
 impl std::fmt::Display for TryFromPrimaryError {
@@ -583,7 +583,6 @@ impl std::fmt::Display for TryFromPrimaryError {
         write!(f, "PrimaryNodeId variant mismatch")
     }
 }
-impl std::error::Error for TryFromPrimaryError {}
 
 impl Default for TryFromPrimaryError {
     fn default() -> Self {

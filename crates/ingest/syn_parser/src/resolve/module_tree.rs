@@ -912,18 +912,19 @@ impl ModuleTree {
     // include the PrimaryNodeIdTrait here. We may wish to implement a new method that will find
     // the direct parent for any given node (e.g. Assoc nodes like MethodNode) or Secondary Nodes
     // like struct fields, to handle these cases.
-    pub fn find_defining_file_path_ref_seq(
+    pub fn find_defining_file_path_ref_seq<T: PrimaryNodeIdTrait>(
         &self,
-        item_pid: PrimaryNodeId, // Changed: Accept PrimaryNodeId directly
+        typed_pid: T,
     ) -> Result<&Path, ModuleTreeError> {
-        let item_any_id = item_pid.as_any(); // Convert to AnyNodeId for lookups/errors
-
         // 1. Find the immediate parent module ID using the relation index.
+        //    We still need this initial lookup as the input is AnyNodeId.
         let initial_parent_mod_id = self
-            .get_iter_relations_to(&item_any_id) // Use AnyNodeId for lookup
-            .ok_or(ModuleTreeError::NoRelationsFoundForId(item_any_id))? // Use AnyNodeId in error
-            .find_map(|tr| tr.rel().source_contains(item_pid)) // Use helper with PrimaryNodeId
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(item_any_id))?; // Use AnyNodeId in error
+            .get_iter_relations_to(&typed_pid.as_any()) // Use iterator version
+            .ok_or(ModuleTreeError::NoRelationsFoundForId(typed_pid.as_any()))? // Use specific error
+            .find_map(|tr| tr.rel().source_contains(typed_pid))
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(
+                typed_pid.as_any(),
+            ))?; // Error if no Contains relation found
 
         let mut current_mod_id = initial_parent_mod_id;
         let mut recursion_limit = 100; // Safety break
@@ -933,7 +934,7 @@ impl ModuleTree {
             recursion_limit -= 1;
             if recursion_limit <= 0 {
                 return Err(ModuleTreeError::RecursionLimitExceeded {
-                    start_node_id: item_any_id, // Use AnyNodeId in error
+                    start_node_id: typed_pid.as_any(), // Use the original input ID
                     limit: 100,
                 });
             }
@@ -1401,7 +1402,7 @@ impl ModuleTree {
             .and_then(|iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if *target == effective_source_id.as_any() =>
+                        if *target == effective_source_id.to_pid() =>
                     // Compare AnyNodeId directly
                     {
                         Some(*source) // Source is ModuleNodeId
@@ -1500,7 +1501,7 @@ impl ModuleTree {
                 .and_then(|iter| {
                     iter.find_map(|tr| match tr.rel() {
                         SyntacticRelation::Contains { source, target }
-                            if *target == import_node_id.as_any() =>
+                            if *target == import_node_id.to_pid() =>
                         // Compare AnyNodeId directly
                         {
                             Some(*source) // Source is ModuleNodeId
@@ -1566,7 +1567,7 @@ impl ModuleTree {
         let parent_module_vis = graph
             .modules()
             .iter()
-            .find(|m| m.items().is_some_and(|m| m.contains(&node.id())))
+            .find(|m| m.items().is_some_and(|m| m.contains(&node.id))))
             .map(|m| m.visibility())
             // Use ok_or_else to handle Option and create the specific error
             .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(node.id()))?;
@@ -1601,7 +1602,7 @@ impl ModuleTree {
             // Check if the current ImportNode directly re-exports the target item
             let found_direct_reexport = self
                 .get_iter_relations_from(&current_import_id.as_any()) // Relations FROM the import node
-                .map_or(false, |iter| {
+                .map_or(false, |mut iter| {
                     iter.any(|tr| match tr.rel() {
                         SyntacticRelation::ReExports { source, target }
                             if *source == current_import_id
@@ -1621,7 +1622,7 @@ impl ModuleTree {
             // Look for a ReExports relation where the *target* is the current ImportNode.
             let next_import_in_chain = self
                 .get_iter_relations_to(&current_import_id.as_any()) // Relations TO the import node
-                .and_then(|iter| {
+                .and_then(|mut iter| {
                     iter.find_map(|tr| match tr.rel() {
                         // Find a relation where the current import is the TARGET
                         SyntacticRelation::ReExports { source, target }
@@ -1760,7 +1761,7 @@ impl ModuleTree {
                 Ok((relation, public_reexport_path)) => {
                     // Log the correctly formed relation
                     // Note: The target_node_id is relation.target
-                    let target_node_id = match relation.target {
+                    let target_node_id = match relation.target() {
                         id => id,
                         // Target is always NodeId now
                         // _ => {
@@ -2089,7 +2090,7 @@ impl ModuleTree {
         // This covers inline modules and declarations contained directly.
         let direct_parent = self
             .get_iter_relations_to(&module_id.into())
-            .and_then(|iter| {
+            .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
                         if *target == module_id.into() =>
@@ -2107,7 +2108,7 @@ impl ModuleTree {
         // If no direct parent found via Contains, check if `module_id` is a file-based definition.
         // If so, find its declaration and then the declaration's parent.
         self.get_iter_relations_to(&module_id.into())
-            .and_then(|iter| {
+            .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     // Find the relation linking a declaration *to* this definition
                     SyntacticRelation::ResolvesToDefinition {
@@ -2120,7 +2121,7 @@ impl ModuleTree {
                     } if *target == module_id => {
                         // Found the declaration ID (`decl_id`). Now find *its* parent.
                         self.get_iter_relations_to(&decl_id.into())
-                            .and_then(|decl_iter| {
+                            .and_then(|mut decl_iter| {
                                 decl_iter.find_map(|decl_tr| match decl_tr.rel() {
                                     SyntacticRelation::Contains {
                                         source: parent_id,
@@ -2658,7 +2659,7 @@ impl ModuleTree {
             // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with AnyNodeId
             let is_linked = self
                 .get_iter_relations_to(&mod_id.as_any()) // Use AnyNodeId
-                .map_or(false, |iter| {
+                .map_or(false, |mut iter| {
                     iter.any(|tr| {
                         matches!(
                             tr.rel(), // Use rel() to get SyntacticRelation
@@ -2944,15 +2945,15 @@ impl ModuleTree {
 
     /// Logs detailed information about a relation for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups.
-    pub fn log_relation_verbose(&self, rel: Relation) {
+    pub fn log_relation_verbose(&self, rel: TreeRelation) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Relation Details:", "Verbose Log:".log_header());
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", format!("{:?}", rel.kind).log_name());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", rel.0.to_string().log_name());
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Source:");
-        self.log_node_id_verbose(rel.source.into()); // Changed: Convert NodeId to AnyNodeId
+        self.log_node_id_verbose(rel.source().into()); // Changed: Convert NodeId to AnyNodeId
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Target:");
-        self.log_node_id_verbose(rel.target.into()); // Changed: Convert NodeId to AnyNodeId
+        self.log_node_id_verbose(rel.target().into()); // Changed: Convert NodeId to AnyNodeId
     }
 
     /// Logs detailed information about a NodeId for debugging purposes.
