@@ -740,18 +740,18 @@ impl ModuleTree {
     pub fn add_rel(&mut self, tr: TreeRelation) {
         let new_index = self.tree_relations.len();
         let relation = tr.rel(); // Get the inner Relation
-        let source_id = relation.source;
-        let target_id = relation.target;
+        let source_id = relation.source(); // Get AnyNodeId
+        let target_id = relation.target(); // Get AnyNodeId
 
         self.tree_relations.push(tr);
 
-        // Update indices using NodeId keys
+        // Update indices using AnyNodeId keys
         self.relations_by_source
-            .entry(source_id)
+            .entry(source_id) // Use AnyNodeId directly
             .or_default()
             .push(new_index);
         self.relations_by_target
-            .entry(target_id)
+            .entry(target_id) // Use AnyNodeId directly
             .or_default()
             .push(new_index);
     }
@@ -780,13 +780,13 @@ impl ModuleTree {
         let new_index = self.tree_relations.len();
         self.tree_relations.push(tr);
 
-        // Update indices using NodeId keys
+        // Update indices using AnyNodeId keys
         self.relations_by_source
-            .entry(source_id)
+            .entry(relation.source()) // Use AnyNodeId directly
             .or_default()
             .push(new_index);
         self.relations_by_target
-            .entry(target_id)
+            .entry(relation.target()) // Use AnyNodeId directly
             .or_default()
             .push(new_index);
 
@@ -831,20 +831,20 @@ impl ModuleTree {
         for relation in relations_iter {
             // Convert to TreeRelation (cheap wrapper)
             let tr = TreeRelation::new(relation);
-            let source_id = tr.rel().source; // Now NodeId
-            let target_id = tr.rel().target; // Now NodeId
+            let source_id = tr.rel().source(); // Get AnyNodeId
+            let target_id = tr.rel().target(); // Get AnyNodeId
 
-            // Update the source index HashMap using NodeId key
+            // Update the source index HashMap using AnyNodeId key
             // entry().or_default() gets the Vec<usize> for the source_id,
             // creating it if it doesn't exist, then pushes the current_index.
             self.relations_by_source
-                .entry(source_id)
+                .entry(source_id) // Use AnyNodeId directly
                 .or_default()
                 .push(current_index);
 
-            // Update the target index HashMap similarly using NodeId key
+            // Update the target index HashMap similarly using AnyNodeId key
             self.relations_by_target
-                .entry(target_id)
+                .entry(target_id) // Use AnyNodeId directly
                 .or_default()
                 .push(current_index);
 
@@ -2506,16 +2506,16 @@ impl ModuleTree {
         decl_mod_id: ModuleNodeId,
     ) -> Result<ModuleNodeId, ModuleTreeError> {
         self.relations_by_source
-         .get(&decl_mod_id.into_inner())
+         .get(&decl_mod_id.into()) // Changed: Use .into() to get AnyNodeId for lookup
          .and_then(|indices| {
              indices.iter().find_map(|&index| {
                  // Use .get() for safe access and .rel() to get inner Relation
                  let relation = self.tree_relations.get(index)?.rel();
-                 if relation.kind == RelationKind::CustomPath {
-                         Some(ModuleNodeId::new(relation.target))
-                 } else {
-                     None
-                    }
+                 // Match on the specific variant to get the correctly typed target
+                 match relation {
+                     SyntacticRelation::CustomPath { target, .. } => Some(*target), // Target is already ModuleNodeId
+                     _ => None,
+                 }
              })
          })
          .ok_or_else(|| {
