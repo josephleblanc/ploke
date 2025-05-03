@@ -1,7 +1,7 @@
 use crate::parser::{
     graph::GraphAccess,
     nodes::{
-        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, ImportNodeId, PrimaryNodeId,
+        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, GraphNode, ImportNodeId, PrimaryNodeId,
         PrimaryNodeIdTrait, ReexportNodeId, TryFromPrimaryError,
     }, // Removed GraphNode import
 };
