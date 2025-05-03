@@ -1364,7 +1364,7 @@ impl ModuleTree {
         let (effective_source_id, visibility_source_node) =
             if current_mod_node.is_file_based() && current_mod_id != self.root {
                 // For file-based modules, find the declaration using AnyNodeId
-                let decl_relations = self
+                let mut decl_relations = self
                     .get_iter_relations_to(&current_mod_id.as_any()) // Use AnyNodeId
                     .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
 
@@ -1399,7 +1399,7 @@ impl ModuleTree {
         // Find the parent of the effective source (declaration or inline module) using AnyNodeId
         let parent_mod_id_opt = self
             .get_iter_relations_to(&effective_source_id.as_any()) // Use AnyNodeId
-            .and_then(|iter| {
+            .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
                         if target.as_any() == effective_source_id.as_any() =>
@@ -1498,7 +1498,7 @@ impl ModuleTree {
             // Find the module containing this ImportNode using AnyNodeId
             let container_mod_id_opt = self
                 .get_iter_relations_to(&import_node_id.as_any()) // Use AnyNodeId
-                .and_then(|iter| {
+                .and_then(|mut iter| {
                     iter.find_map(|tr| match tr.rel() {
                         SyntacticRelation::Contains { source, target }
                             if target.as_any() == import_node_id.as_any() =>
@@ -1753,10 +1753,12 @@ impl ModuleTree {
                         // }
                     };
 
-                    self.log_rel(relation, Some("ReExport Target Resolved")); // Log before potential error
+                    self.log_relation(relation, Some("ReExport Target Resolved")); // Log before potential error
 
-                    // Update the reexport_index: public_path -> target_node_id
-                    self.add_reexport_checked(public_reexport_path, target_node_id)?;
+                    let reexport = target_node_id.try_into()?; // problem with error conversion
+                                                               // using `?` AI!
+                                                               // Update the reexport_index: public_path -> target_node_id
+                    self.add_reexport_checked(public_reexport_path, reexport)?;
 
                     self.add_rel_checked(relation.into())?;
                     // If index update succeeded, add relation using the unchecked method
@@ -2029,7 +2031,8 @@ impl ModuleTree {
     }
 
     #[allow(dead_code)]
-    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: ImportNodeId) -> Option<String> { // Changed: item_id is ImportNodeId
+    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: ImportNodeId) -> Option<String> {
+        // Changed: item_id is ImportNodeId
         self.pending_exports
             .as_deref() // Get Option<&[PendingExport]>
             .and_then(|exports| {
@@ -2037,7 +2040,8 @@ impl ModuleTree {
                 exports
                     .iter()
                     .find(|exp| {
-                        exp.containing_mod_id() == module_id && exp.export_node().id == item_id // Compare ImportNodeId == ImportNodeId
+                        exp.containing_mod_id() == module_id && exp.export_node().id == item_id
+                        // Compare ImportNodeId == ImportNodeId
                     })
                     .and_then(|exp| exp.export_node().source_path.last().cloned())
             })
@@ -2045,12 +2049,12 @@ impl ModuleTree {
 
     #[allow(dead_code)]
     fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {
-        let child_module_node = self
-            .modules
-            .get(&child_id)
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(
-                child_id.as_any(), // Use AnyNodeId in error
-            ))?;
+        let child_module_node =
+            self.modules
+                .get(&child_id)
+                .ok_or(ModuleTreeError::ContainingModuleNotFound(
+                    child_id.as_any(), // Use AnyNodeId in error
+                ))?;
         Ok(child_module_node)
     }
 
@@ -2295,7 +2299,7 @@ impl ModuleTree {
             current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
                 self.log_find_decl_dir_missing_parent(current_id);
                 ModuleTreeError::ContainingModuleNotFound(current_id.as_any()) // Use AnyNodeId in error
-                                                                                // Re-use existing error
+                                                                               // Re-use existing error
             })?;
         }
         Err(ModuleTreeError::ContainingModuleNotFound(
