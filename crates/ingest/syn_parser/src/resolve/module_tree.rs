@@ -480,8 +480,8 @@ impl ModuleTree {
                     let existing_id = *entry.get();
                     return Err(ModuleTreeError::DuplicatePath {
                         path: node_path, // Use the cloned path
-                        existing_id: existing_id.as_any(),
-                        conflicting_id: conflicting_id.as_any(),
+                        existing_id: existing_id.as_any(), // This is ModuleNodeId, convert
+                        conflicting_id: conflicting_id.as_any(), // This is ModuleNodeId, convert
                     });
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
@@ -494,11 +494,11 @@ impl ModuleTree {
                 // Clone node_path for the error case
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     // Path already exists
-                    let existing_id = *entry.get();
+                    let existing_id = *entry.get(); // This is AnyNodeId
                     return Err(ModuleTreeError::DuplicatePath {
                         path: node_path, // Use the cloned path
-                        existing_id,
-                        conflicting_id: conflicting_id.as_any(),
+                        existing_id, // Keep as AnyNodeId
+                        conflicting_id: conflicting_id.as_any(), // Convert ModuleNodeId to AnyNodeId
                     });
                 }
                 std::collections::hash_map::Entry::Vacant(entry) => {
