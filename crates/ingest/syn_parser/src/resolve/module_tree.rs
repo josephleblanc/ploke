@@ -711,21 +711,27 @@ impl ModuleTree {
         })
     }
 
+    /// Returns an iterator over all `TreeRelation`s pointing to the given `target_id`.
+    ///
+    /// This provides efficient access to incoming relations without collecting them into a `Vec`.
+    /// Filtering by relation kind should be done by the caller on the resulting iterator,
+    /// or by using `get_relations_to` with a filter closure.
+    ///
+    /// # Arguments
+    /// * `target_id`: The ID of the target node.
+    ///
+    /// # Returns
+    /// An `Option` containing an iterator yielding `&TreeRelation` if the target ID exists
+    /// in the index, otherwise `None`.
     pub fn get_iter_relations_to<'a>(
-        // AI: Show me how you might refactor this given our recent changes to `relations.rs` AI!
         &'a self,
-        target_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
+        target_id: &AnyNodeId,
     ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_target.get(target_id).map(|indices| {
-            // Changed: Use AnyNodeId key
-            // Use relations_by_target
-            // If source_id not in map, return empty
-            indices.iter().filter_map(|&index| {
-                self.tree_relations
-                    .get(index)
-                    // filter() on Option returns Some only if the closure is true.
-                    .filter(|&relation| relation.rel().kind == *kind)
-            })
+        self.relations_by_target.get(target_id).map(|indices| { // Use AnyNodeId key
+            // Map indices directly to relation references
+            indices
+                .iter()
+                .filter_map(|&index| self.tree_relations.get(index))
         })
     }
 
