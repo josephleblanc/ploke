@@ -268,8 +268,8 @@ pub enum ModuleTreeError {
     #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
     ConflictingReExportPath {
         path: NodePath,
-        existing_id: AnyNodeId,
-        conflicting_id: AnyNodeId,
+        existing_id: ReexportNodeId, // Changed: Use ReexportNodeId
+        conflicting_id: ReexportNodeId, // Changed: Use ReexportNodeId
     },
 
     // --- NEW VARIANT ---
@@ -1533,38 +1533,72 @@ impl ModuleTree {
         todo!() // Rest of the visibility logic still needs implementation
     }
 
-    // Helper to check if an item is part of a re-export chain leading to our target
-    // NOTE: Why is this currently unused? I'm fairly sure we were using it somewhere...
-    #[allow(dead_code, reason = "This is almost certainly useful somewhere")]
+    /// Checks if an item (`target_item_id`) is reachable via a chain of `ReExports` relations
+    /// starting from a specific `ImportNode` (`start_import_id`).
+    /// Used to detect potential re-export cycles or verify paths.
+    #[allow(dead_code, reason = "May be useful later for cycle detection or validation")]
     fn is_part_of_reexport_chain(
         &self,
-        start_id: NodeId,
-        target_id: NodeId,
+        start_import_id: ImportNodeId,
+        target_item_id: AnyNodeId, // Target can be any node type
     ) -> Result<bool, ModuleTreeError> {
-        let mut current_id = start_id;
-        let mut visited = HashSet::new();
+        let mut current_import_id = start_import_id;
+        let mut visited_imports = HashSet::new(); // Track visited ImportNodeIds to detect cycles
 
-        while visited.insert(current_id) {
-            // Check if current_id re-exports our target using NodeId
-            if let Some(_reexport_rel) = self.tree_relations.iter().find(|tr| {
-                tr.rel().kind == RelationKind::ReExports
-                    && tr.rel().source == current_id // Use NodeId directly
-                    && tr.rel().target == target_id // Use NodeId directly
-            }) {
-                return Ok(true);
+        // Limit iterations to prevent infinite loops in case of unexpected cycles
+        for _ in 0..100 {
+            // Check if the current import node has already been visited in this chain
+            if !visited_imports.insert(current_import_id) {
+                // Cycle detected involving ImportNodes
+                return Err(ModuleTreeError::ReExportChainTooLong {
+                    start_node_id: start_import_id.as_any(), // Report cycle start
+                });
             }
 
-            // Move to next re-export in chain using NodeId
-            if let Some(next_rel) = self.tree_relations.iter().find(|tr| {
-                tr.rel().kind == RelationKind::ReExports && tr.rel().target == current_id
-                // Use NodeId directly
-            }) {
-                current_id = next_rel.rel().source; // Source is NodeId
+            // Check if the current ImportNode directly re-exports the target item
+            let found_direct_reexport = self
+                .get_iter_relations_from(&current_import_id.as_any()) // Relations FROM the import node
+                .map_or(false, |iter| {
+                    iter.any(|tr| match tr.rel() {
+                        SyntacticRelation::ReExports { source, target }
+                            if *source == current_import_id && target.as_any() == target_item_id =>
+                        {
+                            true // Found direct re-export of the target
+                        }
+                        _ => false,
+                    })
+                });
+
+            if found_direct_reexport {
+                return Ok(true); // Target found in the chain
+            }
+
+            // If not found directly, find the *next* ImportNode in the chain.
+            // Look for a ReExports relation where the *target* is the current ImportNode.
+            let next_import_in_chain = self
+                .get_iter_relations_to(&current_import_id.as_any()) // Relations TO the import node
+                .and_then(|iter| {
+                    iter.find_map(|tr| match tr.rel() {
+                        // Find a relation where the current import is the TARGET
+                        SyntacticRelation::ReExports { source, target }
+                            if target.as_any() == current_import_id.as_any() =>
+                        {
+                            Some(*source) // The source of this relation is the next ImportNodeId
+                        }
+                        _ => None,
+                    })
+                });
+
+            if let Some(next_id) = next_import_in_chain {
+                // Move to the next import node in the chain
+                current_import_id = next_id;
             } else {
+                // No further re-exports found targeting the current import node. Chain ends here.
                 break;
             }
         }
 
+        // If the loop finishes without finding the target, it's not part of this chain
         Ok(false)
     }
 
@@ -1724,9 +1758,10 @@ impl ModuleTree {
         &self,
         export: &PendingExport,
         graph: &ParsedCodeGraph, // Needed for graph lookups during relative resolution
-    ) -> Result<(Relation, NodePath), ModuleTreeError> {
+    ) -> Result<(SyntacticRelation, NodePath), ModuleTreeError> { // Changed return type
         let source_mod_id = export.containing_mod_id();
         let export_node = export.export_node();
+        let export_node_id = export_node.id(); // Get ImportNodeId
 
         // Always use the original source_path to find the target item
         let target_path_segments = export_node.source_path();
@@ -1738,7 +1773,6 @@ impl ModuleTree {
         }
 
         let first_segment = &target_path_segments[0];
-        // We need to find this
 
         // --- Delegate ALL path resolution to resolve_path_relative_to ---
         let (base_module_id, segments_to_resolve) = if first_segment == "crate" {
@@ -1748,32 +1782,44 @@ impl ModuleTree {
         };
 
         // Check for external crate re-exports *before* attempting local resolution
-        // This check might need refinement depending on how extern crates are represented.
-        // Assuming iter_dependency_names gives names of direct dependencies.
-        if base_module_id == self.root() // Only check for external if path starts relative to root
-            && !segments_to_resolve.is_empty() // Ensure there's a segment to check
+        if base_module_id == self.root()
+            && !segments_to_resolve.is_empty()
             && graph.iter_dependency_names().any(|dep_name| dep_name == segments_to_resolve[0])
         {
             self.log_resolve_single_export_external(segments_to_resolve);
             // Return specific error for external re-exports that SPP might handle later
-            return Err(ModuleTreeError::ExternalItemNotResolved(export_node.id));
+            return Err(ModuleTreeError::ExternalItemNotResolved(export_node_id.as_any())); // Use AnyNodeId
         }
 
-        let target_node_id: NodeId = self
+        // Resolve the path, expecting AnyNodeId
+        let target_any_id: AnyNodeId = self // Changed: Expect AnyNodeId
             .resolve_path_relative_to(
                 base_module_id,
                 segments_to_resolve,
                 graph, // Pass graph access
             )
-            .map_err(|e| self.wrap_resolution_error(e, export_node.id, target_path_segments))?;
+            .map_err(|e| self.wrap_resolution_error(e, export_node_id, target_path_segments))?;
 
-        // --- If target_node_id was found ---
-        let relation = Relation {
-            source: export_node.id, // Source is the ImportNode itself (NodeId)
-            target: target_node_id, // Target is the resolved item (NodeId)
-            kind: RelationKind::ReExports,
+        // --- If target_any_id was found ---
+
+        // Try to convert the resolved AnyNodeId to PrimaryNodeId, as required by ReExports relation
+        let target_primary_id = PrimaryNodeId::try_from(target_any_id).map_err(|_| {
+            // If conversion fails, it means the resolved item is not a primary node type
+            // (e.g., it resolved to a Field or Variant, which cannot be directly re-exported this way).
+            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Re-export target {} resolved to a non-primary node type ({:?}), which is invalid for ReExports relation.", target_any_id, target_any_id);
+            ModuleTreeError::UnresolvedReExportTarget {
+                path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_default(), // Provide path context
+                import_node_id: Some(export_node_id.as_any()), // Provide import node context
+            }
+        })?;
+
+
+        // Create the SyntacticRelation::ReExports
+        let relation = SyntacticRelation::ReExports {
+            source: export_node_id, // Source is ImportNodeId
+            target: target_primary_id, // Target must be PrimaryNodeId
         };
-        self.log_rel(relation, Some("resolve_single_export created relation"));
+        self.log_relation(relation, Some("resolve_single_export created relation")); // Use new log helper
 
         // Construct the public path using the visible_name
         let containing_module = self.get_module_checked(&source_mod_id)?;
@@ -2540,32 +2586,33 @@ impl ModuleTree {
     /// if an issue occurs during processing.
     pub(crate) fn prune_unlinked_file_modules(&mut self) -> Result<PruningResult, ModuleTreeError> {
         #[cfg(feature = "validate")]
-        let rels_before = self.validate_unique_rels();
+        let _rels_before = self.validate_unique_rels(); // Store result to avoid unused warning
 
-        // Changed return type
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Starting pruning of unlinked file modules from ModuleTree...", "Begin".log_header());
 
         // --- Step 1: Initial Identification of Unlinked File Modules ---
         let mut initial_prunable_module_ids: HashSet<ModuleNodeId> = HashSet::new();
-        let root_inner_id = self.root.into_inner(); // Get inner NodeId for comparison
+        let root_any_id = self.root.as_any(); // Get AnyNodeId for comparison
 
         // 1. Identify prunable module IDs
         for (mod_id, module_node) in self.modules.iter() {
             // Skip root and non-file-based modules
-            if module_node.id() == root_inner_id || !module_node.is_file_based() {
+            if module_node.id.as_any() == root_any_id || !module_node.is_file_based() {
                 continue;
             }
 
-            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with NodeId
+            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with AnyNodeId
             let is_linked = self
-                .get_relations_to(mod_id.as_inner(), |tr| {
-                    // Use inner NodeId
-                    matches!(
-                        tr.rel().kind,
-                        RelationKind::ResolvesToDefinition | RelationKind::CustomPath
-                    )
-                })
-                .is_some_and(|rels| !rels.is_empty()); // Linked if the filtered result is not empty
+                .get_iter_relations_to(&mod_id.as_any()) // Use AnyNodeId
+                .map_or(false, |iter| {
+                    iter.any(|tr| {
+                        matches!(
+                            tr.rel(), // Use rel() to get SyntacticRelation
+                            SyntacticRelation::ResolvesToDefinition { .. }
+                                | SyntacticRelation::CustomPath { .. }
+                        )
+                    })
+                });
 
             if !is_linked {
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Marking initially unlinked module for pruning: {} ({})", module_node.name.log_name(), mod_id.to_string().log_id());
@@ -2580,25 +2627,26 @@ impl ModuleTree {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Identified {} initially unlinked modules.", initial_prunable_module_ids.len().to_string().log_id());
 
         // --- Step 2: Recursively Collect All Items Defined Within Unlinked Files ---
-        let mut all_prunable_item_ids: HashSet<NodeId> = initial_prunable_module_ids
+        // Changed: Use AnyNodeId for the set and queue
+        let mut all_prunable_item_ids: HashSet<AnyNodeId> = initial_prunable_module_ids
             .iter()
-            .map(|id| id.into_inner())
+            .map(|id| id.as_any()) // Convert ModuleNodeId to AnyNodeId
             .collect();
-        // Queue for BFS traversal, starting with the initial unlinked module IDs
-        let mut queue: VecDeque<NodeId> = all_prunable_item_ids.iter().copied().collect();
+        // Queue for BFS traversal, starting with the initial unlinked module IDs as AnyNodeId
+        let mut queue: VecDeque<AnyNodeId> = all_prunable_item_ids.iter().copied().collect();
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Recursively finding items contained within unlinked modules...");
-        while let Some(current_id) = queue.pop_front() {
-            // Find items directly contained by the current node using NodeId
-            if let Some(contained_relations) = self.get_all_relations_from(&current_id) {
+        while let Some(current_any_id) = queue.pop_front() {
+            // Find items directly contained by the current node using AnyNodeId
+            if let Some(contained_relations) = self.get_iter_relations_from(&current_any_id) {
                 for rel in contained_relations {
-                    // Relation target is already NodeId
-                    let target_id = rel.rel().target;
+                    // Get target AnyNodeId using the helper method
+                    let target_any_id = rel.rel().target();
                     // If this target item is newly discovered as prunable...
-                    if all_prunable_item_ids.insert(target_id) {
+                    if all_prunable_item_ids.insert(target_any_id) {
                         // ...add it to the queue to explore its contents
                         // (Important if it's an inline module defined within the unlinked file)
-                        queue.push_back(target_id);
+                        queue.push_back(target_any_id);
                     }
                 }
             }
@@ -2608,10 +2656,13 @@ impl ModuleTree {
         // --- Step 3: Identify Relations to Prune ---
         let mut relations_to_prune_indices = HashSet::new();
         for (index, tr) in self.tree_relations.iter().enumerate() {
-            let rel = tr.rel();
-            // Relation source and target are now NodeId
-            let source_is_pruned = all_prunable_item_ids.contains(&rel.source);
-            let target_is_pruned = all_prunable_item_ids.contains(&rel.target);
+            // Get source and target AnyNodeIds using helper methods
+            let source_any_id = tr.rel().source();
+            let target_any_id = tr.rel().target();
+
+            // Check if either source or target is in the set of prunable AnyNodeIds
+            let source_is_pruned = all_prunable_item_ids.contains(&source_any_id);
+            let target_is_pruned = all_prunable_item_ids.contains(&target_any_id);
 
             if source_is_pruned || target_is_pruned {
                 relations_to_prune_indices.insert(index);
@@ -2628,17 +2679,17 @@ impl ModuleTree {
         let modules_after = self.modules.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned modules map: {} -> {} (removed {})", modules_before, modules_after, modules_before - modules_after);
 
-        // Prune path_index: Remove entries whose VALUE (NodeId) is in the full prunable item set
+        // Prune path_index: Remove entries whose VALUE (AnyNodeId) is in the full prunable item set
         let path_index_before = self.path_index.len();
         self.path_index
-            .retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
+            .retain(|_path, any_node_id| !all_prunable_item_ids.contains(any_node_id)); // Use AnyNodeId directly
         let path_index_after = self.path_index.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned path_index: {} -> {} (removed {})", path_index_before, path_index_after, path_index_before - path_index_after);
 
-        // Prune decl_index: Remove entries whose VALUE (NodeId) is in the full prunable item set
+        // Prune decl_index: Remove entries whose VALUE (ModuleNodeId) corresponds to an AnyNodeId in the prunable set
         let decl_index_before = self.decl_index.len();
         self.decl_index
-            .retain(|_path, node_id| !all_prunable_item_ids.contains(node_id));
+            .retain(|_path, module_node_id| !all_prunable_item_ids.contains(&module_node_id.as_any())); // Convert to AnyNodeId for check
         let decl_index_after = self.decl_index.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned decl_index: {} -> {} (removed {})", decl_index_before, decl_index_after, decl_index_before - decl_index_after);
 
@@ -2671,13 +2722,13 @@ impl ModuleTree {
         self.relations_by_target.clear();
         // Iterate over the *filtered* tree_relations
         for (index, tr) in self.tree_relations.iter().enumerate() {
-            // Use NodeId keys for indices
+            // Use AnyNodeId keys for indices by calling helper methods
             self.relations_by_source
-                .entry(tr.rel().source) // Use NodeId directly
+                .entry(tr.rel().source()) // Use AnyNodeId directly
                 .or_default()
                 .push(index);
             self.relations_by_target
-                .entry(tr.rel().target) // Use NodeId directly
+                .entry(tr.rel().target()) // Use AnyNodeId directly
                 .or_default()
                 .push(index);
         }
@@ -2685,7 +2736,7 @@ impl ModuleTree {
         // --- Step 6: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
-            pruned_item_ids: all_prunable_item_ids, // Return all items that were pruned as a result
+            pruned_item_ids: all_prunable_item_ids, // Return all items that were pruned as a result (as AnyNodeId)
             pruned_relations,                       // Return the actual relations removed
         };
 
@@ -2693,7 +2744,7 @@ impl ModuleTree {
 
         #[cfg(feature = "validate")]
         assert!(self.validate_unique_rels());
-        Ok(result_data) // Corrected variable name
+        Ok(result_data)
     }
 
     pub(crate) fn validate_unique_rels(&self) -> bool {
