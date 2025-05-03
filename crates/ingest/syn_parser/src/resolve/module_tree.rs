@@ -1,6 +1,8 @@
 use crate::parser::{
     graph::GraphAccess,
-    nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ReexportNodeId},
+    nodes::{
+        AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId, PrimaryNodeIdTrait, ReexportNodeId,
+    },
 };
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
@@ -259,6 +261,8 @@ pub enum ModuleTreeError {
     FilePathMissingParent(PathBuf), // Store the problematic path
     #[error("Root module {0} is not file-based, which is required for path resolution.")]
     RootModuleNotFileBased(ModuleNodeId),
+    #[error("Invalid State: Root module {0} not found")]
+    RootModuleNotFound(ModuleNodeId),
 
     // --- NEW VARIANT ---
     #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
@@ -886,29 +890,33 @@ impl ModuleTree {
     pub fn get_root_module(&self) -> Result<&ModuleNode, ModuleTreeError> {
         self.modules
             .get(&self.root)
-            .ok_or_else(|| ModuleTreeError::ContainingModuleNotFound(*self.root.as_inner()))
+            .ok_or_else(|| ModuleTreeError::RootModuleNotFound(self.root))
     }
 
-    /// Finds the absolute file path of the file-based module containing the given node ID.
+    /// Finds the absolute file path of the file-based module containing the given primary node ID.
     ///
     /// This traverses upwards from the node's immediate parent module. If the parent
     /// is inline, it continues searching upwards using the `get_parent_module_id` helper
     /// until a file-based module is found.
-    pub fn find_defining_file_path_ref_seq(
+    // TODO: Handle Assoc/Secondary items in another function.
+    // Write another function or method to handle the case of Assoc or Secondary items.
+    // This approach will not directly work for Associated or Secondary items, whether or not we
+    // include the PrimaryNodeIdTrait here. We may wish to implement a new method that will find
+    // the direct parent for any given node (e.g. Assoc nodes like MethodNode) or Secondary Nodes
+    // like struct fields, to handle these cases.
+    pub fn find_defining_file_path_ref_seq<T: PrimaryNodeIdTrait>(
         &self,
-        node_id: AnyNodeId,
+        typed_pid: T,
     ) -> Result<&Path, ModuleTreeError> {
         // 1. Find the immediate parent module ID using the relation index.
         //    We still need this initial lookup as the input is AnyNodeId.
         let initial_parent_mod_id = self
-            .get_iter_relations_to(&node_id) // Use iterator version
-            .ok_or(ModuleTreeError::NoRelationsFoundForId(node_id))? // Use specific error
-            .find_map(|tr| match tr.rel() {
-                // Find the first 'Contains' relation targeting the node_id
-                SyntacticRelation::Contains { source, target } if *target == node_id => Some(*source), // Source is ModuleNodeId
-                _ => None,
-            })
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Error if no Contains relation found
+            .get_iter_relations_to(&typed_pid.as_any()) // Use iterator version
+            .ok_or(ModuleTreeError::NoRelationsFoundForId(typed_pid.as_any()))? // Use specific error
+            .find_map(|tr| tr.rel().source_contains(typed_pid))
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(
+                typed_pid.as_any(),
+            ))?; // Error if no Contains relation found
 
         let mut current_mod_id = initial_parent_mod_id;
         let mut recursion_limit = 100; // Safety break
@@ -918,7 +926,7 @@ impl ModuleTree {
             recursion_limit -= 1;
             if recursion_limit <= 0 {
                 return Err(ModuleTreeError::RecursionLimitExceeded {
-                    start_node_id: node_id, // Use the original input ID
+                    start_node_id: typed_pid.as_any(), // Use the original input ID
                     limit: 100,
                 });
             }
@@ -939,15 +947,14 @@ impl ModuleTree {
             }
 
             // 5. If inline or declaration, find its parent module ID using the helper
-            current_mod_id = self.get_parent_module_id(current_mod_id)
-                .ok_or_else(|| {
-                    // If get_parent_module_id returns None (and not at root), the tree is inconsistent
-                    self.log_find_decl_dir_missing_parent(current_mod_id); // Log helper
-                    ModuleTreeError::InternalState(format!(
-                        "Module tree inconsistent: Parent not found for non-root module {}",
-                        current_mod_id
-                    ))
-                })?;
+            current_mod_id = self.get_parent_module_id(current_mod_id).ok_or_else(|| {
+                // If get_parent_module_id returns None (and not at root), the tree is inconsistent
+                self.log_find_decl_dir_missing_parent(current_mod_id); // Log helper
+                ModuleTreeError::InternalState(format!(
+                    "Module tree inconsistent: Parent not found for non-root module {}",
+                    current_mod_id
+                ))
+            })?;
         }
     }
 

@@ -84,14 +84,13 @@ const COLOR_SPRING_GREEN: Color = Color::TrueColor {
 }; // #73daca - Teal/Spring Green (Types)
 
 use crate::{
-    parser::nodes::{ImportNode, NodePath},
+    parser::nodes::{AnyNodeId, ImportNode, ImportNodeId, NodePath},
     resolve::module_tree::{ModuleTree, ModuleTreeError},
 };
 pub use colored::Colorize;
 
 use colored::{Color, ColoredString};
 use log::debug;
-use ploke_core::NodeId;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -272,13 +271,13 @@ pub trait LogDataStructure {
         );
     }
 
-    fn log_module_insert(&self, module: &ModuleNode, id: ModuleNodeId) {
+    fn log_module_insert(&self, module: &ModuleNode) {
         // Get the string representation of the module definition kind
         let def_kind_str = get_module_def_kind_str(module);
         debug!(target: LOG_TARGET_BUILD, "{} {} {} | {} | {}", // Added one more {} placeholder
             "Insert".log_header(),
             module.name.log_name(),
-            format!("({})", id).log_id(),
+            format!("({})", module.id).log_id(),
             def_kind_str.log_name(), // Log the kind using name style
             module.visibility.log_vis_debug()
         );
@@ -470,7 +469,7 @@ pub trait LogDataStructure {
         );
     }
 
-    fn log_resolve_segment_relation(&self, target_id: NodeId) {
+    fn log_resolve_segment_relation(&self, target_id: AnyNodeId) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD,
             "  {} Relation Target ID: {}",
             "->".log_comment(),
@@ -573,7 +572,7 @@ pub trait LogDataStructure {
         self.log_bfs_path(target_id, path_to_item, "Start Re-export Explore");
     }
 
-    fn log_spp_reexport_missing_import_node(&self, import_node_id: NodeId) {
+    fn log_spp_reexport_missing_import_node(&self, import_node_id: ImportNodeId) {
         log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id.to_string().log_id());
     }
 
@@ -603,13 +602,13 @@ pub trait LogDataStructure {
         debug!(target: LOG_TARGET_BFS, "  {} Re-exporting module {} already visited.", "->".log_comment(), reexporting_mod_id.to_string().log_id());
     }
 
-    fn log_spp_reexport_no_container(&self, import_node_id: NodeId) {
+    fn log_spp_reexport_no_container(&self, import_node_id: ImportNodeId) {
         log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id.to_string().log_id());
     }
 
     // --- Logging Helpers for is_accessible ---
 
-    fn log_access_missing_decl_node(&self, decl_id: NodeId, target_defn_id: NodeId) {
+    fn log_access_missing_decl_node(&self, decl_id: ModuleNodeId, target_defn_id: ModuleNodeId) {
         log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id.to_string().log_id(), target_defn_id.to_string().log_id());
     }
 
@@ -649,7 +648,7 @@ pub trait LogDataStructure {
     fn wrap_resolution_error(
         &self,
         error: ModuleTreeError,
-        export_node_id: NodeId,
+        export_node_id: AnyNodeId,
         original_path_segments: &[String],
     ) -> ModuleTreeError {
         match error {
@@ -702,7 +701,7 @@ pub trait LogDataStructure {
 
     fn log_update_path_index_remove_inconsistency(
         &self,
-        removed_id: NodeId,
+        removed_id: ModuleNodeId,
         original_path: &NodePath,
         expected_def_mod_id: ModuleNodeId,
     ) {
@@ -746,7 +745,7 @@ pub trait LogDataStructure {
         &self,
         canonical_path: &NodePath,
         def_mod_id: ModuleNodeId,
-        existing_id: NodeId,
+        existing_id: ModuleNodeId,
     ) {
         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}. {}",
             "Error:".log_error(),
@@ -790,11 +789,7 @@ pub trait LogErrorConversion {
     );
 
     /// Logs an error when AnyNodeId fails to convert to MacroNodeId.
-    fn log_macro_id_conversion_error(
-        &self,
-        macro_name: &str,
-        error: AnyNodeIdConversionError,
-    );
+    fn log_macro_id_conversion_error(&self, macro_name: &str, error: AnyNodeIdConversionError);
 }
 
 impl LogErrorConversion for VisitorState {
@@ -851,11 +846,7 @@ impl LogErrorConversion for VisitorState {
         );
     }
 
-    fn log_macro_id_conversion_error(
-        &self,
-        macro_name: &str,
-        _error: AnyNodeIdConversionError,
-    ) {
+    fn log_macro_id_conversion_error(&self, macro_name: &str, _error: AnyNodeIdConversionError) {
         log::error!(target: LOG_TARGET_NODE_ID,
             "{} Failed to convert {} to {} for macro '{}' in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
             "ID Conversion Error:".log_error(),

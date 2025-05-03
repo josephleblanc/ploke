@@ -11,7 +11,7 @@ use colored::Colorize;
 use itertools::Itertools;
 use log::{debug, trace};
 pub use parsed_graph::ParsedCodeGraph;
-use petgraph::graph::Node;
+pub use parsed_graph::ParsedGraphError;
 
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
@@ -23,7 +23,6 @@ use ploke_core::{ItemKind, TypeId, TypeKind};
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::parser::visibility::VisibilityResult;
 use crate::parser::{
     nodes::{
         ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode,
@@ -62,6 +61,27 @@ pub trait GraphAccess {
     fn macros_mut(&mut self) -> &mut Vec<MacroNode>;
     fn use_statements_mut(&mut self) -> &mut Vec<ImportNode>;
 
+    // ----- Secondary node methods -----
+    fn find_methods_in_module(
+        &self,
+        module_id: ModuleNodeId,
+    ) -> impl Iterator<Item = MethodNodeId> + '_ {
+        // First get impls in module
+        let impl_ids = self
+            .relations()
+            .iter()
+            .filter_map(move |rel| rel.contains_target(module_id));
+
+        // Then find methods in each impl
+        impl_ids.flat_map(move |impl_id| {
+            self.relations().iter().filter_map(move |rel| match rel {
+                SyntacticRelation::ImplAssociatedItem { source, target } if *source == impl_id => {
+                    (*target).try_into().ok()
+                }
+                _ => None,
+            })
+        })
+    }
 
     fn validate_unique_rels(&self) -> bool {
         let rels: &[SyntacticRelation] = &self.relations(); // Use updated type
@@ -159,6 +179,7 @@ pub trait GraphAccess {
         }
     }
 
+
     #[cfg(feature = "type_bearing_ids")]
     fn get_child_modules(&self, module_id: ModuleNodeId) -> impl Iterator< Item = &ModuleNode >  {
         use itertools::Itertools;
@@ -174,6 +195,7 @@ pub trait GraphAccess {
     }
 
     fn get_child_modules_inline(&self, module_id: ModuleNodeId) -> impl Iterator<Item = &ModuleNode> {
+
         self.get_child_modules(module_id)
             .filter(|m| matches!(m.module_def, ModuleKind::Inline { .. }))
     }
@@ -433,9 +455,9 @@ pub trait GraphAccess {
         });
         let first = matches.next();
         if matches.next().is_some() {
-            return Err(SynParserError::DuplicateNode(id));
+            return Err(SynParserError::DuplicateNode(id.as_any()));
         }
-        first.ok_or(SynParserError::NotFound(id))
+        first.ok_or(SynParserError::NotFound(id.as_any()))
     }
 
     /// Finds a union node by its ID.
@@ -696,7 +718,7 @@ pub trait GraphAccess {
     }
 
 
-    fn get_children_iter<T: PrimaryNodeIdTrait>(&self, module_id: ModuleNodeId) -> impl Iterator<Item = T>  {
+    fn get_children_ids_iter<T: PrimaryNodeIdTrait>(&self, module_id: ModuleNodeId) -> impl Iterator<Item = T>  {
         self.relations()
             .iter()
             .copied()
@@ -849,6 +871,7 @@ pub trait GraphAccess {
         }
         first.ok_or(SynParserError::NotFound(id.as_any()))
     }
+
 }
 
 

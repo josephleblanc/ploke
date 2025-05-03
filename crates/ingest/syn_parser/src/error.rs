@@ -28,11 +28,10 @@ pub enum CodeVisitorError {
 }
 
 /// Custom error type for the syn_parser crate.
-use crate::parser::graph::parsed_graph::ParsedGraphError; // Import the new error type
+use crate::parser::graph::ParsedGraphError; // Import the new error type
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
-
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),

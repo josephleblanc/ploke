@@ -150,19 +150,12 @@ pub enum SyntacticRelation {
 // }
 
 impl SyntacticRelation {
-    // Add helper methods if needed, e.g., getting source/target NodeId generically
-    pub fn source_contains(&self, trg: PrimaryNodeId) -> Option<ModuleNodeId> {
+    pub fn source_contains<T: PrimaryNodeIdTrait>(&self, trg: T) -> Option<ModuleNodeId> {
         match self {
-            Self::Contains { target: t, source } if *t == trg => Some(*source),
+            Self::Contains { target: t, source } if *t == trg.to_pid() => Some(*source),
             _ => None,
         }
     }
-    // pub fn contains_target<T: From<PrimaryNodeId>>(&self, src: ModuleNodeId) -> Option<T> {
-    //     match self {
-    //         Self::Contains { source: s, target } if *s == src => Some(T::from(*target)),
-    //         _ => None,
-    //     }
-    // }
     pub fn contains_target<T: PrimaryNodeIdTrait>(&self, src: ModuleNodeId) -> Option<T> {
         match self {
             Self::Contains { source: s, target } if *s == src => T::try_from(*target).ok(),

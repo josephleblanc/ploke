@@ -6,6 +6,8 @@
 
 // Declare the private internal module
 mod internal;
+use crate::parser::relations::SyntacticRelation;
+
 // Removed: mod utility_macros;
 use super::*;
 // Removed: pub(self) use utility_macros::*;

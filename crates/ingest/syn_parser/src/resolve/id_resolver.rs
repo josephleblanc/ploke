@@ -102,7 +102,6 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             .path_index()
             .iter() // Iterate over (NodePath, NodeId) from path_index
             .filter_map(|(np, mod_id)| {
-
                 trace!(target: LOG_TARGET, "path_index filter_map: <name unknown> ({}) | NodePath: {}",
                     mod_id.to_string().log_id(),
                     np.to_string().log_path()
@@ -110,7 +109,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 // Get the ModuleNode for the ID
                 self.module_tree
                     .modules()
-                    .get(&ModuleNodeId::new(*mod_id))
+                    .get(*mod_id)
                     .inspect(|opt| {
                 trace!(target: LOG_TARGET, "  getting: {} ({}) | Option is_some(), name: {:#?}",
                     mod_id.to_string().log_id(),

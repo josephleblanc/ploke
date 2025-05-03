@@ -6,7 +6,6 @@ use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 use super::*;
 use thiserror::Error; // Add thiserror
 
-// Create a specific graph kind of error here AI!
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum ParsedGraphError {
     #[error("Crate context is missing, cannot determine root path.")]
@@ -18,7 +17,6 @@ pub enum ParsedGraphError {
     #[error("Duplicate root module file path '{0}' found in graph.")]
     DuplicateRootFile(PathBuf),
 }
-
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ParsedCodeGraph {
@@ -33,8 +31,6 @@ pub struct ParsedCodeGraph {
     //  - Option for now
     crate_context: Option<CrateContext>,
 }
-
-// Create a specific graph kind of error here AI!
 
 impl ParsedCodeGraph {
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
@@ -146,7 +142,7 @@ impl ParsedCodeGraph {
         #[cfg(feature = "validate")]
         assert!(self.validate_unique_rels());
         let root_module = self.get_root_module_checked()?;
-        let mut tree = ModuleTree::new_from_root(root_module)?;
+        let mut tree = ModuleTree::new_from_root(&root_module)?;
         // 1: Register all modules with their containment info
         for module in self.modules() {
             log_build_tree_processing_module(module);
@@ -218,7 +214,11 @@ impl ParsedCodeGraph {
         // 6. Prune unlinked file modules from the ModuleTree state
         let pruning_result = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
         if !pruning_result.pruned_module_ids.is_empty() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.", pruning_result.pruned_module_ids.len(), pruning_result.pruned_item_ids.len(), pruning_result.pruned_relations.len());
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and _fill me in_ relations from ModuleTree.",
+                pruning_result.pruned_module_ids.len(),
+                pruning_result.pruned_item_ids.len(),
+                // pruning_result.pruned_relations.len()
+            );
             // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
         }
         // By the time we are finished, we should have all the necessary relations to form the path
@@ -267,16 +267,16 @@ impl ParsedCodeGraph {
         // We just need to clone the result if Ok.
         self.find_module_by_file_path_checked(root_path)
             .map(|node| node.clone()) // Clone the found ModuleNode
-            // Note: No specific mapping needed here, as find_module_by_file_path_checked
-            // already returns appropriate SynParserError variants (NotFound wrapped in InternalState, DuplicateNode).
-            // If more specific errors were desired (like RootFileNotFound), we could map the error:
-            // .map_err(|e| match e {
-            //     SynParserError::InternalState(_) => // Assuming this wraps NotFound for file paths
-            //         ParsedGraphError::RootFileNotFound(root_path.clone()).into(),
-            //     SynParserError::DuplicateNode(_) => // Assuming this wraps duplicate file paths
-            //         ParsedGraphError::DuplicateRootFile(root_path.clone()).into(),
-            //     other_err => other_err, // Propagate other errors
-            // })
+                                      // Note: No specific mapping needed here, as find_module_by_file_path_checked
+                                      // already returns appropriate SynParserError variants (NotFound wrapped in InternalState, DuplicateNode).
+                                      // If more specific errors were desired (like RootFileNotFound), we could map the error:
+                                      // .map_err(|e| match e {
+                                      //     SynParserError::InternalState(_) => // Assuming this wraps NotFound for file paths
+                                      //         ParsedGraphError::RootFileNotFound(root_path.clone()).into(),
+                                      //     SynParserError::DuplicateNode(_) => // Assuming this wraps duplicate file paths
+                                      //         ParsedGraphError::DuplicateRootFile(root_path.clone()).into(),
+                                      //     other_err => other_err, // Propagate other errors
+                                      // })
     }
 }
 
