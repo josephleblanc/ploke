@@ -892,38 +892,39 @@ impl ModuleTree {
     /// Finds the absolute file path of the file-based module containing the given node ID.
     ///
     /// This traverses upwards from the node's immediate parent module. If the parent
-    /// is inline, it continues searching upwards until a file-based module is found.
+    /// is inline, it continues searching upwards using the `get_parent_module_id` helper
+    /// until a file-based module is found.
     pub fn find_defining_file_path_ref_seq(
         &self,
-        node_id: AnyNodeId, // Changed: Parameter is AnyNodeId
+        node_id: AnyNodeId,
     ) -> Result<&Path, ModuleTreeError> {
-        // let graph_id = node_id; // No longer needed
+        // 1. Find the immediate parent module ID using the relation index.
+        //    We still need this initial lookup as the input is AnyNodeId.
+        let initial_parent_mod_id = self
+            .get_iter_relations_to(&node_id) // Use iterator version
+            .ok_or(ModuleTreeError::NoRelationsFoundForId(node_id))? // Use specific error
+            .find_map(|tr| match tr.rel() {
+                // Find the first 'Contains' relation targeting the node_id
+                SyntacticRelation::Contains { source, target } if *target == node_id => Some(*source), // Source is ModuleNodeId
+                _ => None,
+            })
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Error if no Contains relation found
 
-        // 1. Find the immediate parent module ID using AnyNodeId
+        let mut current_mod_id = initial_parent_mod_id;
+        let mut recursion_limit = 100; // Safety break
 
-        let parent_relations = self
-            .get_relations_to(&node_id, |tr| tr.rel().kind == RelationKind::Contains) // Changed: Use AnyNodeId
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Changed: Use AnyNodeId in error
-
-        let mut current_mod_id = parent_relations
-            .first()
-            .map(|tr| ModuleNodeId::new(tr.rel().source))
-            .ok_or(ModuleTreeError::ContainingModuleNotFound(node_id))?; // Changed: Use AnyNodeId in error
-
-        let mut cycle_guard = 0;
-        // 2. Traverse upwards until a file-based module is found
+        // 2. Loop upwards using get_parent_module_id
         loop {
-            cycle_guard += 1;
-            if cycle_guard >= 100 {
-                return Err(ModuleTreeError::InternalState(format!(
-                    "Detected cycle/self-loop for {}",
-                    node_id
-                )));
+            recursion_limit -= 1;
+            if recursion_limit <= 0 {
+                return Err(ModuleTreeError::RecursionLimitExceeded {
+                    start_node_id: node_id, // Use the original input ID
+                    limit: 100,
+                });
             }
-            let module_node = self
-                .modules
-                .get(&current_mod_id)
-                .ok_or(ModuleTreeError::ModuleNotFound(current_mod_id))?; // Error if module missing
+
+            // Get the current module node using the typed ID
+            let module_node = self.get_module_checked(&current_mod_id)?; // Use checked version with ?
 
             // 3. Check if the current module is file-based
             if let Some(file_path) = module_node.file_path() {
@@ -931,47 +932,22 @@ impl ModuleTree {
                 return Ok(file_path);
             }
 
-            // 4. If inline, find *its* parent module ID using AnyNodeId
-            let inline_parent_relations = self
-                .get_relations_to(&current_mod_id.into(), |tr| {
-                    // Changed: Convert ModuleNodeId to AnyNodeId
-                    // Use inner NodeId
-                    tr.rel().kind == RelationKind::Contains
-                })
-                .ok_or_else(|| {
-                    ModuleTreeError::ContainingModuleNotFound(*current_mod_id.as_inner())
-                    // Error uses inner NodeId
-                })?; // Error if inline has no parent
+            // 4. Check if we've reached the root (and it wasn't file-based, handled above)
+            if current_mod_id == self.root {
+                // If root is reached and wasn't file-based, it's an error state.
+                return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
+            }
 
-            // Extract the potential parent ID *before* reassigning current_mod_id
-            let potential_parent_mod_id = inline_parent_relations
-                .first()
-                .map(|tr| ModuleNodeId::new(tr.rel().source)) // Source is NodeId
+            // 5. If inline or declaration, find its parent module ID using the helper
+            current_mod_id = self.get_parent_module_id(current_mod_id)
                 .ok_or_else(|| {
-                    // Error if the relation is missing
+                    // If get_parent_module_id returns None (and not at root), the tree is inconsistent
+                    self.log_find_decl_dir_missing_parent(current_mod_id); // Log helper
                     ModuleTreeError::InternalState(format!(
-                        "Missing Contains relation for target {}",
+                        "Module tree inconsistent: Parent not found for non-root module {}",
                         current_mod_id
                     ))
                 })?;
-
-            // Check for self-containment loop (parent is the same as the child)
-            if potential_parent_mod_id == current_mod_id {
-                log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "    {} Found self-containment loop for module {}", "✗".log_error(), current_mod_id.to_string().log_id());
-                return Err(ModuleTreeError::InternalState(format!(
-                    "Detected self-containment loop for module {}",
-                    current_mod_id
-                )));
-            }
-
-            // Assign the validated parent ID
-            current_mod_id = potential_parent_mod_id;
-
-            // Basic cycle prevention / safety break (checking against root)
-            if current_mod_id == self.root && !self.get_module_checked(&self.root)?.is_file_based()
-            {
-                return Err(ModuleTreeError::RootModuleNotFileBased(self.root));
-            }
         }
     }
 
