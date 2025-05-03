@@ -1141,56 +1141,69 @@ impl ModuleTree {
         }
     }
 
+    /// Calculates the shortest public path from the crate root to a given item.
+    ///
+    /// This function performs a Breadth-First Search (BFS) starting from the item's
+    /// containing module and exploring upwards towards the crate root (`self.root`).
+    /// It considers both module containment (`Contains` relation) and public re-exports
+    /// (`ReExports` relation via `ImportNode`s with public visibility).
+    ///
+    /// # Arguments
+    /// * `item_any_id`: The `AnyNodeId` of the item whose public path is required.
+    /// * `graph`: Access to the `ParsedCodeGraph` for node lookups and dependency info.
+    ///
+    /// # Returns
+    /// * `Ok(ResolvedItemInfo)`: Contains the shortest public path, the public name,
+    ///   the resolved ID (definition or re-export), and target kind information.
+    /// * `Err(ModuleTreeError)`: If the item is not found, not publicly accessible,
+    ///   or if inconsistencies are detected in the graph/tree structure.
     pub fn shortest_public_path(
         &self,
-        item_id: NodeId,
-        graph: &ParsedCodeGraph, // Need graph for node details and dependency check
+        item_any_id: AnyNodeId, // Changed: Input is AnyNodeId
+        graph: &ParsedCodeGraph,
     ) -> Result<ResolvedItemInfo, ModuleTreeError> {
-        // Changed return type
         // --- 1. Initial Setup ---
 
-        let item_node = graph.find_node_unique(item_id)?; // O(n) lookup, need to refactor
-                                                          // find_node_unique
+        let item_node = graph.find_node_unique(item_any_id)?; // Use AnyNodeId for lookup
         if !item_node.visibility().is_pub() {
-            // If the item's own visibility isn't Public, it can never be reached
-            // via a public path from the crate root.
+            // If the item's own visibility isn't Public, it can never be reached.
             self.log_spp_item_not_public(item_node);
-            return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id));
+            return Err(ModuleTreeError::ItemNotPubliclyAccessible(item_any_id)); // Use AnyNodeId in error
         }
-        // Removed early check for ExternCrate here.
-        // It's handled later when determining ResolvedTargetKind.
-        // let item_gid = &GraphId::Node(item_node.id()); // No longer needed
         let item_name = item_node.name().to_string();
 
         self.log_spp_start(item_node);
 
-        // Find the direct parent module ID using the index with NodeId
-        let initial_parent_relations = self
-            .get_relations_to(&item_id, |tr| tr.rel().kind == RelationKind::Contains) // Use item_id directly
-            .ok_or_else(|| ModuleTreeError::no_relations_found(item_node))?;
-        let parent_mod_id = match initial_parent_relations.first() {
-            Some(tr) => ModuleNodeId::new(tr.rel().source), // Source is NodeId
-            None => {
+        // Find the direct parent module ID using the index with AnyNodeId
+        let initial_parent_mod_id = self
+            .get_iter_relations_to(&item_any_id) // Use AnyNodeId for lookup
+            .ok_or_else(|| ModuleTreeError::no_relations_found(item_node))?
+            .find_map(|tr| match tr.rel() {
+                // Find the first 'Contains' relation targeting the item_any_id
+                SyntacticRelation::Contains { source, target } if *target == item_any_id => {
+                    Some(*source) // Source is ModuleNodeId
+                }
+                _ => None,
+            })
+            .ok_or_else(|| {
                 // Item isn't contained in any module? Maybe it's the root module itself?
                 if let Some(module_node) = item_node.as_module() {
-                    if module_node.id() == *self.root.as_inner() {
+                    if module_node.id.as_any() == self.root.as_any() { // Compare AnyNodeId
                         // Special case: asking for the path to the root module itself
                         return Ok(ResolvedItemInfo {
-                            // Use new_unchecked as ["crate"] is never empty
                             path: NodePath::new_unchecked(vec!["crate".to_string()]),
-                            public_name: "crate".to_string(), // Root module's public name
-                            resolved_id: item_id,
+                            public_name: "crate".to_string(),
+                            resolved_id: item_any_id, // Use AnyNodeId
                             target_kind: ResolvedTargetKind::InternalDefinition {
-                                definition_id: item_id,
+                                definition_id: item_any_id, // Use AnyNodeId
                             },
-                            definition_name: None, // Root name is 'crate'
+                            definition_name: None,
                         });
                     }
                 }
                 // Otherwise, it's an error or uncontained item
-                return Err(ModuleTreeError::ContainingModuleNotFound(item_id));
-            }
-        };
+                ModuleTreeError::ContainingModuleNotFound(item_any_id) // Use AnyNodeId in error
+            })?;
 
         let mut queue: VecDeque<(ModuleNodeId, Vec<String>)> = VecDeque::new();
         let mut visited: HashSet<ModuleNodeId> = HashSet::new();
@@ -1221,9 +1234,9 @@ impl ModuleTree {
                 // For now, assume SPP correctly resolves through internal re-exports.
 
                 // Let's refine the target_kind determination:
-                let (resolved_id, target_kind) = match graph.find_node_unique(item_id)?.as_import() // find_node_unique uses NodeId
+                let (resolved_id, target_kind) = match graph.find_node_unique(item_any_id)?.as_import() // Use AnyNodeId
                 {
-                    // If the original item_id points to an ImportNode (meaning it was a re-export)
+                    // If the original item_any_id points to an ImportNode (meaning it was a re-export)
                     Some(import_node) => {
                         // Check if it's an external re-export
                         if import_node.is_extern_crate()
@@ -1231,9 +1244,9 @@ impl ModuleTree {
                                 graph.iter_dependency_names().any(|dep| dep == seg)
                             })
                         {
-                            // External: resolved_id is the ImportNode's ID
+                            // External: resolved_id is the ImportNode's ID (as AnyNodeId)
                             (
-                                import_node.id(),
+                                import_node.id.as_any(), // Convert ImportNodeId to AnyNodeId
                                 ResolvedTargetKind::ExternalReExport {
                                     external_path: import_node.source_path().to_vec(),
                                 },
@@ -1243,26 +1256,29 @@ impl ModuleTree {
                             // The resolved_id should be the ultimate definition ID.
                             // We need to find the target of the ReExports relation from this import_node.
                             let reexport_target_id = self
-                                .get_relations_from(&import_node.id(), |tr| {
-                                    // Use NodeId
-                                    tr.rel().kind == RelationKind::ReExports
+                                .get_iter_relations_from(&import_node.id.as_any()) // Use AnyNodeId
+                                .and_then(|iter| {
+                                    iter.find_map(|tr| match tr.rel() {
+                                        SyntacticRelation::ReExports { target, .. } => Some(*target), // Target is PrimaryNodeId
+                                        _ => None,
+                                    })
                                 })
-                                .and_then(|rels| rels.first().map(|tr| tr.rel().target)) // Target is NodeId
-                                .unwrap_or(item_id); // Fallback to original item_id if lookup fails
+                                .map(|pid| pid.as_any()) // Convert PrimaryNodeId to AnyNodeId
+                                .unwrap_or(item_any_id); // Fallback to original item_any_id
 
                             (
-                                reexport_target_id,
+                                reexport_target_id, // Already AnyNodeId
                                 ResolvedTargetKind::InternalDefinition {
-                                    definition_id: reexport_target_id,
+                                    definition_id: reexport_target_id, // Use AnyNodeId
                                 },
                             )
                         }
                     }
-                    // If the original item_id points to a definition node
+                    // If the original item_any_id points to a definition node
                     None => (
-                        item_id, // resolved_id is the definition ID
+                        item_any_id, // resolved_id is the definition ID (AnyNodeId)
                         ResolvedTargetKind::InternalDefinition {
-                            definition_id: item_id,
+                            definition_id: item_any_id, // Use AnyNodeId
                         },
                     ),
                 };
@@ -1271,13 +1287,13 @@ impl ModuleTree {
                 let definition_name =
                     if let ResolvedTargetKind::InternalDefinition { definition_id } = target_kind {
                         graph
-                            .find_node_unique(definition_id)?
+                            .find_node_unique(definition_id)? // Use AnyNodeId
                             .name()
                             .ne(&public_name)
                             .then(|| {
                                 graph
-                                    .find_node_unique(definition_id)
-                                    .unwrap()
+                                    .find_node_unique(definition_id) // Use AnyNodeId
+                                    .unwrap() // Safe unwrap as we just found it
                                     .name()
                                     .to_string()
                             })
@@ -1286,8 +1302,7 @@ impl ModuleTree {
                     };
 
                 // --- Construct Final Result ---
-                // Use new_unchecked as final_path always starts with "crate"
-                let final_node_path = NodePath::new_unchecked(final_path);
+                let final_node_path = NodePath::new_unchecked(final_path); // Path is Vec<String>
                 return Ok(ResolvedItemInfo {
                     path: final_node_path, // Module path as NodePath
                     public_name,           // Name at the end of the path
@@ -1321,7 +1336,7 @@ impl ModuleTree {
         } // End while loop
 
         // --- 6. Not Found ---
-        Err(ModuleTreeError::ItemNotPubliclyAccessible(item_id))
+        Err(ModuleTreeError::ItemNotPubliclyAccessible(item_any_id)) // Use AnyNodeId in error
     }
 
     // Helper function for exploring via parent modules
@@ -1340,25 +1355,30 @@ impl ModuleTree {
         // Determine the ID and visibility source (declaration or definition)
         let (effective_source_id, visibility_source_node) =
             if current_mod_node.is_file_based() && current_mod_id != self.root {
-                // For file-based modules, find the declaration using NodeId
+                // For file-based modules, find the declaration using AnyNodeId
                 let decl_relations = self
-                    .get_relations_to(current_mod_id.as_inner(), |tr| {
-                        // Use inner NodeId
-                        matches!(
-                            tr.rel().kind,
-                            RelationKind::ResolvesToDefinition | RelationKind::CustomPath
-                        )
-                    })
+                    .get_iter_relations_to(&current_mod_id.as_any()) // Use AnyNodeId
                     .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
+
                 self.log_spp_containment_vis_source(current_mod_node);
-                if let Some(decl_rel) = decl_relations.first() {
-                    let decl_id = ModuleNodeId::new(decl_rel.rel().source); // Source is NodeId
-                                                                            // Visibility comes from the declaration node
+
+                // Find the first relation that links a declaration to this definition
+                let decl_id_opt = decl_relations.find_map(|tr| match tr.rel() {
+                    SyntacticRelation::ResolvesToDefinition { source, target }
+                    | SyntacticRelation::CustomPath { source, target }
+                        if *target == current_mod_id =>
+                    {
+                        Some(*source) // Source is ModuleNodeId
+                    }
+                    _ => None,
+                });
+
+                if let Some(decl_id) = decl_id_opt {
+                    // Visibility comes from the declaration node
                     self.log_spp_containment_vis_source_decl(decl_id);
                     (decl_id, self.get_module_checked(&decl_id)?)
                 } else {
                     // Unlinked file-based module, treat as private/inaccessible upwards
-                    // Or log a warning and use the definition itself? Let's treat as inaccessible.
                     self.log_spp_containment_unlinked(current_mod_id);
                     return Ok(()); // Cannot proceed upwards via containment
                 }
@@ -1368,15 +1388,22 @@ impl ModuleTree {
                 (current_mod_id, current_mod_node)
             };
 
-        // Find the parent of the effective source (declaration or inline module) using NodeId
-        let parent_relations = self
-            .get_relations_to(effective_source_id.as_inner(), |tr| {
-                // Use inner NodeId
-                tr.rel().kind == RelationKind::Contains
-            })
-            .ok_or_else(|| ModuleTreeError::no_relations_found(current_mod_node))?;
-        if let Some(parent_rel) = parent_relations.first() {
-            let parent_mod_id = ModuleNodeId::new(parent_rel.rel().source); // Source is NodeId
+        // Find the parent of the effective source (declaration or inline module) using AnyNodeId
+        let parent_mod_id_opt = self
+            .get_iter_relations_to(&effective_source_id.as_any()) // Use AnyNodeId
+            .and_then(|iter| {
+                iter.find_map(|tr| match tr.rel() {
+                    SyntacticRelation::Contains { source, target }
+                        if target.base_id() == effective_source_id.base_id() =>
+                    // Compare base IDs in case target is AnyNodeId
+                    {
+                        Some(*source) // Source is ModuleNodeId
+                    }
+                    _ => None,
+                })
+            });
+
+        if let Some(parent_mod_id) = parent_mod_id_opt {
 
             // Check visibility: Is the declaration/inline module visible FROM the parent?
             // We need the parent module node to check its scope if visibility is restricted
@@ -1421,25 +1448,25 @@ impl ModuleTree {
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
         self.log_spp_reexport_start(target_id, path_to_item);
-        // Find ImportNodes that re-export the target_id using NodeId
+        // Find ImportNodes that re-export the target_id using AnyNodeId
         // Need reverse ReExport lookup: target = target_id -> source = import_node_id
-        let reexport_relations = self
-            .get_relations_to(target_id.as_inner(), |tr| {
-                // Use inner NodeId
-                tr.rel().kind == RelationKind::ReExports
+        let reexporting_imports = self
+            .get_iter_relations_to(&target_id.as_any()) // Use AnyNodeId
+            .map(|iter| {
+                iter.filter_map(|tr| match tr.rel() {
+                    SyntacticRelation::ReExports { source, target }
+                        if target.as_any() == target_id.as_any() =>
+                    {
+                        Some(*source) // Source is ImportNodeId
+                    }
+                    _ => None,
+                })
             })
-            .ok_or_else(|| {
-                // WARNING:
-                // Placeholder `unwrap` here, need better error conversions for
-                // SynParserError <--> ModuleTreeError
-                let node = graph.find_node_unique(target_id.into_inner()).unwrap();
-                ModuleTreeError::no_relations_found(node)
-            })?;
+            .into_iter() // Convert Option<impl Iterator> to Iterator
+            .flatten(); // Flatten to get ImportNodeIds
 
-        for rel in reexport_relations {
-            let import_node_id = rel.rel().source; // Source is NodeId
+        for import_node_id in reexporting_imports {
             let import_node = match graph.get_import_checked(import_node_id) {
-                // O(1) <--- not actually true, refactor graph method `get_import_checked`
                 Ok(node) => node,
                 Err(_) => {
                     self.log_spp_reexport_missing_import_node(import_node_id);
@@ -1447,10 +1474,11 @@ impl ModuleTree {
                 }
             };
             // Check for extern crate, return error that needs to be handled by caller.
-            // This should only happen for items that are not defined in the target parsed crate.
             if import_node.is_extern_crate() {
                 self.log_spp_reexport_is_external(import_node);
-                return Err(ModuleTreeError::ExternalItemNotResolved(import_node_id));
+                return Err(ModuleTreeError::ExternalItemNotResolved(
+                    import_node_id.as_any(), // Use AnyNodeId in error
+                ));
             }
             self.log_spp_reexport_get_import_node(import_node);
 
@@ -1460,15 +1488,22 @@ impl ModuleTree {
                 continue; // Skip private `use` statements
             }
 
-            // Find the module containing this ImportNode using NodeId
-            let container_relations = self
-                .get_relations_to(&import_node_id, |r| {
-                    // Use NodeId
-                    r.rel().kind == RelationKind::Contains
-                })
-                .ok_or_else(|| ModuleTreeError::no_relations_found(import_node))?;
-            if let Some(container_rel) = container_relations.first() {
-                let reexporting_mod_id = ModuleNodeId::new(container_rel.rel().source); // Source is NodeId
+            // Find the module containing this ImportNode using AnyNodeId
+            let container_mod_id_opt = self
+                .get_iter_relations_to(&import_node_id.as_any()) // Use AnyNodeId
+                .and_then(|iter| {
+                    iter.find_map(|tr| match tr.rel() {
+                        SyntacticRelation::Contains { source, target }
+                            if target.base_id() == import_node_id.base_id() =>
+                        // Compare base IDs
+                        {
+                            Some(*source) // Source is ModuleNodeId
+                        }
+                        _ => None,
+                    })
+                });
+
+            if let Some(reexporting_mod_id) = container_mod_id_opt {
 
                 // IMPORTANT: Check if the *re-exporting module* itself is accessible
                 // This requires knowing *from where* we are checking. In BFS, we don't have
@@ -1845,7 +1880,7 @@ impl ModuleTree {
         base_module_id: ModuleNodeId,
         path_segments: &[String],
         graph: &ParsedCodeGraph, // Need graph access
-    ) -> Result<NodeId, ModuleTreeError> {
+    ) -> Result<AnyNodeId, ModuleTreeError> { // Changed: Return AnyNodeId
         if path_segments.is_empty() {
             return Err(ModuleTreeError::NodePathValidation(Box::new(
                 SynParserError::NodeValidation(
@@ -1862,7 +1897,7 @@ impl ModuleTree {
             remaining_segments = &remaining_segments[1..];
             if remaining_segments.is_empty() {
                 // Path was just "self", refers to the module itself
-                return Ok(*current_module_id.as_inner());
+                return Ok(current_module_id.as_any()); // Changed: Return AnyNodeId
             }
         }
         // 2. Handle `super::` prefix (potentially multiple times)
@@ -1878,60 +1913,61 @@ impl ModuleTree {
                 remaining_segments = &remaining_segments[1..];
                 if remaining_segments.is_empty() {
                     // Path ended with "super", refers to the parent module
-                    return Ok(*current_module_id.as_inner());
+                    return Ok(current_module_id.as_any()); // Changed: Return AnyNodeId
                 }
             }
         }
 
         // 3. Iterative Resolution through remaining segments
-        let mut resolved_id: Option<NodeId> = None;
+        let mut resolved_any_id: Option<AnyNodeId> = None; // Changed: Store AnyNodeId
 
         for (i, segment) in remaining_segments.iter().enumerate() {
-            let search_in_module_id = resolved_id
-                .map(ModuleNodeId::new) // If we resolved to a module last iteration
-                .unwrap_or(current_module_id); // Otherwise, start in the initial/adjusted module
+            // Determine the module to search within for this segment
+            let search_in_module_id = match resolved_any_id {
+                Some(any_id) => ModuleNodeId::try_from(any_id).map_err(|_| {
+                    // The previously resolved item was not a module, cannot continue path
+                    ModuleTreeError::UnresolvedReExportTarget {
+                        path: NodePath::try_from(path_segments.to_vec())?,
+                        import_node_id: None, // Indicate failure due to non-module segment
+                    }
+                })?,
+                None => current_module_id, // Start in the initial/adjusted module
+            };
 
-            // 4. Find items named `segment` directly contained within `search_in_module_id` using NodeId
+            // 4. Find items named `segment` directly contained within `search_in_module_id` using AnyNodeId
             let contains_relations = self
-                .get_relations_from(search_in_module_id.as_inner(), |tr| {
-                    // Use inner NodeId
-                    tr.rel().kind == RelationKind::Contains
-                })
-                .unwrap_or_default(); // Use unwrap_or_default for empty vec if no relations
+                .get_iter_relations_from(&search_in_module_id.as_any()) // Use AnyNodeId
+                .map(|iter| iter.collect::<Vec<_>>()) // Collect for logging/multiple checks
+                .unwrap_or_default();
 
-            let mut candidates: Vec<NodeId> = Vec::new();
+            let mut candidates: Vec<AnyNodeId> = Vec::new(); // Changed: Store AnyNodeId
             self.log_resolve_segment_start(segment, search_in_module_id, contains_relations.len());
 
-            for rel in &contains_relations {
+            for rel_ref in &contains_relations {
                 // Iterate by reference
-                // Target is always NodeId now
-                let target_id = rel.rel().target;
-                self.log_resolve_segment_relation(target_id);
-                match graph.find_node_unique(target_id) {
+                let target_any_id = rel_ref.rel().target(); // Target is AnyNodeId
+                self.log_resolve_segment_relation(target_any_id);
+                match graph.find_node_unique(target_any_id) {
                     Ok(target_node) => {
                         let name_matches = target_node.name() == segment;
                         self.log_resolve_segment_found_node(target_node, segment, name_matches);
                         if name_matches {
-                            // Original visibility check logic follows...
-                            // 5. Visibility Check (Simplified: Check if accessible from the module we are searching *in*)
-                            // TODO: Refine visibility check if needed. is_accessible might be too broad here?
-                            //       Maybe need a check specific to direct children?
-                            //       For now, using is_accessible.
-                            if let Some(target_mod_id) =
-                                target_node.as_module().map(|m| ModuleNodeId::new(m.id()))
-                            {
-                                // If the target is a module, check its accessibility
-                                if self.is_accessible(search_in_module_id, target_mod_id) {
-                                    candidates.push(target_id);
+                            // 5. Visibility Check (Simplified)
+                            // Check if the target node is accessible from the module we are searching in.
+                            // For modules, use is_accessible. For other items, assume accessible if contained (needs refinement).
+                            let is_target_accessible = match ModuleNodeId::try_from(target_any_id) {
+                                Ok(target_mod_id) => {
+                                    self.is_accessible(search_in_module_id, target_mod_id)
                                 }
-                            } else {
-                                // If the target is not a module (e.g., function, struct),
-                                // its visibility is inherent. Check if it's public or accessible
-                                // within the crate/restricted path.
-                                // For simplicity here, let's assume if it's contained, it's accessible
-                                // for the purpose of path resolution *within* the module structure.
-                                // A more robust check might involve the item's own visibility field.
-                                candidates.push(target_id); // Assume accessible for now if contained
+                                Err(_) => {
+                                    // Assume non-module items are accessible if contained for now.
+                                    // A better check would involve the item's own visibility.
+                                    true
+                                }
+                            };
+
+                            if is_target_accessible {
+                                candidates.push(target_any_id); // Changed: Push AnyNodeId
                             }
                         }
                     }
@@ -1939,7 +1975,7 @@ impl ModuleTree {
                         debug!(target: LOG_TARGET_MOD_TREE_BUILD,
                             "    {} Error finding node for ID {}: {:?}",
                             "✗".log_error(),
-                            target_id.to_string().log_id(),
+                            target_any_id.to_string().log_id(), // Use AnyNodeId
                             e.to_string().log_error()
                         );
                     }
@@ -1963,15 +1999,15 @@ impl ModuleTree {
                     });
                 }
                 1 => {
-                    let found_id = candidates[0];
-                    resolved_id = Some(found_id); // Store the resolved ID for the next iteration
+                    let found_any_id = candidates[0]; // Changed: ID is AnyNodeId
+                    resolved_any_id = Some(found_any_id); // Store the resolved AnyNodeId
 
                     // Check if it's the last segment
                     if i == remaining_segments.len() - 1 {
-                        return Ok(found_id);
+                        return Ok(found_any_id); // Changed: Return AnyNodeId
                     } else {
                         // More segments remain, ensure the found item is a module
-                        if graph.find_node_unique(found_id)?.as_module().is_none() {
+                        if graph.find_node_unique(found_any_id)?.as_module().is_none() {
                             return Err(ModuleTreeError::UnresolvedReExportTarget {
                                 // Or a more specific error like "PathNotAModule"
                                 path: NodePath::try_from(path_segments.to_vec())?,
@@ -2341,13 +2377,12 @@ impl ModuleTree {
             match target_defn {
                 Some(target_defn_node) => {
                     // 2. Found the target file definition node. Create the relation.
-                    let target_defn_id = target_defn_node.id();
-                    let relation = Relation {
-                        source: decl_module_id.into_inner(),
-                        target: target_defn_id,
-                        kind: RelationKind::CustomPath,
+                    let target_defn_id = target_defn_node.id; // Get ModuleNodeId
+                    let relation = SyntacticRelation::CustomPath {
+                        source: *decl_module_id, // Use ModuleNodeId directly
+                        target: target_defn_id,  // Use ModuleNodeId directly
                     };
-                    self.log_rel(relation, None);
+                    self.log_relation(relation, None); // Use new log helper
                     // NOTE: Edge Case
                     // It is actually valid to have a case of duplicate definitions. We'll
                     // need to consider how to handle this case, since it is possible to have an
@@ -2356,16 +2391,15 @@ impl ModuleTree {
                     // For now, just throw error.
                     if let Some(dup) = targets_iter.next() {
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
-                        "Duplicate module definition for path attribute target '{}'  {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
-                            decl_module_node.id,
+                        "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
+                            decl_module_node.id, // Use ModuleNodeId
                         resolved_path.display(),
                             &decl_module_node,
-                            &target_defn,
+                            &target_defn_node, // Use the found node
                             &dup
-
                     )));
                     }
-                    internal_relations.push(relation);
+                    internal_relations.push(relation); // Push SyntacticRelation
                 }
                 None => {
                     // 3. Handle case where the target file node wasn't found.
@@ -2422,7 +2456,10 @@ impl ModuleTree {
             }
         }
         self.external_path_attrs.extend(external_path_files);
-        self.add_relations_batch(&internal_relations)?;
+        // Add relations one by one using add_rel which takes TreeRelation
+        for rel in internal_relations {
+            self.add_rel(rel.into());
+        }
         Ok(())
     }
 
@@ -2500,14 +2537,15 @@ impl ModuleTree {
 
             // 4. Remove the old path index entry for the definition module
             // Use the original_path (derived from file system) as the key to remove.
+            let def_mod_any_id = def_mod_id.as_any(); // Get AnyNodeId
             if let Some(removed_id) = self.path_index.remove(&original_path) {
-                if removed_id != *def_mod_id.as_inner() {
+                if removed_id != def_mod_any_id { // Compare AnyNodeId
                     self.log_update_path_index_remove_inconsistency(
-                        removed_id,
+                        removed_id, // This is AnyNodeId
                         &original_path,
                         def_mod_id,
                     );
-                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_id, removed_id)));
+                    return Err(ModuleTreeError::InternalState(format!("Path index inconsistency during removal for path {}: expected {}, found {}. This suggests the path_index was corrupted earlier.", original_path, def_mod_any_id, removed_id)));
                 }
                 self.log_update_path_index_remove(&original_path, def_mod_id);
             } else {
@@ -2515,22 +2553,21 @@ impl ModuleTree {
             }
 
             // 5. Insert the new path index entry using the canonical path
-            // Use the canonical_path (from the declaration) as the key, mapping to the definition ID.
-            let def_mod_inner_id = *def_mod_id.as_inner(); // Get the inner NodeId
+            // Use the canonical_path (from the declaration) as the key, mapping to the definition ID (as AnyNodeId).
             if let Some(existing_id) = self
                 .path_index
-                .insert(canonical_path.clone(), def_mod_inner_id)
+                .insert(canonical_path.clone(), def_mod_any_id) // Insert AnyNodeId
             {
-                if existing_id != def_mod_inner_id {
+                if existing_id != def_mod_any_id { // Compare AnyNodeId
                     self.log_update_path_index_insert_conflict(
                         &canonical_path,
                         def_mod_id,
-                        existing_id,
+                        existing_id, // This is AnyNodeId
                     );
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
-                        existing_id,
-                        conflicting_id: def_mod_inner_id,
+                        existing_id, // AnyNodeId
+                        conflicting_id: def_mod_any_id, // AnyNodeId
                     });
                 }
                 self.log_update_path_index_reinsert(&canonical_path, def_mod_id);
