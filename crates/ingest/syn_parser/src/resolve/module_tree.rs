@@ -750,37 +750,53 @@ impl ModuleTree {
             .push(new_index);
     }
 
-    /// Adds a relation to the tree, first checking if the source and target nodes
-    /// exist in the `modules` map.
-    /// Returns `ModuleTreeError::ModuleNotFound` if a check fails.
-    pub fn add_rel_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
+    /// Adds a relation *between two modules* to the tree, first checking if both the source
+    /// and target module nodes exist in the `modules` map.
+    ///
+    /// This is intended for relations like `ResolvesToDefinition` or `CustomPath` where both
+    /// ends are expected to be modules already registered in the tree.
+    ///
+    /// Returns `ModuleTreeError::ModuleNotFound` if either module is not found.
+    /// Returns `ModuleTreeError::InternalState` if the source or target of the relation
+    /// cannot be converted to a `ModuleNodeId`.
+    pub fn add_new_mod_rel_checked(&mut self, tr: TreeRelation) -> Result<(), ModuleTreeError> {
         let relation = tr.rel();
-        let source_id = relation.source; // Now NodeId
-        let target_id = relation.target; // Now NodeId
+        let source_any_id = relation.source(); // Returns AnyNodeId
+        let target_any_id = relation.target(); // Returns AnyNodeId
 
-        // Check source node
-        let source_mod_id = ModuleNodeId::new(source_id);
+        // Attempt to convert source and target to ModuleNodeId
+        let source_mod_id = ModuleNodeId::try_from(source_any_id).map_err(|_| {
+            ModuleTreeError::InternalState(format!(
+                "Source ID {} of relation {:?} is not a ModuleNodeId, cannot use add_new_mod_rel_checked",
+                source_any_id, relation
+            ))
+        })?;
+        let target_mod_id = ModuleNodeId::try_from(target_any_id).map_err(|_| {
+            ModuleTreeError::InternalState(format!(
+                "Target ID {} of relation {:?} is not a ModuleNodeId, cannot use add_new_mod_rel_checked",
+                target_any_id, relation
+            ))
+        })?;
+
+        // Check if both modules exist in the map
         if !self.modules.contains_key(&source_mod_id) {
             return Err(ModuleTreeError::ModuleNotFound(source_mod_id));
         }
-
-        // Check target node
-        let target_mod_id = ModuleNodeId::new(target_id);
         if !self.modules.contains_key(&target_mod_id) {
             return Err(ModuleTreeError::ModuleNotFound(target_mod_id));
         }
 
-        // Checks passed, add the relation using the unchecked method's logic
+        // Checks passed, add the relation using the logic from add_rel
         let new_index = self.tree_relations.len();
-        self.tree_relations.push(tr);
+        self.tree_relations.push(tr); // Push the original TreeRelation
 
-        // Update indices using AnyNodeId keys
+        // Update indices using the AnyNodeIds obtained earlier
         self.relations_by_source
-            .entry(relation.source()) // Use AnyNodeId directly
+            .entry(source_any_id)
             .or_default()
             .push(new_index);
         self.relations_by_target
-            .entry(relation.target()) // Use AnyNodeId directly
+            .entry(target_any_id)
             .or_default()
             .push(new_index);
 
