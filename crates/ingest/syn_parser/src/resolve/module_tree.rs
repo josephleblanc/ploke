@@ -20,9 +20,8 @@ use crate::{
     error::SynParserError,
     parser::{
         nodes::{
-            self, extract_path_attr_from_node, GraphNode, ImportNode, ModuleNode, ModuleNodeId,
-            NodePath,
-        },
+            self, extract_path_attr_from_node, ImportNode, ModuleNode, ModuleNodeId, NodePath,
+        }, // Removed GraphNode import
         relations::SyntacticRelation,
         types::VisibilityKind,
         ParsedCodeGraph,
@@ -1175,7 +1174,8 @@ impl ModuleTree {
         // --- 1. Initial Setup ---
 
         let item_any_id = item_pid.as_any();
-        let item_node = graph.find_node_unique(item_any_id)?; // Use AnyNodeId for lookup
+        // Use map_err for SynParserError -> ModuleTreeError conversion
+        let item_node = graph.find_node_unique(item_any_id).map_err(ModuleTreeError::from)?;
         if !item_node.visibility().is_pub() {
             // If the item's own visibility isn't Public, it can never be reached.
             self.log_spp_item_not_public(item_node);
@@ -1244,7 +1244,8 @@ impl ModuleTree {
                 // For now, assume SPP correctly resolves through internal re-exports.
 
                 // Let's refine the target_kind determination:
-                let (resolved_id, target_kind) = match graph.find_node_unique(item_any_id)?.as_import() // Use AnyNodeId
+                // Use map_err for SynParserError -> ModuleTreeError conversion
+                let (resolved_id, target_kind) = match graph.find_node_unique(item_any_id).map_err(ModuleTreeError::from)?.as_import()
                 {
                     // If the original item_any_id points to an ImportNode (meaning it was a re-export)
                     Some(import_node) => {
@@ -1294,19 +1295,18 @@ impl ModuleTree {
                 };
 
                 // Determine definition_name
-                let definition_name =
-                    if let ResolvedTargetKind::InternalDefinition { definition_id } = target_kind {
-                        graph
-                            .find_node_unique(definition_id)? // Use AnyNodeId
-                            .name()
-                            .ne(&public_name)
-                            .then(|| {
-                                graph
-                                    .find_node_unique(definition_id) // Use AnyNodeId
-                                    .unwrap() // Safe unwrap as we just found it
-                                    .name()
-                                    .to_string()
-                            })
+                // Use map_err for SynParserError -> ModuleTreeError conversion
+                let definition_name = if let ResolvedTargetKind::InternalDefinition {
+                    definition_id,
+                } = target_kind
+                {
+                    let def_node = graph
+                        .find_node_unique(definition_id)
+                        .map_err(ModuleTreeError::from)?;
+                    def_node
+                        .name()
+                        .ne(&public_name)
+                        .then(|| def_node.name().to_string())
                     } else {
                         None // Not an internal definition
                     };
@@ -1329,9 +1329,8 @@ impl ModuleTree {
                 &path_to_item,
                 &mut queue,
                 &mut visited,
-                graph,
-            ); // Need to handle errors
-               // When should this return error for invalid graph state?
+                // graph, // Removed argument
+            )?; // Propagate potential errors
 
             // --- 5. Explore Sideways/Upwards (Re-exports) ---
             self.log_spp_explore_reexports(current_mod_id, &path_to_item);
@@ -1356,7 +1355,7 @@ impl ModuleTree {
         path_to_item: &[String],
         queue: &mut VecDeque<(ModuleNodeId, Vec<String>)>,
         visited: &mut HashSet<ModuleNodeId>,
-        graph: &ParsedCodeGraph, // NOTE: Unused variable `graph`. Why is it here?
+        // graph: &ParsedCodeGraph, // Removed unused parameter
     ) -> Result<(), ModuleTreeError> {
         // Added Result return
 
@@ -1667,9 +1666,13 @@ impl ModuleTree {
             // };
             // self.log_rel(relation, None);
 
-            new_relations.push(relation.into());
+            new_relations.push(relation.into()); // NOTE: `relation` is not defined here, this block seems broken.
             // Add to reexport_index
+            // FIXME: This block is likely broken due to `as_inner` and `get_item_module_path` issues.
+            //        Commenting out until `get_item_module_path` is refactored or this cfg block removed.
+            /*
             if let Some(reexport_name) = export_node.source_path.last() {
+                // ERROR: Uses as_inner() and potentially broken get_item_module_path
                 let mut reexport_path = graph.get_item_module_path(*source_mod_id.as_inner());
                 // Check for renamed export path, e.g. `a::b::Struct as RenamedStruct`
                 if export_node.is_renamed() {
@@ -1705,12 +1708,13 @@ impl ModuleTree {
                     }
                     std::collections::hash_map::Entry::Vacant(entry) => {
                         // Path is free, insert the new re-export ID.
-                        entry.insert(export_node.id);
+                        entry.insert(export_node.id); // ERROR: export_node.id is ImportNodeId, reexport_index expects ReexportNodeId
                     }
                 }
             }
+            */
         }
-        for new_tr in new_relations {
+        for new_tr in new_relations { // NOTE: new_relations might be empty due to commented block
             self.add_rel(new_tr);
         }
 
@@ -1842,8 +1846,11 @@ impl ModuleTree {
             // If conversion fails, it means the resolved item is not a primary node type
             // (e.g., it resolved to a Field or Variant, which cannot be directly re-exported this way).
             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Re-export target {} resolved to a non-primary node type ({:?}), which is invalid for ReExports relation.", target_any_id, target_any_id);
+            // Explicitly handle NodePath conversion error instead of unwrap_or_default
+            let path_for_error = NodePath::try_from(target_path_segments.to_vec())
+                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
             ModuleTreeError::UnresolvedReExportTarget {
-                path: NodePath::try_from(target_path_segments.to_vec()).unwrap_or_default(), // Provide path context
+                path: path_for_error, // Provide path context
                 import_node_id: Some(export_node_id.as_any()), // Provide import node context
             }
         })?;
@@ -2042,7 +2049,6 @@ impl ModuleTree {
                     .iter()
                     .find(|exp| {
                         exp.containing_mod_id() == module_id && exp.export_node().id == item_id
-                        // Compare ImportNodeId == ImportNodeId
                     })
                     .and_then(|exp| exp.export_node().source_path.last().cloned())
             })
@@ -2076,11 +2082,11 @@ impl ModuleTree {
         // First, try finding a direct 'Contains' relation targeting this module_id.
         // This covers inline modules and declarations contained directly.
         let direct_parent = self
-            .get_iter_relations_to(&module_id.into())
+            .get_iter_relations_to(&(*module_id).into()) // Dereference before into()
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if *target == module_id.into() =>
+                        if *target == (*module_id).into() => // Dereference before into()
                     {
                         Some(*source) // Source is already ModuleNodeId
                     }
@@ -2094,7 +2100,7 @@ impl ModuleTree {
 
         // If no direct parent found via Contains, check if `module_id` is a file-based definition.
         // If so, find its declaration and then the declaration's parent.
-        self.get_iter_relations_to(&module_id.into())
+        self.get_iter_relations_to(&(*module_id).into()) // Dereference before into()
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     // Find the relation linking a declaration *to* this definition
@@ -2107,7 +2113,7 @@ impl ModuleTree {
                         target,
                     } if *target == module_id => {
                         // Found the declaration ID (`decl_id`). Now find *its* parent.
-                        self.get_iter_relations_to(&decl_id.into())
+                        self.get_iter_relations_to(&(*decl_id).into()) // Dereference before into()
                             .and_then(|mut decl_iter| {
                                 decl_iter.find_map(|decl_tr| match decl_tr.rel() {
                                     SyntacticRelation::Contains {
@@ -2386,7 +2392,7 @@ impl ModuleTree {
                     if let Some(dup) = targets_iter.next() {
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
                         "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
-                            decl_module_node.id, // Use ModuleNodeId
+                            decl_module_node.id.as_any(), // Convert ModuleNodeId to AnyNodeId for display consistency if needed, or keep as ModuleNodeId if Display is sufficient
                         resolved_path.display(),
                             &decl_module_node,
                             &target_defn_node, // Use the found node
@@ -2934,13 +2940,13 @@ impl ModuleTree {
     /// This function is intended for verbose debugging and may perform lookups.
     pub fn log_relation_verbose(&self, rel: TreeRelation) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Relation Details:", "Verbose Log:".log_header());
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", rel.0.to_string().log_name());
+        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Kind: {}", rel.rel().to_string().log_name()); // Use rel()
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Source:");
-        self.log_node_id_verbose(rel.source().into()); // Changed: Convert NodeId to AnyNodeId
+        self.log_node_id_verbose(rel.rel().source()); // Use rel()
 
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Target:");
-        self.log_node_id_verbose(rel.target().into()); // Changed: Convert NodeId to AnyNodeId
+        self.log_node_id_verbose(rel.rel().target()); // Use rel()
     }
 
     /// Logs detailed information about a NodeId for debugging purposes.
@@ -3013,7 +3019,8 @@ impl ModuleTree {
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| target_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel().kind).log_name(), target_display);
+                // Format the relation variant directly
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel()).log_name(), target_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
@@ -3035,25 +3042,13 @@ impl ModuleTree {
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| source_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel().kind).log_name(), source_display);
+                // Format the relation variant directly
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel()).log_name(), source_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
         }
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Visibility: {}", format!("{:?}", module.visibility).log_vis());
-        debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Kind: {}", crate::utils::logging::get_module_def_kind_str(module).log_orange());
-        if let Some(fp) = module.file_path() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      File Path: {}", fp.display().to_string().log_path());
-        }
-        if let Some(span) = module.inline_span() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Inline Span: {:?}", span);
-        }
-        if let Some(span) = module.declaration_span() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      Decl Span: {:?}", span);
-        }
-        if !module.cfgs.is_empty() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      CFGs: {}", module.cfgs.join(", ").log_magenta());
-        }
+        // Removed duplicated logging block that referred to non-existent `module` variable
 
         // Check pending imports/exports using AnyNodeId
         let is_in_pending_import = self
@@ -3087,7 +3082,8 @@ impl ModuleTree {
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| target_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel().kind()).log_name(), target_display);
+                // Format the relation variant directly
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel()).log_name(), target_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
@@ -3108,7 +3104,8 @@ impl ModuleTree {
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| source_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel().kind()).log_name(), source_display);
+                // Format the relation variant directly
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel()).log_name(), source_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
