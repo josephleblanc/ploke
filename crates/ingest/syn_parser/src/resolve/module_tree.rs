@@ -316,6 +316,8 @@ pub enum ModuleTreeError {
     RecursionLimitExceeded { start_node_id: AnyNodeId, limit: u8 },
     #[error("Error Converting from {0}")]
     TypedIdConversionError(#[from] TryFromPrimaryError),
+    #[error("Error converting AnyNodeId: {0}")]
+    AnyNodeIdConversionError(#[from] AnyNodeIdConversionError), // New variant
 }
 
 /// Holds the IDs and relations pruned from the ModuleTree.
@@ -1755,8 +1757,7 @@ impl ModuleTree {
 
                     self.log_relation(relation, Some("ReExport Target Resolved")); // Log before potential error
 
-                    let reexport = target_node_id.try_into()?; // problem with error conversion
-                                                               // using `?` AI!
+                    let reexport = target_node_id.try_into()?; // Convert AnyNodeId to ReexportNodeId
                                                                // Update the reexport_index: public_path -> target_node_id
                     self.add_reexport_checked(public_reexport_path, reexport)?;
 
