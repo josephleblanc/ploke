@@ -2088,12 +2088,11 @@ impl ModuleTree {
         // First, try finding a direct 'Contains' relation targeting this module_id.
         // This covers inline modules and declarations contained directly.
         let direct_parent = self
-            .get_iter_relations_to(&(*module_id).into()) // Dereference before into()
+            .get_iter_relations_to(&module_id.as_any()) // Use as_any()
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if *target == (*module_id).into() =>
-                    // Dereference before into()
+                        if target.as_any() == module_id.as_any() => // Use as_any()
                     {
                         Some(*source) // Source is already ModuleNodeId
                     }
