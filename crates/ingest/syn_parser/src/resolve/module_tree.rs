@@ -1854,13 +1854,16 @@ impl ModuleTree {
             // If conversion fails, it means the resolved item is not a primary node type
             // (e.g., it resolved to a Field or Variant, which cannot be directly re-exported this way).
             log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Re-export target {} resolved to a non-primary node type ({:?}), which is invalid for ReExports relation.", target_any_id, target_any_id);
-            // Explicitly handle NodePath conversion error instead of unwrap_or_default
-            let path_for_error = NodePath::try_from(target_path_segments.to_vec())
-                .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?; // Impropoer error
-            // conversion in closure AI!
-            ModuleTreeError::UnresolvedReExportTarget {
-                path: path_for_error, // Provide path context
-                import_node_id: Some(export_node_id.as_any()), // Provide import node context
+            // Explicitly handle NodePath conversion error within the closure
+            match NodePath::try_from(target_path_segments.to_vec()) {
+                Ok(path_for_error) => ModuleTreeError::UnresolvedReExportTarget {
+                    path: path_for_error, // Provide path context
+                    import_node_id: Some(export_node_id.as_any()), // Provide import node context
+                },
+                Err(e) => {
+                    // If NodePath conversion fails, return that specific error
+                    ModuleTreeError::NodePathValidation(Box::new(e))
+                }
             }
         })?;
 
