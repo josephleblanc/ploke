@@ -1,9 +1,9 @@
 use crate::parser::{
     graph::GraphAccess,
     nodes::{
-        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, GraphNode, ImportNodeId, PrimaryNodeId,
+        AnyNodeId, AnyNodeIdConversionError, AsAnyNodeId, ImportNodeId, PrimaryNodeId,
         PrimaryNodeIdTrait, ReexportNodeId, TryFromPrimaryError,
-    },
+    }, // Removed GraphNode import
 };
 pub use colored::Colorize;
 use log::debug; // Import the debug macro
