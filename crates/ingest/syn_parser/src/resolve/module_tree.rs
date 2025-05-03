@@ -268,7 +268,7 @@ pub enum ModuleTreeError {
     #[error("Conflicting re-export path '{path}' detected. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
     ConflictingReExportPath {
         path: NodePath,
-        existing_id: ReexportNodeId, // Changed: Use ReexportNodeId
+        existing_id: ReexportNodeId,    // Changed: Use ReexportNodeId
         conflicting_id: ReexportNodeId, // Changed: Use ReexportNodeId
     },
 
@@ -1536,7 +1536,10 @@ impl ModuleTree {
     /// Checks if an item (`target_item_id`) is reachable via a chain of `ReExports` relations
     /// starting from a specific `ImportNode` (`start_import_id`).
     /// Used to detect potential re-export cycles or verify paths.
-    #[allow(dead_code, reason = "May be useful later for cycle detection or validation")]
+    #[allow(
+        dead_code,
+        reason = "May be useful later for cycle detection or validation"
+    )]
     fn is_part_of_reexport_chain(
         &self,
         start_import_id: ImportNodeId,
@@ -1561,7 +1564,8 @@ impl ModuleTree {
                 .map_or(false, |iter| {
                     iter.any(|tr| match tr.rel() {
                         SyntacticRelation::ReExports { source, target }
-                            if *source == current_import_id && target.as_any() == target_item_id =>
+                            if *source == current_import_id
+                                && target.as_any() == target_item_id =>
                         {
                             true // Found direct re-export of the target
                         }
@@ -1758,7 +1762,8 @@ impl ModuleTree {
         &self,
         export: &PendingExport,
         graph: &ParsedCodeGraph, // Needed for graph lookups during relative resolution
-    ) -> Result<(SyntacticRelation, NodePath), ModuleTreeError> { // Changed return type
+    ) -> Result<(SyntacticRelation, NodePath), ModuleTreeError> {
+        // Changed return type
         let source_mod_id = export.containing_mod_id();
         let export_node = export.export_node();
         let export_node_id = export_node.id(); // Get ImportNodeId
@@ -1784,11 +1789,15 @@ impl ModuleTree {
         // Check for external crate re-exports *before* attempting local resolution
         if base_module_id == self.root()
             && !segments_to_resolve.is_empty()
-            && graph.iter_dependency_names().any(|dep_name| dep_name == segments_to_resolve[0])
+            && graph
+                .iter_dependency_names()
+                .any(|dep_name| dep_name == segments_to_resolve[0])
         {
             self.log_resolve_single_export_external(segments_to_resolve);
             // Return specific error for external re-exports that SPP might handle later
-            return Err(ModuleTreeError::ExternalItemNotResolved(export_node_id.as_any())); // Use AnyNodeId
+            return Err(ModuleTreeError::ExternalItemNotResolved(
+                export_node_id.as_any(),
+            )); // Use AnyNodeId
         }
 
         // Resolve the path, expecting AnyNodeId
@@ -1813,10 +1822,9 @@ impl ModuleTree {
             }
         })?;
 
-
         // Create the SyntacticRelation::ReExports
         let relation = SyntacticRelation::ReExports {
-            source: export_node_id, // Source is ImportNodeId
+            source: export_node_id,    // Source is ImportNodeId
             target: target_primary_id, // Target must be PrimaryNodeId
         };
         self.log_relation(relation, Some("resolve_single_export created relation")); // Use new log helper
@@ -2688,8 +2696,9 @@ impl ModuleTree {
 
         // Prune decl_index: Remove entries whose VALUE (ModuleNodeId) corresponds to an AnyNodeId in the prunable set
         let decl_index_before = self.decl_index.len();
-        self.decl_index
-            .retain(|_path, module_node_id| !all_prunable_item_ids.contains(&module_node_id.as_any())); // Convert to AnyNodeId for check
+        self.decl_index.retain(|_path, module_node_id| {
+            !all_prunable_item_ids.contains(&module_node_id.as_any())
+        }); // Convert to AnyNodeId for check
         let decl_index_after = self.decl_index.len();
         debug!(target: LOG_TARGET_MOD_TREE_BUILD, "  Pruned decl_index: {} -> {} (removed {})", decl_index_before, decl_index_after, decl_index_before - decl_index_after);
 
