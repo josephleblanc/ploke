@@ -1402,8 +1402,8 @@ impl ModuleTree {
             .and_then(|iter| {
                 iter.find_map(|tr| match tr.rel() {
                     SyntacticRelation::Contains { source, target }
-                        if *target == effective_source_id.to_pid() =>
-                    // Compare AnyNodeId directly
+                        if target.as_any() == effective_source_id.as_any() =>
+                    // Compare AnyNodeId representations
                     {
                         Some(*source) // Source is ModuleNodeId
                     }
@@ -2047,7 +2047,7 @@ impl ModuleTree {
     }
 
     #[allow(dead_code)]
-    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: NodeId) -> Option<String> {
+    fn get_reexport_name(&self, module_id: ModuleNodeId, item_id: ImportNodeId) -> Option<String> { // Changed: item_id is ImportNodeId
         self.pending_exports
             .as_deref() // Get Option<&[PendingExport]>
             .and_then(|exports| {
@@ -2055,7 +2055,7 @@ impl ModuleTree {
                 exports
                     .iter()
                     .find(|exp| {
-                        exp.containing_mod_id() == module_id && exp.export_node().id == item_id
+                        exp.containing_mod_id() == module_id && exp.export_node().id == item_id // Compare ImportNodeId == ImportNodeId
                     })
                     .and_then(|exp| exp.export_node().source_path.last().cloned())
             })
@@ -2063,12 +2063,12 @@ impl ModuleTree {
 
     #[allow(dead_code)]
     fn get_contained_mod(&self, child_id: ModuleNodeId) -> Result<&ModuleNode, ModuleTreeError> {
-        let child_module_node =
-            self.modules
-                .get(&child_id)
-                .ok_or(ModuleTreeError::ContainingModuleNotFound(
-                    *child_id.as_inner(),
-                ))?;
+        let child_module_node = self
+            .modules
+            .get(&child_id)
+            .ok_or(ModuleTreeError::ContainingModuleNotFound(
+                child_id.as_any(), // Use AnyNodeId in error
+            ))?;
         Ok(child_module_node)
     }
 
@@ -2126,8 +2126,8 @@ impl ModuleTree {
                                     SyntacticRelation::Contains {
                                         source: parent_id,
                                         target: contains_target,
-                                    } if contains_target.base_id() == decl_id.base_id() =>
-                                    // Compare base IDs just in case target is AnyNodeId
+                                    } if contains_target.as_any() == decl_id.as_any() =>
+                                    // Compare AnyNodeId representations
                                     {
                                         Some(*parent_id) // Parent is already ModuleNodeId
                                     }
@@ -2312,12 +2312,12 @@ impl ModuleTree {
             // Return error if the parent link is missing (inconsistent tree).
             current_id = self.get_parent_module_id(current_id).ok_or_else(|| {
                 self.log_find_decl_dir_missing_parent(current_id);
-                ModuleTreeError::ContainingModuleNotFound(*current_id.as_inner())
-                // Re-use existing error
+                ModuleTreeError::ContainingModuleNotFound(current_id.as_any()) // Use AnyNodeId in error
+                                                                                // Re-use existing error
             })?;
         }
         Err(ModuleTreeError::ContainingModuleNotFound(
-            *current_id.as_inner(),
+            current_id.as_any(), // Use AnyNodeId in error
         ))
     }
     /// Resolves a path string (either relative or absolute) relative to a base directory.
@@ -2997,14 +2997,14 @@ impl ModuleTree {
         let is_in_pending_import = self
             .pending_imports
             .iter()
-            .any(|p| p.import_node().id.as_any() == node_id); // Changed: Compare AnyNodeId
+            .any(|p| p.import_node().id.as_any() == node_id); // Compare AnyNodeId
         if is_in_pending_import {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
         }
         if let Some(exports) = self.pending_exports.as_deref() {
             let is_in_pending_export = exports
                 .iter()
-                .any(|p| p.export_node().id.as_any() == node_id); // Changed: Compare AnyNodeId
+                .any(|p| p.export_node().id.as_any() == node_id); // Compare AnyNodeId
             if is_in_pending_export {
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
             }
@@ -3015,11 +3015,10 @@ impl ModuleTree {
             // Changed: Use AnyNodeId
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
             for rel_ref in relations_from {
-                // Target is always NodeId now
-                let target_id: AnyNodeId = rel_ref.rel().target.into(); // Changed: Convert target NodeId to AnyNodeId
+                let target_id: AnyNodeId = rel_ref.rel().target(); // Target is AnyNodeId
                 let target_id_str = target_id.to_string().log_id();
                 // Try to get target name if it's a module
-                let target_name = ModuleNodeId::try_from(target_id) // Changed: TryFrom AnyNodeId
+                let target_name = ModuleNodeId::try_from(target_id) // TryFrom AnyNodeId
                     .ok()
                     .and_then(|mid| self.modules.get(&mid))
                     .map(|m| m.name.as_str());
@@ -3038,11 +3037,10 @@ impl ModuleTree {
             // Changed: Use AnyNodeId
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
             for rel_ref in relations_to {
-                // Source is always NodeId now
-                let source_id: AnyNodeId = rel_ref.rel().source.into(); // Changed: Convert source NodeId to AnyNodeId
+                let source_id: AnyNodeId = rel_ref.rel().source(); // Source is AnyNodeId
                 let source_id_str = source_id.to_string().log_id();
                 // Try to get source name if it's a module
-                let source_name = ModuleNodeId::try_from(source_id) // Changed: TryFrom AnyNodeId
+                let source_name = ModuleNodeId::try_from(source_id) // TryFrom AnyNodeId
                     .ok()
                     .and_then(|mid| self.modules.get(&mid))
                     .map(|m| m.name.as_str());
@@ -3070,60 +3068,60 @@ impl ModuleTree {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      CFGs: {}", module.cfgs.join(", ").log_magenta());
         }
 
-        // Check pending imports/exports
+        // Check pending imports/exports using AnyNodeId
         let is_in_pending_import = self
             .pending_imports
             .iter()
-            .any(|p| p.import_node().id == node_id);
+            .any(|p| p.import_node().id.as_any() == node_id); // Compare AnyNodeId
         if is_in_pending_import {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
         }
         if let Some(exports) = self.pending_exports.as_deref() {
-            let is_in_pending_export = exports.iter().any(|p| p.export_node().id == node_id);
+            let is_in_pending_export = exports
+                .iter()
+                .any(|p| p.export_node().id.as_any() == node_id); // Compare AnyNodeId
             if is_in_pending_export {
                 debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_exports", "Found".log_yellow());
             }
         }
 
-        // Log relations FROM this node using NodeId
+        // Log relations FROM this node using AnyNodeId
         if let Some(relations_from) = self.get_all_relations_from(&node_id) {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From ({}):", relations_from.len());
             for rel_ref in relations_from {
-                // Target is always NodeId now
-                let target_id = rel_ref.rel().target;
+                let target_id: AnyNodeId = rel_ref.rel().target(); // Target is AnyNodeId
                 let target_id_str = target_id.to_string().log_id();
                 // Try to get target name if it's a module
-                let target_name = self
-                    .modules
-                    .get(&ModuleNodeId::new(target_id))
+                let target_name = ModuleNodeId::try_from(target_id) // TryFrom AnyNodeId
+                    .ok()
+                    .and_then(|mid| self.modules.get(&mid))
                     .map(|m| m.name.as_str());
                 let target_display = target_name
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| target_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel().kind).log_name(), target_display);
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      -> {:<18} {}", format!("{:?}", rel_ref.rel().kind()).log_name(), target_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations From: {}", "None".log_error());
         }
 
-        // Log relations TO this node using NodeId
+        // Log relations TO this node using AnyNodeId
         if let Some(relations_to) = self.get_all_relations_to(&node_id) {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To ({}):", relations_to.len());
             for rel_ref in relations_to {
-                // Source is always NodeId now
-                let source_id = rel_ref.rel().source;
+                let source_id: AnyNodeId = rel_ref.rel().source(); // Source is AnyNodeId
                 let source_id_str = source_id.to_string().log_id();
                 // Try to get source name if it's a module
-                let source_name = self
-                    .modules
-                    .get(&ModuleNodeId::new(source_id))
+                let source_name = ModuleNodeId::try_from(source_id) // TryFrom AnyNodeId
+                    .ok()
+                    .and_then(|mid| self.modules.get(&mid))
                     .map(|m| m.name.as_str());
                 let source_display = source_name
                     .map(|n| n.log_name().to_string())
                     .unwrap_or_else(|| source_id_str.to_string());
 
-                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel().kind).log_name(), source_display);
+                debug!(target: LOG_TARGET_MOD_TREE_BUILD, "      <- {:<18} {}", format!("{:?}", rel_ref.rel().kind()).log_name(), source_display);
             }
         } else {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Relations To: {}", "None".log_error());
