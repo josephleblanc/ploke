@@ -538,7 +538,7 @@ impl ModuleTree {
         relations: &[SyntacticRelation],
     ) -> Result<(), ModuleTreeError> {
         for rel in relations.iter() {
-            self.add_rel((*rel).into());
+            self.add_rel(TreeRelation::from(*rel)); // Explicitly convert using From
         }
         Ok(())
     }
@@ -1755,14 +1755,8 @@ impl ModuleTree {
                 Ok((relation, public_reexport_path)) => {
                     // Log the correctly formed relation
                     // Note: The target_node_id is relation.target
-                    let target_node_id = match relation.target() {
-                        id => id,
-                        _ => {
-                            log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "ReExport relation target is not a NodeId: {:?}", relation);
-                            // Decide how to handle this unexpected case, maybe continue or return error
-                            continue;
-                        }
-                    };
+                    // The target() method always returns AnyNodeId, so no match needed.
+                    let target_node_id = relation.target();
 
                     self.log_relation(relation, Some("ReExport Target Resolved")); // Log before potential error
 
@@ -2113,7 +2107,7 @@ impl ModuleTree {
 
         // If no direct parent found via Contains, check if `module_id` is a file-based definition.
         // If so, find its declaration and then the declaration's parent.
-        self.get_iter_relations_to(&(*module_id).into()) // Dereference before into()
+        self.get_iter_relations_to(&module_id.as_any()) // Use as_any()
             .and_then(|mut iter| {
                 iter.find_map(|tr| match tr.rel() {
                     // Find the relation linking a declaration *to* this definition
@@ -2126,7 +2120,7 @@ impl ModuleTree {
                         target,
                     } if *target == module_id => {
                         // Found the declaration ID (`decl_id`). Now find *its* parent.
-                        self.get_iter_relations_to(&(*decl_id).into()) // Dereference before into()
+                        self.get_iter_relations_to(&decl_id.as_any()) // Use as_any()
                             .and_then(|mut decl_iter| {
                                 decl_iter.find_map(|decl_tr| match decl_tr.rel() {
                                     SyntacticRelation::Contains {
@@ -2371,7 +2365,7 @@ impl ModuleTree {
             };
             let decl_module_node = self.modules.get(decl_module_id).ok_or_else(|| {
                 self.log_path_processing(&ctx, "Error", Some("Module not found"));
-                ModuleTreeError::ContainingModuleNotFound(*decl_module_id.as_inner())
+                ModuleTreeError::ContainingModuleNotFound(decl_module_id.as_any()) // Use as_any()
             })?;
 
             // Update context with module info
@@ -2403,9 +2397,10 @@ impl ModuleTree {
                                                        // the items in the linked file, in which case the shadowed items are ignored.
                                                        // For now, just throw error.
                     if let Some(dup) = targets_iter.next() {
+                        // Use ModuleNodeId directly for display, as it implements Display
                         return Err(ModuleTreeError::DuplicateDefinition(format!(
                         "Duplicate module definition for path attribute target '{}' {}:\ndeclaration: {:#?}\nfirst: {:#?},\nsecond: {:#?}",
-                            decl_module_node.id.as_any(), // Convert ModuleNodeId to AnyNodeId for display consistency if needed, or keep as ModuleNodeId if Display is sufficient
+                            decl_module_node.id,
                         resolved_path.display(),
                             &decl_module_node,
                             &target_defn_node, // Use the found node
