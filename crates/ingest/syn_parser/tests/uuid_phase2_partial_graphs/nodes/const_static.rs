@@ -629,6 +629,10 @@ fn test_value_node_field_name() {
     let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_BOOL";
 
+    // AI: Update this test to use the `ParanoidArgs` and its methods instead.
+    // find the nodes with `find_pid_pathkind_checked`. then compare the names fo some nodes.
+    // remove the old methods of finding the nodes.
+    // Make the changes only for this test AI!
     let node = find_value_node_basic(graph, &module_path, value_name);
 
     assert_eq!(
