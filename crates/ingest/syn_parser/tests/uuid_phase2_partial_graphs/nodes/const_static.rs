@@ -626,19 +626,36 @@ fn test_value_node_field_name() {
         .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
         .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_BOOL";
 
-    // AI: Update this test to use the `ParanoidArgs` and its methods instead.
-    // find the nodes with `find_pid_pathkind_checked`. then compare the names fo some nodes.
-    // remove the old methods of finding the nodes.
-    // Make the changes only for this test AI!
-    let node = find_value_node_basic(graph, &module_path, value_name);
+    // Use ParanoidArgs to find the node
+    let args = ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: value_name,
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    };
+
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_nodes");
+
+    // Generate the expected PrimaryNodeId
+    let expected_pid = gen_pid_paranoid(args, &successful_graphs)
+        .expect("Failed to generate PID for TOP_LEVEL_BOOL");
+
+    // Find the node using the generated ID
+    let node = graph
+        .find_node_unique(expected_pid.into())
+        .expect("Failed to find node using generated PID");
 
     assert_eq!(
-        node.name, value_name,
+        node.name(), // Use the GraphNode trait method
+        value_name,
         "Mismatch for name field. Expected: '{}', Actual: '{}'",
-        value_name, node.name
+        value_name,
+        node.name()
     );
 }
 
