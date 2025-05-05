@@ -14,6 +14,7 @@ use thiserror::Error; // Ensure thiserror is imported
 pub mod debug_printers;
 pub mod paranoid;
 pub mod resolution; // Add resolution module
+pub mod macro_rule_tests; // Add new module for macros
 
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
