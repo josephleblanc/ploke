@@ -50,21 +50,9 @@ pub struct StaticNodeInfo {
 // ("IMPL_CONST", ItemKind::Const, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
 // ("TRAIT_REQ_CONST", ItemKind::Const, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
 
-// AI: before:
-// static EXPECTED_ITEMS: &[StaticNodeInfo] = &[
-// AI: after:
+// Define the static array using ParanoidArgs
 static EXPECTED_ITEMS: &[ParanoidArgs] = &[
     // --- Top Level Items ---
-    //
-    // AI: Before
-    // StaticNodeInfo {
-    //     ident: "TOP_LEVEL_INT",
-    //     item_kind: ItemKind::Const,
-    //     module_path: &["crate", "const_static"],
-    //     cfgs: &[],
-    //     expected_visibility: VisibilityKind::Inherited,
-    // },
-    // AI: After
     ParanoidArgs {
         fixture_name: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
@@ -73,107 +61,119 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
     },
-    // I'd like you to change the rest of these. Refer to the `fixture_nodes/src/const_static.rs`
-    // file to update them while ensuring they are correct. AI!
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_BOOL",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Public,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_STR",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Static,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_COUNTER",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Static,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Public,
     },
-    // StaticNodeInfo { // CANNOT DO THIS - Vec in Restricted
-    //     ident: "TOP_LEVEL_CRATE_STATIC",
-    //     item_kind: ItemKind::Static,
-    //     module_path: &["crate", "const_static"],
-    //     cfgs: &[],
-    //     expected_visibility: VisibilityKind::Restricted(vec!["crate".to_string()]),
-    // },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_CRATE_STATIC", // pub(crate)
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "ARRAY_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "TUPLE_STATIC",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Static,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "STRUCT_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "ALIASED_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "EXPR_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "FN_CALL_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Inherited,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "doc_attr_const",
+        expected_cfg: None, // Attributes are not CFGs
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
-        module_path: &["crate", "const_static"],
-        cfgs: &[],
-        expected_visibility: VisibilityKind::Public,
     },
-    StaticNodeInfo {
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
         ident: "DOC_ATTR_STATIC",
+        expected_cfg: Some(&["target_os = \"linux\""]), // This one has a CFG
+        expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Static,
-        module_path: &["crate", "const_static"],
-        cfgs: &["target_os = \"linux\""], // CFG is static
-        expected_visibility: VisibilityKind::Inherited,
     },
     // --- Inner Mod Items ---
-    // StaticNodeInfo { // CANNOT DO THIS - Vec in Restricted
-    //     ident: "INNER_CONST",
-    //     item_kind: ItemKind::Const,
-    //     module_path: &["crate", "const_static", "inner_mod"],
-    //     cfgs: &[],
-    //     expected_visibility: VisibilityKind::Restricted(vec!["crate".to_string()]),
-    // },
-    // StaticNodeInfo { // CANNOT DO THIS - Vec in Restricted
-    //     ident: "INNER_MUT_STATIC",
-    //     item_kind: ItemKind::Static,
-    //     module_path: &["crate", "const_static", "inner_mod"],
-    //     cfgs: &[],
-    //     expected_visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
-    // },
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs", // Defined in this file
+        ident: "INNER_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture_name: "fixture_nodes",
+        relative_file_path: "src/const_static.rs", // Defined in this file
+        ident: "INNER_MUT_STATIC",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+        item_kind: ItemKind::Static,
+    },
 ];
 
 // Test Plan for ValueNode (const/static) in Phase 2 (uuid_ids)
