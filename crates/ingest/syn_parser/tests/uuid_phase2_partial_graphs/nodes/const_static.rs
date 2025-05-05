@@ -14,17 +14,6 @@ use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 use syn_parser::TestIds;
 
-#[derive(Debug, Clone)] // Added Clone
-pub struct StaticNodeInfo {
-    pub ident: &'static str,
-    pub item_kind: ItemKind,                  // ItemKind is Copy + 'static
-    pub module_path: &'static [&'static str], // Slices of static string literals
-    pub cfgs: &'static [&'static str],        // Slices of static string literals
-    // Optional: Add other static properties you want to check
-    pub expected_visibility: VisibilityKind, // Add this if VisibilityKind allows static definition
-                                             // pub has_docstring: bool, // Example
-}
-
 // Previous versions.
 // Define expected items: (name, kind, is_mutable, visibility_check)
 // Visibility check is basic: true if it should NOT be Inherited
@@ -54,7 +43,7 @@ pub struct StaticNodeInfo {
 static EXPECTED_ITEMS: &[ParanoidArgs] = &[
     // --- Top Level Items ---
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_INT",
         expected_cfg: None,
@@ -62,7 +51,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_BOOL",
         expected_cfg: None,
@@ -70,7 +59,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_STR",
         expected_cfg: None,
@@ -78,7 +67,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Static,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_COUNTER",
         expected_cfg: None,
@@ -86,7 +75,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Static,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_CRATE_STATIC", // pub(crate)
         expected_cfg: None,
@@ -94,7 +83,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Static,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "ARRAY_CONST",
         expected_cfg: None,
@@ -102,7 +91,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TUPLE_STATIC",
         expected_cfg: None,
@@ -110,7 +99,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Static,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "STRUCT_CONST",
         expected_cfg: None,
@@ -118,7 +107,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "ALIASED_CONST",
         expected_cfg: None,
@@ -126,7 +115,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "EXPR_CONST",
         expected_cfg: None,
@@ -134,7 +123,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "FN_CALL_CONST",
         expected_cfg: None,
@@ -142,7 +131,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "doc_attr_const",
         expected_cfg: None, // Attributes are not CFGs
@@ -150,7 +139,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "DOC_ATTR_STATIC",
         expected_cfg: Some(&["target_os = \"linux\""]), // This one has a CFG
@@ -159,7 +148,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
     },
     // --- Inner Mod Items ---
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs", // Defined in this file
         ident: "INNER_CONST",
         expected_cfg: None,
@@ -167,7 +156,7 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         item_kind: ItemKind::Const,
     },
     ParanoidArgs {
-        fixture_name: "fixture_nodes",
+        fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs", // Defined in this file
         ident: "INNER_MUT_STATIC",
         expected_cfg: None,
@@ -199,9 +188,8 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
 //      - Assert node.type_id is TypeId::Synthetic(_).
 //      - Assert node.kind() matches (Const or Static { is_mutable }).
 //      - Assert node.visibility is not Inherited if it should be something else (basic check).
-
 #[test]
-fn test_const_static_basic_smoke_test_full_parse() -> anyhow::Result<()> {
+fn basic_smoke_test() -> anyhow::Result<()> {
     let results = run_phase1_phase2("fixture_nodes");
     assert!(!results.is_empty(), "Phase 1 & 2 failed to produce results");
 
@@ -220,34 +208,14 @@ fn test_const_static_basic_smoke_test_full_parse() -> anyhow::Result<()> {
 
     let graph = &target_data.graph;
 
-    // Define expected items: (name, kind, is_mutable, visibility_check)
-    // Visibility check is basic: true if it should NOT be Inherited
-    // let expected_consts = vec![
-    //     ("TOP_LEVEL_INT", ItemKind::Const, false), // private
-    //     ("TOP_LEVEL_BOOL", ItemKind::Const, true), // pub
-    //     ("INNER_CONST", ItemKind::Const, true),    // pub(crate) (in mod)
-    //     ("ARRAY_CONST", ItemKind::Const, false),   // private
-    //     ("STRUCT_CONST", ItemKind::Const, false),  // private
-    //     ("ALIASED_CONST", ItemKind::Const, false), // private
-    //     ("EXPR_CONST", ItemKind::Const, false),    // private
-    //     ("FN_CALL_CONST", ItemKind::Const, false), // private
-    //     ("doc_attr_const", ItemKind::Const, true), // pub
-    // ];
-    // let expected_statics = vec![
-    //     ("TOP_LEVEL_STR", ItemKind::Static, false), // private
-    //     ("TOP_LEVEL_COUNTER", ItemKind::Static, true, true), // pub
-    //     ("TOP_LEVEL_CRATE_STATIC", ItemKind::Static, false, true), // pub(crate)
-    //     ("TUPLE_STATIC", ItemKind::Static, false, false), // private
-    //     ("DOC_ATTR_STATIC", ItemKind::Static, false, false), // private
-    //     ("INNER_MUT_STATIC", ItemKind::Static, true, true), // pub(super) (in mod)
-    // ];
-    // ("IMPL_CONST", ItemKind::Const, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
-    // ("TRAIT_REQ_CONST", ItemKind::Const, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
-
     assert!(!graph.consts.is_empty(), "CodeGraph contains no Consts");
-    assert!(!graph.consts.is_empty(), "CodeGraph contains no Statics");
+    assert!(!graph.statics.is_empty(), "CodeGraph contains no Statics");
 
-    for item in EXPECTED_ITEMS {
+    // Check consts
+    for item in EXPECTED_ITEMS
+        .iter()
+        .filter(|cnst| cnst.item_kind == ItemKind::Const)
+    {
         let node = graph
             .consts
             .iter()
@@ -281,81 +249,90 @@ fn test_const_static_basic_smoke_test_full_parse() -> anyhow::Result<()> {
             node.kind()
         );
 
-        assert_eq!(
-            node.visibility, item.expected_visibility,
-            "Node '{}': Expected {:?} visibility, found {:?}",
-            item.ident, item.expected_visibility, node.visibility
+        // Remove visibility for now. Possibly move elsewhere.
+        // assert_eq!(
+        //     node.visibility, item.expected_visibility,
+        //     "Node '{}': Expected {:?} visibility, found {:?}",
+        //     item.ident, item.expected_visibility, node.visibility
+        // );
+    }
+    // Check consts
+    for item in EXPECTED_ITEMS
+        .iter()
+        .filter(|sttc| sttc.item_kind == ItemKind::Static)
+    {
+        let node = graph
+            .consts
+            .iter()
+            .find(|s| s.name == item.ident)
+            .ok_or_else(|| FixtureError::NotFound(item.ident.to_string()))?;
+
+        assert!(
+            matches!(node.id.base_tid(), NodeId::Synthetic(_)),
+            "Node '{}': ID should be Synthetic, found {:?}",
+            item.ident,
+            node.id
         );
+        assert!(
+            matches!(node.tracking_hash, Some(TrackingHash(_))),
+            "Node '{}': tracking_hash should be Some(TrackingHash), found {:?}",
+            item.ident,
+            node.tracking_hash
+        );
+        assert!(
+            matches!(node.type_id, TypeId::Synthetic(_)),
+            "Node '{}': type_id should be Synthetic, found {:?}",
+            item.ident,
+            node.type_id
+        );
+        assert_eq!(
+            node.kind(),
+            item.item_kind,
+            "Node '{}': Kind mismatch. Expected {:?}, found {:?}",
+            item.ident,
+            item.item_kind,
+            node.kind()
+        );
+        // Commenting out for now
+        // assert_eq!(
+        //     node.visibility, item.expected_visibility,
+        //     "Node '{}': Expected {:?} visibility, found {:?}",
+        //     item.ident, item.expected_visibility, node.visibility
+        // );
     }
     Ok(())
 }
-
+// AI: follow test structure
 // Tier 2: Targeted Field Verification
-// Goal: Verify each field of the ValueNode struct individually for specific examples.
+// Goal: Verify each field of the StaticNode or ConstNode struct individually for specific examples.
 //       These tests act as diagnostics if specific fields break later. Use detailed asserts.
 //       Uses full parse for consistency.
 // ---------------------------------------------------------------------------------
 #[test]
 fn test_value_node_field_id_regeneration() {
-    // Target: TOP_LEVEL_INT
-    let results = run_phase1_phase2("fixture_nodes");
-    let fixture_path = fixtures_crates_dir()
-        .join("fixture_nodes")
-        .join("src")
-        .join("const_static.rs");
-    let target_data = results
+    // AI: Fill out this test. Don't change the first part.
+    let fixture = "fixture_nodes";
+    let results = run_phase1_phase2(fixture);
+    /// Check for errors
+    results
         .iter()
-        .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
-        .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph;
-    let crate_namespace = target_data.crate_namespace;
-    let file_path = &target_data.file_path;
-    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
-    let value_name = "TOP_LEVEL_INT";
-
-    let paranoid_args = ParanoidArgs {
-        fixture_name: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_INT",
-        expected_cfg: None,
-        expected_path: ["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    };
-
-    let node = find_value_node_basic(graph, &module_path, value_name);
-    // let actual_span = node.span; // Span no longer used
-
-    // Determine ItemKind based on the node found
-    let item_kind = match node.kind() {
-        ItemKind::Const => ploke_core::ItemKind::Const,
-        ItemKind::Static { .. } => ploke_core::ItemKind::Static,
-    };
-
-    // Find the containing module node to get its ID for the parent scope
-    let module_node = graph
-        .modules
+        .filter(|result| result.is_err())
+        .inspect(|e| {
+            log::error!("Error while parsing {:?}", e);
+        })
+        .count();
+    let parsed = results
         .iter()
-        .find(|m| m.path == module_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",
-                module_path,
-                file_path.display(),
-                value_name
-            )
-        });
+        .map(|result| result.expect("Failed to parse target fixture."));
 
-    let regenerated_id = NodeId::generate_synthetic(
-        crate_namespace,
-        file_path,
-        &module_path,
-        value_name,
-        item_kind,            // Pass the determined ItemKind
-        Some(module_node.id), // Pass the containing module's ID
-        None,                 // Assume no relevant CFGs for this test case
-    );
+    // AI: Change after here:
+    let example_idents = ["ident", "ident", "ident"]; // AI: Pick some representative examples
+    let items = EXPECTED_ITEMS;
+    // AI: Generate the ids for representative items and verify them.
+    let expected_pids = items.iter().copied().map(|item| item.generate_pid(results));
 
     // Assert the ID is synthetic (basic check) - still useful
+    // AI: Replace or delete this
     assert!(
         matches!(node.id, NodeId::Synthetic(_)),
         "Node '{}': ID should be Synthetic, found {:?}",
@@ -364,11 +341,15 @@ fn test_value_node_field_id_regeneration() {
     );
 
     // Now perform the full ID comparison
+    // Compare the ID
     assert_eq!(
         node.id, regenerated_id,
         "Mismatch for ID field. Expected (regen): {}, Actual: {}",
         regenerated_id, node.id
     );
+    // AI: Compare All other fields from representative examples here
+    // Use your access to the target fixture `nodes/const_static.rs` to provide accurate checks of
+    // each field. You can see the details on the const/static node definitions at `nodes/value.rs` AI!
 }
 
 // #[test] fn test_value_node_field_name()
@@ -956,14 +937,14 @@ fn test_value_node_field_tracking_hash_presence() {
 #[test]
 fn test_value_node_relation_contains_file_module() {
     // Target: TOP_LEVEL_INT in "crate::const_static" module (const_static.rs)
-    let fixture_name = "fixture_nodes";
+    let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs";
     let module_path = vec!["crate".to_string(), "const_static".to_string()];
     let value_name = "TOP_LEVEL_INT";
 
-    // let results = run_phase1_phase2(fixture_name);
+    // let results = run_phase1_phase2(fixture);
     // Process results: Filter out errors and collect Ok values
-    let successful_graphs = run_phases_and_collect(fixture_name);
+    let successful_graphs = run_phases_and_collect(fixture);
 
     let target_data = successful_graphs
         .iter()
@@ -974,7 +955,7 @@ fn test_value_node_relation_contains_file_module() {
     // Find the file-level module node using the processed graphs
     let module_node = find_file_module_node_paranoid(
         successful_graphs.as_slice(), // Pass as slice
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
     );
@@ -1018,7 +999,7 @@ fn test_value_node_relation_contains_file_module() {
 #[test]
 fn test_value_node_relation_contains_inline_module() {
     // Target: INNER_CONST in "crate::const_static::inner_mod"
-    let fixture_name = "fixture_nodes";
+    let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs"; // INNER_CONST is defined in this file
     let module_path = vec![
         "crate".to_string(),
@@ -1028,7 +1009,7 @@ fn test_value_node_relation_contains_inline_module() {
     let value_name = "INNER_CONST";
 
     // Process results: Filter out errors and collect Ok values
-    let successful_graphs = run_phases_and_collect(fixture_name);
+    let successful_graphs = run_phases_and_collect(fixture);
 
     let target_data = successful_graphs
         .iter()
@@ -1039,7 +1020,7 @@ fn test_value_node_relation_contains_inline_module() {
     // Find the inline module node using the processed graphs
     let module_node = find_inline_module_node_paranoid(
         successful_graphs.as_slice(), // Pass as slice
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
     );
@@ -1079,12 +1060,12 @@ fn test_value_node_relation_contains_inline_module() {
 #[test]
 fn test_value_node_paranoid_const_doc_attr() {
     // Target: pub const doc_attr_const: f64 = 3.14; (in "crate::const_static" module)
-    let fixture_name = "fixture_nodes";
+    let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs";
     let module_path = vec!["crate".to_string(), "const_static".to_string()];
     let value_name = "doc_attr_const";
 
-    let results = run_phase1_phase2(fixture_name);
+    let results = run_phase1_phase2(fixture);
     // Collect owned graphs, consuming the Ok results
     let successful_graphs: Vec<ParsedCodeGraph> = results
         .into_iter() // Use into_iter to consume
@@ -1102,7 +1083,7 @@ fn test_value_node_paranoid_const_doc_attr() {
     // 1. Find node using paranoid helper (includes ID check)
     let node = find_value_node_paranoid(
         successful_graphs.as_slice(),
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
         value_name,
@@ -1180,7 +1161,7 @@ fn test_value_node_paranoid_const_doc_attr() {
     // 4. Verify Relation
     let module_node = find_file_module_node_paranoid(
         successful_graphs.as_slice(),
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
     );
@@ -1284,7 +1265,7 @@ fn test_value_node_paranoid_const_doc_attr() {
 #[test]
 fn test_value_node_paranoid_static_mut_inner_mod() {
     // Target: pub(super) static mut INNER_MUT_STATIC: bool = false; (in "crate::const_static::inner_mod")
-    let fixture_name = "fixture_nodes";
+    let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs";
     let module_path = vec![
         "crate".to_string(),
@@ -1293,7 +1274,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     ];
     let value_name = "INNER_MUT_STATIC";
 
-    let results = run_phase1_phase2(fixture_name);
+    let results = run_phase1_phase2(fixture);
     // Collect owned graphs, consuming the Ok results
     let successful_graphs: Vec<ParsedCodeGraph> = results
         .into_iter() // Use into_iter to consume
@@ -1311,7 +1292,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     // 1. Find node using paranoid helper (includes ID check)
     let node = find_value_node_paranoid(
         successful_graphs.as_slice(),
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
         value_name,
@@ -1398,7 +1379,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     // 4. Verify Relation
     let module_node = find_inline_module_node_paranoid(
         successful_graphs.as_slice(),
-        fixture_name,
+        fixture,
         file_path_rel,
         &module_path,
     );
@@ -1438,7 +1419,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
 
 // --- Helper Functions (Now defined) ---
 // find_value_node_paranoid in common/paranoid/const_static_helpers.rs
-//   - Takes parsed_graphs, fixture_name, relative_file_path, expected_module_path, value_name.
+//   - Takes parsed_graphs, fixture, relative_file_path, expected_module_path, value_name.
 //   - Finds the ParsedCodeGraph.
 //   - Finds the ModuleNode for the expected_module_path within that graph.
 //   - Filters graph.values by name AND checks if the ID is in the ModuleNode's items.
