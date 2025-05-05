@@ -455,15 +455,14 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
         // 3. Compare Fields using lazy static data
         match item_args.item_kind {
             ItemKind::Const => {
-                let const_node = found_node
-                    .as_const()
-                    // AI: Use real errors. Check the rest of the function to make sure you are
-                    // correctly using errors that actually exist instead of making them up AI!
-                    .ok_or_else(|| SynParserError::NodeKindMismatch {
-                        id: found_node.any_id(),
-                        expected: item_args.item_kind,
-                        actual: found_node.kind(),
-                    })?;
+                let const_node = found_node.as_const().ok_or_else(|| {
+                    SynParserError::InternalState(format!(
+                        "Node kind mismatch for ID {}: Expected {:?}, found {:?}",
+                        found_node.any_id(),
+                        item_args.item_kind,
+                        found_node.kind()
+                    ))
+                })?;
                 let expected_data = EXPECTED_CONSTS_DATA
                     .get(ident)
                     .unwrap_or_else(|| panic!("Expected const data not found for {}", ident));
@@ -525,14 +524,14 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
                 );
             }
             ItemKind::Static => {
-                let static_node =
-                    found_node
-                        .as_static()
-                        .ok_or_else(|| SynParserError::NodeKindMismatch {
-                            id: found_node.any_id(),
-                            expected: item_args.item_kind,
-                            actual: found_node.kind(),
-                        })?;
+                let static_node = found_node.as_static().ok_or_else(|| {
+                    SynParserError::InternalState(format!(
+                        "Node kind mismatch for ID {}: Expected {:?}, found {:?}",
+                        found_node.any_id(),
+                        item_args.item_kind,
+                        found_node.kind()
+                    ))
+                })?;
                 let expected_data = EXPECTED_STATICS_DATA
                     .get(ident)
                     .unwrap_or_else(|| panic!("Expected static data not found for {}", ident));
