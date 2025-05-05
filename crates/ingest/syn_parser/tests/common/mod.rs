@@ -42,6 +42,84 @@ pub(crate) struct ParanoidArgs<'a> {
     pub(crate) expected_cfg: Option<&'a [&'a str]>,
 }
 
+impl<'a> ParanoidArgs<'a> {
+    /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
+    /// correctly matches when using the expected inputs for the typed id node generation.
+    /// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
+    /// in the `ParanoidArgs`.
+    fn generate_pid(
+        &'a self,
+        parsed_graphs: &'a [ParsedCodeGraph],
+    ) -> Result<PrimaryNodeId, SynParserError> {
+        // 1. Construct the absolute expected file path
+        let fixture_root = fixtures_crates_dir().join(self.fixture);
+        let target_file_path = fixture_root.join(self.relative_file_path);
+        let item_kind = ItemKind::Const;
+
+        // 2. Find the specific ParsedCodeGraph for the target file
+        let target_data = parsed_graphs
+            .iter()
+            .find(|data| data.file_path == target_file_path)
+            .unwrap_or_else(|| {
+                panic!(
+                    "ParsedCodeGraph for '{}' not found in results",
+                    target_file_path.display()
+                )
+            });
+        let graph = &target_data.graph;
+        let exp_path_string = self
+            .expected_path
+            .iter()
+            .copied()
+            .map(|s| s.to_string())
+            .collect_vec();
+
+        let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
+        let cfgs = self
+            .expected_cfg
+            .map(|c| strs_to_strings(c))
+            .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
+        let item_name = self
+            .expected_path
+            .last()
+            .expect("Must use name as last element of path for paranoid test helper.");
+        let name_as_vec = vec![item_name.to_string()];
+
+        let generated_id = NodeId::generate_synthetic(
+            target_data.crate_namespace,
+            &target_file_path,
+            &name_as_vec,
+            self.ident,
+            item_kind,
+            Some(parent_module.id.base_tid()),
+            cfgs.as_deref(),
+        );
+
+        let pid = match self.item_kind {
+            ItemKind::Function => FunctionNodeId::new_test(generated_id).into(),
+            ItemKind::Struct => StructNodeId::new_test(generated_id).into(),
+            ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),
+            ItemKind::Union => UnionNodeId::new_test(generated_id).into(),
+            ItemKind::TypeAlias => TypeAliasNodeId::new_test(generated_id).into(),
+            ItemKind::Trait => TraitNodeId::new_test(generated_id).into(),
+            ItemKind::Impl => ImplNodeId::new_test(generated_id).into(),
+            ItemKind::Module => ModuleNodeId::new_test(generated_id).into(),
+            ItemKind::Const => ConstNodeId::new_test(generated_id).into(),
+            ItemKind::Static => StaticNodeId::new_test(generated_id).into(),
+            ItemKind::Macro => MacroNodeId::new_test(generated_id).into(),
+            ItemKind::Import => ImportNodeId::new_test(generated_id).into(),
+            // TODO: Decide what to do about handling ExternCrate. We kind of do want everything to
+            // have a NodeId of some kind, and this will do for now, but we also want to
+            // distinguish between an ExternCrate statement and something else... probably.
+            ItemKind::ExternCrate => ImportNodeId::new_test(generated_id).into(),
+            _ => {
+                panic!("You can't use this test helper on Secondary/Assoc nodes, at least not yet.")
+            }
+        };
+        Ok(pid)
+    }
+}
+
 /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
 /// correctly matches when using the expected inputs for the typed id node generation.
 /// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided

@@ -32,6 +32,7 @@ use crate::parser::graph::ParsedGraphError; // Import the new error type
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
+    // AI: Add error here AI!
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),

@@ -33,6 +33,7 @@ thiserror = { workspace = true }                          # version 2
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
 syn_parser_macros = { path = "../syn_parser_macros" }     # Add dependency on the proc macro crate
+anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
 toml = { version = "0.8" }
