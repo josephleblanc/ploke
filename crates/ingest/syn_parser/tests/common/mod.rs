@@ -1,11 +1,11 @@
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId, TypeKind};
+use ploke_core::{ItemKind, NodeId, TrackingHash, TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess};
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
 use syn_parser::TestIds;
@@ -18,28 +18,32 @@ pub mod resolution; // Add resolution module
 #[derive(Debug, Clone)]
 /// Args for the paranoid helper test functions.
 /// Includes all information required to regenerate the NodeId of the target node.
-pub struct ParanoidArgs<'a> {
-    parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
-    fixture_name: &'a str,                // Needed to construct expected path
-    relative_file_path: &'a str,          // e.g., "src/const_static.rs"
-    expected_path: &'a [&'a str], // Module path within the target file (e.g., ["crate"] or ["crate", "inner_mod"])
-    ident: &'a str,               // Name of the const/static item
-    expected_cfg: &'a [&'a str],
-    item_kind: ItemKind,
+pub(crate) struct ParanoidArgs<'a> {
+    // AI: Add comments AI!
+    // parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
+    pub(crate) fixture: &'a str, // Needed to construct expected path
+    pub(crate) relative_file_path: &'a str, // e.g., "src/const_static.rs"
+    pub(crate) expected_path: &'a [&'a str], // Module path within the target file (e.g., ["crate"] or ["crate", "inner_mod"])
+    pub(crate) ident: &'a str,               // Name of the const/static item
+    pub(crate) item_kind: ItemKind,
+    pub(crate) expected_cfg: Option<&'a [&'a str]>,
 }
+
 /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
 /// correctly matches when using the expected inputs for the typed id node generation.
 /// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
 /// in the `ParanoidArgs`.
-pub fn gen_pid_paranoid<'a>(args: ParanoidArgs) -> Result<PrimaryNodeId, SynParserError> {
+pub fn gen_pid_paranoid<'a>(
+    args: ParanoidArgs,
+    parsed_graphs: &'a [ParsedCodeGraph],
+) -> Result<PrimaryNodeId, SynParserError> {
     // 1. Construct the absolute expected file path
-    let fixture_root = fixtures_crates_dir().join(args.fixture_name);
+    let fixture_root = fixtures_crates_dir().join(args.fixture);
     let target_file_path = fixture_root.join(args.relative_file_path);
     let item_kind = ItemKind::Const;
 
     // 2. Find the specific ParsedCodeGraph for the target file
-    let target_data = args
-        .parsed_graphs
+    let target_data = parsed_graphs
         .iter()
         .find(|data| data.file_path == target_file_path)
         .unwrap_or_else(|| {
@@ -57,8 +61,10 @@ pub fn gen_pid_paranoid<'a>(args: ParanoidArgs) -> Result<PrimaryNodeId, SynPars
         .collect_vec();
 
     let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
-    let cfg_string = strs_to_strings(args.expected_cfg);
-    let cfgs = calculate_cfg_hash_bytes(&cfg_string);
+    let cfgs = args
+        .expected_cfg
+        .map(|c| strs_to_strings(c))
+        .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
     let item_name = args
         .expected_path
         .last()
@@ -141,10 +147,10 @@ pub const FIXTURES_DIR: &str = "tests/fixtures";
 
 #[derive(Error, Debug)]
 pub enum TestError {
-    #[transparent]
-    FixtureError(#[from] FixtureError)
-    #[transparent]
-    SmokeTestError(#[from] FixtureError)
+    #[error(transparent)]
+    FixtureError(#[from] FixtureError),
+    #[error(transparent)]
+    SmokeTestError(#[from] SmokeTestError),
 }
 
 #[derive(Error, Debug)]
