@@ -632,16 +632,20 @@ fn test_value_node_field_name() {
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Generate the expected PrimaryNodeId
+    // AI: BAD
     let expected_pid = gen_pid_paranoid(args, &successful_graphs)
         .expect("Failed to generate PID for TOP_LEVEL_BOOL");
+    // AI: You aren't listening. Do this instead:
+    // AI: GOOD:
+    let expected_pid = args
+        .gen_pid_paranoid(&successful_graphs)
+        .expect("Failed to generate PID for TOP_LEVEL_BOOL");
+    // AI!
 
     // Find the specific graph for const_static.rs from the successful graphs
-    let target_data = find_parsed_graph_by_path(
-        &successful_graphs,
-        "fixture_nodes",
-        "src/const_static.rs",
-    )
-    .expect("ParsedCodeGraph for const_static.rs not found");
+    let target_data =
+        find_parsed_graph_by_path(&successful_graphs, "fixture_nodes", "src/const_static.rs")
+            .expect("ParsedCodeGraph for const_static.rs not found");
     let graph = &target_data.graph; // Get the graph from the correct ParsedCodeGraph
 
     // Find the node using the generated ID within the correct graph
