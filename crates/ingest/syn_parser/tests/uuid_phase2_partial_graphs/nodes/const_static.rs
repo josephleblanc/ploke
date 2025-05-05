@@ -617,15 +617,6 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
 fn test_value_node_field_name() {
     // Target: TOP_LEVEL_BOOL
     let results = run_phase1_phase2("fixture_nodes");
-    let fixture_path = fixtures_crates_dir()
-        .join("fixture_nodes")
-        .join("src")
-        .join("const_static.rs");
-    let target_data = results
-        .iter()
-        .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
-        .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph;
     let value_name = "TOP_LEVEL_BOOL";
 
     // Use ParanoidArgs to find the node
