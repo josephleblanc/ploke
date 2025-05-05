@@ -858,6 +858,7 @@ fn test_value_node_field_kind_const() {
 //  - Assert_eq!(node.kind(), ItemKind::Static { is_mutable: false }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
 fn test_value_node_field_kind_static_imm() {
+    // AI: Update this test next, following a similar structure to the previous one. AI!
     // Target: TOP_LEVEL_STR
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
