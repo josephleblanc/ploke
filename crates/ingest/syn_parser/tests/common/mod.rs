@@ -19,13 +19,26 @@ pub mod resolution; // Add resolution module
 /// Args for the paranoid helper test functions.
 /// Includes all information required to regenerate the NodeId of the target node.
 pub(crate) struct ParanoidArgs<'a> {
-    // AI: Add comments AI!
-    // parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
-    pub(crate) fixture: &'a str, // Needed to construct expected path
-    pub(crate) relative_file_path: &'a str, // e.g., "src/const_static.rs"
-    pub(crate) expected_path: &'a [&'a str], // Module path within the target file (e.g., ["crate"] or ["crate", "inner_mod"])
-    pub(crate) ident: &'a str,               // Name of the const/static item
+    // parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection - Passed separately now
+    /// The name of the test fixture directory (e.g., "fixture_nodes").
+    /// Used to construct the absolute path to the fixture crate root.
+    pub(crate) fixture: &'a str,
+    /// The path to the specific source file within the fixture, relative to the fixture root
+    /// (e.g., "src/const_static.rs"). Used to find the correct `ParsedCodeGraph` and
+    /// as input for `NodeId::generate_synthetic`.
+    pub(crate) relative_file_path: &'a str,
+    /// The expected fully-qualified module path of the *parent* module containing the target item
+    /// (e.g., `["crate", "my_module"]`). Used to find the parent `ModuleNodeId` for ID generation.
+    pub(crate) expected_path: &'a [&'a str],
+    /// The identifier (name) of the target item (e.g., "MY_CONST").
+    /// Used as input for `NodeId::generate_synthetic`.
+    pub(crate) ident: &'a str,
+    /// The expected `ItemKind` of the target item (e.g., `ItemKind::Const`).
+    /// Used to select the correct `PrimaryNodeId` type and for ID generation.
     pub(crate) item_kind: ItemKind,
+    /// An optional slice of cfg strings expected to be active for the item
+    /// (e.g., `Some(&["target_os = \"linux\""])`). Used to calculate the cfg hash
+    /// for ID generation. `None` or `Some(&[])` indicates no cfgs.
     pub(crate) expected_cfg: Option<&'a [&'a str]>,
 }
 
