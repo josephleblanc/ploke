@@ -616,7 +616,6 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
 #[test]
 fn test_value_node_field_name() {
     // Target: TOP_LEVEL_BOOL
-    let results = run_phase1_phase2("fixture_nodes");
     let value_name = "TOP_LEVEL_BOOL";
 
     // Use ParanoidArgs to find the node
@@ -636,9 +635,18 @@ fn test_value_node_field_name() {
     let expected_pid = gen_pid_paranoid(args, &successful_graphs)
         .expect("Failed to generate PID for TOP_LEVEL_BOOL");
 
-    // Find the node using the generated ID
+    // Find the specific graph for const_static.rs from the successful graphs
+    let target_data = find_parsed_graph_by_path(
+        &successful_graphs,
+        "fixture_nodes",
+        "src/const_static.rs",
+    )
+    .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph; // Get the graph from the correct ParsedCodeGraph
+
+    // Find the node using the generated ID within the correct graph
     let node = graph
-        .find_node_unique(expected_pid.into())
+        .find_node_unique(expected_pid.into()) // Uses the generated PID
         .expect("Failed to find node using generated PID");
 
     assert_eq!(
