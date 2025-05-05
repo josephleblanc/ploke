@@ -15,31 +15,54 @@ pub mod debug_printers;
 pub mod paranoid;
 pub mod resolution; // Add resolution module
 
+pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
+    let crate_path = fixtures_crates_dir().join(fixture_name);
+    let project_root = workspace_root(); // Use workspace root for context
+    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+        .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
+
+    let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
+        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
+
+    // Collect successful results, panicking if any file failed to parse in Phase 2
+    results_with_errors
+        .into_iter()
+        .map(|res| {
+            res.unwrap_or_else(|e| {
+                panic!(
+                    "Phase 2 parsing failed for a file in fixture {}: {:?}",
+                    fixture_name, e
+                )
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 /// Args for the paranoid helper test functions.
 /// Includes all information required to regenerate the NodeId of the target node.
-pub(crate) struct ParanoidArgs<'a> {
+pub struct ParanoidArgs<'a> {
     // parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection - Passed separately now
     /// The name of the test fixture directory (e.g., "fixture_nodes").
     /// Used to construct the absolute path to the fixture crate root.
-    pub(crate) fixture: &'a str,
+    pub fixture: &'a str,
     /// The path to the specific source file within the fixture, relative to the fixture root
     /// (e.g., "src/const_static.rs"). Used to find the correct `ParsedCodeGraph` and
     /// as input for `NodeId::generate_synthetic`.
-    pub(crate) relative_file_path: &'a str,
+    pub relative_file_path: &'a str,
     /// The expected fully-qualified module path of the *parent* module containing the target item
     /// (e.g., `["crate", "my_module"]`). Used to find the parent `ModuleNodeId` for ID generation.
-    pub(crate) expected_path: &'a [&'a str],
+    pub expected_path: &'a [&'a str],
     /// The identifier (name) of the target item (e.g., "MY_CONST").
     /// Used as input for `NodeId::generate_synthetic`.
-    pub(crate) ident: &'a str,
+    pub ident: &'a str,
     /// The expected `ItemKind` of the target item (e.g., `ItemKind::Const`).
     /// Used to select the correct `PrimaryNodeId` type and for ID generation.
-    pub(crate) item_kind: ItemKind,
+    pub item_kind: ItemKind,
     /// An optional slice of cfg strings expected to be active for the item
     /// (e.g., `Some(&["target_os = \"linux\""])`). Used to calculate the cfg hash
     /// for ID generation. `None` or `Some(&[])` indicates no cfgs.
-    pub(crate) expected_cfg: Option<&'a [&'a str]>,
+    pub expected_cfg: Option<&'a [&'a str]>,
 }
 
 impl<'a> ParanoidArgs<'a> {
@@ -47,10 +70,10 @@ impl<'a> ParanoidArgs<'a> {
     /// correctly matches when using the expected inputs for the typed id node generation.
     /// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
     /// in the `ParanoidArgs`.
-    fn generate_pid(
+    pub fn generate_pid(
         &'a self,
         parsed_graphs: &'a [ParsedCodeGraph],
-    ) -> Result<PrimaryNodeId, SynParserError> {
+    ) -> Result<TestInfo, SynParserError> {
         // 1. Construct the absolute expected file path
         let fixture_root = fixtures_crates_dir().join(self.fixture);
         let target_file_path = fixture_root.join(self.relative_file_path);
@@ -116,7 +139,46 @@ impl<'a> ParanoidArgs<'a> {
                 panic!("You can't use this test helper on Secondary/Assoc nodes, at least not yet.")
             }
         };
-        Ok(pid)
+
+        let test_info = TestInfo {
+            args: self,
+            target_data,
+            test_pid: pid,
+        };
+        Ok(test_info)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TestInfo<'a> {
+    args: &'a ParanoidArgs<'a>,
+    target_data: &'a ParsedCodeGraph,
+    test_pid: PrimaryNodeId,
+}
+
+impl<'a> TestInfo<'a> {
+    pub fn new(
+        args: &'a ParanoidArgs,
+        target_data: &'a ParsedCodeGraph,
+        test_pid: PrimaryNodeId,
+    ) -> Self {
+        Self {
+            args,
+            target_data,
+            test_pid,
+        }
+    }
+
+    pub fn args(&self) -> &ParanoidArgs<'a> {
+        self.args
+    }
+
+    pub fn target_data(&self) -> &ParsedCodeGraph {
+        self.target_data
+    }
+
+    pub fn test_pid(&self) -> PrimaryNodeId {
+        self.test_pid
     }
 }
 
@@ -175,7 +237,7 @@ pub fn gen_pid_paranoid<'a>(
     let pid = match args.item_kind {
         ItemKind::Function => FunctionNodeId::new_test(generated_id).into(),
         ItemKind::Struct => StructNodeId::new_test(generated_id).into(),
-        ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),
+        ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),crates/ingest/syn_parser/src/parser/graph/mod.rs
         ItemKind::Union => UnionNodeId::new_test(generated_id).into(),
         ItemKind::TypeAlias => TypeAliasNodeId::new_test(generated_id).into(),
         ItemKind::Trait => TraitNodeId::new_test(generated_id).into(),
@@ -203,7 +265,8 @@ use {
     syn_parser::parser::analyze_files_parallel,
 };
 
-use ploke_common::{fixtures_crates_dir, fixtures_dir};
+use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+#[cfg(not(feature = "type_bearing_ids"))]
 pub use resolution::build_tree_for_tests;
 
 pub mod uuid_ids_utils;
@@ -264,7 +327,9 @@ pub enum TestHelperError {
     #[error("Invalid argument provided to test helper: {0}")]
     InvalidArgument(String),
 
-    #[error("Could not find ParsedCodeGraph for fixture '{fixture_name}' file '{relative_file_path}'")]
+    #[error(
+        "Could not find ParsedCodeGraph for fixture '{fixture_name}' file '{relative_file_path}'"
+    )]
     FixtureGraphNotFound {
         fixture_name: String,
         relative_file_path: String,
@@ -277,7 +342,6 @@ pub enum TestHelperError {
     UnsupportedItemKind(ItemKind),
     // Add other helper-specific errors as needed
 }
-
 
 /// A small group of errors that are indicative of some basic properties of the nodes or the
 /// fixture being broken. Should only be used rarely and with care.

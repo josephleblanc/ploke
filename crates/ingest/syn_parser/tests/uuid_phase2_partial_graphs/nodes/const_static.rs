@@ -1,7 +1,8 @@
 #![cfg(test)]
 use crate::common::gen_pid_paranoid;
-use crate::common::paranoid::*; // Use re-exports from paranoid mod
-use crate::common::uuid_ids_utils::*;
+use crate::common::run_phase1_phase2;
+use crate::common::run_phases_and_collect;
+// Use re-exports from paranoid mod
 use crate::common::FixtureError;
 use crate::common::ParanoidArgs;
 use lazy_static::lazy_static;
@@ -12,10 +13,11 @@ use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
 use std::collections::HashMap;
 use syn_parser::error::SynParserError;
-use syn_parser::parser::nodes::{Attribute, ConstNode, StaticNode};
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::Attribute;
+use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
-use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 use syn_parser::TestIds; // Import specific nodes and Attribute
 
 // Struct to hold expected fields for a ConstNode
@@ -623,44 +625,34 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
 //  - Find the ValueNode.
 //  - Assert_eq!(node.name, "TOP_LEVEL_BOOL", "Mismatch for name field. Expected: {}, Actual: {}", ...);
 #[test]
-fn test_value_node_field_name() {
-    // Target: TOP_LEVEL_BOOL
-    let value_name = "TOP_LEVEL_BOOL";
+fn test_value_node_field_name() -> Result<()> {
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Use ParanoidArgs to find the node
     let args = ParanoidArgs {
         fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
-        ident: value_name,
+        ident: "TOP_LEVEL_BOOL",
         expected_cfg: None,
         expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
     };
 
-    // Collect successful graphs
-    let successful_graphs = run_phases_and_collect("fixture_nodes");
-
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
-    let expected_pid = args
-        .gen_pid_paranoid(&successful_graphs)
-        .expect("Failed to generate PID for TOP_LEVEL_BOOL");
-
-    // Find the specific graph for const_static.rs from the successful graphs
-    let target_data =
-        find_parsed_graph_by_path(&successful_graphs, "fixture_nodes", "src/const_static.rs")
-            .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph; // Get the graph from the correct ParsedCodeGraph
+    let test_info = args.generate_pid(&successful_graphs)?;
 
     // Find the node using the generated ID within the correct graph
-    let node = graph
-        .find_node_unique(expected_pid.into()) // Uses the generated PID
+    let node = test_info
+        .target_data()
+        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
         .expect("Failed to find node using generated PID");
 
     assert_eq!(
         node.name(), // Use the GraphNode trait method
-        value_name,
+        args.ident,
         "Mismatch for name field. Expected: '{}', Actual: '{}'",
-        value_name,
+        args.ident,
         node.name()
     );
 }
