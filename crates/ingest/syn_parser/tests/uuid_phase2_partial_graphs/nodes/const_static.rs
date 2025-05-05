@@ -909,8 +909,7 @@ fn test_value_node_field_kind_static_imm() {
 fn test_value_node_field_kind_static_mut() {
     // Target: TOP_LEVEL_COUNTER
     let value_name = "TOP_LEVEL_COUNTER";
-    // AI: This is incorect. See `ploke-core` AI!
-    let expected_kind = ItemKind::Static { is_mutable: true };
+    let expected_kind = ItemKind::Static; // Static kind doesn't store mutability
 
     // Use ParanoidArgs to find the node
     let args = ParanoidArgs {
