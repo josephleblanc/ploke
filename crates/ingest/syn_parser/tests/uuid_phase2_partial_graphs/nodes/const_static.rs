@@ -631,16 +631,10 @@ fn test_value_node_field_name() {
     // Collect successful graphs
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
-    // Generate the expected PrimaryNodeId
-    // AI: BAD
-    let expected_pid = gen_pid_paranoid(args, &successful_graphs)
-        .expect("Failed to generate PID for TOP_LEVEL_BOOL");
-    // AI: You aren't listening. Do this instead:
-    // AI: GOOD:
+    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let expected_pid = args
         .gen_pid_paranoid(&successful_graphs)
         .expect("Failed to generate PID for TOP_LEVEL_BOOL");
-    // AI!
 
     // Find the specific graph for const_static.rs from the successful graphs
     let target_data =
