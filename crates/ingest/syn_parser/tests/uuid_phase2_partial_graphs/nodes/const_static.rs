@@ -908,25 +908,40 @@ fn test_value_node_field_kind_static_imm() {
 #[test]
 fn test_value_node_field_kind_static_mut() {
     // Target: TOP_LEVEL_COUNTER
-    // AI: Update test AI!
-    let results = run_phase1_phase2("fixture_nodes");
-    let fixture_path = fixtures_crates_dir()
-        .join("fixture_nodes")
-        .join("src")
-        .join("const_static.rs");
-    let target_data = results
-        .iter()
-        .find_map(|res| res.as_ref().ok().filter(|d| d.file_path == fixture_path))
-        .expect("ParsedCodeGraph for const_static.rs not found");
-    let graph = &target_data.graph;
-    let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_COUNTER";
     let expected_kind = ItemKind::Static { is_mutable: true };
 
-    let node = find_value_node_basic(graph, &module_path, value_name);
+    // Use ParanoidArgs to find the node
+    let args = ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: value_name,
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static, // Correct kind
+    };
+
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_nodes");
+
+    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+    let expected_pid = args
+        .gen_pid_paranoid(&successful_graphs)
+        .expect("Failed to generate PID for TOP_LEVEL_COUNTER");
+
+    // Find the specific graph for const_static.rs from the successful graphs
+    let target_data =
+        find_parsed_graph_by_path(&successful_graphs, "fixture_nodes", "src/const_static.rs")
+            .expect("ParsedCodeGraph for const_static.rs not found");
+    let graph = &target_data.graph; // Get the graph from the correct ParsedCodeGraph
+
+    // Find the node using the generated ID within the correct graph
+    let node = graph
+        .find_node_unique(expected_pid.into()) // Uses the generated PID
+        .expect("Failed to find node using generated PID");
 
     assert_eq!(
-        node.kind(),
+        node.kind(), // Use the GraphNode trait method
         expected_kind,
         "Mismatch for kind field on '{}'. Expected: {:?}, Actual: {:?}",
         value_name,
