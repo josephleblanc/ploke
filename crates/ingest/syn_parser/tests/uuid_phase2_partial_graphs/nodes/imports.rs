@@ -26,7 +26,7 @@ fn find_import_node_basic<'a>(
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path().as_slice() == module_path)
+        .find(|m| m.path().as_slice() == module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for definition path: {:?} while looking for import '{}'",
@@ -359,7 +359,7 @@ fn test_import_node_field_id_regeneration() {
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == &module_path)
+        .find(|m| m.path() == &module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for path: {:?} in file '{}' while testing '{}'",

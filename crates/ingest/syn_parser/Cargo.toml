@@ -52,11 +52,12 @@ env_logger = "0.11" # Add env_logger for test logging
 
 # Feature flags
 [features]
-default = ["type_bearing_ids", "validate", "reexport"]
-feature_a = []                                         # Add feature_a used by fixture
-feature_b = []                                         # Add feature_b used by test
+default = ["type_bearing_ids", "validate", "reexport", "not_wip_marker"]
+feature_a = []                                                           # Add feature_a used by fixture
+feature_b = []                                                           # Add feature_b used by test
 verbose_debug = []
 temp_target = []
+not_wip_marker = []
 
 # temporary transition cfg to allow comparison of
 # functionality with previous, non-type-bearing implementation. Will eventually

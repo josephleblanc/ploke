@@ -1,10 +1,11 @@
 use crate::common::paranoid::find_enum_node_paranoid;
 use crate::common::uuid_ids_utils::*;
+use ploke_core::NodeId;
 use ploke_core::{TypeId, TypeKind};
-use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
+use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, GraphNode};
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{nodes::GraphNode, relations::RelationKind};
+use syn_parser::TestIds;
 
 // --- Test Cases ---
 
@@ -36,14 +37,16 @@ fn test_enum_node_sample_enum_paranoid() {
         .unwrap()
         .graph;
 
+    // We're working on updating these test files, and I want to try using rustacean's structural
+    // search and replace. Can you provide an example that might work for:
     // Basic EnumNode Properties
-    assert!(matches!(enum_node.id(), NodeId::Synthetic(_)));
+    assert!(matches!(enum_node.enum_id().as_any(), AnyNodeId::Enum(_)));
     assert!(
         enum_node.tracking_hash.is_some(),
         "Tracking hash should be present"
     );
     assert_eq!(enum_node.name(), enum_name);
-    assert_eq!(enum_node.visibility(), VisibilityKind::Public);
+    assert_eq!(*enum_node.visibility(), VisibilityKind::Public);
     assert!(enum_node.attributes.is_empty());
     assert!(enum_node.docstring.is_none());
     assert!(enum_node.generic_params.is_empty());
@@ -57,7 +60,7 @@ fn test_enum_node_sample_enum_paranoid() {
         .iter()
         .find(|v| v.name == "Variant1")
         .expect("Variant1 not found");
-    assert!(matches!(variant1.id, NodeId::Synthetic(_)));
+    assert!(matches!(variant1.id.base_tid(), NodeId::Synthetic(_)));
     assert!(variant1.fields.is_empty());
     assert!(variant1.discriminant.is_none());
     assert!(variant1.attributes.is_empty());
@@ -68,14 +71,14 @@ fn test_enum_node_sample_enum_paranoid() {
         .iter()
         .find(|v| v.name == "Variant2")
         .expect("Variant2 not found");
-    assert!(matches!(variant2.id, NodeId::Synthetic(_)));
+    assert!(matches!(variant2.id.base_tid(), NodeId::Synthetic(_)));
     assert!(variant2.discriminant.is_none());
     assert!(variant2.attributes.is_empty());
     assert_eq!(variant2.fields.len(), 1);
 
     // Field within Variant2: value: i32
     let field_value = &variant2.fields[0];
-    assert!(matches!(field_value.id, NodeId::Synthetic(_)));
+    assert!(matches!(field_value.id.base_tid(), NodeId::Synthetic(_)));
     assert_eq!(field_value.name.as_deref(), Some("value"));
     // Visibility of fields in struct-like variants defaults to Inherited
     assert_eq!(field_value.visibility, VisibilityKind::Inherited);
@@ -90,7 +93,7 @@ fn test_enum_node_sample_enum_paranoid() {
         .iter()
         .find(|v| v.name == "Variant3")
         .expect("Variant3 not found");
-    assert!(matches!(variant3.id, NodeId::Synthetic(_)));
+    assert!(matches!(variant3.id.base_tid(), NodeId::Synthetic(_)));
     assert!(variant3.fields.is_empty());
     assert!(variant3.discriminant.is_none());
     assert!(variant3.attributes.is_empty());
@@ -98,13 +101,13 @@ fn test_enum_node_sample_enum_paranoid() {
     // --- Paranoid Relation Checks ---
     let module_id = find_inline_module_by_path(graph, &module_path)
         .expect("Failed to find module node for relation check")
-        .id();
+        .id;
 
     // 1. Module Contains Enum
     assert_relation_exists(
         graph,
         GraphId::Node(module_id),
-        GraphId::Node(enum_node.id()),
+        GraphId::Node(enum_node.id),
         RelationKind::Contains,
         "Expected ModuleNode to Contain EnumNode",
     );
@@ -112,21 +115,21 @@ fn test_enum_node_sample_enum_paranoid() {
     // 2. Enum Contains Variants
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_node.id()),
+        GraphId::Node(enum_node.id),
         GraphId::Node(variant1.id),
         RelationKind::EnumVariant,
         "Expected EnumNode to have EnumVariant relation to Variant1",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_node.id()),
+        GraphId::Node(enum_node.id),
         GraphId::Node(variant2.id),
         RelationKind::EnumVariant,
         "Expected EnumNode to have EnumVariant relation to Variant2",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_node.id()),
+        GraphId::Node(enum_node.id),
         GraphId::Node(variant3.id),
         RelationKind::EnumVariant,
         "Expected EnumNode to have EnumVariant relation to Variant3",
@@ -174,7 +177,7 @@ fn test_other_enum_nodes() {
     );
 
     // Assertions for SampleEnum1
-    assert!(matches!(enum1_node.id(), NodeId::Synthetic(_)));
+    assert!(matches!(enum1_node.id, NodeId::Synthetic(_)));
     assert!(enum1_node.tracking_hash.is_some());
     assert_eq!(enum1_node.name(), enum1_name);
     assert_eq!(enum1_node.visibility(), VisibilityKind::Public);
@@ -197,26 +200,24 @@ fn test_other_enum_nodes() {
     assert!(variant1_2.fields.is_empty());
 
     // Relations for SampleEnum1
-    let module_id = find_inline_module_by_path(graph, &module_path)
-        .unwrap()
-        .id();
+    let module_id = find_inline_module_by_path(graph, &module_path).unwrap().id;
     assert_relation_exists(
         graph,
         GraphId::Node(module_id),
-        GraphId::Node(enum1_node.id()),
+        GraphId::Node(enum1_node.id),
         RelationKind::Contains,
         "Module->SampleEnum1",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum1_node.id()),
+        GraphId::Node(enum1_node.id),
         GraphId::Node(variant1_1.id),
         RelationKind::EnumVariant,
         "SampleEnum1->Variant1",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum1_node.id()),
+        GraphId::Node(enum1_node.id),
         GraphId::Node(variant1_2.id),
         RelationKind::EnumVariant,
         "SampleEnum1->Variant2",
@@ -233,7 +234,7 @@ fn test_other_enum_nodes() {
     );
 
     // Assertions for EnumWithData
-    assert!(matches!(enum_data_node.id(), NodeId::Synthetic(_)));
+    assert!(matches!(enum_data_node.id, NodeId::Synthetic(_)));
     assert!(enum_data_node.tracking_hash.is_some());
     assert_eq!(enum_data_node.name(), enum_data_name);
     assert_eq!(enum_data_node.visibility(), VisibilityKind::Public);
@@ -272,20 +273,20 @@ fn test_other_enum_nodes() {
     assert_relation_exists(
         graph,
         GraphId::Node(module_id),
-        GraphId::Node(enum_data_node.id()),
+        GraphId::Node(enum_data_node.id),
         RelationKind::Contains,
         "Module->EnumWithData",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_data_node.id()),
+        GraphId::Node(enum_data_node.id),
         GraphId::Node(variant_data_1.id),
         RelationKind::EnumVariant,
         "EnumWithData->Variant1",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_data_node.id()),
+        GraphId::Node(enum_data_node.id),
         GraphId::Node(variant_data_2.id),
         RelationKind::EnumVariant,
         "EnumWithData->Variant2",
@@ -316,7 +317,7 @@ fn test_other_enum_nodes() {
     );
 
     // Assertions for DocumentedEnum
-    assert!(matches!(enum_doc_node.id(), NodeId::Synthetic(_)));
+    assert!(matches!(enum_doc_node.id, NodeId::Synthetic(_)));
     assert!(enum_doc_node.tracking_hash.is_some());
     assert_eq!(enum_doc_node.name(), enum_doc_name);
     assert_eq!(enum_doc_node.visibility(), VisibilityKind::Public);
@@ -348,20 +349,20 @@ fn test_other_enum_nodes() {
     assert_relation_exists(
         graph,
         GraphId::Node(module_id),
-        GraphId::Node(enum_doc_node.id()),
+        GraphId::Node(enum_doc_node.id),
         RelationKind::Contains,
         "Module->DocumentedEnum",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_doc_node.id()),
+        GraphId::Node(enum_doc_node.id),
         GraphId::Node(variant_doc_1.id),
         RelationKind::EnumVariant,
         "DocumentedEnum->Variant1",
     );
     assert_relation_exists(
         graph,
-        GraphId::Node(enum_doc_node.id()),
+        GraphId::Node(enum_doc_node.id),
         GraphId::Node(variant_doc_2.id),
         RelationKind::EnumVariant,
         "DocumentedEnum->Variant2",

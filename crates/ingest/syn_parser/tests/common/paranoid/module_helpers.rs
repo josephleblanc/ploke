@@ -40,7 +40,7 @@ pub fn find_declaration_node_paranoid<'a>(
     let candidates: Vec<&ModuleNode> = graph
         .modules
         .iter()
-        .filter(|m| m.path == expected_module_path && m.is_declaration())
+        .filter(|m| m.path == expected_module_path && m.is_decl())
         .collect();
 
     // 4. PARANOID CHECK: Assert exactly ONE candidate remains

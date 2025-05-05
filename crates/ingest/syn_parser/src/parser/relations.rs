@@ -1,14 +1,11 @@
 // Import specific typed IDs AND the new category enums
+use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AssociatedItemNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamNodeId, ImplNodeId,
-    ImportNodeId, MacroNodeId, ModuleNodeId, ParamNodeId, PrimaryNodeId, ReexportNodeId,
-    StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
+    AssociatedItemNodeId, EnumNodeId, FieldNodeId, ImplNodeId, ImportNodeId, ModuleNodeId,
+    PrimaryNodeId, StructNodeId, TraitNodeId, UnionNodeId, VariantNodeId,
 };
-use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-
-use super::nodes::{AnyNodeId, AsAnyNodeId, PrimaryNodeIdTrait};
 
 // Define the new error type
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,10 +13,6 @@ pub enum RelationConversionError {
     #[error("Relation kind {0:?} is not applicable for ScopeKind conversion")]
     NotApplicable(SyntacticRelation), // Use the new enum type
 }
-
-// ANCHOR: Relation
-// Removed original Relation struct and RelationKind enum.
-
 /// Represents a type-safe structural or semantic relation between two nodes in the code graph.
 /// Each variant enforces the correct NodeId types for its source and target where possible.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -27,7 +20,6 @@ pub enum SyntacticRelation {
     //-----------------------------------------------------------------------
     //                Module Structure & Definition Relations
     //-----------------------------------------------------------------------
-
     // ----------------------------------
     // ----- Created in CodeVisitor -----
     // ----------------------------------
@@ -184,6 +176,18 @@ impl SyntacticRelation {
             .ok()
             .and_then(|m_child| self.resolved_by_decl(m_child))
     }
+    pub fn source_reexports(&self, src: ImportNodeId) -> Option<PrimaryNodeId> {
+        match self {
+            Self::ReExports { source: s, target } if *s == src => Some(*target),
+            _ => None,
+        }
+    }
+    pub fn target_exported_by(&self, trg: PrimaryNodeId) -> Option<ImportNodeId> {
+        match self {
+            Self::ReExports { source, target: t } if *t == trg => Some(*source),
+            _ => None,
+        }
+    }
 
     /// Returns the source NodeId of the relation as a generic TypeId.
     pub fn source(&self) -> AnyNodeId {
@@ -219,6 +223,42 @@ impl SyntacticRelation {
             SyntacticRelation::ImplAssociatedItem { target, .. } => target.into(),
             SyntacticRelation::TraitAssociatedItem { target, .. } => target.into(),
         }
+    }
+
+    pub fn src_eq_trg(&self, r_next: Self) -> bool {
+        self.source() == r_next.target()
+    }
+    pub fn trg_eq_src(&self, r_next: Self) -> bool {
+        self.target() == r_next.source()
+    }
+    pub fn src_eq_src(&self, r_next: Self) -> bool {
+        self.source() == r_next.target()
+    }
+    pub fn trg_eq_trg(&self, r_next: Self) -> bool {
+        self.target() == r_next.target()
+    }
+
+    #[cfg(not(feature = "not_wip_marker"))]
+    pub fn traverse_pub(&self, r_next: Self) {
+        match *self {
+            // e.g. with match arms for chosen traversal
+            SyntacticRelation::Contains { source, target: t } if r_next.trg_eq_src(*t) => {
+                todo!()
+            }
+            SyntacticRelation::ResolvesToDefinition { source, target } => todo!(),
+            SyntacticRelation::CustomPath { source, target } => todo!(),
+            SyntacticRelation::ReExports { source, target } => todo!(),
+            SyntacticRelation::ModuleImports { source, target } => todo!(),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if the syntactic relation is [`Contains`].
+    ///
+    /// [`Contains`]: SyntacticRelation::Contains
+    #[must_use]
+    pub fn is_contains(&self) -> bool {
+        matches!(self, Self::Contains { .. })
     }
 }
 
@@ -276,7 +316,6 @@ pub enum ScopeKind {
     /// Can be used in a `use` statement, e.g. `use a::b::SomeStruct;`
     CanUse,
 }
-
 impl TryInto<ScopeKind> for SyntacticRelation {
     type Error = RelationConversionError; // Use the new error type
 

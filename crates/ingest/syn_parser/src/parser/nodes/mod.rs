@@ -20,13 +20,10 @@ use std::fmt::Display;
 
 pub use super::graph::GraphNode;
 
-use crate::{
-    error::SynParserError,
-    utils::{LogStyle, LogStyleDebug},
-};
+use crate::error::SynParserError;
 
-use super::{graph::GraphAccess, types::VisibilityKind};
-use ploke_core::TypeId;
+use super::types::VisibilityKind;
+use ploke_core::{ItemKind, TypeId};
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
@@ -35,7 +32,7 @@ pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, ProcMacroKind};
-pub use module::{ModuleKind, ModuleNode};
+pub use module::{ModDisc, ModuleKind, ModuleNode};
 pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
@@ -260,4 +257,8 @@ impl GraphNode for TypeDefNode {
             _ => None,
         }
     }
+}
+
+pub(crate) trait HasKind {
+    fn has_kind(&self) -> ItemKind;
 }

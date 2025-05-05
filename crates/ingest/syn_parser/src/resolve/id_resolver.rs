@@ -1,16 +1,16 @@
 use std::path::Path;
 
 use log::{debug, trace}; // Import debug macro
-use ploke_core::{CanonId, IdInfo, NodeId, ResolvedId};
+use ploke_core::{CanonId, IdInfo, ResolvedId};
 use uuid::Uuid;
 
 use crate::{
     error::SynParserError,
     parser::{
         graph::{GraphAccess, ParsedCodeGraph},
-        nodes::{GraphNode, ModuleNodeId, NodePath},
+        nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, NodePath},
     }, // Import GraphNode trait for logging
-    resolve::module_tree::{ModuleTree, ModuleTreeError},
+    resolve::module_tree::ModuleTree,
     utils::{LogStyle, LogStyleDebug}, // Import logging traits
 };
 
@@ -91,7 +91,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
     /// for any node (e.g., path determination error, node not found, I/O error).
     pub fn resolve_all(
         &self,
-    ) -> impl Iterator<Item = Result<(NodeId, CanonId), SynParserError>> + '_ {
+    ) -> impl Iterator<Item = Result<(AnyNodeId, CanonId), SynParserError>> + '_ {
         trace!(target: LOG_TARGET, "{} Starting CanonId resolution...", "Begin".log_header());
         let path_index_len = self.module_tree.path_index().len();
         trace!(target: LOG_TARGET, "  Processing {} modules from path_index.", path_index_len.to_string().log_id());
@@ -100,7 +100,8 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
         // `ModuleNode`s that are either inline or file-based
         self.module_tree
             .path_index()
-            .iter() // Iterate over (NodePath, NodeId) from path_index
+            .iter() // Iterate over (NodePath, ModuleNodeId) from path_index
+            .filter_map(|(np, m_any_id)| ModuleNodeId::try_from(*m_any_id).ok().map(|mod_id| (np, mod_id)))
             .filter_map(|(np, mod_id)| {
                 trace!(target: LOG_TARGET, "path_index filter_map: <name unknown> ({}) | NodePath: {}",
                     mod_id.to_string().log_id(),
@@ -109,7 +110,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 // Get the ModuleNode for the ID
                 self.module_tree
                     .modules()
-                    .get(*mod_id)
+                    .get(&mod_id)
                     .inspect(|opt| {
                 trace!(target: LOG_TARGET, "  getting: {} ({}) | Option is_some(), name: {:#?}",
                     mod_id.to_string().log_id(),
@@ -120,7 +121,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                     .map(|module| (np, module)).inspect(| (np, module)| {
                 trace!(target: LOG_TARGET, "Filtering empty modules: {} ({}) | NodePath: {}",
                     module.name().log_name(),
-                    module.id().to_string().log_id(),
+                    module.id.to_string().log_id(),
                     np.to_string().log_path()
                 );
                     }
@@ -130,7 +131,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 // Log which module we are processing items for
                 trace!(target: LOG_TARGET, "Processing items in module: {} ({})",
                     module.name().log_name(),
-                    module.id().to_string().log_id()
+                    module.id.to_string().log_id()
                 );
                 // Get items contained in the module, or an empty slice if none
                 let items = module.items().unwrap_or(&[]);
@@ -141,7 +142,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 // Find the actual GraphNode for the item ID
                 trace!(target: LOG_TARGET, "  Attempting find_node_unique for item_id: {}", item_id.to_string().log_id());
                 // Chain the fallible operations using and_then and map_err
-                self.graph.find_node_unique(item_id) // -> Result<&dyn GraphNode, SynParserError>
+                self.graph.find_node_unique(item_id.as_any()) // -> Result<&dyn GraphNode, SynParserError>
                     .and_then(|node| { // If find_node_unique is Ok, proceed
                         trace!(target: LOG_TARGET, "    Found node: {}", node.name().log_name());
                         self.module_tree.find_defining_file_path_ref_seq(item_id) // -> Result<&Path, ModuleTreeError>
@@ -159,21 +160,21 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 match find_result {
                     Ok((np, node, fp)) => {
                         // If find succeeded, try to resolve the node.
-                        let resolve_result = self.resolve_single_node(np, node, fp);
+                        let resolve_result = self.resolve_single_node(&np, node, fp);
                         match resolve_result {
                             Ok(canon_id) => {
                                 trace!(target: LOG_TARGET, "    {} Resolved {} -> {}",
                                     "✓".log_green(),
-                                    node.id().to_string().log_id(),
+                                    node.any_id().to_string().log_id(),
                                     canon_id.to_string().log_id_debug() // Use debug log style for CanonId
                                 );
-                                Ok((node.id(), canon_id))
+                                Ok((node.any_id(), canon_id))
                             }
                             Err(id_conv_err) => {
                                 // Log the IdConversionError before converting
                                 log::error!(target: LOG_TARGET, "    {} Failed IdConversion for {}: {}",
                                     "✗".log_error(),
-                                    node.id().to_string().log_id(),
+                                    node.any_id().to_string().log_id(),
                                     id_conv_err.to_string().log_error()
                                 );
                                 // Convert IdConversionError to SynParserError

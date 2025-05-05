@@ -6,7 +6,6 @@
 
 // Declare the private internal module
 mod internal;
-use crate::parser::relations::SyntacticRelation;
 
 // Removed: mod utility_macros;
 use super::*;
@@ -43,3 +42,6 @@ pub use internal::{
 // --- semi-private ---
 // Would like to make these more private someday
 pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
+
+// Tests
+pub use internal::test_ids;

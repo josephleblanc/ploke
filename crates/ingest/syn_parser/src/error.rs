@@ -77,6 +77,9 @@ pub enum SynParserError {
     /// Indicates that a module with the specified path was not found.
     #[error("Module with path {0:?} not found.")]
     ModulePathNotFound(Vec<String>),
+    /// Indicates that a module with the specified path was not found.
+    #[error("Item with path {0:?} not found.")]
+    ItemPathNotFound(Vec<String>),
 
     /// Indicates that multiple modules were found for the specified path.
     #[error("Duplicate modules found for path {0:?}.")]
@@ -312,6 +315,9 @@ impl From<ModuleTreeError> for SynParserError {
                     limit, start_node_id
                 ))
             }
+            ModuleTreeError::RootModuleNotFound(_module_node_id) => todo!(),
+            ModuleTreeError::TypedIdConversionError(_try_from_primary_error) => todo!(),
+            ModuleTreeError::AnyNodeIdConversionError(_any_node_id_conversion_error) => todo!(),
         }
     }
 }

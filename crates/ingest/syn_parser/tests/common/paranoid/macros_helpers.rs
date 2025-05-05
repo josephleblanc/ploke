@@ -37,11 +37,11 @@ pub fn find_macro_node_paranoid<'a>(
     let file_path = &target_data.file_path; // Use the path from the found graph data
 
     // 3. Find the ModuleNode for the expected_module_path within the target graph
-    //    Use defn_path() to correctly match file-based or inline modules.
+    //    Use path() to correctly match file-based or inline modules.
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == expected_module_path)
+        .find(|m| m.path() == expected_module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for definition path: {:?} in file '{}'",

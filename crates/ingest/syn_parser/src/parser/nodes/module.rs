@@ -68,11 +68,11 @@ impl ModuleNode {
     /// This path represents how the module is addressed within the crate structure,
     /// regardless of whether it's defined inline, in a separate file, or declared
     /// with a `#[path]` attribute.
-
+    ///
     /// Definition path to file as it would be called by a `use` statement,
     /// Examples:
     ///     `mod module_two {}` -> ["crate", "module_one", "module_two"]
-    pub fn defn_path(&self) -> &Vec<String> {
+    pub fn path(&self) -> &Vec<String> {
         &self.path
     }
 
@@ -90,7 +90,7 @@ impl ModuleNode {
 
     /// Returns `true` if this module node represents only a declaration
     /// (e.g., `mod foo;`) whose definition needs to be resolved.
-    pub fn is_declaration(&self) -> bool {
+    pub fn is_decl(&self) -> bool {
         matches!(self.module_def, ModuleKind::Declaration { .. })
     }
 
@@ -199,7 +199,7 @@ impl ModuleNode {
     /// mod my_mod;
     /// ```
     pub fn has_path_attr(&self) -> bool {
-        self.is_declaration() && self.attributes.iter().any(|attr| attr.name == "path")
+        self.is_decl() && self.attributes.iter().any(|attr| attr.name == "path")
     }
 }
 
@@ -237,6 +237,13 @@ pub enum ModuleKind {
         /// after the module tree has been resolved. `None` before resolution.
         resolved_definition: Option<ModuleNodeId>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Copy, Hash, PartialOrd, Ord)]
+pub enum ModDisc {
+    FileBased,
+    Inline,
+    Declaration,
 }
 
 impl GraphNode for ModuleNode {

@@ -1,13 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
-use crate::parser::nodes::*;
 
 use crate::parser::{
     // Updated node types
     nodes::{
-        ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode,
-        StaticNode, TraitNode, TypeDefNode,
+        ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
+        TraitNode, TypeDefNode,
     },
     relations::SyntacticRelation, // Use new relation enum
     types::TypeNode,
@@ -63,7 +62,8 @@ impl GraphAccess for CodeGraph {
         &self.traits
     }
 
-    fn relations(&self) -> &[SyntacticRelation] { // Updated type
+    fn relations(&self) -> &[SyntacticRelation] {
+        // Updated type
         &self.relations
     }
 
@@ -72,11 +72,13 @@ impl GraphAccess for CodeGraph {
     }
 
     // Removed values()
-    fn consts(&self) -> &[ConstNode] { // Added
+    fn consts(&self) -> &[ConstNode] {
+        // Added
         &self.consts
     }
 
-    fn statics(&self) -> &[StaticNode] { // Added
+    fn statics(&self) -> &[StaticNode] {
+        // Added
         &self.statics
     }
 
@@ -110,7 +112,8 @@ impl GraphAccess for CodeGraph {
         &mut self.traits
     }
 
-    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> { // Updated type
+    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> {
+        // Updated type
         &mut self.relations
     }
 
@@ -119,11 +122,13 @@ impl GraphAccess for CodeGraph {
     }
 
     // Removed values_mut()
-    fn consts_mut(&mut self) -> &mut Vec<ConstNode> { // Added
+    fn consts_mut(&mut self) -> &mut Vec<ConstNode> {
+        // Added
         &mut self.consts
     }
 
-    fn statics_mut(&mut self) -> &mut Vec<StaticNode> { // Added
+    fn statics_mut(&mut self) -> &mut Vec<StaticNode> {
+        // Added
         &mut self.statics
     }
 
@@ -156,7 +161,7 @@ impl CodeGraph {
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added
-        // Removed values append
+                                                 // Removed values append
         self.macros.append(&mut other.macros);
         self.use_statements.append(&mut other.use_statements);
         Ok(())

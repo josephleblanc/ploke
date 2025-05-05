@@ -84,7 +84,7 @@ pub trait GraphAccess {
     }
 
     fn validate_unique_rels(&self) -> bool {
-        let rels: &[SyntacticRelation] = &self.relations(); // Use updated type
+        let rels: &[SyntacticRelation] = self.relations(); // Use updated type
         let mut dups = Vec::new();
         let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
             if !acc.contains(rel) {
@@ -95,7 +95,6 @@ pub trait GraphAccess {
             acc
         });
         for dup in &dups {
-
             debug!("{:#?}", dup);
             let target = self.find_node_unique(dup.target()).unwrap();
             let source = self.find_node_unique(dup.source()).unwrap();
@@ -185,7 +184,7 @@ pub trait GraphAccess {
         use itertools::Itertools;
 
         let mut ids = self.ids_contained_by(module_id);
-        self.modules().iter().filter(move |m| ids.contains(&m.id.to_pid())).into_iter()
+        self.modules().iter().filter(move |m| ids.contains(&m.id.to_pid()))
     }
     #[cfg(feature = "type_bearing_ids")]
     fn ids_contained_by(&self, module_id: ModuleNodeId) -> impl Iterator<Item = PrimaryNodeId>  {
@@ -216,8 +215,15 @@ pub trait GraphAccess {
     /// - `Ok(&ModuleNode)` if exactly one match is found.
     /// - `Err(SynParserError::ModulePathNotFound)` if no matches are found.
     /// - `Err(SynParserError::DuplicateModulePath)` if more than one match is found.
-    fn find_module_by_path_checked(&self, path: &[String]) -> Result<&ModuleNode, SynParserError> {
-        let mut matches = self.modules().iter().filter(|m| m.path == path);
+    fn find_mods_by_kind_path_checked(&self,kind: ModDisc, path: &[String]) -> Result<&ModuleNode, SynParserError> {
+        let mut matches = self.modules().iter().filter(|m| { 
+            m.path == path 
+            && match kind {
+                ModDisc::FileBased => m.is_file_based(),
+                ModDisc::Inline => m.is_inline(),
+                ModDisc::Declaration => m.is_decl(),
+            }
+        });
         let first = matches.next();
         if matches.next().is_some() {
             // Convert path slice to Vec<String> for the error variant
@@ -230,20 +236,20 @@ pub trait GraphAccess {
     /// Finds a module node *definition* (FileBased or Inline) by its definition path,
     /// returning an error if not found or if duplicates exist.
     /// Excludes ModuleKind::Declaration nodes.
-    fn find_module_by_defn_path_checked(
+    fn find_module_by_path_checked(
         &self,
-        defn_path: &[String],
+        path: &[String],
     ) -> Result<&ModuleNode, SynParserError> {
-        debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Searching for defn_path:".cyan(), defn_path.join("::").yellow());
+        debug!(target: LOG_TARGET_GRAPH_FIND, "{} {}", "Searching for path:".cyan(), path.join("::").yellow());
         let matching_nodes: Vec<&ModuleNode> = self // Find ALL nodes matching path first
             .modules()
             .iter()
-            .filter(|m| m.defn_path() == defn_path)
+            .filter(|m| m.path() == path)
             .collect();
 
         debug!(target: LOG_TARGET_GRAPH_FIND, "Found {} nodes matching path:", matching_nodes.len().to_string().green());
         for node in &matching_nodes {
-            let def_type = if node.is_declaration() {
+            let def_type = if node.is_decl() {
                 "Decl".red()
             } else {
                 "Def".green()
@@ -261,7 +267,7 @@ pub trait GraphAccess {
         // Now filter the collected nodes
         let mut non_decl_matches = matching_nodes
             .into_iter() // Iterate over the collected matches
-            .filter(|m| !m.is_declaration()); // Apply the filter
+            .filter(|m| !m.is_decl()); // Apply the filter
 
         let first = non_decl_matches.next();
         let second = non_decl_matches.next(); // Check if there's a second match *after* filtering
@@ -273,15 +279,15 @@ pub trait GraphAccess {
             let all_matches: Vec<_> = self
                 .modules()
                 .iter()
-                .filter(|m| m.defn_path() == defn_path && !m.is_declaration())
+                .filter(|m| m.path() == path && !m.is_decl())
                 .collect();
             // Log only the IDs of duplicates for brevity
             let duplicate_ids: Vec<String> = all_matches.iter().map(|m| m.id.to_string()).collect();
             debug!(target: LOG_TARGET_GRAPH_FIND,
                 "Duplicate non-declaration modules found for path {}: [{}]",
-                defn_path.join("::").yellow(), duplicate_ids.join(", ").magenta()
+                path.join("::").yellow(), duplicate_ids.join(", ").magenta()
             );
-            return Err(SynParserError::DuplicateModulePath(defn_path.to_vec()));
+            return Err(SynParserError::DuplicateModulePath(path.to_vec()));
         }
 
         match first {
@@ -297,7 +303,25 @@ pub trait GraphAccess {
             }
         }
 
-        first.ok_or_else(|| SynParserError::ModulePathNotFound(defn_path.to_vec()))
+        first.ok_or_else(|| SynParserError::ModulePathNotFound(path.to_vec()))
+    }
+
+    /// Creates an iterator over all of the items at a given path that match a given kind.
+    /// This is useful in finding the items contained by a module.
+    fn iter_pid_pathkind(&self, path: &[String], kind: ItemKind) -> impl Iterator<Item = PrimaryNodeId> {
+        self.modules().iter().filter(move |m| m.path == path)
+            .filter_map(|m| m.items()) // Filters out both empty modules and module declarations
+            .flatten()
+            .copied()
+            .filter(move |pid| pid.kind() == kind)
+    }
+
+    fn find_pid_pathkind_checked(&self, path: &[String], kind: ItemKind) -> Result<PrimaryNodeId, SynParserError> {
+        let mut iter_pid = self.iter_pid_pathkind(path, kind);
+            let first = iter_pid.next()
+            .ok_or_else(|| SynParserError::ModulePathNotFound(path.to_vec()));
+        iter_pid.next().ok_or_else(|| SynParserError::DuplicateModulePath(path.to_vec()))?;
+        first
     }
 
     fn get_item_module_path(&self, item_id: PrimaryNodeId) -> Vec<String> {
@@ -956,6 +980,16 @@ pub trait GraphNode {
             // are not directly represented as top-level GraphNode types this way.
             _ => false,
         }
+    }
+
+    fn as_disc(&self ) -> Option< ModDisc > {
+        self.as_module().map(|m| {
+            match m.module_def {
+                ModuleKind::FileBased {..} => ModDisc::FileBased,
+                ModuleKind::Inline {..} => ModDisc::Inline,
+                ModuleKind::Declaration {..} => ModDisc::Declaration,
+            }
+        })
     }
 
     fn kind(&self) -> ItemKind {

@@ -29,7 +29,7 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
         print_module_tree(&merged, module.id, "", false, base_path)?;
     }
 
-    merged.find_module_by_path_checked(&["crate".to_string()])?;
+    merged.find_mods_by_path_iter(&["crate".to_string()])?;
 
     Ok(())
 }

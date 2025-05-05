@@ -44,19 +44,19 @@ pub fn find_node_id_by_path_and_name(
     let parent_module = graph.modules.iter().find(|m| {
         #[cfg(feature = "verbose_debug")]
         println!(
-            "searching for: {:?}\nm.defn_path() = {:?}\nm.path = {:?}
+            "searching for: {:?}\nm.path() = {:?}\nm.path = {:?}
 m.name = {}\nm.id = {}\nm.is_file_based() = {}
 m.items() = {:#?}",
             module_path,
-            m.defn_path(),
+            m.path(),
             m.path,
             m.name,
             m.id,
             m.is_file_based(),
             m.items()
         );
-        (m.defn_path() == module_path && m.is_inline())
-            || (m.defn_path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline())
+            || (m.path() == module_path && m.is_file_based())
     })?;
 
     // Convert items Vec<NodeId> to a HashSet for faster lookups if needed,
@@ -131,8 +131,8 @@ pub fn find_import_id(
 ) -> Option<NodeId> {
     let parent_module = graph.modules.iter().find(|m| {
         // #[cfg(feature = "verbose_debug")]
-        (m.defn_path() == module_path && m.is_inline())
-            || (m.defn_path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline())
+            || (m.path() == module_path && m.is_file_based())
     })?;
     let import_id = graph
         .use_statements
@@ -424,7 +424,7 @@ pub fn find_inline_module_by_path<'a>(
     let mut modules = graph
         .modules
         .iter()
-        .filter(|m| m.defn_path() == module_path);
+        .filter(|m| m.path() == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
     for unexpected_module in modules {
@@ -449,7 +449,7 @@ pub fn find_mod_decl_by_path_and_name<'a>(
     let mut modules = graph
         .modules
         .iter()
-        .filter(|m| m.is_declaration() && m.name() == name && m.path == module_path);
+        .filter(|m| m.is_decl() && m.name() == name && m.path == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
     for unexpected_module in modules {

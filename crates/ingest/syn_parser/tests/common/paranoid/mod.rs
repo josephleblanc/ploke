@@ -22,3 +22,5 @@ pub use struct_helpers::find_struct_node_paranoid;
 pub use trait_helpers::find_trait_node_paranoid;
 pub use type_alias_helpers::find_type_alias_node_paranoid;
 pub use union_helpers::find_union_node_paranoid;
+
+use super::*;

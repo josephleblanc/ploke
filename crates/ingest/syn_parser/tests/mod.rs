@@ -1,4 +1,5 @@
 // This module will include all tests
+#![cfg(test)]
 pub mod common;
 
 pub mod processing;

@@ -4,17 +4,65 @@
 //! internally, provides restricted constructors, and defines helper types like
 //! `AnyNodeId`. Access to the base `NodeId` is confined to this module.
 
-use crate::parser::graph::GraphNode;
+use crate::parser::graph::GraphAccess;
 use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
 use crate::utils::LOG_TARGET_NODE_ID;
 use log::debug;
-use ploke_core::{NodeId, TypeKind}; // Removed IdConversionError import
+use ploke_core::{NodeId, TypeKind};// Removed IdConversionError import
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
+
+pub mod test_ids {
+    use ploke_core::NodeId;
+
+    use super::*;
+
+    pub trait TestIds: TypedId {
+        fn base_tid(&self) -> NodeId;
+        fn new_test(id: NodeId) -> Self;
+    }
+
+
+    macro_rules! make_id_testable{
+        ($SpecificId:ty) => {
+            impl TestIds for $SpecificId {
+                #[inline]
+                fn base_tid(&self) -> NodeId {
+                    self.base_id()
+                }
+                #[inline]
+                fn new_test(id: NodeId) -> Self {
+                    Self(id)
+                }
+            }
+        };
+    }
+make_id_testable!(FunctionNodeId);
+make_id_testable!(StructNodeId);
+make_id_testable!(EnumNodeId);
+make_id_testable!(UnionNodeId);
+make_id_testable!(TypeAliasNodeId);
+make_id_testable!(TraitNodeId);
+make_id_testable!(ImplNodeId);
+make_id_testable!(ConstNodeId);
+make_id_testable!(StaticNodeId);
+make_id_testable!(MacroNodeId);
+make_id_testable!(ImportNodeId);
+make_id_testable!(ModuleNodeId);
+// Associated Items
+make_id_testable!(MethodNodeId);
+// Secondary Nodes
+make_id_testable!(FieldNodeId);
+make_id_testable!(VariantNodeId);
+make_id_testable!(ParamNodeId);
+make_id_testable!(GenericParamNodeId);
+// Other IDs
+make_id_testable!(ReexportNodeId);
+}
 
 // ----- Traits -----
 
@@ -23,11 +71,11 @@ use std::fmt::Display;
 ///
 /// This trait is implemented internally for each specific ID type that represents
 /// a node directly stored and retrievable in the `GraphAccess` implementor.
-// pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
-//     // Added Copy bound as IDs are Copy
-//     // Added Sealed bound to prevent external implementations
-//     fn get<'g>(&self, graph: &'g dyn GraphAccess) -> Option<&'g dyn GraphNode>;
-// }
+pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
+    // Added Copy bound as IDs are Copy
+    // Added Sealed bound to prevent external implementations
+    fn get<'g, T: GraphNode>(&self, graph: &'g impl GraphAccess) -> Option<&'g T>;
+}
 
 /// Convenience trait to help be more explicit about converting into AnyNodeId.
 /// Relies on `Into<AnyNodeId>` being implemented on the base type on a case by case basis.
@@ -39,6 +87,7 @@ where
         self.into()
     }
 }
+
 
 impl<T> AsAnyNodeId for T where T: AnyTypedId + Into<AnyNodeId> {}
 
@@ -125,10 +174,10 @@ pub(in crate::parser) trait GenerateTypeId {
     /// Helper to generate a synthetic NodeId using the current visitor state.
     /// Uses the last ID pushed onto `current_primary_defn_scope` as the parent scope ID.
     /// Accepts the calculated hash bytes of the effective CFG strings.
-    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId;
+    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[ TypeId ]) -> TypeId;
 }
 impl GenerateTypeId for VisitorState {
-    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &Vec<TypeId>) -> TypeId {
+    fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[TypeId]) -> TypeId {
         // 2. Get the current parent scope ID from the state.
         //    Assume it's always present because the root module ID is pushed first.
         let parent_scope_id = self.current_primary_defn_scope.iter()
@@ -146,14 +195,14 @@ impl GenerateTypeId for VisitorState {
             "Invalid State: Visitor.self's current_primary_defn_scope should not be empty during type processing",
         );
         // 3. Generate the new Synthetic Type ID using structural info AND parent scope
-        let new_id = TypeId::generate_synthetic(
+        
+        TypeId::generate_synthetic(
             self.crate_namespace,
             &self.current_file_path,
             type_kind,                       // Pass the determined TypeKind
             related_types,                   // Pass the determined related TypeIds
             Some(parent_scope_id.base_id()), // Pass the non-optional parent scope ID wrapped in Some
-        );
-        new_id
+        )
     }
 }
 
@@ -274,6 +323,7 @@ macro_rules! define_category_enum {
 
         $(
 
+        
 
             impl From<$IdType> for $EnumName {
                 #[inline]
@@ -294,6 +344,7 @@ macro_rules! define_category_enum {
                     }
                 }
             }
+        
         )*
     };
 

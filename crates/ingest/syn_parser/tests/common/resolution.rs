@@ -33,7 +33,7 @@ pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree)
 ///
 /// # Arguments
 /// * `graph` - The CodeGraph to search within.
-/// * `module_defn_path` - The definition path of the containing module (e.g., `["crate", "local_mod"]`).
+/// * `module_path` - The definition path of the containing module (e.g., `["crate", "local_mod"]`).
 /// * `item_name` - The simple name of the item to find (e.g., `"local_func"`).
 ///
 /// # Returns
@@ -47,11 +47,11 @@ pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree)
 // )] // Annoying warnings
 pub fn find_item_id_in_module_by_name(
     graph: &CodeGraph,
-    module_defn_path: &[String],
+    module_path: &[String],
     item_name: &str,
 ) -> Result<NodeId, SynParserError> {
     // 1. Find the containing module definition node rigorously
-    let module_node = graph.find_module_by_defn_path_checked(module_defn_path)?;
+    let module_node = graph.find_module_by_path_checked(module_path)?;
     let module_id = module_node.id();
 
     // 2. Collect all potential candidates by name across different node types
@@ -102,7 +102,7 @@ pub fn find_item_id_in_module_by_name(
         graph
             .modules
             .iter()
-            .filter(|n| n.name() == item_name && !n.is_declaration()) // Exclude declarations here
+            .filter(|n| n.name() == item_name && !n.is_decl()) // Exclude declarations here
             .map(|n| n as &dyn GraphNode),
     );
 
@@ -132,7 +132,7 @@ pub fn find_item_id_in_module_by_name(
 ///
 /// # Arguments
 /// * `graph` - The CodeGraph to search within.
-/// * `module_defn_path` - The definition path of the containing module.
+/// * `module_path` - The definition path of the containing module.
 /// * `item_name` - The simple name of the item.
 /// * `item_kind` - The `ploke_core::ItemKind` of the item.
 ///
@@ -143,16 +143,16 @@ pub fn find_item_id_in_module_by_name(
 /// * `Err(SynParserError::DuplicateNode)` if multiple items matching the criteria are found.
 pub fn find_item_id_by_path_name_kind_checked(
     graph: &ParsedCodeGraph,
-    module_defn_path: &[&str],
+    module_path: &[&str],
     item_name: &str,
     item_kind: ploke_core::ItemKind,
 ) -> Result<NodeId, SynParserError> {
     // 1. Find the containing module definition node rigorously
-    let m_path_string = module_defn_path
+    let m_path_string = module_path
         .iter()
         .map(|seg| seg.to_string())
         .collect::<Vec<_>>();
-    let module_node = graph.find_module_by_defn_path_checked(&m_path_string)?;
+    let module_node = graph.find_module_by_path_checked(&m_path_string)?;
     let module_id = module_node.id();
 
     // 2. Get IDs of all nodes contained within the module
@@ -211,7 +211,7 @@ pub fn find_item_id_by_path_name_kind_checked(
                 "Encountered errors while searching for item '{}' ({:?}) in module {:?}: {:?}",
                 item_name,
                 item_kind,
-                module_defn_path,
+                module_path,
                 errors
             );
         }
@@ -234,7 +234,7 @@ pub fn find_item_id_by_path_name_kind_checked(
                 "Duplicate items found for name '{}' ({:?}) in module {:?}: {:?}",
                 item_name,
                 item_kind,
-                module_defn_path,
+                module_path,
                 matches
             );
             Err(SynParserError::DuplicateNode(matches[0])) // Report first duplicate ID
@@ -261,8 +261,8 @@ pub fn find_reexport_import_node_by_name_checked(
     visible_name: &str,
 ) -> Result<NodeId, SynParserError> {
     // 1. Find the containing module node rigorously using the logical path
-    //    We use find_module_by_path_checked because re-exports are associated with the logical module structure.
-    let module_node = graph.find_module_by_path_checked(module_path)?;
+    //    We use find_mods_by_path_iter because re-exports are associated with the logical module structure.
+    let module_node = graph.find_mods_by_path_iter(module_path)?;
     let module_id = module_node.id();
 
     // 2. Get IDs of all nodes contained within the module

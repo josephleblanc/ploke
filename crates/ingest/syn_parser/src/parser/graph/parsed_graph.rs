@@ -1,4 +1,7 @@
-use crate::{discovery::DependencyMap as _, resolve::module_tree::ModuleTreeError};
+use crate::{
+    discovery::DependencyMap as _,
+    resolve::module_tree::{ModuleTreeError, TreeRelation},
+};
 use std::{collections::HashSet, path::PathBuf};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
@@ -160,7 +163,7 @@ impl ParsedCodeGraph {
         //      - Does not include inter-file links, due to parallel parsing with no cross-channel
         //      communication.
         //      TODO: Add validation step for relations before adding them.
-        tree.extend_relations(self.relations().iter().copied());
+        tree.extend_relations(self.relations().iter().copied().map_into::<TreeRelation>());
 
         // 3: Build syntactic links
         //      - Creates `Relation::ResolvesToDefinition` link from
@@ -265,18 +268,7 @@ impl ParsedCodeGraph {
         // Find the module by its file path.
         // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
         // We just need to clone the result if Ok.
-        self.find_module_by_file_path_checked(root_path)
-            .map(|node| node.clone()) // Clone the found ModuleNode
-                                      // Note: No specific mapping needed here, as find_module_by_file_path_checked
-                                      // already returns appropriate SynParserError variants (NotFound wrapped in InternalState, DuplicateNode).
-                                      // If more specific errors were desired (like RootFileNotFound), we could map the error:
-                                      // .map_err(|e| match e {
-                                      //     SynParserError::InternalState(_) => // Assuming this wraps NotFound for file paths
-                                      //         ParsedGraphError::RootFileNotFound(root_path.clone()).into(),
-                                      //     SynParserError::DuplicateNode(_) => // Assuming this wraps duplicate file paths
-                                      //         ParsedGraphError::DuplicateRootFile(root_path.clone()).into(),
-                                      //     other_err => other_err, // Propagate other errors
-                                      // })
+        self.find_module_by_file_path_checked(root_path).cloned()
     }
 }
 

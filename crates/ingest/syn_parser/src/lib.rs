@@ -8,3 +8,6 @@ pub(crate) mod utils; // Don't re-export `LogStyle` to keep it clear its a utili
 pub use parser::visitor::analyze_file_phase2;
 pub use parser::{create_parser_channel, CodeGraph, ParserMessage};
 pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
+
+// test ids
+pub use parser::nodes::test_ids::TestIds;

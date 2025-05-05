@@ -3,15 +3,9 @@ use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
-use syn_parser::parser::nodes::GraphId;
-use syn_parser::parser::nodes::ValueKind;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
-use syn_parser::parser::{
-    graph::CodeGraph,
-    nodes::{GraphNode, ValueNode},
-    relations::RelationKind,
-};
+use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 
 // Test Plan for ValueNode (const/static) in Phase 2 (uuid_ids)
 // ============================================================
@@ -165,7 +159,7 @@ fn find_value_node_basic<'a>(
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == module_path)
+        .find(|m| m.path() == module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for definition path: {:?} while looking for '{}'",

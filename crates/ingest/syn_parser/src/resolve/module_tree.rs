@@ -37,7 +37,7 @@ pub mod test_interface {
 
     use super::{ModuleTree, ModuleTreeError, ResolvedItemInfo};
     use crate::parser::{
-        nodes::{AnyNodeId, GraphNode, PrimaryNodeId},
+        nodes::{AnyNodeId, PrimaryNodeId},
         ParsedCodeGraph,
     };
 
@@ -465,14 +465,14 @@ impl ModuleTree {
         }
 
         // Use map_err for explicit conversion from SynParserError to ModuleTreeError
-        let node_path = NodePath::try_from(module.defn_path().clone())
+        let node_path = NodePath::try_from(module.path().clone())
             .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
         let conflicting_id = module.id; // ID of the module we are trying to add
 
         // Separate declaration and definition path->Id indexes.
         // Indexes for declaration vs definition (inline or filebased) must be kept separate to
         // avoid collision, as module definitions and declarations have the same canonical path.
-        if module.is_declaration() {
+        if module.is_decl() {
             match self.decl_index.entry(node_path.clone()) {
                 // Clone node_path for the error case
                 std::collections::hash_map::Entry::Occupied(entry) => {
@@ -1098,12 +1098,12 @@ impl ModuleTree {
             .filter(|m| m.is_file_based() && m.id != root_id)
         {
             // This is ["crate", "renamed_path", "actual_file"] for the file node
-            let defn_path = module.defn_path();
+            let path = module.path();
 
             // Log the attempt to find a declaration matching the *file's* definition path
-            self.log_path_resolution(module, defn_path, "Checking", Some("decl_index..."));
+            self.log_path_resolution(module, path, "Checking", Some("decl_index..."));
 
-            match self.decl_index.get(defn_path.as_slice()) {
+            match self.decl_index.get(path.as_slice()) {
                 Some(decl_id) => {
                     // Found declaration, create relation
                     let resolves_to_rel = SyntacticRelation::ResolvesToDefinition {
@@ -1115,8 +1115,8 @@ impl ModuleTree {
                 }
                 None => {
                     // No declaration found matching the file's definition path.
-                    self.log_unlinked_module(module, defn_path);
-                    let node_path = NodePath::try_from(defn_path.clone()) // Use the file's defn_path
+                    self.log_unlinked_module(module, path);
+                    let node_path = NodePath::try_from(path.clone()) // Use the file's path
                         .map_err(|e| ModuleTreeError::NodePathValidation(Box::new(e)))?;
 
                     // If path conversion succeeded, collect the unlinked info.
@@ -1870,7 +1870,7 @@ impl ModuleTree {
 
         // Construct the public path using the visible_name
         let containing_module = self.get_module_checked(&source_mod_id)?;
-        let mut public_path_vec = containing_module.defn_path().clone();
+        let mut public_path_vec = containing_module.path().clone();
         public_path_vec.push(export_node.visible_name.clone()); // Use the name it's exported AS
         let public_reexport_path = NodePath::try_from(public_path_vec)?;
 

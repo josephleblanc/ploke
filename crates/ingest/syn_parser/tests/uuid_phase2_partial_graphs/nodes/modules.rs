@@ -158,7 +158,7 @@ fn test_module_node_top_pub_mod_paranoid() {
         declaration_node.tracking_hash.is_some(),
         "Tracking hash should be Some for declaration node"
     );
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some()); // Should have the span of `mod ...;`
     assert!(declaration_node.resolved_definition().is_none()); // Not resolved in Phase 2
 
@@ -218,7 +218,7 @@ fn test_module_node_top_priv_mod_paranoid() {
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
     assert_eq!(declaration_node.visibility(), VisibilityKind::Inherited); // `mod top_priv_mod;`
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some()); // Declarations have hash
     assert!(declaration_node.resolved_definition().is_none());
@@ -327,7 +327,7 @@ fn test_module_node_crate_visible_mod_paranoid() {
     assert_eq!(declaration_node.path, module_path_vec);
     // TODO: Fix visibility parsing/testing - currently `pub(crate)` might be parsed as Restricted or Public.
     // assert_eq!(declaration_node.visibility(), VisibilityKind::Crate); // `pub(crate) mod ...;`
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some());
     assert!(declaration_node.resolved_definition().is_none());
@@ -439,7 +439,7 @@ fn test_module_node_logical_name_path_attr_paranoid() {
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, logical_module_path_vec); // Declaration has logical path
     assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some());
     assert!(declaration_node.resolved_definition().is_none());
@@ -726,7 +726,7 @@ fn test_module_node_nested_example_submod_paranoid() {
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
     assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some());
     assert!(declaration_node.resolved_definition().is_none());
@@ -843,7 +843,7 @@ fn test_module_node_deeply_nested_mod_paranoid() {
     assert_eq!(declaration_node.name(), module_name);
     assert_eq!(declaration_node.path, module_path_vec);
     assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
+    assert!(declaration_node.is_decl());
     assert!(declaration_node.declaration_span().is_some());
     assert!(declaration_node.tracking_hash.is_some());
     assert!(declaration_node.resolved_definition().is_none());

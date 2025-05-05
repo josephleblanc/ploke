@@ -729,9 +729,6 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
-    use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn test_derive_crate_namespace_consistency() {
