@@ -3,19 +3,19 @@ use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use crate::common::FixtureError;
 use crate::common::ParanoidArgs;
+use lazy_static::lazy_static;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::ItemKind;
 use ploke_core::NodeId;
 use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
+use std::collections::HashMap;
 use syn_parser::error::SynParserError;
+use syn_parser::parser::nodes::{Attribute, ConstNode, StaticNode};
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
-use syn_parser::TestIds;
-use lazy_static::lazy_static;
-use std::collections::HashMap;
-use syn_parser::parser::nodes::{ConstNode, StaticNode, Attribute}; // Import specific nodes and Attribute
+use syn_parser::TestIds; // Import specific nodes and Attribute
 
 // Struct to hold expected fields for a ConstNode
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +43,6 @@ struct ExpectedStaticData {
     tracking_hash_check: bool,
     cfgs: Vec<String>,
 }
-
 
 lazy_static! {
     // Map from ident -> ExpectedConstData
@@ -120,7 +119,6 @@ lazy_static! {
         m
     };
 }
-
 
 // Previous versions.
 // Define expected items: (name, kind, is_mutable, visibility_check)
@@ -417,7 +415,8 @@ fn basic_smoke_test() -> anyhow::Result<()> {
 //       Uses full parse for consistency.
 // ---------------------------------------------------------------------------------
 #[test]
-fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserError> { // Renamed slightly
+fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserError> {
+    // Renamed slightly
     let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs";
 
@@ -456,65 +455,153 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
         // 3. Compare Fields using lazy static data
         match item_args.item_kind {
             ItemKind::Const => {
-                let const_node = found_node.as_const().ok_or_else(|| {
-                    SynParserError::NodeKindMismatch {
+                let const_node = found_node
+                    .as_const()
+                    // AI: Use real errors. Check the rest of the function to make sure you are
+                    // correctly using errors that actually exist instead of making them up AI!
+                    .ok_or_else(|| SynParserError::NodeKindMismatch {
                         id: found_node.any_id(),
                         expected: item_args.item_kind,
                         actual: found_node.kind(),
-                    }
-                })?;
-                let expected_data = EXPECTED_CONSTS_DATA.get(ident)
+                    })?;
+                let expected_data = EXPECTED_CONSTS_DATA
+                    .get(ident)
                     .unwrap_or_else(|| panic!("Expected const data not found for {}", ident));
 
-                assert_eq!(const_node.name, expected_data.name, "Name mismatch for {}", ident);
-                assert_eq!(const_node.visibility(), &expected_data.visibility, "Visibility mismatch for {}", ident);
-                assert_eq!(matches!(const_node.type_id, TypeId::Synthetic(_)), expected_data.type_id_check, "TypeId check failed for {}", ident);
-                assert_eq!(const_node.value.as_deref(), expected_data.value, "Value mismatch for {}", ident);
+                assert_eq!(
+                    const_node.name, expected_data.name,
+                    "Name mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    const_node.visibility(),
+                    &expected_data.visibility,
+                    "Visibility mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    matches!(const_node.type_id, TypeId::Synthetic(_)),
+                    expected_data.type_id_check,
+                    "TypeId check failed for {}",
+                    ident
+                );
+                assert_eq!(
+                    const_node.value.as_deref(),
+                    expected_data.value,
+                    "Value mismatch for {}",
+                    ident
+                );
                 // Note: Attribute comparison might need refinement if order matters or args are complex
-                assert_eq!(const_node.attributes, expected_data.attributes, "Attributes mismatch for {}", ident);
-                assert_eq!(const_node.docstring.as_deref().map(|s| s.contains(expected_data.docstring_contains.unwrap_or(""))).unwrap_or(false),
-                           expected_data.docstring_contains.is_some(), "Docstring mismatch for {}", ident);
-                assert_eq!(matches!(const_node.tracking_hash, Some(TrackingHash(_))), expected_data.tracking_hash_check, "TrackingHash check failed for {}", ident);
+                assert_eq!(
+                    const_node.attributes, expected_data.attributes,
+                    "Attributes mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    const_node
+                        .docstring
+                        .as_deref()
+                        .map(|s| s.contains(expected_data.docstring_contains.unwrap_or("")))
+                        .unwrap_or(false),
+                    expected_data.docstring_contains.is_some(),
+                    "Docstring mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    matches!(const_node.tracking_hash, Some(TrackingHash(_))),
+                    expected_data.tracking_hash_check,
+                    "TrackingHash check failed for {}",
+                    ident
+                );
                 // Sort CFGs for comparison
                 let mut actual_cfgs = const_node.cfgs().to_vec();
                 actual_cfgs.sort_unstable();
                 let mut expected_cfgs_sorted = expected_data.cfgs.clone();
                 expected_cfgs_sorted.sort_unstable();
-                assert_eq!(actual_cfgs, expected_cfgs_sorted, "CFGs mismatch for {}", ident);
+                assert_eq!(
+                    actual_cfgs, expected_cfgs_sorted,
+                    "CFGs mismatch for {}",
+                    ident
+                );
             }
             ItemKind::Static => {
-                 let static_node = found_node.as_static().ok_or_else(|| {
-                     SynParserError::NodeKindMismatch {
-                        id: found_node.any_id(),
-                        expected: item_args.item_kind,
-                        actual: found_node.kind(),
-                    }
-                })?;
-                let expected_data = EXPECTED_STATICS_DATA.get(ident)
+                let static_node =
+                    found_node
+                        .as_static()
+                        .ok_or_else(|| SynParserError::NodeKindMismatch {
+                            id: found_node.any_id(),
+                            expected: item_args.item_kind,
+                            actual: found_node.kind(),
+                        })?;
+                let expected_data = EXPECTED_STATICS_DATA
+                    .get(ident)
                     .unwrap_or_else(|| panic!("Expected static data not found for {}", ident));
 
-                assert_eq!(static_node.name, expected_data.name, "Name mismatch for {}", ident);
-                assert_eq!(static_node.visibility(), &expected_data.visibility, "Visibility mismatch for {}", ident);
-                assert_eq!(matches!(static_node.type_id, TypeId::Synthetic(_)), expected_data.type_id_check, "TypeId check failed for {}", ident);
-                assert_eq!(static_node.is_mutable, expected_data.is_mutable, "is_mutable mismatch for {}", ident);
-                assert_eq!(static_node.value.as_deref(), expected_data.value, "Value mismatch for {}", ident);
-                assert_eq!(static_node.attributes, expected_data.attributes, "Attributes mismatch for {}", ident);
-                 assert_eq!(static_node.docstring.as_deref().map(|s| s.contains(expected_data.docstring_contains.unwrap_or(""))).unwrap_or(false),
-                           expected_data.docstring_contains.is_some(), "Docstring mismatch for {}", ident);
-                assert_eq!(matches!(static_node.tracking_hash, Some(TrackingHash(_))), expected_data.tracking_hash_check, "TrackingHash check failed for {}", ident);
+                assert_eq!(
+                    static_node.name, expected_data.name,
+                    "Name mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    static_node.visibility(),
+                    &expected_data.visibility,
+                    "Visibility mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    matches!(static_node.type_id, TypeId::Synthetic(_)),
+                    expected_data.type_id_check,
+                    "TypeId check failed for {}",
+                    ident
+                );
+                assert_eq!(
+                    static_node.is_mutable, expected_data.is_mutable,
+                    "is_mutable mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    static_node.value.as_deref(),
+                    expected_data.value,
+                    "Value mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    static_node.attributes, expected_data.attributes,
+                    "Attributes mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    static_node
+                        .docstring
+                        .as_deref()
+                        .map(|s| s.contains(expected_data.docstring_contains.unwrap_or("")))
+                        .unwrap_or(false),
+                    expected_data.docstring_contains.is_some(),
+                    "Docstring mismatch for {}",
+                    ident
+                );
+                assert_eq!(
+                    matches!(static_node.tracking_hash, Some(TrackingHash(_))),
+                    expected_data.tracking_hash_check,
+                    "TrackingHash check failed for {}",
+                    ident
+                );
                 // Sort CFGs for comparison
                 let mut actual_cfgs = static_node.cfgs().to_vec();
                 actual_cfgs.sort_unstable();
                 let mut expected_cfgs_sorted = expected_data.cfgs.clone();
                 expected_cfgs_sorted.sort_unstable();
-                assert_eq!(actual_cfgs, expected_cfgs_sorted, "CFGs mismatch for {}", ident);
+                assert_eq!(
+                    actual_cfgs, expected_cfgs_sorted,
+                    "CFGs mismatch for {}",
+                    ident
+                );
             }
             _ => panic!("Unexpected item kind in test: {:?}", item_args.item_kind),
         }
     }
     Ok(())
 }
-
 
 // #[test] fn test_value_node_field_name()
 //  - Target: TOP_LEVEL_BOOL
