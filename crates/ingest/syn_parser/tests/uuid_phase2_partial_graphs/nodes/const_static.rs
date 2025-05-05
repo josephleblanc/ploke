@@ -615,6 +615,7 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
 //  - Assert_eq!(node.name, "TOP_LEVEL_BOOL", "Mismatch for name field. Expected: {}, Actual: {}", ...);
 #[test]
 fn test_value_node_field_name() {
+    // AI: Update this test, following our design documents that I've shared with you for guidance AI!
     // Target: TOP_LEVEL_BOOL
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
