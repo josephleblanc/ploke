@@ -13,6 +13,114 @@ use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 use syn_parser::TestIds;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use syn_parser::parser::nodes::{ConstNode, StaticNode, Attribute}; // Import specific nodes and Attribute
+
+// Struct to hold expected fields for a ConstNode
+#[derive(Debug, Clone, PartialEq)]
+struct ExpectedConstData {
+    name: &'static str,
+    visibility: VisibilityKind,
+    type_id_check: bool, // Just check if it's Synthetic for now
+    value: Option<&'static str>,
+    attributes: Vec<Attribute>, // Store expected non-cfg attributes
+    docstring_contains: Option<&'static str>,
+    tracking_hash_check: bool, // Check if Some
+    cfgs: Vec<String>,
+}
+
+// Struct to hold expected fields for a StaticNode
+#[derive(Debug, Clone, PartialEq)]
+struct ExpectedStaticData {
+    name: &'static str,
+    visibility: VisibilityKind,
+    type_id_check: bool,
+    is_mutable: bool,
+    value: Option<&'static str>,
+    attributes: Vec<Attribute>,
+    docstring_contains: Option<&'static str>,
+    tracking_hash_check: bool,
+    cfgs: Vec<String>,
+}
+
+
+lazy_static! {
+    // Map from ident -> ExpectedConstData
+    static ref EXPECTED_CONSTS_DATA: HashMap<&'static str, ExpectedConstData> = {
+        let mut m = HashMap::new();
+        m.insert("TOP_LEVEL_INT", ExpectedConstData {
+            name: "TOP_LEVEL_INT",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("10"),
+            attributes: vec![],
+            docstring_contains: Some("top-level private constant"),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("doc_attr_const", ExpectedConstData {
+            name: "doc_attr_const",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            value: Some("3.14"),
+            attributes: vec![
+                // Note: Arg parsing might simplify this in the future
+                Attribute { name: "deprecated".to_string(), args: vec!["note = \"Use NEW_DOC_ATTR_CONST instead\"".to_string()], value: None },
+                Attribute { name: "allow".to_string(), args: vec!["unused".to_string()], value: None },
+            ],
+            docstring_contains: Some("This is a documented constant."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        // Add more const examples if needed
+        m
+    };
+
+    // Map from ident -> ExpectedStaticData
+    static ref EXPECTED_STATICS_DATA: HashMap<&'static str, ExpectedStaticData> = {
+        let mut m = HashMap::new();
+        m.insert("TOP_LEVEL_COUNTER", ExpectedStaticData {
+            name: "TOP_LEVEL_COUNTER",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            is_mutable: true,
+            value: Some("0"),
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+         m.insert("DOC_ATTR_STATIC", ExpectedStaticData {
+            name: "DOC_ATTR_STATIC",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            is_mutable: false,
+            value: Some("true"),
+            attributes: vec![], // cfg is handled separately
+            docstring_contains: Some("A static variable with a doc comment and attribute."),
+            tracking_hash_check: true,
+            // Note: cfg string includes quotes as parsed by syn
+            cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here
+        });
+        m.insert("INNER_MUT_STATIC", ExpectedStaticData {
+            name: "INNER_MUT_STATIC",
+            visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
+            type_id_check: true,
+            is_mutable: true,
+            value: Some("false"),
+            attributes: vec![
+                 Attribute { name: "allow".to_string(), args: vec!["dead_code".to_string()], value: None },
+            ],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        // Add more static examples if needed
+        m
+    };
+}
+
 
 // Previous versions.
 // Define expected items: (name, kind, is_mutable, visibility_check)
@@ -302,55 +410,111 @@ fn basic_smoke_test() -> anyhow::Result<()> {
     }
     Ok(())
 }
-// AI: follow test structure
+
 // Tier 2: Targeted Field Verification
 // Goal: Verify each field of the StaticNode or ConstNode struct individually for specific examples.
 //       These tests act as diagnostics if specific fields break later. Use detailed asserts.
 //       Uses full parse for consistency.
 // ---------------------------------------------------------------------------------
 #[test]
-fn test_value_node_field_id_regeneration() {
-    // AI: Fill out this test. Don't change the first part.
+fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserError> { // Renamed slightly
     let fixture = "fixture_nodes";
-    let results = run_phase1_phase2(fixture);
-    /// Check for errors
-    results
-        .iter()
-        .filter(|result| result.is_err())
-        .inspect(|e| {
-            log::error!("Error while parsing {:?}", e);
-        })
-        .count();
-    let parsed = results
-        .iter()
-        .map(|result| result.expect("Failed to parse target fixture."));
+    let file_path_rel = "src/const_static.rs";
 
-    // AI: Change after here:
-    let example_idents = ["ident", "ident", "ident"]; // AI: Pick some representative examples
-    let items = EXPECTED_ITEMS;
-    // AI: Generate the ids for representative items and verify them.
-    let expected_pids = items.iter().copied().map(|item| item.generate_pid(results));
+    // Use helper to collect graphs, handling errors
+    let successful_graphs = run_phases_and_collect(fixture);
 
-    // Assert the ID is synthetic (basic check) - still useful
-    // AI: Replace or delete this
-    assert!(
-        matches!(node.id, NodeId::Synthetic(_)),
-        "Node '{}': ID should be Synthetic, found {:?}",
-        value_name,
-        node.id
-    );
+    // Find the specific graph for const_static.rs
+    let target_data = find_parsed_graph_by_path(&successful_graphs, fixture, file_path_rel)?;
+    let graph = &target_data.graph;
 
-    // Now perform the full ID comparison
-    // Compare the ID
-    assert_eq!(
-        node.id, regenerated_id,
-        "Mismatch for ID field. Expected (regen): {}, Actual: {}",
-        regenerated_id, node.id
-    );
-    // AI: Compare All other fields from representative examples here
-    // Use your access to the target fixture `nodes/const_static.rs` to provide accurate checks of
-    // each field. You can see the details on the const/static node definitions at `nodes/value.rs` AI!
+    // --- Define Representative Examples ---
+    // Choose idents corresponding to keys in the lazy static maps
+    let representative_idents = [
+        "TOP_LEVEL_INT",
+        "doc_attr_const",
+        "TOP_LEVEL_COUNTER",
+        "DOC_ATTR_STATIC",
+        "INNER_MUT_STATIC",
+    ];
+
+    for ident in representative_idents {
+        println!("Checking fields for: {}", ident);
+
+        // Find the corresponding ParanoidArgs from the static list
+        let item_args = EXPECTED_ITEMS
+            .iter()
+            .find(|i| i.ident == ident)
+            .unwrap_or_else(|| panic!("ParanoidArgs not found for ident: {}", ident));
+
+        // 1. Generate the expected ID using the paranoid helper
+        let expected_pid = gen_pid_paranoid(item_args.clone(), &successful_graphs)?;
+
+        // 2. Find the node using the generated ID
+        let found_node = graph.find_node_unique(expected_pid.into())?;
+
+        // 3. Compare Fields using lazy static data
+        match item_args.item_kind {
+            ItemKind::Const => {
+                let const_node = found_node.as_const().ok_or_else(|| {
+                    SynParserError::NodeKindMismatch {
+                        id: found_node.any_id(),
+                        expected: item_args.item_kind,
+                        actual: found_node.kind(),
+                    }
+                })?;
+                let expected_data = EXPECTED_CONSTS_DATA.get(ident)
+                    .unwrap_or_else(|| panic!("Expected const data not found for {}", ident));
+
+                assert_eq!(const_node.name, expected_data.name, "Name mismatch for {}", ident);
+                assert_eq!(const_node.visibility(), &expected_data.visibility, "Visibility mismatch for {}", ident);
+                assert_eq!(matches!(const_node.type_id, TypeId::Synthetic(_)), expected_data.type_id_check, "TypeId check failed for {}", ident);
+                assert_eq!(const_node.value.as_deref(), expected_data.value, "Value mismatch for {}", ident);
+                // Note: Attribute comparison might need refinement if order matters or args are complex
+                assert_eq!(const_node.attributes, expected_data.attributes, "Attributes mismatch for {}", ident);
+                assert_eq!(const_node.docstring.as_deref().map(|s| s.contains(expected_data.docstring_contains.unwrap_or(""))).unwrap_or(false),
+                           expected_data.docstring_contains.is_some(), "Docstring mismatch for {}", ident);
+                assert_eq!(matches!(const_node.tracking_hash, Some(TrackingHash(_))), expected_data.tracking_hash_check, "TrackingHash check failed for {}", ident);
+                // Sort CFGs for comparison
+                let mut actual_cfgs = const_node.cfgs().to_vec();
+                actual_cfgs.sort_unstable();
+                let mut expected_cfgs_sorted = expected_data.cfgs.clone();
+                expected_cfgs_sorted.sort_unstable();
+                assert_eq!(actual_cfgs, expected_cfgs_sorted, "CFGs mismatch for {}", ident);
+            }
+            ItemKind::Static => {
+                 let static_node = found_node.as_static().ok_or_else(|| {
+                     SynParserError::NodeKindMismatch {
+                        id: found_node.any_id(),
+                        expected: item_args.item_kind,
+                        actual: found_node.kind(),
+                    }
+                })?;
+                let expected_data = EXPECTED_STATICS_DATA.get(ident)
+                    .unwrap_or_else(|| panic!("Expected static data not found for {}", ident));
+
+                assert_eq!(static_node.name, expected_data.name, "Name mismatch for {}", ident);
+                assert_eq!(static_node.visibility(), &expected_data.visibility, "Visibility mismatch for {}", ident);
+                assert_eq!(matches!(static_node.type_id, TypeId::Synthetic(_)), expected_data.type_id_check, "TypeId check failed for {}", ident);
+                assert_eq!(static_node.is_mutable, expected_data.is_mutable, "is_mutable mismatch for {}", ident);
+                assert_eq!(static_node.value.as_deref(), expected_data.value, "Value mismatch for {}", ident);
+                assert_eq!(static_node.attributes, expected_data.attributes, "Attributes mismatch for {}", ident);
+                 assert_eq!(static_node.docstring.as_deref().map(|s| s.contains(expected_data.docstring_contains.unwrap_or(""))).unwrap_or(false),
+                           expected_data.docstring_contains.is_some(), "Docstring mismatch for {}", ident);
+                assert_eq!(matches!(static_node.tracking_hash, Some(TrackingHash(_))), expected_data.tracking_hash_check, "TrackingHash check failed for {}", ident);
+                // Sort CFGs for comparison
+                let mut actual_cfgs = static_node.cfgs().to_vec();
+                actual_cfgs.sort_unstable();
+                let mut expected_cfgs_sorted = expected_data.cfgs.clone();
+                expected_cfgs_sorted.sort_unstable();
+                assert_eq!(actual_cfgs, expected_cfgs_sorted, "CFGs mismatch for {}", ident);
+            }
+            _ => panic!("Unexpected item kind in test: {:?}", item_args.item_kind),
+        }
+    }
+    Ok(())
 }
+
 
 // #[test] fn test_value_node_field_name()
 //  - Target: TOP_LEVEL_BOOL
