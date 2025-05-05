@@ -50,6 +50,7 @@ itertools = "0.14.0"
 [dev-dependencies]
 tempfile = "3.10"   # For creating temporary files/dirs in tests
 env_logger = "0.11" # Add env_logger for test logging
+lazy_static = "1.4.0" # Added lazy_static
 
 # Feature flags
 [features]

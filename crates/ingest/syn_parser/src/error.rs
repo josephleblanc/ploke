@@ -29,10 +29,26 @@ pub enum CodeVisitorError {
 
 /// Custom error type for the syn_parser crate.
 use crate::parser::graph::ParsedGraphError; // Import the new error type
+// Import the new test helper error type (adjust path if necessary based on your project structure)
+// This might require making TestHelperError public or adjusting visibility.
+// Assuming it's accessible via crate::common::TestHelperError for now.
+// If tests are a separate crate, this direct import won't work easily.
+// A common pattern is to define test-specific errors within the main crate
+// under a `#[cfg(test)]` module or feature-gate them.
+// For now, let's assume it's defined in a way that's visible here.
+// If not, we'll need to rethink where TestHelperError is defined or how it's wrapped.
+
+// Placeholder: If TestHelperError is in tests/common/mod.rs, direct import isn't possible.
+// Let's add a variant that takes a String instead, and the conversion will happen in the test code.
+// #[cfg(test)] // Or define it conditionally if needed
+// use crate::common::TestHelperError; // Hypothetical import
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
-    // AI: Add error here AI!
+    /// Error originating from test helper logic (wrapped as string).
+    #[error("Test helper error: {0}")]
+    TestHelperError(String), // Wrap the error message
+
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),

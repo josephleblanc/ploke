@@ -9,7 +9,7 @@ use syn_parser::parser::types::{GenericParamKind, GenericParamNode, VisibilityKi
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
 use syn_parser::TestIds;
-use thiserror::Error;
+use thiserror::Error; // Ensure thiserror is imported
 
 pub mod debug_printers;
 pub mod paranoid;
@@ -257,6 +257,28 @@ pub enum FixtureError {
     #[error("Test assertion failed: {0}")]
     Assertion(String),
 }
+
+/// Errors specific to the setup or execution of test helper functions.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum TestHelperError {
+    #[error("Invalid argument provided to test helper: {0}")]
+    InvalidArgument(String),
+
+    #[error("Could not find ParsedCodeGraph for fixture '{fixture_name}' file '{relative_file_path}'")]
+    FixtureGraphNotFound {
+        fixture_name: String,
+        relative_file_path: String,
+    },
+
+    #[error("Expected path was empty")]
+    EmptyExpectedPath,
+
+    #[error("Unsupported ItemKind for helper: {0:?}")]
+    UnsupportedItemKind(ItemKind),
+    // Add other helper-specific errors as needed
+}
+
+
 /// A small group of errors that are indicative of some basic properties of the nodes or the
 /// fixture being broken. Should only be used rarely and with care.
 #[derive(Error, Debug)]
