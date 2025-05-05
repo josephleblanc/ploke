@@ -424,9 +424,16 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
     // Use helper to collect graphs, handling errors
     let successful_graphs = run_phases_and_collect(fixture);
 
-    // AI: This funciton doesn't exist. Fix it AI!
     // Find the specific graph for const_static.rs
-    let target_data = find_parsed_graph_by_path(&successful_graphs, fixture, file_path_rel)?;
+    let target_data = successful_graphs
+        .iter()
+        .find(|g| g.file_path.ends_with(file_path_rel)) // Find by relative path suffix
+        .ok_or_else(|| {
+            SynParserError::TestHelperError(format!(
+                "ParsedCodeGraph for fixture '{}' file '{}' not found",
+                fixture, file_path_rel
+            ))
+        })?;
     let graph = &target_data.graph;
 
     // --- Define Representative Examples ---
