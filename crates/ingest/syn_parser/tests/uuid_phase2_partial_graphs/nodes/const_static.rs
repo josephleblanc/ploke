@@ -5,6 +5,7 @@ use crate::common::run_phases_and_collect;
 // Use re-exports from paranoid mod
 use crate::common::FixtureError;
 use crate::common::ParanoidArgs;
+use crate::common::macro_rule_tests::paranoid_test_name_check; // Import the macro
 use lazy_static::lazy_static;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::ItemKind;
@@ -624,38 +625,51 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
 //  - Target: TOP_LEVEL_BOOL
 //  - Find the ValueNode.
 //  - Assert_eq!(node.name, "TOP_LEVEL_BOOL", "Mismatch for name field. Expected: {}, Actual: {}", ...);
-#[test]
-fn test_value_node_field_name() -> Result<()> {
-    // Collect successful graphs
-    let successful_graphs = run_phases_and_collect("fixture_nodes");
 
-    // Use ParanoidArgs to find the node
-    let args = ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_BOOL",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    };
+// Replaced by macro invocation below
+// #[test]
+// fn test_value_node_field_name() -> Result<(), SynParserError> { // Original was Result<()> which is FixtureError
+//     // Collect successful graphs
+//     let successful_graphs = run_phases_and_collect("fixture_nodes");
+//
+//     // Use ParanoidArgs to find the node
+//     let args = ParanoidArgs {
+//         fixture: "fixture_nodes",
+//         relative_file_path: "src/const_static.rs",
+//         ident: "TOP_LEVEL_BOOL",
+//         expected_cfg: None,
+//         expected_path: &["crate", "const_static"],
+//         item_kind: ItemKind::Const,
+//     };
+//
+//     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+//     let test_info = args.generate_pid(&successful_graphs)?;
+//
+//     // Find the node using the generated ID within the correct graph
+//     let node = test_info
+//         .target_data() // This is &ParsedCodeGraph
+//         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+//         .expect("Failed to find node using generated PID");
+//
+//     assert_eq!(
+//         node.name(), // Use the GraphNode trait method
+//         args.ident,
+//         "Mismatch for name field. Expected: '{}', Actual: '{}'",
+//         args.ident,
+//         node.name()
+//     );
+//     Ok(())
+// }
 
-    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
-    let test_info = args.generate_pid(&successful_graphs)?;
-
-    // Find the node using the generated ID within the correct graph
-    let node = test_info
-        .target_data()
-        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
-        .expect("Failed to find node using generated PID");
-
-    assert_eq!(
-        node.name(), // Use the GraphNode trait method
-        args.ident,
-        "Mismatch for name field. Expected: '{}', Actual: '{}'",
-        args.ident,
-        node.name()
-    );
-}
+paranoid_test_name_check!(
+    test_value_node_field_name_macro_generated,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_BOOL",
+    expected_path: &["crate", "const_static"],
+    item_kind: ItemKind::Const,
+    expected_cfg: None
+);
 
 // #[test] fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
