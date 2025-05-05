@@ -28,8 +28,6 @@ pub fn find_value_node_paranoid<'a>(args: ParanoidArgs) -> Result<PrimaryNodeId,
             )
         });
     let graph = &target_data.graph;
-    let crate_namespace = target_data.crate_namespace;
-    let file_path = &target_data.file_path; // Use the path from the found graph data
     let exp_path_string = args
         .expected_path
         .iter()

@@ -16,6 +16,8 @@ pub mod paranoid;
 pub mod resolution; // Add resolution module
 
 #[derive(Debug, Clone)]
+/// Args for the paranoid helper test functions.
+/// Includes all information required to regenerate the NodeId of the target node.
 pub struct ParanoidArgs<'a> {
     parsed_graphs: &'a [ParsedCodeGraph], // Operate on the collection
     fixture_name: &'a str,                // Needed to construct expected path
@@ -25,12 +27,11 @@ pub struct ParanoidArgs<'a> {
     expected_cfg: &'a [&'a str],
     item_kind: ItemKind,
 }
-
-/// Finds the specific ParsedCodeGraph for the target file, then finds the ValueNode
-/// (const or static) within that graph corresponding to the given module path and name,
-/// performs paranoid checks, and returns a reference.
-/// Panics if the graph or node is not found, or if uniqueness or ID checks fail.
-pub fn find_primary_node_paranoid<'a>(args: ParanoidArgs) -> Result<PrimaryNodeId, SynParserError> {
+/// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
+/// correctly matches when using the expected inputs for the typed id node generation.
+/// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
+/// in the `ParanoidArgs`.
+pub fn gen_pid_paranoid<'a>(args: ParanoidArgs) -> Result<PrimaryNodeId, SynParserError> {
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(args.fixture_name);
     let target_file_path = fixture_root.join(args.relative_file_path);
@@ -139,6 +140,14 @@ pub fn print_typedef_names(code_graph: &CodeGraph) -> Vec<&str> {
 pub const FIXTURES_DIR: &str = "tests/fixtures";
 
 #[derive(Error, Debug)]
+pub enum TestError {
+    #[transparent]
+    FixtureError(#[from] FixtureError)
+    #[transparent]
+    SmokeTestError(#[from] FixtureError)
+}
+
+#[derive(Error, Debug)]
 pub enum FixtureError {
     #[error("IO error reading fixture: {0}")]
     Io(#[from] std::io::Error),
@@ -150,6 +159,15 @@ pub enum FixtureError {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("Test assertion failed: {0}")]
     Assertion(String),
+}
+/// A small group of errors that are indicative of some basic properties of the nodes or the
+/// fixture being broken. Should only be used rarely and with care.
+#[derive(Error, Debug)]
+pub enum SmokeTestError {
+    /// A basic test for the name of a given node, where the name is the visible name. This is a
+    /// smoke test and it should not be taken as a thought indication of uniqueness.
+    #[error("Fixture not found: {0}")]
+    NotFoundByName(String),
 }
 
 /// Helper to assert a condition with a descriptive error             

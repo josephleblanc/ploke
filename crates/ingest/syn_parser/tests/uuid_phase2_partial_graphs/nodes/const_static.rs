@@ -1,8 +1,12 @@
+#![cfg(test)]
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
+use crate::common::ParanoidArgs;
 use ploke_common::fixtures_crates_dir;
+use ploke_core::ItemKind;
 use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
+use syn_parser::error::SynParserError;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
@@ -28,8 +32,26 @@ use syn_parser::parser::{graph::CodeGraph, nodes::GraphNode};
 //      - Assert node.id is NodeId::Synthetic(_).
 //      - Assert node.tracking_hash is Some(TrackingHash(_)).
 //      - Assert node.type_id is TypeId::Synthetic(_).
-//      - Assert node.kind matches (Constant or Static { is_mutable }).
+//      - Assert node.kind matches (Const or Static { is_mutable }).
 //      - Assert node.visibility is not Inherited if it should be something else (basic check).
+
+struct StaticHelper {
+    name: &str,
+    item_kind: ItemKind,
+    is_vis: VisibilityKind,
+}
+
+const TOP_LEVEL_INT_INFO: StaticHelper = StaticHelper {
+    name: "TOP_LEVEL_INT",
+    item_kind: ItemKind::Const,
+    is_vis: false
+}
+const TEST_STATIC_TOP_LEVEL_INT: StaticHelper = StaticHelper {
+    name: "TOP_LEVEL_INT",
+    item_kind: ItemKind::Const,
+    is_vis: false
+}
+
 #[test]
 fn test_const_static_basic_smoke_test_full_parse() {
     let results = run_phase1_phase2("fixture_nodes");
@@ -50,60 +72,35 @@ fn test_const_static_basic_smoke_test_full_parse() {
 
     let graph = &target_data.graph;
 
-    // Define expected items: (name, kind, visibility_check)
+    // Define expected items: (name, kind, is_mutable, visibility_check)
     // Visibility check is basic: true if it should NOT be Inherited
-    let expected_items = vec![
-        ("TOP_LEVEL_INT", ValueKind::Constant, false), // private
-        ("TOP_LEVEL_BOOL", ValueKind::Constant, true), // pub
-        (
-            "TOP_LEVEL_STR",
-            ValueKind::Static { is_mutable: false },
-            false,
-        ), // private
-        (
-            "TOP_LEVEL_COUNTER",
-            ValueKind::Static { is_mutable: true },
-            true,
-        ), // pub
-        (
-            "TOP_LEVEL_CRATE_STATIC",
-            ValueKind::Static { is_mutable: false },
-            true,
-        ), // pub(crate)
-        ("ARRAY_CONST", ValueKind::Constant, false),   // private
-        (
-            "TUPLE_STATIC",
-            ValueKind::Static { is_mutable: false },
-            false,
-        ), // private
-        ("STRUCT_CONST", ValueKind::Constant, false),  // private
-        ("ALIASED_CONST", ValueKind::Constant, false), // private
-        ("EXPR_CONST", ValueKind::Constant, false),    // private
-        ("FN_CALL_CONST", ValueKind::Constant, false), // private
-        ("doc_attr_const", ValueKind::Constant, true), // pub
-        (
-            "DOC_ATTR_STATIC",
-            ValueKind::Static { is_mutable: false },
-            false,
-        ), // private
-        // ("IMPL_CONST", ValueKind::Constant, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
-        // ("TRAIT_REQ_CONST", ValueKind::Constant, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
-        ("INNER_CONST", ValueKind::Constant, true), // pub(crate) (in mod)
-        (
-            "INNER_MUT_STATIC", // pub(super) (in mod)
-            ValueKind::Static { is_mutable: true },
-            true,
-        ), // pub(super) (in mod)
+    let expected_consts = vec![
+        ("TOP_LEVEL_INT", ItemKind::Const, false), // private
+        ("TOP_LEVEL_BOOL", ItemKind::Const, true), // pub
+        ("INNER_CONST", ItemKind::Const, true),    // pub(crate) (in mod)
+        ("ARRAY_CONST", ItemKind::Const, false),   // private
+        ("STRUCT_CONST", ItemKind::Const, false),  // private
+        ("ALIASED_CONST", ItemKind::Const, false), // private
+        ("EXPR_CONST", ItemKind::Const, false),    // private
+        ("FN_CALL_CONST", ItemKind::Const, false), // private
+        ("doc_attr_const", ItemKind::Const, true), // pub
     ];
+    let expected_statics = vec![
+        ("TOP_LEVEL_STR", ItemKind::Static, false), // private
+        ("TOP_LEVEL_COUNTER", ItemKind::Static, true, true), // pub
+        ("TOP_LEVEL_CRATE_STATIC", ItemKind::Static, false, true), // pub(crate)
+        ("TUPLE_STATIC", ItemKind::Static, false, false), // private
+        ("DOC_ATTR_STATIC", ItemKind::Static, false, false), // private
+        ("INNER_MUT_STATIC", ItemKind::Static, true, true), // pub(super) (in mod)
+    ];
+    // ("IMPL_CONST", ItemKind::Const, true),     // Ignored: Limitation - Associated const in impl not parsed (see 02c_phase2_known_limitations.md)
+    // ("TRAIT_REQ_CONST", ItemKind::Const, false), // Ignored: Limitation - Associated const in trait impl not parsed (see 02c_phase2_known_limitations.md)
 
-    assert!(!graph.values.is_empty(), "CodeGraph contains no ValueNodes");
+    assert!(!graph.consts.is_empty(), "CodeGraph contains no Consts");
+    assert!(!graph.consts.is_empty(), "CodeGraph contains no Statics");
 
-    for (name, expected_kind, should_not_be_inherited) in expected_items {
-        let node = graph
-            .values
-            .iter()
-            .find(|v| v.name == name)
-            .unwrap_or_else(|| panic!("ValueNode '{}' not found in graph.values", name));
+    for (name, expected_kind, is_mutable, should_not_be_inherited) in expected_statics {
+        let node = graph.consts.iter().find(|s| s.name == name).ok_or_else(|| )
 
         assert!(
             matches!(node.id, NodeId::Synthetic(_)),
@@ -215,8 +212,8 @@ fn test_value_node_field_id_regeneration() {
 
     // Determine ItemKind based on the node found
     let item_kind = match node.kind {
-        ValueKind::Constant => ploke_core::ItemKind::Const,
-        ValueKind::Static { .. } => ploke_core::ItemKind::Static,
+        ItemKind::Const => ploke_core::ItemKind::Const,
+        ItemKind::Static { .. } => ploke_core::ItemKind::Static,
     };
 
     // Find the containing module node to get its ID for the parent scope
@@ -461,7 +458,7 @@ fn test_value_node_field_type_id_presence() {
 // #[test] fn test_value_node_field_kind_const()
 //  - Target: TOP_LEVEL_INT
 //  - Find the ValueNode.
-//  - Assert_eq!(node.kind, ValueKind::Constant, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
+//  - Assert_eq!(node.kind, ItemKind::Const, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
 fn test_value_node_field_kind_const() {
     // Target: TOP_LEVEL_INT
@@ -477,7 +474,7 @@ fn test_value_node_field_kind_const() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_INT";
-    let expected_kind = ValueKind::Constant;
+    let expected_kind = ItemKind::Const;
 
     let node = find_value_node_basic(graph, &module_path, value_name);
 
@@ -491,7 +488,7 @@ fn test_value_node_field_kind_const() {
 // #[test] fn test_value_node_field_kind_static_imm()
 //  - Target: TOP_LEVEL_STR
 //  - Find the ValueNode.
-//  - Assert_eq!(node.kind, ValueKind::Static { is_mutable: false }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
+//  - Assert_eq!(node.kind, ItemKind::Static { is_mutable: false }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
 fn test_value_node_field_kind_static_imm() {
     // Target: TOP_LEVEL_STR
@@ -507,7 +504,7 @@ fn test_value_node_field_kind_static_imm() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_STR";
-    let expected_kind = ValueKind::Static { is_mutable: false };
+    let expected_kind = ItemKind::Static { is_mutable: false };
 
     let node = find_value_node_basic(graph, &module_path, value_name);
 
@@ -521,7 +518,7 @@ fn test_value_node_field_kind_static_imm() {
 // #[test] fn test_value_node_field_kind_static_mut()
 //  - Target: TOP_LEVEL_COUNTER
 //  - Find the ValueNode.
-//  - Assert_eq!(node.kind, ValueKind::Static { is_mutable: true }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
+//  - Assert_eq!(node.kind, ItemKind::Static { is_mutable: true }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
 fn test_value_node_field_kind_static_mut() {
     // Target: TOP_LEVEL_COUNTER
@@ -537,7 +534,7 @@ fn test_value_node_field_kind_static_mut() {
     let graph = &target_data.graph;
     let module_path = vec!["crate".to_string(), "const_static".to_string()]; // Correct path
     let value_name = "TOP_LEVEL_COUNTER";
-    let expected_kind = ValueKind::Static { is_mutable: true };
+    let expected_kind = ItemKind::Static { is_mutable: true };
 
     let node = find_value_node_basic(graph, &module_path, value_name);
 
@@ -998,7 +995,7 @@ fn test_value_node_paranoid_const_doc_attr() {
         matches!(node.type_id, TypeId::Synthetic(_)),
         "TypeId should be Synthetic"
     );
-    assert_eq!(node.kind, ValueKind::Constant, "Kind mismatch");
+    assert_eq!(node.kind, ItemKind::Const, "Kind mismatch");
     // Note: Value representation might depend on syn/quote formatting. Adjust if needed.
     assert_eq!(node.value.as_deref(), Some("3.14"), "Value string mismatch");
     assert_eq!(node.attributes.len(), 2, "Attribute count mismatch");
@@ -1112,7 +1109,7 @@ fn test_value_node_paranoid_const_doc_attr() {
 //      - name == "doc_attr_const"
 //      - visibility == Public
 //      - type_id is Synthetic
-//      - kind == Constant
+//      - kind == Const
 //      - value == Some("3.14") // Or maybe the approx constant representation? Check syn output.
 //      - attributes.len() == 2 (check names/args specifically)
 //      - docstring contains "This is a documented constant."
@@ -1209,7 +1206,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
     );
     assert_eq!(
         node.kind,
-        ValueKind::Static { is_mutable: true },
+        ItemKind::Static { is_mutable: true },
         "Kind mismatch"
     );
     assert_eq!(
