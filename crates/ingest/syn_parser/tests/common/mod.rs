@@ -148,6 +148,8 @@ impl<'a> ParanoidArgs<'a> {
         };
         Ok(test_info)
     }
+    // AI: Create another set of logging method that follow the pattern we are using in
+    // `ExpectedConstData` with `find_node_by_values` and its helper functions. AI!
 }
 
 #[derive(Debug, Clone)]
