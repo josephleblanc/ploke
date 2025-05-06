@@ -2,6 +2,9 @@
 use crate::common::gen_pid_paranoid;
 use crate::common::run_phase1_phase2;
 use crate::common::run_phases_and_collect;
+use syn_parser::parser::nodes::HasAttributes;
+use syn_parser::utils::LogStyle;
+use syn_parser::utils::LogStyleDebug;
 // Use re-exports from paranoid mod
 use crate::common::FixtureError;
 use crate::common::ParanoidArgs;
@@ -22,7 +25,6 @@ use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::TestIds; // Import specific nodes and Attribute
 pub const LOG_TEST_CONST: &str = "log_test_const";
-use syn_parser::utils::logging::{LogStyle, LogStyleDebug};
 // Struct to hold expected fields for a ConstNode
 #[derive(Debug, Clone, PartialEq)]
 struct ExpectedConstData {
@@ -35,20 +37,48 @@ struct ExpectedConstData {
     tracking_hash_check: bool, // Check if Some
     cfgs: Vec<String>,
 }
-
+// AI: Continue implementing this pattern.
 impl ExpectedConstData {
     pub fn find_node_by_values(&self, parsed: &ParsedCodeGraph) {
-        parsed.graph.consts.iter().filter(|node| {
-            log::debug!(target: LOG_TEST_CONST,
-                "   {}: Expected '{}' == Actual '{}': {}",
-                "Checking if names match".to_string().log_step(),
-                self.name.log_name(),
-                node.name().log_name(), // Use GraphNode::name() which returns &str
-                (self.name == node.name()).to_string().log_vis() // Compare names and log boolean result
-            );
-            self.name == node.name()
-        });
+        parsed
+            .graph
+            .consts
+            .iter()
+            .filter(|n| self.is_name_match_debug(n));
     }
+
+    fn is_name_match_debug(&self, node: &&ConstNode) -> bool {
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected '{}' == Actual '{}': {}",
+            "Names Match?".to_string().log_step(),
+            self.name.log_name(),
+            node.name().log_name(), // Use GraphNode::name() which returns &str
+            (self.name == node.name()).to_string().log_vis() // Compare names and log boolean result
+        );
+        self.name == node.name()
+    }
+    fn is_vis_match_debug(&self, node: &&ConstNode) -> bool {
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected '{}' == Actual '{}': {}",
+            "Names Match?".to_string().log_step(),
+            self.visibility.log_vis_debug(),
+            node.visibility().log_vis_debug(), // Use GraphNode::name() which returns &str
+            (self.visibility == *node.visibility()).to_string().log_vis() // Compare names and log boolean result
+        );
+        self.visibility == *node.visibility()
+    }
+    fn is_attr_match_debug(&self, node: &&ConstNode) -> bool {
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected '{}' == Actual '{}': {}",
+            "Names Match?".to_string().log_step(),
+            self.attributes.log_green_debug(),
+            node.attributes().log_green_debug(), // Use GraphNode::name() which returns &str
+            (self.attributes== node.attributes()).to_string().log_vis() // Compare names and log boolean result
+        );
+        self.attributes == node.attributes()
+    }
+    // AI: Fill the rest out in this style. Do not use your original suggestions. Just do it the
+    // way I have done above AI!
 }
 
 // Struct to hold expected fields for a StaticNode
