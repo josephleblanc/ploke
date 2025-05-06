@@ -163,12 +163,12 @@ impl<'a> ParanoidArgs<'a> {
         );
         log::debug!(target: LOG_PARANOID_CHECK,
             "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {:?}\n    Parent Path: {:?}\n    CFGs: {:?}",
-            self.fixture.log_info(),
-            self.relative_file_path.log_info(),
-            self.ident.log_info(),
-            self.item_kind,
-            self.expected_path.log_info_debug(),
-            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_info()
+            self.fixture.log_name(),
+            self.relative_file_path.log_path(),
+            self.ident.log_name(),
+            self.item_kind.log_vis_debug(), // Use LogStyleDebug for ItemKind
+            self.expected_path.log_path_debug(),
+            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_name()
         );
     }
 
@@ -240,7 +240,7 @@ impl<'a> ParanoidArgs<'a> {
         log::debug!(target: LOG_PARANOID_CHECK,
             "    {} | Expected Parent Module Path '{:?}' was used for NodeId generation and lookup.",
             "Parent Path Check?".to_string().log_step(),
-            self.expected_path.log_info_debug()
+            self.expected_path.log_path_debug()
         );
     }
 
@@ -266,7 +266,12 @@ impl<'a> ParanoidArgs<'a> {
             all_match.to_string().log_vis()
         );
         if !all_match {
-            log::debug!(target: LOG_PARANOID_CHECK, "Mismatch Details - Actual Node:\n{:#?}", actual_node);
+            log::debug!(target: LOG_PARANOID_CHECK,
+                "Mismatch Details - Actual Node:\n  ID: {}\n  Name: {}\n  Kind: {:?}",
+                actual_node.any_id().to_string().log_id(),
+                actual_node.name().log_name(),
+                actual_node.kind().log_vis_debug()
+            );
         }
         all_match
     }
