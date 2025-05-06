@@ -40,13 +40,12 @@ impl ExpectedConstData {
     pub fn find_node_by_values(&self, parsed: &ParsedCodeGraph) {
         parsed.graph.consts.iter().filter(|node| {
             log::debug!(target: LOG_TEST_CONST,
-                "   {}: {} == {}: {}",
+                "   {}: Expected '{}' == Actual '{}': {}",
                 "Checking if names match".to_string().log_step(),
                 self.name.log_name(),
-                node.name.to_string().log_name(),
-                self.name == node,
-            ); // AI: fix this use of log_name, etc, to work for statics. add a new trait
-               // implementation in logging.rs if needed. AI!
+                node.name().log_name(), // Use GraphNode::name() which returns &str
+                (self.name == node.name()).to_string().log_vis() // Compare names and log boolean result
+            );
             self.name == node.name()
         });
     }
