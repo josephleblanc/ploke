@@ -37,14 +37,22 @@ struct ExpectedConstData {
     tracking_hash_check: bool, // Check if Some
     cfgs: Vec<String>,
 }
-// AI: Continue implementing this pattern.
+
 impl ExpectedConstData {
-    pub fn find_node_by_values(&self, parsed: &ParsedCodeGraph) {
-        parsed
-            .graph
-            .consts
-            .iter()
-            .filter(|n| self.is_name_match_debug(n));
+    pub fn find_node_by_values<'a>(
+        &'a self,
+        parsed: &'a ParsedCodeGraph,
+    ) -> impl Iterator<Item = &&ConstNode> {
+        parsed.graph.consts.iter().filter(move |n| {
+            self.is_name_match_debug(n)
+                && self.is_vis_match_debug(n)
+                && self.is_attr_match_debug(n)
+                && self.is_type_id_check_match_debug(n)
+                && self.is_value_match_debug(n)
+                && self.is_docstring_contains_match_debug(n)
+                && self.is_tracking_hash_check_match_debug(n)
+                && self.is_cfgs_match_debug(n)
+        })
     }
 
     fn is_name_match_debug(&self, node: &&ConstNode) -> bool {
@@ -77,8 +85,75 @@ impl ExpectedConstData {
         );
         self.attributes == node.attributes()
     }
-    // AI: Fill the rest out in this style. Do not use your original suggestions. Just do it the
-    // way I have done above AI!
+
+    fn is_type_id_check_match_debug(&self, node: &&ConstNode) -> bool {
+        let actual_check_passes = matches!(node.type_id, TypeId::Synthetic(_));
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
+            "TypeId Check Match?".to_string().log_step(),
+            self.type_id_check.to_string().log_name(),
+            actual_check_passes.to_string().log_name(),
+            (self.type_id_check == actual_check_passes).to_string().log_vis()
+        );
+        self.type_id_check == actual_check_passes
+    }
+
+    fn is_value_match_debug(&self, node: &&ConstNode) -> bool {
+        let actual_value = node.value.as_deref();
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected '{:?}' == Actual '{:?}': {}",
+            "Value Match?".to_string().log_step(),
+            self.value.log_name_debug(),
+            actual_value.log_name_debug(),
+            (self.value == actual_value).to_string().log_vis()
+        );
+        self.value == actual_value
+    }
+
+    fn is_docstring_contains_match_debug(&self, node: &&ConstNode) -> bool {
+        let actual_docstring = node.docstring.as_deref();
+        let check_passes = match self.docstring_contains {
+            Some(expected_substr) => actual_docstring.map_or(false, |s| s.contains(expected_substr)),
+            None => actual_docstring.is_none(),
+        };
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected contains '{:?}' in Actual '{:?}': {}",
+            "Docstring Contains Match?".to_string().log_step(),
+            self.docstring_contains.log_name_debug(),
+            actual_docstring.log_name_debug(),
+            check_passes.to_string().log_vis()
+        );
+        check_passes
+    }
+
+    fn is_tracking_hash_check_match_debug(&self, node: &&ConstNode) -> bool {
+        let actual_check_passes = matches!(node.tracking_hash, Some(TrackingHash(_)));
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
+            "TrackingHash Check Match?".to_string().log_step(),
+            self.tracking_hash_check.to_string().log_name(),
+            actual_check_passes.to_string().log_name(),
+            (self.tracking_hash_check == actual_check_passes).to_string().log_vis()
+        );
+        self.tracking_hash_check == actual_check_passes
+    }
+
+    fn is_cfgs_match_debug(&self, node: &&ConstNode) -> bool {
+        // For CFGs, order doesn't matter, so we sort before comparison for stability.
+        let mut actual_cfgs = node.cfgs().to_vec();
+        actual_cfgs.sort_unstable();
+        let mut expected_cfgs_sorted = self.cfgs.clone();
+        expected_cfgs_sorted.sort_unstable();
+
+        log::debug!(target: LOG_TEST_CONST,
+            "   {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}': {}",
+            "CFGs Match?".to_string().log_step(),
+            expected_cfgs_sorted.log_green_debug(),
+            actual_cfgs.log_green_debug(),
+            (expected_cfgs_sorted == actual_cfgs).to_string().log_vis()
+        );
+        expected_cfgs_sorted == actual_cfgs
+    }
 }
 
 // Struct to hold expected fields for a StaticNode
