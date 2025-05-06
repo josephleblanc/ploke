@@ -238,9 +238,9 @@ impl<'a> ParanoidArgs<'a> {
     /// This check is implicitly performed during ID generation and lookup via `generate_pid`.
     pub fn log_parent_module_path_check_info(&self) {
         log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected Parent Module Path '{:?}' was used for NodeId generation and lookup.",
+            "    {} | Expected Parent Module Path '{}' was used for NodeId generation and lookup.",
             "Parent Path Check?".to_string().log_step(),
-            self.expected_path.log_path_debug()
+            self.expected_path.log_path_debug() // Will be displayed via {}
         );
     }
 
