@@ -125,24 +125,26 @@ impl GeneratesAnyNodeId for VisitorState {
             .copied()
             .map(|p_id| p_id.base_id());
 
-        if name == "TOP_LEVEL_BOOL" {
-
-            debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC");
-        debug!(target: LOG_TEMP_TARGET,
-            "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
-            name, item_kind
-        );
-        debug!(target: LOG_TEMP_TARGET, "  crate_namespace: {}", self.crate_namespace);
-        debug!(target: LOG_TEMP_TARGET, "  file_path: {:?}", self.current_file_path);
-        debug!(target: LOG_TEMP_TARGET, "  relative_path: {:?}", self.current_module_path);
-        debug!(target: LOG_TEMP_TARGET, "  item_name: {}", name);
-        debug!(target: LOG_TEMP_TARGET, "  item_kind: {:?}", item_kind);
-        debug!(target: LOG_TEMP_TARGET, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
-        debug!(target: LOG_TEMP_TARGET, "  cfg_bytes: {:?}", cfg_bytes);
+        // MODIFIED CONDITION FOR LOGGING:
+        if (item_kind == ItemKind::Const || item_kind == ItemKind::Static) &&
+           log::log_enabled!(target: LOG_TEMP_TARGET, log::Level::Debug) { // Check if specific log is enabled
+            debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC: VisitorState"); // Add context label
+            debug!(target: LOG_TEMP_TARGET,
+                "  Inputs for '{}' ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}",
+                name, // item name being processed by visitor
+                item_kind, // item kind being processed
+                self.crate_namespace,
+                &self.current_file_path,
+                &self.current_module_path, // This is the 'relative_path' for the item's ID context
+                name,
+                item_kind,
+                primary_parent_scope_id, // The actual parent_scope_id used by visitor
+                cfg_bytes // The actual cfg_bytes used by visitor
+            );
         }
         // if name == "TOP_LEVEL_BOOL" {
         //
-        //     debug!("DEBUG_CONST_STATIC");
+        //     debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC");
         // debug!(target: LOG_TARGET_NODE_ID,
         //     "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
         //     name, item_kind
