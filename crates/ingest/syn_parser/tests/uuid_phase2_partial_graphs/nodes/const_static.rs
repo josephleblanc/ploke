@@ -457,6 +457,10 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
 //      - Assert node.visibility is not Inherited if it should be something else (basic check).
 #[test]
 fn basic_smoke_test() -> anyhow::Result<()> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     let results = run_phase1_phase2("fixture_nodes");
     assert!(!results.is_empty(), "Phase 1 & 2 failed to produce results");
 
