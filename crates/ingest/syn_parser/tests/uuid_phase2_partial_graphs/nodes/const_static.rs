@@ -691,6 +691,33 @@ paranoid_test_fields_and_values_const!(
     expected_cfg: None
 );
 
+paranoid_test_fields_and_values_const!(
+    test_top_level_int_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_INT",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None // TOP_LEVEL_INT has no cfgs
+);
+
+paranoid_test_fields_and_values_const!(
+    test_doc_attr_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "doc_attr_const",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None // doc_attr_const itself has no #[cfg], its attributes are non-cfg
+);
+
+paranoid_test_fields_and_values_const!(
+    test_inner_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs", // Defined in this file
+    ident: "INNER_CONST",
+    expected_path: &["crate", "const_static", "inner_mod"], // Path to its parent module
+    expected_cfg: None // INNER_CONST has no cfgs
+);
+
 // fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
 //  - Find the ValueNode.
