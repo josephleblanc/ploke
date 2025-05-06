@@ -578,6 +578,10 @@ fn basic_smoke_test() -> anyhow::Result<()> {
 #[test]
 // #[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserError> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
     // Renamed slightly
     let fixture = "fixture_nodes";
     let file_path_rel = "src/const_static.rs";
