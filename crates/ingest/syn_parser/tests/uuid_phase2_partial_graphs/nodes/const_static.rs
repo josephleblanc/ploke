@@ -817,15 +817,21 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
-        // AI: Add checks here for new checks you just created in common/mod.rs AI!
-        let _ = exp_const
-            .find_node_by_values(
-                successful_graphs
-                    .iter()
-                    .find(|pg| pg.file_path.ends_with(args.relative_file_path))
-                    .unwrap(),
-            )
-            .count();
+        // If PID generation fails, log detailed checks against the expected node values
+        let target_graph = successful_graphs
+            .iter()
+            .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+            .unwrap(); // Panic if graph not found, as it's essential for debugging
+
+        // Attempt to find the node by its expected values to run checks
+        if let Some(actual_node) = exp_const.find_node_by_values(target_graph).next() {
+            log::warn!(target: LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
+            args.run_all_checks_on_node_and_log(actual_node);
+        } else {
+            log::error!(target: LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}), AND node could not be found by expected values for further checks.", args.ident, e);
+        }
+        // Original count for completeness, though the above provides more detail
+        let _ = exp_const.find_node_by_values(target_graph).count();
     })?;
 
     // Find the node using the generated ID within the correct graph
@@ -833,9 +839,15 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         .target_data() // This is &ParsedCodeGraph
         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
         .inspect_err(|e| {
-            let _ = exp_const
-                .find_node_by_values(test_info.target_data())
-                .count();
+            // If node lookup by PID fails, log detailed checks
+            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, e);
+            if let Some(actual_node) = exp_const.find_node_by_values(test_info.target_data()).next() {
+                args.run_all_checks_on_node_and_log(actual_node);
+            } else {
+                 log::error!(target: LOG_TEST_CONST, "Node lookup by PID failed for '{}', AND node could not be found by expected values for further checks.", args.ident);
+            }
+            // Original count for completeness
+            let _ = exp_const.find_node_by_values(test_info.target_data()).count();
         })?;
 
     assert_eq!(
