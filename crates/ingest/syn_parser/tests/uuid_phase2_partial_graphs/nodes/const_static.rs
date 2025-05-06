@@ -52,7 +52,7 @@ impl ExpectedConstData {
                 && self.is_docstring_contains_match_debug(n)
                 && self.is_tracking_hash_check_match_debug(n)
                 && self.is_cfgs_match_debug(n)
-        })
+        }) // AI: Change these to separate filter calls AI!
     }
 
     fn is_name_match_debug(&self, node: &&ConstNode) -> bool {
@@ -113,7 +113,9 @@ impl ExpectedConstData {
     fn is_docstring_contains_match_debug(&self, node: &&ConstNode) -> bool {
         let actual_docstring = node.docstring.as_deref();
         let check_passes = match self.docstring_contains {
-            Some(expected_substr) => actual_docstring.map_or(false, |s| s.contains(expected_substr)),
+            Some(expected_substr) => {
+                actual_docstring.map_or(false, |s| s.contains(expected_substr))
+            }
             None => actual_docstring.is_none(),
         };
         log::debug!(target: LOG_TEST_CONST,
