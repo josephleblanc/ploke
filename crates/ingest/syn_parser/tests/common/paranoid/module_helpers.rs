@@ -1,3 +1,4 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 //! Helper functions for module testing
 //!
 //! These helper functions are intentionally overkill and brittle.

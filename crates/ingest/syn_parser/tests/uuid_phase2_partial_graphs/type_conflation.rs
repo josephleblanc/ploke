@@ -1,3 +1,4 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 //! Tests specifically targeting TypeId conflation issues, particularly
 //! with generics (T) and Self types across different scopes.
 
@@ -45,6 +46,7 @@ fn find_lib_rs_graph(graphs: &[ParsedCodeGraph]) -> &ParsedCodeGraph {
 /// The `TypeId`s are expected to be the *same* because `TypeId::generate_synthetic`
 /// currently ignores the parent scope. This test SHOULD FAIL until the fix is applied.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_generic_param_conflation_in_functions() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
     let graph_data = find_lib_rs_graph(&graphs); // Find the specific graph for lib.rs
@@ -102,6 +104,7 @@ fn test_generic_param_conflation_in_functions() {
 /// currently ignores the parent scope and only sees `TypeKind::Named { path: ["Self"], .. }`.
 /// This test SHOULD FAIL until the fix is applied.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_self_return_type_conflation_in_impls() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
     let graph_data = find_lib_rs_graph(&graphs); // Find the specific graph for lib.rs
@@ -189,6 +192,7 @@ inner_return_self_type: {:#?}",
 /// currently ignores the parent scope and only sees `TypeKind::Named { path: ["T"], .. }`.
 /// This test SHOULD FAIL until the fix is applied.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_generic_field_conflation_in_structs() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
     let graph_data = find_lib_rs_graph(&graphs); // Find the specific graph for lib.rs
@@ -237,6 +241,7 @@ fn test_generic_field_conflation_in_structs() {
 // ID generation does not yet account for cfg.
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_cfg_struct_node_id_conflation() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
     let module_path = &["crate".to_string()];
@@ -290,6 +295,7 @@ fn test_cfg_struct_node_id_conflation() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_cfg_function_node_id_conflation() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
     let module_path = &["crate".to_string()];
@@ -338,6 +344,7 @@ fn test_cfg_function_node_id_conflation() {
 /// - `FileGatedStruct` in `src/cfg_file_a.rs` (via `#[cfg(feature = "feature_a")]`)
 /// - `FileGatedStruct` in `src/cfg_file_not_a.rs` (via `#[cfg(not(feature = "feature_a"))]`)
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_file_level_cfg_struct_node_id_disambiguation() {
     let graphs = run_phases_and_collect(FIXTURE_NAME);
 

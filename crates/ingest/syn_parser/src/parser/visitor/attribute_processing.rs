@@ -46,7 +46,7 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
     match &attr.meta {
         // Case 1: Simple path attribute, e.g., #[test]
         syn::Meta::Path(path) => Attribute {
-            span,
+            // span, // Removed, might need to put this back?
             name: path.to_token_stream().to_string(),
             args: Vec::new(),
             value: None,
@@ -76,7 +76,7 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
                 }
             };
             Attribute {
-                span,
+                // span,
                 name,
                 args,
                 value: None,
@@ -97,7 +97,7 @@ fn parse_attribute(attr: &syn::Attribute) -> Attribute {
                 expr => Some(expr.to_token_stream().to_string()),
             };
             Attribute {
-                span,
+                // span,
                 name,
                 args: Vec::new(), // NameValue attributes don't have list-style args
                 value,

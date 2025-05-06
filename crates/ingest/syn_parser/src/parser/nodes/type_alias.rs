@@ -1,7 +1,7 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for TypeAliasNodeInfo
 
 // Represents a type alias (type NewType = OldType)
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct TypeAliasNode {
     pub id: TypeAliasNodeId, // Use typed ID
     pub name: String,

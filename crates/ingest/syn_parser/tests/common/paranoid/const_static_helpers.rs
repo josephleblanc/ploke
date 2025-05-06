@@ -12,9 +12,9 @@ pub struct ConstNodeBuilder {
     span: Option<(usize, usize)>,
     visibility: Option<VisibilityKind>,
     type_id: Option<TypeId>,
-    value: Option<String>, // Optional value expression string
-    attributes: Vec<Attribute>, // Defaults to empty vec
-    docstring: Option<String>, // Optional docstring
+    value: Option<String>,               // Optional value expression string
+    attributes: Vec<Attribute>,          // Defaults to empty vec
+    docstring: Option<String>,           // Optional docstring
     tracking_hash: Option<TrackingHash>, // Optional hash
 }
 

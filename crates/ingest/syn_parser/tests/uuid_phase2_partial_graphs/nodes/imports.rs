@@ -59,6 +59,7 @@ fn find_import_node_basic<'a>(
 }
 // --- Tier 1: Basic Smoke Tests ---
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_basic_smoke_test_full_parse() {
     let results = run_phase1_phase2("fixture_nodes");
     assert!(!results.is_empty(), "Phase 1 & 2 failed to produce results");
@@ -317,6 +318,7 @@ fn test_import_node_basic_smoke_test_full_parse() {
 // --- Tier 2: Targeted Field Verification ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_id_regeneration() {
     // Target: use std::collections::HashMap;
     let results = run_phase1_phase2("fixture_nodes");
@@ -393,6 +395,7 @@ fn test_import_node_field_id_regeneration() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_span() {
     // Target: use std::fmt;
     let results = run_phase1_phase2("fixture_nodes");
@@ -427,6 +430,7 @@ fn test_import_node_field_span() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_path() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -524,6 +528,7 @@ fn test_import_node_field_path() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_kind_use() {
     // Target: HashMap
     let results = run_phase1_phase2("fixture_nodes");
@@ -557,6 +562,7 @@ fn test_import_node_field_kind_use() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_kind_extern_crate() {
     // Target: serde
     let results = run_phase1_phase2("fixture_nodes");
@@ -584,6 +590,7 @@ fn test_import_node_field_kind_extern_crate() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_visible_name_simple() {
     // Target: HashMap
     let results = run_phase1_phase2("fixture_nodes");
@@ -610,6 +617,7 @@ fn test_import_node_field_visible_name_simple() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_visible_name_renamed() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -643,6 +651,7 @@ fn test_import_node_field_visible_name_renamed() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_visible_name_glob() {
     // Target: use std::env::*;
     let results = run_phase1_phase2("fixture_nodes");
@@ -668,6 +677,7 @@ fn test_import_node_field_visible_name_glob() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_original_name_simple() {
     // Target: HashMap
     let results = run_phase1_phase2("fixture_nodes");
@@ -697,6 +707,7 @@ fn test_import_node_field_original_name_simple() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_original_name_renamed() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -732,6 +743,7 @@ fn test_import_node_field_original_name_renamed() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_is_glob_true() {
     // Target: use std::env::*;
     let results = run_phase1_phase2("fixture_nodes");
@@ -754,6 +766,7 @@ fn test_import_node_field_is_glob_true() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_field_is_glob_false() {
     // Target: HashMap
     let results = run_phase1_phase2("fixture_nodes");
@@ -782,6 +795,7 @@ fn test_import_node_field_is_glob_false() {
 // --- Tier 4: Basic Connection Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_relation_contains_file_module() {
     // Target: HashMap in "crate::imports" module
     let fixture_name = "fixture_nodes";
@@ -836,6 +850,7 @@ fn test_import_node_relation_contains_file_module() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_relation_module_imports_file_module() {
     // Target: HashMap in "crate::imports" module
     let fixture_name = "fixture_nodes";
@@ -880,6 +895,7 @@ fn test_import_node_relation_module_imports_file_module() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_relation_contains_inline_module() {
     // Target: Arc in "crate::imports::sub_imports"
     let fixture_name = "fixture_nodes";
@@ -938,6 +954,7 @@ fn test_import_node_relation_contains_inline_module() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_relation_module_imports_inline_module() {
     // Target: Arc in "crate::imports::sub_imports"
     let fixture_name = "fixture_nodes";
@@ -982,6 +999,7 @@ fn test_import_node_relation_module_imports_inline_module() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_in_module_imports_list() {
     // Target: HashMap in "crate::imports" module's imports list
     let fixture_name = "fixture_nodes";
@@ -1018,6 +1036,7 @@ fn test_import_node_in_module_imports_list() {
 // --- Tier 5: Extreme Paranoia Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_simple() {
     // Target: use std::collections::HashMap;
     let fixture_name = "fixture_nodes";
@@ -1113,6 +1132,7 @@ fn test_import_node_paranoid_simple() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_renamed() {
     // Target: use std::io::Result as IoResult;
     let fixture_name = "fixture_nodes";
@@ -1203,6 +1223,7 @@ fn test_import_node_paranoid_renamed() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_glob() {
     // Target: use std::env::*;
     let fixture_name = "fixture_nodes";
@@ -1293,6 +1314,7 @@ fn test_import_node_paranoid_glob() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_self() {
     // Target: use self::sub_imports::SubItem;
     let fixture_name = "fixture_nodes";
@@ -1387,6 +1409,7 @@ fn test_import_node_paranoid_self() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_extern_crate() {
     // Target: extern crate serde;
     let fixture_name = "fixture_nodes";
@@ -1474,6 +1497,7 @@ fn test_import_node_paranoid_extern_crate() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_node_paranoid_extern_crate_renamed() {
     // Target: extern crate serde as SerdeAlias;
     let fixture_name = "fixture_nodes";

@@ -12,6 +12,7 @@ use syn_parser::parser::{
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_generic_struct_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -127,6 +128,7 @@ fn test_struct_node_generic_struct_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_sample_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -193,6 +195,7 @@ fn test_struct_node_sample_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_tuple_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -275,6 +278,7 @@ fn test_struct_node_tuple_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_unit_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -328,6 +332,7 @@ fn test_struct_node_unit_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_attributed_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -412,6 +417,7 @@ fn test_struct_node_attributed_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_documented_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

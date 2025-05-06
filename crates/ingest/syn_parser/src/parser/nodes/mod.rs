@@ -129,6 +129,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_mod_paths() {
         let path = NodePath::new(vec!["crate".into(), "mod_a".into()]).unwrap();
         assert!(path.matches(["crate", "mod_a"].into_iter()));
@@ -163,7 +164,7 @@ impl TryFrom<Vec<String>> for NodePath {
 // Represent an attribute
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Attribute {
-    pub span: (usize, usize),  // Byte start/end offsets
+    // pub span: (usize, usize),  // Byte start/end offsets
     pub name: String,          // e.g., "derive", "cfg", "serde"
     pub args: Vec<String>,     // Arguments or parameters of the attribute
     pub value: Option<String>, // Optional value (e.g., for `#[attr = "value"]`)

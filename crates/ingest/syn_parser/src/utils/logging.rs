@@ -1,13 +1,13 @@
-pub(crate) const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
-pub(crate) const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
-pub(crate) const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
-pub(crate) const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
-pub(crate) const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
-pub(crate) const LOG_TARGET_RELS: &str = "rels"; // Define log target for relation checks
-pub(crate) const LOG_TARGET_NODE_ID: &str = "node_id";
+pub const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
+pub const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
+pub const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
+pub const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
+pub const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
+pub const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
+pub const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
+pub const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
+pub const LOG_TARGET_RELS: &str = "rels"; // Define log target for relation checks
+pub const LOG_TARGET_NODE_ID: &str = "node_id";
 
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
@@ -159,7 +159,6 @@ pub trait LogStyle: AsRef<str> {
         format!("{:?}", self).normal()
     }
 }
-
 impl<T: AsRef<str> + ?Sized> LogStyle for T {}
 
 #[allow(warnings)]
@@ -860,7 +859,7 @@ impl LogErrorConversion for VisitorState {
 }
 
 /// Helper struct to hold context for accessibility logging.
-pub(crate) struct AccLogCtx<'a> {
+pub struct AccLogCtx<'a> {
     pub source_name: &'a str,
     pub target_name: &'a str,
     pub effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
@@ -868,7 +867,7 @@ pub(crate) struct AccLogCtx<'a> {
 
 impl<'a> AccLogCtx<'a> {
     /// Creates a new context for logging accessibility checks.
-    pub(crate) fn new(
+    pub fn new(
         source_id: ModuleNodeId,                   // Keep ID args for name lookup
         target_id: ModuleNodeId,                   // Keep ID args for name lookup
         effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
@@ -895,7 +894,7 @@ impl<'a> AccLogCtx<'a> {
 }
 
 /// Helper function to get a string representation of the ModuleKind kind.
-pub(crate) fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
+pub fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
     match module.module_def {
         ModuleKind::FileBased { .. } => "File",
         ModuleKind::Inline { .. } => "Inline",
@@ -904,7 +903,7 @@ pub(crate) fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
 }
 
 /// Helper struct to hold context for path attribute logging.
-pub(crate) struct PathProcessingContext<'a> {
+pub struct PathProcessingContext<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub attr_value: Option<&'a str>,
@@ -912,7 +911,7 @@ pub(crate) struct PathProcessingContext<'a> {
 }
 
 /// Helper struct to hold context for path attribute logging.
-pub(crate) struct CfgLogCtx<'a> {
+pub struct CfgLogCtx<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub module_path: &'a [String], // Use slice for efficiency

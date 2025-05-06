@@ -1,7 +1,7 @@
 use crate::common::paranoid::*; // Use re-exports from paranoid mod
 use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
-use ploke_core::{TrackingHash};
+use ploke_core::TrackingHash;
 use syn_parser::parser::nodes::GraphId;
 use syn_parser::parser::nodes::{MacroKind, ProcMacroKind}; // Import macro kinds
 use syn_parser::parser::types::VisibilityKind;
@@ -53,6 +53,7 @@ fn find_macro_node_basic<'a>(
 
 // --- Tier 1: Basic Smoke Tests ---
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_basic_smoke_test_full_parse() {
     let results = run_phase1_phase2("fixture_nodes");
     assert!(!results.is_empty(), "Phase 1 & 2 failed to produce results");
@@ -151,6 +152,7 @@ fn test_macro_node_basic_smoke_test_full_parse() {
 // --- Tier 2: Targeted Field Verification ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_id_regeneration() {
     // Target: exported_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -212,6 +214,7 @@ fn test_macro_node_field_id_regeneration() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_name() {
     // Target: local_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -237,6 +240,7 @@ fn test_macro_node_field_name() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_visibility_public() {
     // Target: exported_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -263,6 +267,7 @@ fn test_macro_node_field_visibility_public() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_visibility_inherited() {
     // Target: local_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -289,6 +294,7 @@ fn test_macro_node_field_visibility_inherited() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_kind_declarative() {
     // Target: exported_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -315,6 +321,7 @@ fn test_macro_node_field_kind_declarative() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_kind_proc_func() {
     // Target: function_like_proc_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -343,6 +350,7 @@ fn test_macro_node_field_kind_proc_func() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_kind_proc_derive() {
     // Target: derive_proc_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -371,6 +379,7 @@ fn test_macro_node_field_kind_proc_derive() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_kind_proc_attr() {
     // Target: attribute_proc_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -399,6 +408,7 @@ fn test_macro_node_field_kind_proc_attr() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_attributes() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -459,6 +469,7 @@ fn test_macro_node_field_attributes() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_docstring() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -519,6 +530,7 @@ fn test_macro_node_field_docstring() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_body() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -568,6 +580,7 @@ fn test_macro_node_field_body() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_tracking_hash_presence() {
     // Target: local_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -600,6 +613,7 @@ fn test_macro_node_field_tracking_hash_presence() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_field_span() {
     // Target: exported_macro
     let results = run_phase1_phase2("fixture_nodes");
@@ -636,6 +650,7 @@ fn test_macro_node_field_span() {
 // --- Tier 4: Basic Connection Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_relation_contains_file_module() {
     // Target: exported_macro in "crate::macros" module
     let fixture_name = "fixture_nodes";
@@ -684,6 +699,7 @@ fn test_macro_node_relation_contains_file_module() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_relation_contains_inline_module() {
     // Target: inner_local_macro in "crate::macros::inner_macros"
     let fixture_name = "fixture_nodes";
@@ -738,6 +754,7 @@ fn test_macro_node_relation_contains_inline_module() {
 // --- Tier 5: Extreme Paranoia Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_paranoid_declarative() {
     // Target: documented_macro
     let fixture_name = "fixture_nodes";
@@ -827,6 +844,7 @@ fn test_macro_node_paranoid_declarative() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_macro_node_paranoid_procedural() {
     // Target: documented_proc_macro
     let fixture_name = "fixture_nodes";

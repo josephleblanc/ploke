@@ -88,6 +88,7 @@ fn build_tree_for_edge_cases() -> (ParsedCodeGraph, ModuleTree) {
 // --- Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_multi_step_3() {
     // 1. Multi-Step Re-export Chain (3-step)
     //    Target: `item_c` (renamed re-export of `chain_a::item_a`)
@@ -139,6 +140,7 @@ fn test_spp_multi_step_3() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_multi_step_4_shortest() {
     // 2. Multi-Step Re-export Chain (4-step) & Shortest Path
     //    Target: `item_alt_d` (re-export of `chain_a::item_a`)
@@ -172,6 +174,7 @@ fn test_spp_multi_step_4_shortest() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_inline_path_shadowing() {
     // 3. Inline Module `#[path]` Shadowing
     //    Target: `shadow_me` inside `inline_path_mod`
@@ -209,6 +212,7 @@ fn test_spp_inline_path_shadowing() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_inline_path_item_access() -> Result<(), Box<dyn std::error::Error>> {
     let _ = env_logger::builder()
         .is_test(true)
@@ -248,6 +252,7 @@ fn test_spp_inline_path_item_access() -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_one_file_multi_mod_public() {
     // 5. One File → Multiple Logical Modules (Public)
     //    Target: `item_in_shared_target` (defined in shared_target.rs)
@@ -281,6 +286,7 @@ fn test_spp_one_file_multi_mod_public() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_one_file_multi_mod_crate() {
     // 6. One File → Multiple Logical Modules (Crate)
     //    Target: `crate_item_in_shared_target` (defined in shared_target.rs)
@@ -305,6 +311,7 @@ fn test_spp_one_file_multi_mod_crate() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_glob_reexport_public() {
     // 7. Glob Re-export (Public Item)
     //    Target: `glob_public_item` (defined in glob_target, re-exported at root)
@@ -337,6 +344,7 @@ fn test_spp_glob_reexport_public() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_glob_reexport_path_submodule() {
     // 8. Glob Re-export (Item in `#[path]` Submodule)
     //    Target: `item_in_glob_sub_path` (defined in glob_target/sub_path.rs)
@@ -370,6 +378,7 @@ fn test_spp_glob_reexport_path_submodule() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_glob_reexport_public_submodule() {
     // 9. Glob Re-export (Item in Public Submodule)
     //    Target: `public_item_here` (defined in glob_target::pub_sub_with_restricted)
@@ -405,6 +414,7 @@ fn test_spp_glob_reexport_public_submodule() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_glob_reexport_restricted() {
     // 10. Glob Re-export (Restricted Item)
     //     Target: `super_visible_item` (defined as pub(super) in glob_target::pub_sub_with_restricted)
@@ -429,6 +439,7 @@ fn test_spp_glob_reexport_restricted() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_restricted_crate() {
     // 11. Restricted Visibility Item (`pub(crate)`)
     //     Target: `crate_func` (defined in restricted_vis)
@@ -453,6 +464,7 @@ fn test_spp_restricted_crate() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_restricted_super() {
     // 12. Restricted Visibility Item (`pub(super)`)
     //     Target: `super_func` (defined in restricted_vis)
@@ -477,6 +489,7 @@ fn test_spp_restricted_super() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_restricted_in_path() {
     // 13. Restricted Visibility Item (`pub(in path)`)
     //     Target: `in_path_func` (defined in restricted_vis::inner)
@@ -501,6 +514,7 @@ fn test_spp_restricted_in_path() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_shadowing_local() {
     // 14. Shadowing (Local Definition)
     //     Target: `shadowed_item` (defined locally in shadowing module)
@@ -533,6 +547,7 @@ fn test_spp_shadowing_local() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_relative_reexport_super() {
     // 15. Relative Re-export (`super`)
     //     Target: `reexport_super` (re-export of `item_in_relative` inside `relative::inner`)
@@ -570,6 +585,7 @@ fn test_spp_relative_reexport_super() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_relative_reexport_self() {
     let _ = env_logger::builder()
         .is_test(true)
@@ -607,6 +623,7 @@ fn test_spp_relative_reexport_self() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_deep_reexport_chain() {
     // 17. Deep Re-export Chain
     //     Target: `final_deep_item` (11-step re-export)
@@ -639,6 +656,7 @@ fn test_spp_deep_reexport_chain() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_branching_reexport() {
     // 18. Branching/Converging Re-export
     //     Target: `item_via_a` or `item_via_b` (re-exports of `branch_item`)
@@ -676,6 +694,7 @@ fn test_spp_branching_reexport() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_multiple_renames() {
     // 19. Multiple Renames in Chain
     //     Target: `final_renamed_item` (re-export of `multi_rename_item`)
@@ -708,6 +727,7 @@ fn test_spp_multiple_renames() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_nested_path_level1() {
     // 20. Nested `#[path]` (Level 1 Item)
     //     Target: `item_in_nested_target_1` (defined in nested_path_target_1.rs)
@@ -740,6 +760,7 @@ fn test_spp_nested_path_level1() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_nested_path_level2() {
     // 21. Nested `#[path]` (Level 2 Item)
     //     Target: `item_in_nested_target_2` (defined in nested_path_target_2.rs)
@@ -777,6 +798,7 @@ fn test_spp_nested_path_level2() {
 
 #[test]
 #[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_exclusive_a() {
     // 22. Mutually Exclusive `cfg` (Branch A)
     //     Target: `item_in_cfg_a` (defined in `#[cfg(feature = "cfg_a")] cfg_mod`)
@@ -811,6 +833,7 @@ fn test_spp_cfg_exclusive_a() {
 
 #[test]
 #[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_exclusive_not_a() {
     // 23. Mutually Exclusive `cfg` (Branch Not A)
     //     Target: `item_in_cfg_not_a` (defined in `#[cfg(not(feature = "cfg_a"))] cfg_mod`)
@@ -845,6 +868,7 @@ fn test_spp_cfg_exclusive_not_a() {
 
 #[test]
 #[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_nested_exclusive_ab() {
     // 24. Nested Mutually Exclusive `cfg` (Branch AB)
     //     Target: `item_in_cfg_ab` (defined in `#[cfg(a)] cfg_mod { #[cfg(b)] nested_cfg }`)
@@ -883,6 +907,7 @@ fn test_spp_cfg_nested_exclusive_ab() {
 
 #[test]
 #[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_nested_exclusive_nac() {
     // 25. Nested Mutually Exclusive `cfg` (Branch NotA C)
     //     Target: `item_in_cfg_nac` (defined in `#[cfg(not a)] cfg_mod { #[cfg(c)] nested_cfg }`)
@@ -921,6 +946,7 @@ fn test_spp_cfg_nested_exclusive_nac() {
 
 #[test]
 #[ignore = "Known Limitation P3-00: ModuleTree construction fails on duplicate paths from cfg. See docs/design/known_limitations/P3-00-cfg-duplication.md"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_cfg_conflicting() {
     // 26. Conflicting Parent/Child `cfg`
     //     Target: `impossible_item` (defined in `#[cfg(conflict)] parent { #[cfg(not conflict)] child }`)

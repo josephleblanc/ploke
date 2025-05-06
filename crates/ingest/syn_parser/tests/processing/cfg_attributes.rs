@@ -103,12 +103,14 @@ mod test_cfg_expr {
 
 #[test]
 #[ignore = "Phase 3: Test cfg-expr parsing and evaluation"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_target_specific_conditions() {
     // Placeholder for Phase 3 tests
 }
 
 #[test]
 #[ignore = "Phase 3: Test cfg-expr parsing and evaluation"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_cfg_attribute_roundtrip() {
     // Placeholder for Phase 3 tests
 }

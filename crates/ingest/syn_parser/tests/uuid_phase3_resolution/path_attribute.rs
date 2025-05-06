@@ -9,6 +9,7 @@ use syn_parser::parser::ParsedCodeGraph;
 const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_path_attribute_handling() {
     // Initialize logger without timestamps (ignore errors if already initialized)
     let _ = env_logger::builder()

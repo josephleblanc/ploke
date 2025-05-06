@@ -1,6 +1,6 @@
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -9,7 +9,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for ConstNodeInfo
 
 /// Represents a `const` item.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct ConstNode {
     pub id: ConstNodeId, // Use typed ID
     pub name: String,
@@ -34,7 +34,7 @@ impl GraphNode for ConstNode {
     fn any_id(&self) -> AnyNodeId {
         self.id.into() // Return base NodeId
     }
-    fn visibility(&self) ->&VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         &self.visibility
     }
     fn name(&self) -> &str {
@@ -60,7 +60,7 @@ impl HasAttributes for ConstNode {
 // Removed the macro invocation for StaticNodeInfo
 
 /// Represents a `static` item.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct StaticNode {
     pub id: StaticNodeId, // Use typed ID
     pub name: String,
@@ -86,7 +86,7 @@ impl GraphNode for StaticNode {
     fn any_id(&self) -> AnyNodeId {
         self.id.into() // Return base NodeId
     }
-    fn visibility(&self) ->&VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         &self.visibility
     }
     fn name(&self) -> &str {

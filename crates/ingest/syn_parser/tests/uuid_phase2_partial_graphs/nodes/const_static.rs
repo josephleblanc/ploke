@@ -3,6 +3,7 @@ use crate::common::gen_pid_paranoid;
 use crate::common::run_phase1_phase2;
 use crate::common::run_phases_and_collect;
 use syn_parser::parser::nodes::HasAttributes;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::utils::LogStyle;
 use syn_parser::utils::LogStyleDebug;
 // Use re-exports from paranoid mod
@@ -47,7 +48,8 @@ impl ExpectedConstData {
             .graph
             .consts
             .iter()
-            .filter(move |&n| self.is_name_match_debug(n))
+            .inspect(move |&n| self.log_target_id(n))
+            .filter(move |n| self.is_name_match_debug(n))
             .filter(move |n| self.is_vis_match_debug(n))
             .filter(move |n| self.is_attr_match_debug(n))
             .filter(move |n| self.is_type_id_check_match_debug(n))
@@ -55,8 +57,15 @@ impl ExpectedConstData {
             .filter(move |n| self.is_docstring_contains_match_debug(n))
             .filter(move |n| self.is_tracking_hash_check_match_debug(n))
             .filter(move |n| self.is_cfgs_match_debug(n))
+            .inspect(move |&n| self.log_all_match(n))
     }
 
+    fn log_target_id(&self, node: &ConstNode) {
+        log::debug!(target: LOG_TEST_CONST,
+            "Checking {}",
+                node.id.to_pid().to_string().log_id(),
+        );
+    }
     fn is_name_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected '{}' == Actual '{}': {}",
@@ -103,10 +112,10 @@ impl ExpectedConstData {
     fn is_value_match_debug(&self, node: &ConstNode) -> bool {
         let actual_value = node.value.as_deref();
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected '{:?}' == Actual '{:?}': {}",
+            "   {} | Expected '{}' == Actual '{}': {}",
             "Value Match?".to_string().log_step(),
-            self.value.log_name_debug(),
-            actual_value.log_name_debug(),
+            self.value.unwrap_or("None").log_foreground_primary(),
+            actual_value.unwrap_or("None").log_foreground_secondary(),
             (self.value == actual_value).to_string().log_vis()
         );
         self.value == actual_value
@@ -116,15 +125,15 @@ impl ExpectedConstData {
         let actual_docstring = node.docstring.as_deref();
         let check_passes = match self.docstring_contains {
             Some(expected_substr) => {
-                actual_docstring.map_or(false, |s| s.contains(expected_substr))
+                actual_docstring.map_or_else(|| false, |s| s.contains(expected_substr))
             }
             None => actual_docstring.is_none(),
         };
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected contains '{:?}' in Actual '{:?}': {}",
+            "   {} | Expected contains '{}' in Actual '{}': {}",
             "Docstring Contains Match?".to_string().log_step(),
-            self.docstring_contains.log_name_debug(),
-            actual_docstring.log_name_debug(),
+            self.docstring_contains.unwrap_or("no cfgs").log_foreground_primary(),
+            actual_docstring.unwrap_or("no cfgs").log_foreground_secondary(),
             check_passes.to_string().log_vis()
         );
         check_passes
@@ -150,13 +159,24 @@ impl ExpectedConstData {
         expected_cfgs_sorted.sort_unstable();
 
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}': {}",
-            "CFGs Match?".to_string().log_step(),
+            "   {} | Expected (sorted) '{}' == Actual (sorted) '{}': {}",
+            "CFGs Match?".to_string().log_green(),
             expected_cfgs_sorted.log_green_debug(),
             actual_cfgs.log_green_debug(),
             (expected_cfgs_sorted == actual_cfgs).to_string().log_vis()
         );
         expected_cfgs_sorted == actual_cfgs
+    }
+
+    fn log_all_match(&self, n: &ConstNode) {
+        log::debug!(target: LOG_TEST_CONST,
+            "       {}: {}\n{:-<50}\n{:#?}\n{:-<50}",
+            "All Fields Match".to_string().log_step(),
+            "Logging Detaild Below:",
+            "",
+            n,
+            "",
+        );
     }
 }
 

@@ -3,7 +3,6 @@ mod code_graph;
 mod parsed_graph;
 
 use std::collections::HashMap;
-
 use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 
 pub use code_graph::CodeGraph;
@@ -90,6 +89,7 @@ pub trait GraphAccess {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
+                log::debug!("DUPLICATE: {}", rel);
                 dups.push(*rel);
             }
             acc
@@ -705,6 +705,12 @@ pub trait GraphAccess {
             )
             .chain(
                 self.macros()
+                    .iter()
+                    .filter(move |n| n.id.as_any() == item_id)
+                    .map(|n| n as &dyn GraphNode),
+            )
+            .chain( // <--- ADD THIS CHAIN
+                self.impls()
                     .iter()
                     .filter(move |n| n.id.as_any() == item_id)
                     .map(|n| n as &dyn GraphNode),

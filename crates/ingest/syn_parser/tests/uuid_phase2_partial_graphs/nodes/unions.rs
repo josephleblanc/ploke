@@ -11,6 +11,7 @@ use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::Gener
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_union_node_int_or_float_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -108,6 +109,7 @@ fn test_union_node_int_or_float_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_union_node_generic_union_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -224,6 +226,7 @@ fn test_union_node_generic_union_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_other_union_nodes() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

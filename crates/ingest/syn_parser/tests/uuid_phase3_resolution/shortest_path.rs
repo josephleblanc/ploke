@@ -66,6 +66,7 @@ use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -101,6 +102,7 @@ fn test_spp_public_item_in_root() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_public_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -138,6 +140,7 @@ fn test_spp_public_item_in_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_nested_public_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -181,6 +184,7 @@ fn test_spp_public_item_in_nested_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_private_item_in_public_mod() {
     let _ = env_logger::builder()
         .is_test(true)
@@ -213,6 +217,7 @@ fn test_spp_private_item_in_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_item_in_private_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -245,7 +250,8 @@ fn test_spp_item_in_private_mod() {
 // TODO: Add tests for re-exported items once the shortest_public_path implementation handles them.
 // Example:
 // #[test]
-// fn test_spp_reexported_item() {
+// #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_reexported_item() {
 //     let fixture_name = "reexport_fixture"; // Need a fixture with re-exports
 //     let (graph, tree) = build_tree_for_tests(fixture_name);
 //     // ... find original item ID and re-exporting module ID ...
@@ -254,6 +260,7 @@ fn test_spp_item_in_private_mod() {
 // }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexported_item_finds_original_path() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -559,6 +566,7 @@ assert_spp!(
 // Since it's likely inactive, the re-export doesn't exist, and SPP for the original item is correct.
 #[test]
 // #[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexport_cfg_gated_inactive() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -591,6 +599,7 @@ fn test_spp_reexport_cfg_gated_inactive() {
 // 11. Re-export of External Dependency Item
 #[test]
 // #[ignore = "Requires dependency resolution for SPP"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexport_external_dep() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_tests(fixture_name);

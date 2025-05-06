@@ -1,7 +1,7 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -9,7 +9,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // Removed the macro invocation for StructNodeInfo
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct StructNode {
     pub id: StructNodeId, // Use typed ID
     pub name: String,
@@ -34,7 +34,7 @@ impl StructNode {
 
 // Removed the macro invocation for FieldNodeInfo
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct FieldNode {
     pub id: FieldNodeId, // Use typed ID
     pub name: Option<String>,

@@ -1,7 +1,7 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use ploke_core::{TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for ImplNodeInfo
 
 // Represents an implementation block
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct ImplNode {
     pub id: ImplNodeId, // Use typed ID
     pub self_type: TypeId,

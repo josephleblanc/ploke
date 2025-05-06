@@ -93,7 +93,8 @@ mod export_tests {
 
     #[test]
     #[cfg(feature = "reexport")] // Only run when the feature is enabled
-    fn test_path_resolution_exports() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_path_resolution_exports() -> Result<(), SynParserError> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
@@ -192,7 +193,8 @@ mod export_tests {
 
     #[test]
     #[cfg(feature = "reexport")]
-    fn test_spp_no_cfg_multi_step_chain() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_no_cfg_multi_step_chain() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases_no_cfg";
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         let original_item_a_id = find_function_node_paranoid(
@@ -236,7 +238,8 @@ mod export_tests {
 
     #[test]
     #[cfg(feature = "reexport")]
-    fn test_spp_no_cfg_multi_rename() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_no_cfg_multi_rename() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases_no_cfg";
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `final_renamed_item` -> ... -> `rename_source::multi_rename_item`
@@ -275,7 +278,8 @@ mod export_tests {
 
     #[test]
     #[cfg(feature = "reexport")]
-    fn test_spp_no_cfg_branching() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_no_cfg_branching() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases_no_cfg";
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `branch_item` re-exported as `item_via_a` and `item_via_b`
@@ -332,7 +336,8 @@ mod export_tests {
     #[test]
     #[cfg(feature = "reexport")]
     #[ignore = "Relative path resolution (super::, self::) not yet implemented in resolve_single_export"]
-    fn test_spp_no_cfg_relative_super() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_no_cfg_relative_super() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases_no_cfg";
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `relative::inner::reexport_super` -> `super::item_in_relative` -> `relative::item_in_relative`
@@ -383,7 +388,8 @@ mod export_tests {
     #[test]
     #[cfg(feature = "reexport")]
     #[ignore = "Relative path resolution (super::, self::) not yet implemented in resolve_single_export"]
-    fn test_spp_no_cfg_relative_self() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_no_cfg_relative_self() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases_no_cfg";
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `relative::reexport_self` -> `self::inner::item_in_inner` -> `relative::inner::item_in_inner`
@@ -431,7 +437,8 @@ mod export_tests {
     #[test]
     #[cfg(feature = "reexport")]
     #[ignore = "CFG attribute handling not implemented in process_export_rels"]
-    fn test_spp_cfg_limitation() -> Result<(), SynParserError> {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_cfg_limitation() -> Result<(), SynParserError> {
         let fixture_name = "fixture_spp_edge_cases"; // Use the CFG version
         let pre_merge_graphs = run_phases_and_collect(fixture_name);
         // Target: `glob_item_cfg_a` (re-exported via glob from `glob_target`)
@@ -474,5 +481,6 @@ mod export_tests {
     // TODO: Add test for conflicting re-exports (requires fixture modification or new fixture)
     // #[test]
     // #[cfg(feature = "reexport")]
-    // fn test_conflicting_reexports() { ... }
+    // #[cfg(not(feature = "type_bearing_ids"))]
+fn test_conflicting_reexports() { ... }
 }

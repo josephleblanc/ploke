@@ -154,7 +154,7 @@ impl VisitorState {
     pub(crate) fn process_generics(&mut self, generics: &Generics) -> Vec<GenericParamNode> {
         let mut params = Vec::new();
 
-        for param in &generics.params {
+        for (i, param) in generics.params.iter().enumerate() {
             match param {
                 syn::GenericParam::Type(TypeParam {
                     ident,
@@ -177,7 +177,7 @@ impl VisitorState {
 
                     // Generate ID for the generic parameter node, pass ItemKind::GenericParam and cfg_bytes
                     let generated_any_id = self.generate_synthetic_node_id(
-                        &format!("generic_type_{}", ident), // Use a distinct name format
+                        &format!("generic_type_{}_{}", ident, i), // Use a distinct name format
                         ItemKind::GenericParam,
                         generic_cfg_bytes.as_deref(), // Pass calculated bytes
                     );

@@ -1,3 +1,4 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
 use ploke_core::NodeId;
@@ -6,11 +7,7 @@ use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::{
     error::SynParserError,
-    parser::{
-        graph::CodeGraph,
-        nodes::{GraphId, GraphNode},
-        relations::RelationKind, // Removed TypeDefNode
-    },
+    parser::{graph::CodeGraph, nodes::GraphNode},
 };
 
 use super::uuid_ids_utils::run_phases_and_collect;

@@ -1,7 +1,7 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for TraitNodeInfo
 
 // Represents a trait definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct TraitNode {
     pub id: TraitNodeId, // Use typed ID
     pub name: String,
@@ -18,6 +18,7 @@ pub struct TraitNode {
     pub visibility: VisibilityKind,
     pub methods: Vec<MethodNode>, // Changed from FunctionNode
     pub generic_params: Vec<GenericParamNode>,
+    // TODO: Update super_traits to use a Vec of TraitNodeId
     pub super_traits: Vec<TypeId>,
     pub attributes: Vec<Attribute>,
     pub docstring: Option<String>,
@@ -36,7 +37,7 @@ impl TraitNode {
 }
 
 impl GraphNode for TraitNode {
-    fn visibility(&self) ->&VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         &self.visibility
     }
 

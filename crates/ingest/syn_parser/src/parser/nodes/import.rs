@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -76,7 +76,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)] // Add derive
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
     pub id: ImportNodeId, // Use typed ID

@@ -4,7 +4,8 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+use syn_parser_macros::GenerateNodeInfo;
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 

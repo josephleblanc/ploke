@@ -30,6 +30,7 @@ use crate::common::build_tree_for_tests;
 /// of `ModuleNode`s present in the input `CodeGraph`. This confirms that
 /// `ModuleTree::add_module` was called for every module without losing any.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_module_count() {
     let _ = env_logger::builder()
         .is_test(true)
@@ -55,6 +56,7 @@ fn test_module_tree_module_count() {
 /// This tests the logic within `ModuleTree::add_module` that inserts modules into the `path_index`.
 #[test]
 #[cfg(test)]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_path_index_correctness() {
     let _ = env_logger::builder() // Parse RUST_LOG environment variable
         .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
@@ -170,6 +172,7 @@ fn test_module_tree_path_index_correctness() {
 /// This primarily tests the `ModuleTree::link_mods_syntactic()` method and implicitly
 /// the population of the `decl_index`.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_resolves_to_definition_relation() {
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
@@ -268,6 +271,7 @@ fn test_module_tree_resolves_to_definition_relation() {
 /// (in this specific fixture) `pending_exports` is empty because there are no `pub use`
 /// statements. This tests the filtering logic within `ModuleTree::add_module`.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_import_export_segregation() {
     // Use the fixture_nodes crate, specifically focusing on imports.rs
     let fixture_name = "fixture_nodes";
@@ -397,6 +401,7 @@ fn test_module_tree_import_export_segregation() {
 /// extracted during `process_use_tree` and stored by `ModuleTree::add_module`
 /// are accurate for various import syntaxes.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_imports_fixture_nodes() {
     let fixture_name = "fixture_nodes";
     let graph_and_tree = build_tree_for_tests(fixture_name);
@@ -559,6 +564,7 @@ use std::io::Write; // Import Write trait for formatting
 
 /// with different visibility levels (public, crate, restricted, inherited).
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_is_accessible() {
     // Initialize logger with custom format for this test
     let _ = env_logger::builder() // Parse RUST_LOG environment variable

@@ -12,9 +12,9 @@ use syn_parser::TestIds;
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod debug_printers;
+pub mod macro_rule_tests;
 pub mod paranoid;
-pub mod resolution; // Add resolution module
-pub mod macro_rule_tests; // Add new module for macros
+pub mod resolution; // Add resolution module // Add new module for macros
 
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
@@ -185,11 +185,11 @@ impl<'a> TestInfo<'a> {
 
 /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
 /// correctly matches when using the expected inputs for the typed id node generation.
-/// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
-/// in the `ParanoidArgs`.
-pub fn gen_pid_paranoid<'a>(
+///     - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
+///     in the `ParanoidArgs`.
+pub fn gen_pid_paranoid(
     args: ParanoidArgs,
-    parsed_graphs: &'a [ParsedCodeGraph],
+    parsed_graphs: &[ParsedCodeGraph],
 ) -> Result<PrimaryNodeId, SynParserError> {
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(args.fixture);
@@ -217,7 +217,7 @@ pub fn gen_pid_paranoid<'a>(
     let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
     let cfgs = args
         .expected_cfg
-        .map(|c| strs_to_strings(c))
+        .map(strs_to_strings)
         .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
     let item_name = args
         .expected_path
@@ -238,7 +238,7 @@ pub fn gen_pid_paranoid<'a>(
     let pid = match args.item_kind {
         ItemKind::Function => FunctionNodeId::new_test(generated_id).into(),
         ItemKind::Struct => StructNodeId::new_test(generated_id).into(),
-        ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),crates/ingest/syn_parser/src/parser/graph/mod.rs
+        ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),
         ItemKind::Union => UnionNodeId::new_test(generated_id).into(),
         ItemKind::TypeAlias => TypeAliasNodeId::new_test(generated_id).into(),
         ItemKind::Trait => TraitNodeId::new_test(generated_id).into(),
@@ -280,6 +280,7 @@ pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn:
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_paths() {
     let fixture_path = fixtures_dir().join("my_fixture.rs");
     println!("Fixture path: {}", fixture_path.display());
@@ -481,6 +482,7 @@ pub fn find_generic_param_by_name<'a>(
 }
 
 /// Helper to create module path for tests
+#[cfg(not(feature = "type_bearing_ids"))]
 pub fn test_module_path(segments: &[&str]) -> Vec<String> {
     segments.iter().map(|s| s.to_string()).collect()
 }

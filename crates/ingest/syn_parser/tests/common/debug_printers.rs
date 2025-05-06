@@ -1,3 +1,4 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 use std::path::Path;
 
 use colored::Colorize;

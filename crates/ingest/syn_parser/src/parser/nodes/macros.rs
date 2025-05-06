@@ -1,6 +1,6 @@
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -9,7 +9,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for MacroNodeInfo
 
 // Represents a macro definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct MacroNode {
     pub id: MacroNodeId, // Use typed ID
     pub name: String,

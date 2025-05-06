@@ -42,6 +42,7 @@ pub mod test_interface {
     };
 
     impl ModuleTree {
+        #[cfg(not(feature = "type_bearing_ids"))]
         pub fn test_shortest_public_path(
             &self,
             item_id: PrimaryNodeId,
@@ -50,10 +51,12 @@ pub mod test_interface {
             self.shortest_public_path(item_id, graph)
         }
 
+        #[cfg(not(feature = "type_bearing_ids"))]
         pub fn test_log_node_id_verbose(&self, node_id: AnyNodeId) {
             self.log_node_id_verbose(node_id);
         }
 
+        #[cfg(not(feature = "type_bearing_ids"))]
         pub fn test_validate_unique_rels(&self) {
             self.validate_unique_rels();
         }

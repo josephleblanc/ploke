@@ -1,7 +1,6 @@
 use crate::parser::{graph::GraphNode, types::GenericParamNode}; // Removed define_node_info_struct import
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -10,7 +9,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for EnumNodeInfo
 
 // Represents an enum definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct EnumNode {
     pub id: EnumNodeId, // Use typed ID
     pub name: String,
@@ -42,7 +41,7 @@ impl HasAttributes for EnumNode {
 // Removed the macro invocation for VariantNodeInfo
 
 // Represents a variant in an enum
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct VariantNode {
     pub id: VariantNodeId, // Use typed ID
     pub name: String,

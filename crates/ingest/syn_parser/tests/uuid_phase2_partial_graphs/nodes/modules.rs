@@ -16,6 +16,7 @@ use crate::common::paranoid::{
 };
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_top_pub_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -198,6 +199,7 @@ fn test_module_node_top_pub_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_top_priv_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -306,6 +308,7 @@ fn test_module_node_top_priv_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_crate_visible_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -407,6 +410,7 @@ fn test_module_node_crate_visible_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_logical_name_path_attr_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -533,6 +537,7 @@ fn test_module_node_logical_name_path_attr_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_inline_pub_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -628,6 +633,7 @@ fn test_module_node_inline_pub_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_inline_priv_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -702,6 +708,7 @@ fn test_module_node_inline_priv_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_nested_example_submod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -809,6 +816,7 @@ fn test_module_node_nested_example_submod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_deeply_nested_mod_paranoid() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -923,6 +931,7 @@ fn test_module_node_deeply_nested_mod_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_file_attributes_and_docs() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -957,6 +966,7 @@ fn test_module_node_file_attributes_and_docs() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_mod_attributes_and_docs() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -1010,7 +1020,8 @@ fn test_module_node_mod_attributes_and_docs() {
 }
 
 // #[test] // TODO: Add a fixture with attributes/docs on modules
-// fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
+// #[cfg(not(feature = "type_bearing_ids"))]
+fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
 //     // Requires a fixture with modules having attributes (#![...]) and doc comments (//! or /// mod)
 //     // e.g., Add attributes/docs to `inline_pub_mod` or a file-based module.
 //     // Verify:
@@ -1022,6 +1033,7 @@ fn test_module_node_mod_attributes_and_docs() {
 // }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_items_list_comprehensiveness() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -1145,6 +1157,7 @@ fn test_module_node_items_list_comprehensiveness() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_node_imports_list() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -1263,6 +1276,7 @@ All imports in CodeGraph:{:#?}",
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_contains_relation_inline() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);
@@ -1296,6 +1310,7 @@ fn test_module_contains_relation_inline() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_contains_relation_declaration_nested() {
     let fixture_name = "file_dir_detection";
     let results = run_phases_and_collect(fixture_name);

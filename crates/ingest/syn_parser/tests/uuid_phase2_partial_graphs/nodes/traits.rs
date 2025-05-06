@@ -11,6 +11,7 @@ use syn_parser::parser::{nodes::GraphNode, relations::RelationKind};
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_trait_node_simple_trait_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -81,6 +82,7 @@ fn test_trait_node_simple_trait_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_trait_node_complex_generic_trait_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -160,6 +162,7 @@ fn test_trait_node_complex_generic_trait_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_other_trait_nodes() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

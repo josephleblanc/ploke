@@ -11,6 +11,7 @@ use syn_parser::parser::{
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_tuple() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -79,6 +80,7 @@ fn test_function_node_process_tuple() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_slice() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -167,6 +169,7 @@ fn test_function_node_process_slice() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_array() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -230,6 +233,7 @@ fn test_function_node_process_array() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_ref() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -301,6 +305,7 @@ fn test_function_node_process_ref() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_mut_ref() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -367,6 +372,7 @@ fn test_function_node_process_mut_ref() {
 // --- Tests for functions inside `duplicate_names` module ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_tuple_in_duplicate_names() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -434,6 +440,7 @@ fn test_function_node_process_tuple_in_duplicate_names() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_apply_op() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -494,6 +501,7 @@ fn test_function_node_apply_op() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_const_ptr() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -554,6 +562,7 @@ fn test_function_node_process_const_ptr() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_consumes_point_in_func_mod() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -613,6 +622,7 @@ fn test_function_node_consumes_point_in_func_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_draw_object() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -690,6 +700,7 @@ fn test_function_node_draw_object() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_impl_trait_arg() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -753,6 +764,7 @@ fn test_function_node_process_impl_trait_arg() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_create_impl_trait_return() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -815,6 +827,7 @@ fn test_function_node_create_impl_trait_return() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_mut_ptr() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -875,6 +888,7 @@ fn test_function_node_process_mut_ptr() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_inferred_type_example() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -924,6 +938,7 @@ fn test_function_node_inferred_type_example() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_slice_in_duplicate_names() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -984,6 +999,7 @@ fn test_function_node_process_slice_in_duplicate_names() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_process_array_in_duplicate_names() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -1038,6 +1054,7 @@ fn test_function_node_process_array_in_duplicate_names() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_generic_func_in_func_mod() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -1109,6 +1126,7 @@ fn test_function_node_generic_func_in_func_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_math_operation_consumer_in_func_mod() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -1175,6 +1193,7 @@ fn test_function_node_math_operation_consumer_in_func_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_math_operation_producer_in_func_mod() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -1231,6 +1250,7 @@ fn test_function_node_math_operation_producer_in_func_mod() {
 // --- Tests for functions inside src/func/return_types.rs/restricted_duplicate ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_consumes_point_in_restricted_duplicate() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -1289,6 +1309,7 @@ fn test_function_node_consumes_point_in_restricted_duplicate() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_generic_func_in_restricted_duplicate() {
     let fixture_name = "fixture_types";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

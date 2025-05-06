@@ -10,6 +10,7 @@ use syn_parser::TestIds;
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_enum_node_sample_enum_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -149,6 +150,7 @@ fn test_enum_node_sample_enum_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_other_enum_nodes() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

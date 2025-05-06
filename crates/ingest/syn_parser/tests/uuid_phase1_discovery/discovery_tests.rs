@@ -8,6 +8,7 @@ use tempfile::tempdir;
 // --- Unit Tests ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_derive_crate_namespace_consistency() {
     let name = "my-crate";
     let version = "1.2.3";
@@ -17,6 +18,7 @@ fn test_derive_crate_namespace_consistency() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_derive_crate_namespace_uniqueness() {
     let uuid1 = derive_crate_namespace("crate-a", "1.0.0");
     let uuid2 = derive_crate_namespace("crate-b", "1.0.0");
@@ -29,6 +31,7 @@ fn test_derive_crate_namespace_uniqueness() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_valid_crate() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let crate_root = temp_dir.path().join("test_crate");
@@ -94,6 +97,7 @@ edition = "2021"
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let crate_root = temp_dir.path().join("test_crate");
@@ -115,6 +119,7 @@ fn test_run_discovery_phase_missing_cargo_toml() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let crate_root = temp_dir.path().join("test_crate");
@@ -139,6 +144,7 @@ fn test_run_discovery_phase_invalid_cargo_toml() -> Result<(), Box<dyn std::erro
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_missing_src() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let crate_root = temp_dir.path().join("test_crate");
@@ -165,6 +171,7 @@ version = "0.1.0"
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let crate_root = temp_dir.path().join("non_existent_crate"); // Path does not exist
@@ -185,6 +192,7 @@ fn test_run_discovery_phase_crate_path_not_found() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let project_root = temp_dir.path().to_path_buf();
@@ -237,6 +245,7 @@ fn test_run_discovery_phase_multiple_crates() -> Result<(), Box<dyn std::error::
 // --- Integration Test ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
     // Get the absolute path to the fixture_test_crate within the workspace
     let fixture_crate_root = workspace_root().join("fixture_test_crate");
@@ -349,6 +358,7 @@ fn test_discovery_on_fixture_crate() -> Result<(), Box<dyn std::error::Error>> {
 // Example of a dedicated test if scan_for_mods were made pub(crate)
 /*
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_scan_for_mods_basic() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = tempdir()?;
     let src_dir = temp_dir.path();

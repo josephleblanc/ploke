@@ -1,7 +1,7 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
-use syn_parser_macros::GenerateNodeInfo; // Import the derive macro
+// removed GenerateNodeInfo
 
 use super::*; // Keep for other node types, VisibilityKind etc.
 
@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for MethodNodeInfo
 
 /// Represents an associated function or method within an `impl` or `trait`.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct MethodNode {
     pub id: MethodNodeId, // Use typed ID
     pub name: String,
@@ -77,7 +77,7 @@ impl MethodNode {
 // Removed the macro invocation for FunctionNodeInfo
 
 /// Represents a standalone function item (`fn`).
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct FunctionNode {
     pub id: FunctionNodeId, // Use typed ID
     pub name: String,

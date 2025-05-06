@@ -268,7 +268,6 @@ pub trait DependencyMap {
     // type InnerMap = HashMap<String, DependencySpec>;
 
     fn inner_map(&self) -> &HashMap<String, DependencySpec>;
-    // `DevDependencies` and `Dependencies` AI?
     /// Returns a reference to the dependency specification for the given crate name, if it exists.
     ///
     /// # Example
@@ -731,6 +730,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_derive_crate_namespace_consistency() {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.0");
@@ -741,6 +741,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_derive_crate_namespace_uniqueness() {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.1");

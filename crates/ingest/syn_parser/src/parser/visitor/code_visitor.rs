@@ -357,7 +357,7 @@ impl<'a> CodeVisitor<'a> {
     }
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_push(&self, stack_name: &str, stack: &[String]) {
-        trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH STACK] {}: {:?} -> {:?}",
+        trace!(target: LOG_TARGET_STACK_TRACE, "  [PUSH STACK] {}: {} -> {:?}",
             stack_name.blue(),
             stack.last().unwrap_or(&"<empty>".to_string()).green(),
             stack
@@ -366,7 +366,7 @@ impl<'a> CodeVisitor<'a> {
 
     // Removed #[cfg(feature = "verbose_debug")]
     fn log_pop(&self, stack_name: &str, popped: Option<String>, stack: &[String]) {
-        trace!(target: LOG_TARGET_STACK_TRACE, "  [POP STACK] {}: {:?} -> {:?}",
+        trace!(target: LOG_TARGET_STACK_TRACE, "  [POP STACK] {}: {} -> {:?}",
             stack_name.blue(),
             popped.unwrap_or("<empty>".to_string()).red(),
             stack
@@ -397,8 +397,7 @@ impl<'a> CodeVisitor<'a> {
         let node_id = self
             .state
             .generate_synthetic_node_id(item_name, item_kind, cfg_bytes); // Pass cfg_bytes
-
-        // 2. Find the parent module based on the *current path* and add the item ID.
+                                                                          // 2. Find the parent module based on the *current path* and add the item ID.
         let parent_module_opt = self
             .state
             .code_graph
@@ -499,7 +498,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
                                                                                         // primary, secondary, associated, etc.
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Primary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -511,7 +510,7 @@ impl<'a> CodeVisitor<'a> {
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring
         self.state.current_scope_cfgs = self.state.cfg_stack.pop().unwrap_or_default(); // current_scope_cfgs shared among
                                                                                         // primary, secondary, associated, etc.
-        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({:?}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
+        trace!(target: LOG_TARGET_TRACE, "<<< Exiting Secondary Scope: {} ({}) | Popped CFGs: {:?} | Restored CFGs: {:?}",
             name.cyan(),
             popped_id.map(|id| id.to_string()).unwrap_or("?".to_string()).magenta(),
             popped_cfgs,
@@ -734,8 +733,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process fields
         let mut fields = Vec::new();
-        for (i, field) in item_struct.fields.iter().enumerate() {
-            let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+        for (field, i) in item_struct.fields.iter().zip(u8::MIN..u8::MAX) {
+            let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            let field_ref = field_name.get_or_insert_default();
+            field_ref.extend("unnamed_field".chars().chain(struct_name.as_str().chars()));
+            field_ref.push(i.into());
 
             // --- CFG Handling for Field (Raw Strings) ---
             let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
@@ -752,20 +754,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             // Note: Fields are contained within the struct, not directly in the module,
             // so we don't use register_new_node_id here.
             let field_any_id = self.state.generate_synthetic_node_id(
-                &field_name
-                    .clone()
-                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
+                &field_ref.clone(),
+                // .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
                 ItemKind::Field,
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
 
             // Removed #[cfg] block
-            self.debug_new_id(
-                &field_name
-                    .clone()
-                    .unwrap_or("unnamed_struct_field".to_string()),
-                field_any_id,
-            );
+            self.debug_new_id(&field_ref.clone(), field_any_id);
             let type_id = get_or_create_type(self.state, &field.ty);
 
             let field_node_id: FieldNodeId = field_any_id.try_into().unwrap();
@@ -951,7 +947,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Push the union's base ID onto the scope stack BEFORE processing fields/generics
         // Use helper function for logging
-        let union_typed_id: StructNodeId = union_any_id.try_into().unwrap();
+        let union_typed_id: UnionNodeId = union_any_id.try_into().unwrap();
         self.push_primary_scope(
             &union_name,
             union_typed_id.into(),
@@ -960,8 +956,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         // Process fields
         let mut fields = Vec::new();
-        for (i, field) in item_union.fields.named.iter().enumerate() {
-            let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+        for (field, i) in item_union.fields.named.iter().zip(u8::MIN..u8::MAX) {
+            let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            let field_ref = field_name.get_or_insert_default();
+            field_ref.extend("unnamed_field".chars().chain(union_name.as_str().chars()));
+            field_ref.push(i.into());
 
             // --- CFG Handling for Field (Raw Strings) ---
             let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
@@ -1374,10 +1373,24 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         // Process methods
         let mut methods = Vec::new();
         for item in &item_impl.items {
-            // NOTE: There are NO other match arms or if-let chains here
-            //       to handle syn::ImplItem::Const or syn::ImplItem::Type
+            // for (item, i) in item_impl.items.iter().zip(u8::MIN..u8::MAX) {
+            //     // NOTE: There are NO other match arms or if-let chains here
+            //     //       to handle syn::ImplItem::Const or syn::ImplItem::Type
             if let syn::ImplItem::Fn(method) = item {
                 let method_name = method.sig.ident.to_string();
+                // NOTE: We may not actually want to change this to the above enumerated loop,
+                // since we shouldn't ever have a situation in which the same impl block has the
+                // same name repeat for each method.
+                // let method_name = method.sig.ident.to_string();
+                // let mut method_name: String = method
+                //     .sig
+                //     .ident
+                //     .to_string()
+                //     .chars()
+                //     .chain("unnamed_method".chars())
+                //     .chain(impl_name.as_str().chars())
+                //     .collect();
+                // method_name.push(i.into());
 
                 // --- CFG Handling for Method (Raw Strings) ---
                 let method_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
@@ -1404,9 +1417,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 // Convert method ID and push scope
                 let method_typed_id: MethodNodeId = method_any_id.try_into().unwrap();
                 self.push_assoc_scope(
-                    // TODO: Update the `CodeVisitor` to have another field for associated node id
-                    // for scope management. See comment on `&variant_name,` for more info on how
-                    // to update.
                     &method_name,
                     AssociatedItemNodeId::from(method_typed_id), // Use AssociatedItemNodeId for scope
                     &self.state.current_scope_cfgs.clone(),
@@ -2356,14 +2366,73 @@ fn name_impl(item_impl: &ItemImpl) -> String {
     // `self_type_str`: `"MyStruct"`
     // `trait_str`: `Some("MyTrait")`
     // `impl_name`: `"impl MyTrait for MyStruct"`
-    let self_type_str = item_impl.self_ty.to_token_stream().to_string();
-    let trait_str = item_impl
-        .trait_
-        .as_ref()
-        .map(|(_, path, _)| path.to_token_stream().to_string());
+    //     let self_type_str = item_impl.self_ty.to_token_stream().to_string();
+    //     let trait_str = item_impl
+    //         .trait_
+    //         .as_ref()
+    //         .map(|(_, path, _)| path.to_token_stream().to_string());
+    //     let impl_generics_str = item_impl.generics.to_token_stream().to_string();
+    //
+    //     match trait_str {
+    //         Some(t) => format!("impl {} for {}", t, self_type_str),
+    //         None => format!("impl {}", self_type_str),
+    //     }
+    // }
+    let self_type_str = type_to_string(&item_impl.self_ty);
 
-    match trait_str {
-        Some(t) => format!("impl {} for {}", t, self_type_str),
-        None => format!("impl {}", self_type_str),
+    // Get the impl's own generics (e.g., <T: Debug> in impl<T: Debug> MyType<T>)
+    let impl_generics_str = format_generics_for_name(&item_impl.generics);
+
+    let mut name_parts = vec!["impl".to_string()];
+
+    if !impl_generics_str.is_empty() {
+        name_parts.push(impl_generics_str);
     }
+
+    if let Some((_, trait_path, _)) = &item_impl.trait_ {
+        let trait_str = trait_path.to_token_stream().to_string();
+        let normalized_trait_str = trait_str
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" ");
+        name_parts.push(normalized_trait_str);
+        name_parts.push("for".to_string());
+    }
+
+    name_parts.push(self_type_str);
+
+    name_parts.join(" ")
+}
+// Helper to format generics (params and where clause) into a canonical string
+fn format_generics_for_name(generics: &syn::Generics) -> String {
+    let mut parts = Vec::new();
+
+    if !generics.params.is_empty() {
+        let params_str = generics
+            .params
+            .iter()
+            .map(|p| {
+                let mut s = p.to_token_stream().to_string();
+                s.split_whitespace().collect::<Vec<&str>>().join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("<{}>", params_str));
+    }
+
+    if let Some(where_clause) = &generics.where_clause {
+        let mut s = where_clause.to_token_stream().to_string();
+        let where_str = s.split_whitespace().collect::<Vec<&str>>().join(" ");
+        parts.push(where_str);
+    }
+    parts.join(" ")
+}
+// Helper to get a simplified string for a type, trying to resolve "Self" if possible
+// This is a conceptual helper; actual resolution of "Self" is complex and
+// might not be fully possible at this stage without more context.
+// For now, we'll rely on what syn gives us for self_ty.
+fn type_to_string(ty: &Type) -> String {
+    // Normalize whitespace and remove extra spaces from token stream
+    let mut s = ty.to_token_stream().to_string();
+    s.split_whitespace().collect::<Vec<&str>>().join(" ")
 }

@@ -1,8 +1,8 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 use ploke_common::{fixtures_crates_dir, workspace_root};
 use ploke_core::TypeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::{CodeGraph, GraphAccess as _};
-use syn_parser::parser::relations::RelationKind;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 // Removed `use syn_parser::parser::visitor::ParsedCodeGraph;` - import directly in tests
@@ -55,8 +55,7 @@ m.items() = {:#?}",
             m.is_file_based(),
             m.items()
         );
-        (m.path() == module_path && m.is_inline())
-            || (m.path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline()) || (m.path() == module_path && m.is_file_based())
     })?;
 
     // Convert items Vec<NodeId> to a HashSet for faster lookups if needed,
@@ -131,8 +130,7 @@ pub fn find_import_id(
 ) -> Option<NodeId> {
     let parent_module = graph.modules.iter().find(|m| {
         // #[cfg(feature = "verbose_debug")]
-        (m.path() == module_path && m.is_inline())
-            || (m.path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline()) || (m.path() == module_path && m.is_file_based())
     })?;
     let import_id = graph
         .use_statements
@@ -421,10 +419,7 @@ pub fn find_inline_module_by_path<'a>(
     graph: &'a CodeGraph,
     module_path: &[String],
 ) -> Option<&'a ModuleNode> {
-    let mut modules = graph
-        .modules
-        .iter()
-        .filter(|m| m.path() == module_path);
+    let mut modules = graph.modules.iter().filter(|m| m.path() == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
     for unexpected_module in modules {
