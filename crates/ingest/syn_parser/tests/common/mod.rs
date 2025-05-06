@@ -209,8 +209,14 @@ impl<'a> ParanoidArgs<'a> {
     /// Checks if the actual node's CFGs match the expected CFGs.
     /// Order of CFGs is not considered significant for matching.
     pub fn is_cfgs_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let mut expected_cfgs_sorted = self.expected_cfg
-            .map(|cfgs_slice| cfgs_slice.iter().map(|s| s.to_string()).collect::<Vec<String>>())
+        let mut expected_cfgs_sorted = self
+            .expected_cfg
+            .map(|cfgs_slice| {
+                cfgs_slice
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+            })
             .unwrap_or_default();
         expected_cfgs_sorted.sort_unstable();
 
@@ -243,7 +249,10 @@ impl<'a> ParanoidArgs<'a> {
     /// This method is intended to be called on `ParanoidArgs` after a `GraphNode` has been retrieved
     /// using the `TestInfo` (which contains the generated ID and the `ParanoidArgs`).
     pub fn run_all_checks_on_node_and_log(&self, actual_node: &dyn GraphNode) -> bool {
-        self.log_expected_info_for_node(actual_node.any_id().to_string(), actual_node.name().to_string());
+        self.log_expected_info_for_node(
+            actual_node.any_id().to_string(),
+            actual_node.name().to_string(),
+        );
 
         let ident_match = self.is_ident_match_debug(actual_node);
         let kind_match = self.is_item_kind_match_debug(actual_node);
