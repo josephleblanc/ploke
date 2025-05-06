@@ -43,16 +43,18 @@ impl ExpectedConstData {
         &'a self,
         parsed: &'a ParsedCodeGraph,
     ) -> impl Iterator<Item = &&ConstNode> {
-        parsed.graph.consts.iter().filter(move |n| {
-            self.is_name_match_debug(n)
-                && self.is_vis_match_debug(n)
-                && self.is_attr_match_debug(n)
-                && self.is_type_id_check_match_debug(n)
-                && self.is_value_match_debug(n)
-                && self.is_docstring_contains_match_debug(n)
-                && self.is_tracking_hash_check_match_debug(n)
-                && self.is_cfgs_match_debug(n)
-        }) // AI: Change these to separate filter calls AI!
+        parsed
+            .graph
+            .consts
+            .iter()
+            .filter(move |n| self.is_name_match_debug(n))
+            .filter(move |n| self.is_vis_match_debug(n))
+            .filter(move |n| self.is_attr_match_debug(n))
+            .filter(move |n| self.is_type_id_check_match_debug(n))
+            .filter(move |n| self.is_value_match_debug(n))
+            .filter(move |n| self.is_docstring_contains_match_debug(n))
+            .filter(move |n| self.is_tracking_hash_check_match_debug(n))
+            .filter(move |n| self.is_cfgs_match_debug(n))
     }
 
     fn is_name_match_debug(&self, node: &&ConstNode) -> bool {
