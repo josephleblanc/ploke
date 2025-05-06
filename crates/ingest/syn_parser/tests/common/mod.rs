@@ -4,10 +4,11 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
-use syn_parser::parser::graph::{CodeGraph, GraphAccess};
+use syn_parser::parser::graph::{CodeGraph, GraphAccess, GraphNode}; // Added GraphNode
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
+use syn_parser::utils::{LogStyle, LogStyleDebug}; // Added LogStyle imports
 use syn_parser::TestIds;
 use thiserror::Error; // Ensure thiserror is imported
 
@@ -148,13 +149,118 @@ impl<'a> ParanoidArgs<'a> {
         };
         Ok(test_info)
     }
-    // AI: Create another set of logging method that follow the pattern we are using in
-    // `ExpectedConstData` with `find_node_by_values` and its helper functions.
-    //
-    // You previous attempt departed to far from the desired style. Follow the same patterns as in
-    // the `ExpectedConstData` method `find_node_by_values`. It should use similar programming
-    // patterns. I deleted everything you made before.
-    // AI!
+}
+
+pub const LOG_PARANOID_CHECK: &str = "log_paranoid_check";
+
+impl<'a> ParanoidArgs<'a> {
+    /// Logs the expected information stored in these ParanoidArgs.
+    pub fn log_expected_info_for_node(&self, actual_node_id: String, actual_node_name: String) {
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "Paranoid Check for Node ID '{}', Name '{}'",
+            actual_node_id.log_id(),
+            actual_node_name.log_name()
+        );
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {:?}\n    Parent Path: {:?}\n    CFGs: {:?}",
+            self.fixture.log_info(),
+            self.relative_file_path.log_info(),
+            self.ident.log_info(),
+            self.item_kind,
+            self.expected_path.log_info_debug(),
+            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_info()
+        );
+    }
+
+    /// Checks if the actual node's name matches the expected ident.
+    pub fn is_ident_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
+        let expected_ident = self.ident;
+        let actual_name = actual_node.name();
+        let is_match = expected_ident == actual_name;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "    {} | Expected Ident '{}' == Actual Name '{}': {}",
+            "Ident Match?".to_string().log_step(),
+            expected_ident.log_name(),
+            actual_name.log_name(),
+            is_match.to_string().log_vis()
+        );
+        is_match
+    }
+
+    /// Checks if the actual node's item kind matches the expected item kind.
+    /// NOTE: This currently uses `actual_node.kind()` from the `GraphNode` trait,
+    /// which might not be the same as `AnyNodeId::kind()` if/when that's implemented.
+    pub fn is_item_kind_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
+        let expected_kind = self.item_kind;
+        // Assuming GraphNode::kind() provides the ItemKind.
+        // If AnyNodeId gets a kind() method, that would be: actual_node.any_id().kind()
+        let actual_kind = actual_node.kind();
+        let is_match = expected_kind == actual_kind;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "    {} | Expected ItemKind '{:?}' == Actual ItemKind '{:?}': {}",
+            "ItemKind Match?".to_string().log_step(),
+            expected_kind,
+            actual_kind,
+            is_match.to_string().log_vis()
+        );
+        is_match
+    }
+
+    /// Checks if the actual node's CFGs match the expected CFGs.
+    /// Order of CFGs is not considered significant for matching.
+    pub fn is_cfgs_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
+        let mut expected_cfgs_sorted = self.expected_cfg
+            .map(|cfgs_slice| cfgs_slice.iter().map(|s| s.to_string()).collect::<Vec<String>>())
+            .unwrap_or_default();
+        expected_cfgs_sorted.sort_unstable();
+
+        let mut actual_cfgs_sorted = actual_node.cfgs().to_vec();
+        actual_cfgs_sorted.sort_unstable();
+
+        let is_match = expected_cfgs_sorted == actual_cfgs_sorted;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "    {} | Expected CFGs (sorted) '{:?}' == Actual CFGs (sorted) '{:?}': {}",
+            "CFGs Match?".to_string().log_step(),
+            expected_cfgs_sorted.log_green_debug(),
+            actual_cfgs_sorted.log_green_debug(),
+            is_match.to_string().log_vis()
+        );
+        is_match
+    }
+
+    /// Logs information about the parent module path check.
+    /// This check is implicitly performed during ID generation and lookup via `generate_pid`.
+    pub fn log_parent_module_path_check_info(&self) {
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "    {} | Expected Parent Module Path '{:?}' was used for NodeId generation and lookup.",
+            "Parent Path Check?".to_string().log_step(),
+            self.expected_path.log_info_debug()
+        );
+    }
+
+    /// Runs all defined checks against the provided `GraphNode` and logs the results.
+    /// Returns `true` if all checks pass, `false` otherwise.
+    /// This method is intended to be called on `ParanoidArgs` after a `GraphNode` has been retrieved
+    /// using the `TestInfo` (which contains the generated ID and the `ParanoidArgs`).
+    pub fn run_all_checks_on_node_and_log(&self, actual_node: &dyn GraphNode) -> bool {
+        self.log_expected_info_for_node(actual_node.any_id().to_string(), actual_node.name().to_string());
+
+        let ident_match = self.is_ident_match_debug(actual_node);
+        let kind_match = self.is_item_kind_match_debug(actual_node);
+        let cfgs_match = self.is_cfgs_match_debug(actual_node);
+        self.log_parent_module_path_check_info(); // This is informational as it's part of ID gen
+
+        let all_match = ident_match && kind_match && cfgs_match;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "        {}: {}",
+            "All Checks Passed?".to_string().log_step(),
+            all_match.to_string().log_vis()
+        );
+        if !all_match {
+            log::debug!(target: LOG_PARANOID_CHECK, "Mismatch Details - Actual Node:\n{:#?}", actual_node);
+        }
+        all_match
+    }
 }
 
 #[derive(Debug, Clone)]
