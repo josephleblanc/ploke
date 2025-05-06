@@ -244,6 +244,76 @@ impl<'a> ParanoidArgs<'a> {
         );
     }
 
+    /// Checks if the actual node's parent module path matches the expected path.
+    pub fn is_parent_path_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
+        // Find the ParsedCodeGraph containing this node.
+        // This requires knowing which graph the `actual_node` belongs to.
+        // For now, we assume the `TestInfo` (which calls this) has the correct graph.
+        // This check is somewhat complex as it requires graph context.
+
+        // Find the parent module of the actual_node
+        let fixture_root = fixtures_crates_dir().join(self.fixture);
+        let target_file_path = fixture_root.join(self.relative_file_path);
+
+        // This is a bit of a hack. We need the graph context.
+        // Ideally, `run_all_checks_on_node_and_log` would be a method on `TestInfo`
+        // or `ParsedCodeGraph` would be passed in.
+        // For now, we re-run parts of `generate_pid` to get the graph.
+        // This is inefficient but makes the check self-contained for `ParanoidArgs`.
+        let graphs = run_phases_and_collect(self.fixture); // Re-collect, not ideal
+        let target_data = graphs
+            .iter()
+            .find(|data| data.file_path == target_file_path)
+            .unwrap_or_else(|| {
+                panic!(
+                    "is_parent_path_match_debug: ParsedCodeGraph for '{}' not found",
+                    target_file_path.display()
+                )
+            });
+        let graph = &target_data.graph;
+
+        let actual_parent_module_id = graph
+            .relations()
+            .iter()
+            .find_map(|rel| {
+                if let SyntacticRelation::Contains { source, target } = rel {
+                    if *target == actual_node.any_id().try_into().unwrap() {
+                        // Assuming actual_node.any_id() can be converted to PrimaryNodeId
+                        return Some(*source);
+                    }
+                }
+                None
+            });
+
+        if let Some(parent_id) = actual_parent_module_id {
+            if let Ok(parent_module_node) = graph.find_node_unique(parent_id.into()) {
+                if let Some(parent_mod) = parent_module_node.as_module() {
+                    let actual_path_vec: Vec<String> =
+                        parent_mod.path().iter().map(|s| s.to_string()).collect();
+                    let expected_path_vec: Vec<String> =
+                        self.expected_path.iter().map(|s| s.to_string()).collect();
+                    let is_match = actual_path_vec == expected_path_vec;
+
+                    log::debug!(target: LOG_PARANOID_CHECK,
+                        "    {} | Expected Parent Path '{}' == Actual Parent Path '{}': {}",
+                        "Parent Path Match?".to_string().log_step(),
+                        expected_path_vec.log_path_debug(),
+                        actual_path_vec.log_path_debug(),
+                        is_match.to_string().log_vis()
+                    );
+                    return is_match;
+                }
+            }
+        }
+
+        log::warn!(target: LOG_PARANOID_CHECK,
+            "    {} | Could not determine actual parent path for node '{}'. Check failed.",
+            "Parent Path Match?".to_string().log_step(),
+            actual_node.name().log_name()
+        );
+        false
+    }
+
     /// Runs all defined checks against the provided `GraphNode` and logs the results.
     /// Returns `true` if all checks pass, `false` otherwise.
     /// This method is intended to be called on `ParanoidArgs` after a `GraphNode` has been retrieved
