@@ -42,12 +42,12 @@ impl ExpectedConstData {
     pub fn find_node_by_values<'a>(
         &'a self,
         parsed: &'a ParsedCodeGraph,
-    ) -> impl Iterator<Item = &&ConstNode> {
+    ) -> impl Iterator<Item = &ConstNode> {
         parsed
             .graph
             .consts
             .iter()
-            .filter(move |n| self.is_name_match_debug(n))
+            .filter(move |&n| self.is_name_match_debug(n))
             .filter(move |n| self.is_vis_match_debug(n))
             .filter(move |n| self.is_attr_match_debug(n))
             .filter(move |n| self.is_type_id_check_match_debug(n))
@@ -57,7 +57,7 @@ impl ExpectedConstData {
             .filter(move |n| self.is_cfgs_match_debug(n))
     }
 
-    fn is_name_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_name_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected '{}' == Actual '{}': {}",
             "Names Match?".to_string().log_step(),
@@ -67,7 +67,7 @@ impl ExpectedConstData {
         );
         self.name == node.name()
     }
-    fn is_vis_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_vis_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected '{}' == Actual '{}': {}",
             "Names Match?".to_string().log_step(),
@@ -77,7 +77,7 @@ impl ExpectedConstData {
         );
         self.visibility == *node.visibility()
     }
-    fn is_attr_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_attr_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected '{}' == Actual '{}': {}",
             "Names Match?".to_string().log_step(),
@@ -88,7 +88,7 @@ impl ExpectedConstData {
         self.attributes == node.attributes()
     }
 
-    fn is_type_id_check_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_type_id_check_match_debug(&self, node: &ConstNode) -> bool {
         let actual_check_passes = matches!(node.type_id, TypeId::Synthetic(_));
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
@@ -100,7 +100,7 @@ impl ExpectedConstData {
         self.type_id_check == actual_check_passes
     }
 
-    fn is_value_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_value_match_debug(&self, node: &ConstNode) -> bool {
         let actual_value = node.value.as_deref();
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected '{:?}' == Actual '{:?}': {}",
@@ -112,7 +112,7 @@ impl ExpectedConstData {
         self.value == actual_value
     }
 
-    fn is_docstring_contains_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_docstring_contains_match_debug(&self, node: &ConstNode) -> bool {
         let actual_docstring = node.docstring.as_deref();
         let check_passes = match self.docstring_contains {
             Some(expected_substr) => {
@@ -130,7 +130,7 @@ impl ExpectedConstData {
         check_passes
     }
 
-    fn is_tracking_hash_check_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_tracking_hash_check_match_debug(&self, node: &ConstNode) -> bool {
         let actual_check_passes = matches!(node.tracking_hash, Some(TrackingHash(_)));
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
@@ -142,7 +142,7 @@ impl ExpectedConstData {
         self.tracking_hash_check == actual_check_passes
     }
 
-    fn is_cfgs_match_debug(&self, node: &&ConstNode) -> bool {
+    fn is_cfgs_match_debug(&self, node: &ConstNode) -> bool {
         // For CFGs, order doesn't matter, so we sort before comparison for stability.
         let mut actual_cfgs = node.cfgs().to_vec();
         actual_cfgs.sort_unstable();
@@ -774,17 +774,37 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         ident: "TOP_LEVEL_BOOL",
         expected_cfg: None,
         expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
+        item_kind: ItemKind::Const, // AI!: Make a new entry in `EXPECTED_ITEMS` for this item. Use
+                                    // the contents of the `tests/fixture_crates/fixture_nodes/src/const_static.rs` to ensure
+                                    // it is accurate AI!
     };
+    let args = EXPECTED_ITEMS
+        .iter()
+        .find(|fixt| fixt.ident == args.ident)
+        .unwrap();
+    let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
-    let test_info = args.generate_pid(&successful_graphs)?;
+    let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
+        let _ = exp_const
+            .find_node_by_values(
+                &successful_graphs
+                    .iter()
+                    .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+                    .unwrap(),
+            )
+            .count();
+    })?;
 
     // Find the node using the generated ID within the correct graph
     let node = test_info
         .target_data() // This is &ParsedCodeGraph
         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
-        .expect("Failed to find node using generated PID");
+        .inspect_err(|e| {
+            let _ = exp_const
+                .find_node_by_values(test_info.target_data())
+                .count();
+        })?;
 
     assert_eq!(
         node.name(), // Use the GraphNode trait method
