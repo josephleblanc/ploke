@@ -68,7 +68,8 @@ macro_rules! paranoid_test_name_check {
             // and found_node will be &dyn GraphNode
             let graph_data = test_info.target_data();
             let expected_pid = test_info.test_pid();
-            let found_node: &dyn syn_parser::parser::graph::GraphNode = graph_data.find_node_unique(expected_pid.into())?;
+            let found_node: &dyn syn_parser::parser::graph::GraphNode =
+                graph_data.find_node_unique(expected_pid.into())?;
 
             // 5. Perform the name assertion
             assert_eq!(
@@ -167,7 +168,7 @@ macro_rules! paranoid_test_fields_and_values_const {
                         args.relative_file_path, args.ident
                     )
                 });
-            
+
             args.check_graph(target_graph_data)?; // Log graph context
 
             // 5. Attempt ID-based lookup and individual field checks
@@ -177,14 +178,19 @@ macro_rules! paranoid_test_fields_and_values_const {
                         Ok(node) => {
                             if let Some(const_node) = node.as_const() {
                                 log::info!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "Performing individual field checks for '{}' via ID lookup.", args.ident);
-                                assert!(expected_data.is_name_match_debug(const_node), "Name mismatch for {}", args.ident);
-                                assert!(expected_data.is_vis_match_debug(const_node), "Visibility mismatch for {}", args.ident);
-                                assert!(expected_data.is_attr_match_debug(const_node), "Attributes mismatch for {}", args.ident);
-                                assert!(expected_data.is_type_id_check_match_debug(const_node), "Type ID check mismatch for {}", args.ident);
-                                assert!(expected_data.is_value_match_debug(const_node), "Value mismatch for {}", args.ident);
-                                assert!(expected_data.is_docstring_contains_match_debug(const_node), "Docstring mismatch for {}", args.ident);
-                                assert!(expected_data.is_tracking_hash_check_match_debug(const_node), "Tracking hash check mismatch for {}", args.ident);
-                                assert!(expected_data.is_cfgs_match_debug(const_node), "CFGs mismatch for {}", args.ident);
+                                assert!({
+                                    ![
+                                        expected_data.is_name_match_debug(const_node),
+                                        expected_data.is_vis_match_debug(const_node),
+                                        expected_data.is_attr_match_debug(const_node),
+                                        expected_data.is_type_id_check_match_debug(const_node),
+                                        expected_data.is_value_match_debug(const_node),
+                                        expected_data.is_docstring_contains_match_debug(const_node),
+                                        expected_data.is_tracking_hash_check_match_debug(const_node),
+                                        expected_data.is_cfgs_match_debug(const_node),
+                                    ]
+                                    .contains(&false)
+                                });
                             } else {
                                 panic!("Node found by ID for '{}' was not a ConstNode.", args.ident);
                             }

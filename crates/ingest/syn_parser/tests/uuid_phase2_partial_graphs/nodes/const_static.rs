@@ -2,6 +2,7 @@
 use crate::common::gen_pid_paranoid;
 use crate::common::run_phase1_phase2;
 use crate::common::run_phases_and_collect;
+use crate::paranoid_test_fields_and_values_const;
 use syn_parser::parser::nodes::HasAttributes;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::utils::LogStyle;
@@ -653,6 +654,21 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         args.ident,
         node.name()
     );
+
+    let node = node.as_const().unwrap();
+    assert!({
+        ![
+            exp_const.is_name_match_debug(node),
+            exp_const.is_vis_match_debug(node),
+            exp_const.is_attr_match_debug(node),
+            exp_const.is_type_id_check_match_debug(node),
+            exp_const.is_value_match_debug(node),
+            exp_const.is_docstring_contains_match_debug(node),
+            exp_const.is_tracking_hash_check_match_debug(node),
+            exp_const.is_cfgs_match_debug(node),
+        ]
+        .contains(&false)
+    });
     Ok(())
 }
 
