@@ -4,11 +4,10 @@ use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::Path;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
-use syn_parser::parser::graph::{CodeGraph, GraphAccess, GraphNode}; // Added GraphNode
+use syn_parser::parser::graph::{CodeGraph, GraphAccess};
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
-use syn_parser::utils::{LogStyle, LogStyleDebug}; // Added LogStyle imports
 use syn_parser::TestIds;
 use thiserror::Error; // Ensure thiserror is imported
 
@@ -79,7 +78,7 @@ impl<'a> ParanoidArgs<'a> {
         // 1. Construct the absolute expected file path
         let fixture_root = fixtures_crates_dir().join(self.fixture);
         let target_file_path = fixture_root.join(self.relative_file_path);
-        // let item_kind = ItemKind::Const; // Bug: Should use self.item_kind
+        let item_kind = ItemKind::Const;
 
         // 2. Find the specific ParsedCodeGraph for the target file
         let target_data = parsed_graphs
@@ -104,18 +103,18 @@ impl<'a> ParanoidArgs<'a> {
             .expected_cfg
             .map(|c| strs_to_strings(c))
             .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
-        // let item_name = self // Bug: item_name for NodeId::generate_synthetic is self.ident
-        //     .expected_path
-        //     .last()
-        //     .expect("Must use name as last element of path for paranoid test helper.");
-        // let name_as_vec = vec![item_name.to_string()]; // Bug: relative_path for NodeId::generate_synthetic is exp_path_string
+        let item_name = self
+            .expected_path
+            .last()
+            .expect("Must use name as last element of path for paranoid test helper.");
+        let name_as_vec = vec![item_name.to_string()];
 
         let generated_id = NodeId::generate_synthetic(
             target_data.crate_namespace,
             &target_file_path,
-            &exp_path_string, // Corrected: Use the full parent module path as relative_path context
-            self.ident,       // Corrected: Use the item's identifier as item_name
-            self.item_kind,   // Corrected: Use the item_kind from ParanoidArgs
+            &name_as_vec,
+            self.ident,
+            item_kind,
             Some(parent_module.id.base_tid()),
             cfgs.as_deref(),
         );
@@ -149,108 +148,13 @@ impl<'a> ParanoidArgs<'a> {
         };
         Ok(test_info)
     }
-}
-
-pub const LOG_PARANOID_CHECK: &str = "log_paranoid_check";
-
-impl<'a> ParanoidArgs<'a> {
-    /// Logs the expected information stored in these ParanoidArgs.
-    pub fn log_expected_info(&self) {
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "ParanoidArgs Expectations:\n  Fixture: {}\n  Relative File Path: {}\n  Ident: {}\n  ItemKind: {:?}\n  Expected Parent Path: {:?}\n  Expected CFGs: {:?}",
-            self.fixture.log_info(),
-            self.relative_file_path.log_info(),
-            self.ident.log_info(),
-            self.item_kind,
-            self.expected_path.log_info_debug(),
-            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_info()
-        );
-    }
-
-    /// Checks if the actual node's name matches the expected ident.
-    pub fn is_ident_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let expected_ident = self.ident;
-        let actual_name = actual_node.name();
-        let is_match = expected_ident == actual_name;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "   {} | Expected Ident '{}' == Actual Name '{}': {}",
-            "Ident Match?".to_string().log_step(),
-            expected_ident.log_name(),
-            actual_name.log_name(),
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Checks if the actual node's item kind matches the expected item kind.
-    pub fn is_item_kind_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let expected_kind = self.item_kind;
-        let actual_kind = actual_node.any_id().kind(); // Assuming AnyNodeId has a kind() method
-        let is_match = expected_kind == actual_kind;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "   {} | Expected ItemKind '{:?}' == Actual ItemKind '{:?}': {}",
-            "ItemKind Match?".to_string().log_step(),
-            expected_kind,
-            actual_kind,
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Checks if the actual node's CFGs match the expected CFGs.
-    /// Order of CFGs is not considered significant for matching.
-    pub fn is_cfgs_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let mut expected_cfgs_sorted = self.expected_cfg
-            .map(|cfgs_slice| cfgs_slice.iter().map(|s| s.to_string()).collect::<Vec<String>>())
-            .unwrap_or_default();
-        expected_cfgs_sorted.sort_unstable();
-
-        let mut actual_cfgs_sorted = actual_node.cfgs().to_vec();
-        actual_cfgs_sorted.sort_unstable();
-
-        let is_match = expected_cfgs_sorted == actual_cfgs_sorted;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "   {} | Expected CFGs (sorted) '{:?}' == Actual CFGs (sorted) '{:?}': {}",
-            "CFGs Match?".to_string().log_step(),
-            expected_cfgs_sorted.log_green_debug(),
-            actual_cfgs_sorted.log_green_debug(),
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Logs information about the parent module path check.
-    /// This check is implicitly performed during ID generation and lookup.
-    pub fn log_parent_module_path_check_info(&self) {
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "   {} | Expected Parent Module Path '{:?}' was used for NodeId generation and lookup.",
-            "Parent Path Check?".to_string().log_step(),
-            self.expected_path.log_info_debug()
-        );
-    }
-
-    /// Runs all defined checks against the provided `GraphNode` and logs the results.
-    /// Returns `true` if all checks pass, `false` otherwise.
-    pub fn run_all_checks_and_log(&self, actual_node: &dyn GraphNode) -> bool {
-        self.log_expected_info();
-        log::debug!(target: LOG_PARANOID_CHECK, "Running checks for Node ID '{}', Name '{}'", actual_node.any_id().to_string().log_id(), actual_node.name().log_name());
-
-        let ident_match = self.is_ident_match_debug(actual_node);
-        let kind_match = self.is_item_kind_match_debug(actual_node);
-        let cfgs_match = self.is_cfgs_match_debug(actual_node);
-        self.log_parent_module_path_check_info(); // This is informational
-
-        let all_match = ident_match && kind_match && cfgs_match;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "       {}: {}",
-            "All Checks Passed?".to_string().log_step(),
-            all_match.to_string().log_vis()
-        );
-        if !all_match {
-            log::debug!(target: LOG_PARANOID_CHECK, "Node Details:\n{:#?}", actual_node);
-        }
-        all_match
-    }
+    // AI: Create another set of logging method that follow the pattern we are using in
+    // `ExpectedConstData` with `find_node_by_values` and its helper functions.
+    //
+    // You previous attempt departed to far from the desired style. Follow the same patterns as in
+    // the `ExpectedConstData` method `find_node_by_values`. It should use similar programming
+    // patterns. I deleted everything you made before.
+    // AI!
 }
 
 #[derive(Debug, Clone)]
@@ -297,7 +201,7 @@ pub fn gen_pid_paranoid(
     // 1. Construct the absolute expected file path
     let fixture_root = fixtures_crates_dir().join(args.fixture);
     let target_file_path = fixture_root.join(args.relative_file_path);
-    // let item_kind = ItemKind::Const; // Bug: Should use args.item_kind
+    let item_kind = ItemKind::Const;
 
     // 2. Find the specific ParsedCodeGraph for the target file
     let target_data = parsed_graphs
@@ -322,18 +226,18 @@ pub fn gen_pid_paranoid(
         .expected_cfg
         .map(strs_to_strings)
         .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
-    // let item_name = args // Bug: item_name for NodeId::generate_synthetic is args.ident
-    //     .expected_path
-    //     .last()
-    //     .expect("Must use name as last element of path for paranoid test helper.");
-    // let name_as_vec = vec![item_name.to_string()]; // Bug: relative_path for NodeId::generate_synthetic is exp_path_string
+    let item_name = args
+        .expected_path
+        .last()
+        .expect("Must use name as last element of path for paranoid test helper.");
+    let name_as_vec = vec![item_name.to_string()];
 
     let generated_id = NodeId::generate_synthetic(
         target_data.crate_namespace,
         &target_file_path,
-        &exp_path_string, // Corrected: Use the full parent module path as relative_path context
-        args.ident,       // Corrected: Use the item's identifier as item_name
-        args.item_kind,   // Corrected: Use the item_kind from ParanoidArgs
+        &name_as_vec,
+        args.ident,
+        item_kind,
         Some(parent_module.id.base_tid()),
         cfgs.as_deref(),
     );
