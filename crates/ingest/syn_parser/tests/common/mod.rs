@@ -162,13 +162,13 @@ impl<'a> ParanoidArgs<'a> {
             actual_node_name.log_name()
         );
         log::debug!(target: LOG_PARANOID_CHECK,
-            "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {:?}\n    Parent Path: {:?}\n    CFGs: {:?}",
+            "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {}\n    Parent Path: {}\n    CFGs: {}",
             self.fixture.log_name(),
             self.relative_file_path.log_path(),
             self.ident.log_name(),
-            self.item_kind.log_vis_debug(), // Use LogStyleDebug for ItemKind
-            self.expected_path.log_path_debug(),
-            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_name()
+            self.item_kind.log_vis_debug(), // Use LogStyleDebug for ItemKind, will be displayed via {}
+            self.expected_path.log_path_debug(), // Will be displayed via {}
+            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_name() // Will be displayed via {}
         );
     }
 
@@ -225,10 +225,10 @@ impl<'a> ParanoidArgs<'a> {
 
         let is_match = expected_cfgs_sorted == actual_cfgs_sorted;
         log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected CFGs (sorted) '{:?}' == Actual CFGs (sorted) '{:?}': {}",
+            "    {} | Expected CFGs (sorted) '{}' == Actual CFGs (sorted) '{}': {}",
             "CFGs Match?".to_string().log_step(),
-            expected_cfgs_sorted.log_green_debug(),
-            actual_cfgs_sorted.log_green_debug(),
+            expected_cfgs_sorted.log_green_debug(), // Displays as colored string via {}
+            actual_cfgs_sorted.log_green_debug(),   // Displays as colored string via {}
             is_match.to_string().log_vis()
         );
         is_match
