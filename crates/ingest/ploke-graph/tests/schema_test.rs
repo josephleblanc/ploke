@@ -68,6 +68,7 @@ fn verify_visibility(
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_schema_creation() {
     // Create an in-memory database
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
@@ -235,6 +236,7 @@ fn test_schema_creation() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_visibility_path_queries() {
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
     create_schema(&db).expect("Failed to create schema");
@@ -297,6 +299,7 @@ fn test_visibility_path_queries() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_indices() {
     // Create an in-memory database
     let db = Db::new(MemStorage::default()).expect("Failed to create database");

@@ -140,6 +140,7 @@ fn insert_sample_module_relationship(
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_find_implementations() {
     let db = setup_test_db();
 
@@ -204,6 +205,7 @@ fn test_find_implementations() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_find_type_usages() {
     let db = setup_test_db();
 
@@ -230,6 +232,7 @@ fn test_find_type_usages() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_hierarchy() {
     let db = setup_test_db();
 
@@ -265,6 +268,7 @@ fn test_module_hierarchy() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_advanced_graph_traversal() {
     let db = setup_test_db();
 

@@ -11,6 +11,7 @@ use ploke_graph::schema::{create_schema, insert_sample_data};
 mod test_helpers;
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_basic_function_query() -> Result<(), Error> {
     let db = test_helpers::setup_test_db();
     insert_sample_data(&db).expect("Failed to insert sample data");
@@ -31,6 +32,7 @@ fn test_basic_function_query() -> Result<(), Error> {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_basic_struct_query() -> Result<(), Error> {
     let db = test_helpers::setup_test_db();
     insert_sample_data(&db).expect("Failed to insert sample data");

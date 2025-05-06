@@ -15,7 +15,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility}
 ///
 /// # Example Usage
 /// ```ignore
-/// use syn_parser_macros::GenerateNodeInfo;
+/// // removed GenerateNodeInfo
 /// use ploke_core::{StructNodeId}; // Assuming these exist
 /// // ... other necessary imports ...
 ///

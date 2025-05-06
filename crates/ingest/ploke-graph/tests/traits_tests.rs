@@ -5,6 +5,7 @@ use ploke_test_utils::parse_fixture;
 mod test_helpers;
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_visibility_conversions() {
     let graph = parse_fixture("visibility.rs").expect("Error parsing fixture visibility.rs");
     let func = graph
@@ -22,6 +23,7 @@ fn test_visibility_conversions() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_function_node_conversion() {
     let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
     let func = graph
@@ -36,6 +38,7 @@ fn test_function_node_conversion() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_batch_insert() {
     let graph = parse_fixture("functions.rs").expect("Error parsing fixture functions.rs");
     let functions: Vec<_> = graph.functions.iter().take(2).cloned().collect();

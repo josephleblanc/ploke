@@ -109,6 +109,8 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> AnyNodeId;
 }
+
+pub const LOG_TEMP_TARGET: &str = "temp_target";
 impl GeneratesAnyNodeId for VisitorState {
     fn generate_synthetic_node_id(
         &self,
@@ -123,17 +125,36 @@ impl GeneratesAnyNodeId for VisitorState {
             .copied()
             .map(|p_id| p_id.base_id());
 
-        debug!(target: LOG_TARGET_NODE_ID,
+        if name == "TOP_LEVEL_BOOL" {
+
+            debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC");
+        debug!(target: LOG_TEMP_TARGET,
             "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
             name, item_kind
         );
-        debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
-        debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
-        debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
-        debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
-        debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
-        debug!(target: LOG_TARGET_NODE_ID, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
-        debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
+        debug!(target: LOG_TEMP_TARGET, "  crate_namespace: {}", self.crate_namespace);
+        debug!(target: LOG_TEMP_TARGET, "  file_path: {:?}", self.current_file_path);
+        debug!(target: LOG_TEMP_TARGET, "  relative_path: {:?}", self.current_module_path);
+        debug!(target: LOG_TEMP_TARGET, "  item_name: {}", name);
+        debug!(target: LOG_TEMP_TARGET, "  item_kind: {:?}", item_kind);
+        debug!(target: LOG_TEMP_TARGET, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
+        debug!(target: LOG_TEMP_TARGET, "  cfg_bytes: {:?}", cfg_bytes);
+        }
+        // if name == "TOP_LEVEL_BOOL" {
+        //
+        //     debug!("DEBUG_CONST_STATIC");
+        // debug!(target: LOG_TARGET_NODE_ID,
+        //     "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
+        //     name, item_kind
+        // );
+        // debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
+        // debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
+        // debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
+        // debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
+        // debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
+        // debug!(target: LOG_TARGET_NODE_ID, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
+        // debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
+        // }
 
         let node_id = NodeId::generate_synthetic(
             self.crate_namespace,

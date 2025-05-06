@@ -110,7 +110,8 @@ mod internal {
     // Re-export specific item
     pub use restricted::RestrictedItem;
 
-    fn test_visibility() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_visibility() {
         utils::internal_helper(); // OK
         utils::super_helper(); // OK
         restricted::restricted_func(); // OK

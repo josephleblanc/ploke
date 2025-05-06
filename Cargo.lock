@@ -122,6 +122,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.98"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+
+[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2102,12 +2108,14 @@ dependencies = [
 name = "syn_parser"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "colored",
  "cozo",
  "dashmap 6.1.0",
  "env_logger 0.11.8",
  "flume",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "parse_cfg",
  "petgraph",

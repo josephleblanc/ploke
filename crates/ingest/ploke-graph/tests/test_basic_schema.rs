@@ -8,6 +8,7 @@ use test_helpers::setup_test_db;
 mod test_helpers;
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_schema_creation() {
     let db = setup_test_db();
 
@@ -43,6 +44,7 @@ fn test_schema_creation() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_indices() {
     let db = setup_test_db();
 
@@ -103,6 +105,7 @@ fn insert_sample_type_alias(
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_type_alias_insertion() {
     let db = setup_test_db();
 

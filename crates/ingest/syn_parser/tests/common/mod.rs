@@ -108,12 +108,37 @@ impl<'a> ParanoidArgs<'a> {
             .expected_path
             .last()
             .expect("Must use name as last element of path for paranoid test helper.");
+        // let name_as_vec = vec![item_name.to_string()];
         let name_as_vec = vec![item_name.to_string()];
 
+        if self.ident == "TOP_LEVEL_BOOL" {
+            log::debug!(target: "temp_target",
+                "DEBUG_CONST_STATIC: gemerate_pid self.ident: {}, namespace: {:?}",
+                self.ident,
+                target_data.crate_namespace
+            );
+            log::debug!(target: "temp_target",
+                "
+target_data.crate_namespace,        {},
+&target_file_path,                  {:?},
+&name_as_vec,                       {:?},
+self.ident,                         {},
+item_kind,                          {:?},
+Some(parent_module.id.base_tid()),  {:?},
+cfgs.as_deref(),                    {:?},",
+                target_data.crate_namespace,
+                &target_file_path,
+                &name_as_vec,
+                self.ident,
+                item_kind,
+                Some(parent_module.id.base_tid()),
+                cfgs.as_deref(),
+            )
+        }
         let generated_id = NodeId::generate_synthetic(
             target_data.crate_namespace,
             &target_file_path,
-            &name_as_vec,
+            &exp_path_string,
             self.ident,
             item_kind,
             Some(parent_module.id.base_tid()),
@@ -153,198 +178,39 @@ impl<'a> ParanoidArgs<'a> {
 
 pub const LOG_PARANOID_CHECK: &str = "log_paranoid_check";
 
-impl<'a> ParanoidArgs<'a> {
+impl ParanoidArgs<'_> {
     /// Logs the expected information stored in these ParanoidArgs.
-    pub fn log_expected_info_for_node(&self, actual_node_id: String, actual_node_name: String) {
+    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> anyhow::Result<()> {
+        let exp_fp = self.relative_file_path;
+
         log::debug!(target: LOG_PARANOID_CHECK,
-            "Paranoid Check for Node ID '{}', Name '{}'",
-            actual_node_id.log_id(),
-            actual_node_name.log_name()
+            "{}\n{}: {}\n\t{}: {}\n\t{}: {}",
+                "Checking Graph".log_header(),
+                "Expected Relative File Path: ".log_step(),
+                "Expected Relative File Path: ".log_step(),
+                exp_fp.log_path(),
+                parsed.file_path.to_str().unwrap().log_path(),
+                "Match?".log_orange(),
+                parsed.file_path.ends_with(exp_fp).to_string().log_orange(),
         );
+
+        let mut file_modules = parsed.modules().iter().filter(|m| m.is_file_based());
+        let local_root_module = file_modules.next().unwrap();
         log::debug!(target: LOG_PARANOID_CHECK,
-            "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {}\n    Parent Path: {}\n    CFGs: {}",
-            self.fixture.log_name(),
-            self.relative_file_path.log_path(),
-            self.ident.log_name(),
-            self.item_kind.log_vis_debug(), // Use LogStyleDebug for ItemKind, will be displayed via {}
-            self.expected_path.log_path_debug(), // Will be displayed via {}
-            self.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_name() // Will be displayed via {}
+            "\t{}: \n\t{} \n\t{}\n\t{}: {}",
+                "Root Module Path of Graph".log_step(),
+                self.expected_path.join("::").log_path(),
+                local_root_module.path().join("::").log_path(),
+                "Match?".log_orange(),
+                self.expected_path == local_root_module.path(),
         );
-    }
-
-    /// Checks if the actual node's name matches the expected ident.
-    pub fn is_ident_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let expected_ident = self.ident;
-        let actual_name = actual_node.name();
-        let is_match = expected_ident == actual_name;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected Ident '{}' == Actual Name '{}': {}",
-            "Ident Match?".to_string().log_step(),
-            expected_ident.log_name(),
-            actual_name.log_name(),
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Checks if the actual node's item kind matches the expected item kind.
-    /// NOTE: This currently uses `actual_node.kind()` from the `GraphNode` trait,
-    /// which might not be the same as `AnyNodeId::kind()` if/when that's implemented.
-    pub fn is_item_kind_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let expected_kind = self.item_kind;
-        // Assuming GraphNode::kind() provides the ItemKind.
-        // If AnyNodeId gets a kind() method, that would be: actual_node.any_id().kind()
-        let actual_kind = actual_node.kind();
-        let is_match = expected_kind == actual_kind;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected ItemKind '{:?}' == Actual ItemKind '{:?}': {}",
-            "ItemKind Match?".to_string().log_step(),
-            expected_kind,
-            actual_kind,
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Checks if the actual node's CFGs match the expected CFGs.
-    /// Order of CFGs is not considered significant for matching.
-    pub fn is_cfgs_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        let mut expected_cfgs_sorted = self
-            .expected_cfg
-            .map(|cfgs_slice| {
-                cfgs_slice
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
-        expected_cfgs_sorted.sort_unstable();
-
-        let mut actual_cfgs_sorted = actual_node.cfgs().to_vec();
-        actual_cfgs_sorted.sort_unstable();
-
-        let is_match = expected_cfgs_sorted == actual_cfgs_sorted;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected CFGs (sorted) '{}' == Actual CFGs (sorted) '{}': {}",
-            "CFGs Match?".to_string().log_step(),
-            expected_cfgs_sorted.log_green_debug(), // Displays as colored string via {}
-            actual_cfgs_sorted.log_green_debug(),   // Displays as colored string via {}
-            is_match.to_string().log_vis()
-        );
-        is_match
-    }
-
-    /// Logs information about the parent module path check.
-    /// This check is implicitly performed during ID generation and lookup via `generate_pid`.
-    pub fn log_parent_module_path_check_info(&self) {
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "    {} | Expected Parent Module Path '{}' was used for NodeId generation and lookup.",
-            "Parent Path Check?".to_string().log_step(),
-            self.expected_path.log_path_debug() // Will be displayed via {}
-        );
-    }
-
-    /// Checks if the actual node's parent module path matches the expected path.
-    pub fn is_parent_path_match_debug(&self, actual_node: &dyn GraphNode) -> bool {
-        // Find the ParsedCodeGraph containing this node.
-        // This requires knowing which graph the `actual_node` belongs to.
-        // For now, we assume the `TestInfo` (which calls this) has the correct graph.
-        // This check is somewhat complex as it requires graph context.
-
-        // Find the parent module of the actual_node
-        let fixture_root = fixtures_crates_dir().join(self.fixture);
-        let target_file_path = fixture_root.join(self.relative_file_path);
-
-        // This is a bit of a hack. We need the graph context.
-        // Ideally, `run_all_checks_on_node_and_log` would be a method on `TestInfo`
-        // or `ParsedCodeGraph` would be passed in.
-        // For now, we re-run parts of `generate_pid` to get the graph.
-        // This is inefficient but makes the check self-contained for `ParanoidArgs`.
-        let graphs = run_phases_and_collect(self.fixture); // Re-collect, not ideal
-        let target_data = graphs
-            .iter()
-            .find(|data| data.file_path == target_file_path)
-            .unwrap_or_else(|| {
-                panic!(
-                    "is_parent_path_match_debug: ParsedCodeGraph for '{}' not found",
-                    target_file_path.display()
-                )
-            });
-        let graph = &target_data.graph;
-
-        let actual_parent_module_id = graph
-            .relations()
-            .iter()
-            .find_map(|rel| {
-                if let SyntacticRelation::Contains { source, target } = rel {
-                    if *target == actual_node.any_id().try_into().unwrap() {
-                        // Assuming actual_node.any_id() can be converted to PrimaryNodeId
-                        return Some(*source);
-                    }
-                }
-                None
-            });
-
-        if let Some(parent_id) = actual_parent_module_id {
-            if let Ok(parent_module_node) = graph.find_node_unique(parent_id.into()) {
-                if let Some(parent_mod) = parent_module_node.as_module() {
-                    let actual_path_vec: Vec<String> =
-                        parent_mod.path().iter().map(|s| s.to_string()).collect();
-                    let expected_path_vec: Vec<String> =
-                        self.expected_path.iter().map(|s| s.to_string()).collect();
-                    let is_match = actual_path_vec == expected_path_vec;
-
-                    log::debug!(target: LOG_PARANOID_CHECK,
-                        "    {} | Expected Parent Path '{}' == Actual Parent Path '{}': {}",
-                        "Parent Path Match?".to_string().log_step(),
-                        expected_path_vec.log_path_debug(),
-                        actual_path_vec.log_path_debug(),
-                        is_match.to_string().log_vis()
-                    );
-                    return is_match;
-                }
-            }
+        match file_modules.next() {
+            Some(dup_local_file_mod) => panic!(
+                "Duplicate file-level module found: {:?}",
+                dup_local_file_mod
+            ),
+            None => Ok(()),
         }
-
-        log::warn!(target: LOG_PARANOID_CHECK,
-            "    {} | Could not determine actual parent path for node '{}'. Check failed.",
-            "Parent Path Match?".to_string().log_step(),
-            actual_node.name().log_name()
-        );
-        false
-    }
-
-    /// Runs all defined checks against the provided `GraphNode` and logs the results.
-    /// Returns `true` if all checks pass, `false` otherwise.
-    /// This method is intended to be called on `ParanoidArgs` after a `GraphNode` has been retrieved
-    /// using the `TestInfo` (which contains the generated ID and the `ParanoidArgs`).
-    pub fn run_all_checks_on_node_and_log(&self, actual_node: &dyn GraphNode) -> bool {
-        self.log_expected_info_for_node(
-            actual_node.any_id().to_string(),
-            actual_node.name().to_string(),
-        );
-
-        let ident_match = self.is_ident_match_debug(actual_node);
-        let kind_match = self.is_item_kind_match_debug(actual_node);
-        let cfgs_match = self.is_cfgs_match_debug(actual_node);
-        let parent_path_match = self.is_parent_path_match_debug(actual_node);
-        self.log_parent_module_path_check_info(); // This is informational as it's part of ID gen
-
-        let all_match = ident_match && kind_match && cfgs_match && parent_path_match;
-        log::debug!(target: LOG_PARANOID_CHECK,
-            "        {}: {}",
-            "All Checks Passed?".to_string().log_step(),
-            all_match.to_string().log_vis()
-        );
-        if !all_match {
-            log::debug!(target: LOG_PARANOID_CHECK,
-                "Mismatch Details - Actual Node:\n  ID: {}\n  Name: {}\n  Kind: {:?}",
-                actual_node.any_id().to_string().log_id(),
-                actual_node.name().log_name(),
-                actual_node.kind().log_vis_debug()
-            );
-        }
-        all_match
     }
 }
 

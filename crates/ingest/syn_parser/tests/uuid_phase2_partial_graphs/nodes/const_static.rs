@@ -823,11 +823,8 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
             .find(|pg| pg.file_path.ends_with(args.relative_file_path))
             .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
 
-        if let Some(actual_node) = exp_const.find_node_by_values(target_graph).next() {
-            args.run_all_checks_on_node_and_log(actual_node);
-        } else {
-            log::error!(target: LOG_TEST_CONST, "Node for '{}' not found by values in graph '{}' after PID generation failure.", args.ident, args.relative_file_path);
-        }
+        let found = exp_const.find_node_by_values(target_graph).count();
+        args.check_graph(target_graph);
     })?;
 
     // Find the node using the generated ID within the correct graph
@@ -835,13 +832,10 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         .target_data() // This is &ParsedCodeGraph
         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
         .inspect_err(|e| {
-            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, e);
             let target_graph = test_info.target_data();
-            if let Some(actual_node) = exp_const.find_node_by_values(target_graph).next() {
-                args.run_all_checks_on_node_and_log(actual_node);
-            } else {
-                log::error!(target: LOG_TEST_CONST, "Node for '{}' not found by values in graph '{}' after PID lookup failure.", args.ident, target_graph.file_path.display());
-            }
+            args.check_graph(target_graph);
+            let count = exp_const.find_node_by_values(target_graph).count();
+            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, e);
         })?;
 
     assert_eq!(

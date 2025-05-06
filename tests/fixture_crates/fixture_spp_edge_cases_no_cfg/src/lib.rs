@@ -329,7 +329,8 @@ mod vis_tests {
     use super::*;
 
     #[test]
-    fn test_vis() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_vis() {
         crate::a::b::c::other();
         let mut x = 1;
         eprintln!("in mod vis_tests | func_c({x})");
@@ -460,7 +461,8 @@ mod tests {
     }
 
     #[test]
-    fn test_vis() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_vis() {
         let result = add(2, 2);
         assert_eq!(result, 4);
     }

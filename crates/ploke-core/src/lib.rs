@@ -742,8 +742,8 @@ pub enum IdConversionError {
 /// will generate distinct `NodeId`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemKind {
-    Function,     // Standalone function
-    Method,       // Associated function/method
+    Function, // Standalone function
+    Method,   // Associated function/method
     Struct,
     Enum,
     Union,

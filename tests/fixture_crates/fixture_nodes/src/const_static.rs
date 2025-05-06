@@ -1,5 +1,5 @@
 // tests/fixture_crates/fixture_nodes/src/const_static.rs
-
+// AI:
 #![allow(dead_code)] // Prevent warnings about unused items
 #![allow(unused_mut)] // Prevent warnings about unused mutable statics
 
