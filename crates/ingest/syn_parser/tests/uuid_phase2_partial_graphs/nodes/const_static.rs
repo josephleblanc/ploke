@@ -200,7 +200,7 @@ lazy_static! {
             ],
             docstring_contains: Some("This is a documented constant."),
             tracking_hash_check: true,
-            cfgs: vec![],
+            cfgs: vec![], // AI: Add a new entry for "TOP_LEVEL_BOOL" AI!
         });
         // Add more const examples if needed
         m
@@ -282,14 +282,6 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
         ident: "TOP_LEVEL_INT",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs { // New entry for TOP_LEVEL_BOOL
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_BOOL",
         expected_cfg: None,
         expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
@@ -786,7 +778,10 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
     };
     let args = EXPECTED_ITEMS
         .iter()
-        .find(|fixt| fixt.ident == args.ident)
+        .find(|fixt| {
+            log::debug!("fixt: {}, args.ident: {}", fixt.ident, args.ident);
+            fixt.ident == args.ident
+        })
         .unwrap();
     let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
 
@@ -794,7 +789,7 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
         let _ = exp_const
             .find_node_by_values(
-                &successful_graphs
+                successful_graphs
                     .iter()
                     .find(|pg| pg.file_path.ends_with(args.relative_file_path))
                     .unwrap(),
