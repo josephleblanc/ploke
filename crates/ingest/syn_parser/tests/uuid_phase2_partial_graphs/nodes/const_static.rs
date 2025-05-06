@@ -666,6 +666,15 @@ paranoid_test_name_check!(
     expected_cfg: None
 );
 
+paranoid_test_fields_and_values_const!(
+    test_top_level_bool_fields_and_values, // New test name
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_BOOL",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
 // fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
 //  - Find the ValueNode.
