@@ -200,7 +200,17 @@ lazy_static! {
             ],
             docstring_contains: Some("This is a documented constant."),
             tracking_hash_check: true,
-            cfgs: vec![], // AI: Add a new entry for "TOP_LEVEL_BOOL" AI!
+            cfgs: vec![],
+        });
+        m.insert("TOP_LEVEL_BOOL", ExpectedConstData {
+            name: "TOP_LEVEL_BOOL",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            value: Some("true"),
+            attributes: vec![],
+            docstring_contains: Some("top-level public constant"),
+            tracking_hash_check: true,
+            cfgs: vec![],
         });
         // Add more const examples if needed
         m
