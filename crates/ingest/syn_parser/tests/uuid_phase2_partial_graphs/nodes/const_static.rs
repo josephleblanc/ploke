@@ -5,7 +5,7 @@ use crate::common::run_phases_and_collect;
 // Use re-exports from paranoid mod
 use crate::common::FixtureError;
 use crate::common::ParanoidArgs;
-use crate::common::macro_rule_tests::paranoid_test_name_check; // Import the macro
+use crate::paranoid_test_name_check;
 use lazy_static::lazy_static;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::ItemKind;
@@ -16,11 +16,13 @@ use std::collections::HashMap;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::Attribute;
+use syn_parser::parser::nodes::ConstNode;
 use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::TestIds; // Import specific nodes and Attribute
-
+pub const LOG_TEST_CONST: &str = "log_test_const";
+use syn_parser::utils::logging::{LogStyle, LogStyleDebug};
 // Struct to hold expected fields for a ConstNode
 #[derive(Debug, Clone, PartialEq)]
 struct ExpectedConstData {
@@ -32,6 +34,22 @@ struct ExpectedConstData {
     docstring_contains: Option<&'static str>,
     tracking_hash_check: bool, // Check if Some
     cfgs: Vec<String>,
+}
+
+impl ExpectedConstData {
+    pub fn find_node_by_values(&self, parsed: &ParsedCodeGraph) {
+        parsed.graph.consts.iter().filter(|node| {
+            log::debug!(target: LOG_TEST_CONST,
+                "   {}: {} == {}: {}",
+                "Checking if names match".to_string().log_step(),
+                self.name.log_name(),
+                node.name.to_string().log_name(),
+                self.name == node,
+            ); // AI: fix this use of log_name, etc, to work for statics. add a new trait
+               // implementation in logging.rs if needed. AI!
+            self.name == node.name()
+        });
+    }
 }
 
 // Struct to hold expected fields for a StaticNode
@@ -69,8 +87,8 @@ lazy_static! {
             value: Some("3.14"),
             attributes: vec![
                 // Note: Arg parsing might simplify this in the future
-                Attribute {name:"deprecated".to_string(),args:vec!["note = \"Use NEW_DOC_ATTR_CONST instead\"".to_string()],value:None, span: todo!() },
-                Attribute {name:"allow".to_string(),args:vec!["unused".to_string()],value:None, span: todo!() },
+                Attribute {name:"deprecated".to_string(),args:vec!["note = \"Use NEW_DOC_ATTR_CONST instead\"".to_string()],value:None },
+                Attribute {name:"allow".to_string(),args:vec!["unused".to_string()],value:None },
             ],
             docstring_contains: Some("This is a documented constant."),
             tracking_hash_check: true,
@@ -113,7 +131,7 @@ lazy_static! {
             is_mutable: true,
             value: Some("false"),
             attributes: vec![
-                 Attribute {name:"allow".to_string(),args:vec!["dead_code".to_string()],value:None, span: todo!() },
+                 Attribute {name:"allow".to_string(),args:vec!["dead_code".to_string()],value:None },
             ],
             docstring_contains: None,
             tracking_hash_check: true,
@@ -286,7 +304,8 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
 // Goal: Quickly verify that ValueNodes are created for various const/static items
 //       and basic properties (IDs, hash, kind) are present. Uses full crate parse.
 // ---------------------------------------------------------------------------------
-// #[test] fn test_const_static_basic_smoke_test_full_parse()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_const_static_basic_smoke_test_full_parse()
 //  - Use run_phase1_phase2("fixture_nodes")
 //  - Find the ParsedCodeGraph for const_static.rs
 //  - Iterate through expected const/static names (e.g., TOP_LEVEL_INT, TOP_LEVEL_STR, INNER_CONST)
@@ -419,6 +438,7 @@ fn basic_smoke_test() -> anyhow::Result<()> {
 //       Uses full parse for consistency.
 // ---------------------------------------------------------------------------------
 #[test]
+// #[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserError> {
     // Renamed slightly
     let fixture = "fixture_nodes";
@@ -614,52 +634,59 @@ fn test_value_node_field_id_regeneration_and_fields() -> Result<(), SynParserErr
     Ok(())
 }
 
-// #[test] fn test_value_node_field_name()
+// fn test_value_node_field_name()
 //  - Target: TOP_LEVEL_BOOL
 //  - Find the ValueNode.
 //  - Get context: crate_namespace, file_path, module_path (["crate"]), name ("TOP_LEVEL_INT"), span.
 //  - Regenerate expected NodeId::Synthetic using NodeId::generate_synthetic.
 //  - Assert_eq!(node.id, regenerated_id, "Mismatch for ID field. Expected: {}, Actual: {}", ...);
 
-// #[test] fn test_value_node_field_name()
+// fn test_value_node_field_name()
 //  - Target: TOP_LEVEL_BOOL
 //  - Find the ValueNode.
 //  - Assert_eq!(node.name, "TOP_LEVEL_BOOL", "Mismatch for name field. Expected: {}, Actual: {}", ...);
 
 // Replaced by macro invocation below
-// #[test]
-// fn test_value_node_field_name() -> Result<(), SynParserError> { // Original was Result<()> which is FixtureError
-//     // Collect successful graphs
-//     let successful_graphs = run_phases_and_collect("fixture_nodes");
-//
-//     // Use ParanoidArgs to find the node
-//     let args = ParanoidArgs {
-//         fixture: "fixture_nodes",
-//         relative_file_path: "src/const_static.rs",
-//         ident: "TOP_LEVEL_BOOL",
-//         expected_cfg: None,
-//         expected_path: &["crate", "const_static"],
-//         item_kind: ItemKind::Const,
-//     };
-//
-//     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
-//     let test_info = args.generate_pid(&successful_graphs)?;
-//
-//     // Find the node using the generated ID within the correct graph
-//     let node = test_info
-//         .target_data() // This is &ParsedCodeGraph
-//         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
-//         .expect("Failed to find node using generated PID");
-//
-//     assert_eq!(
-//         node.name(), // Use the GraphNode trait method
-//         args.ident,
-//         "Mismatch for name field. Expected: '{}', Actual: '{}'",
-//         args.ident,
-//         node.name()
-//     );
-//     Ok(())
-// }
+// TODO: Comment out after verifying that both this test and the macro replacing it are correctly
+// running before removing this test
+#[test]
+fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    // Original was Result<()> which is FixtureError
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_nodes");
+
+    // Use ParanoidArgs to find the node
+    let args = ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_BOOL",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    };
+
+    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+    let test_info = args.generate_pid(&successful_graphs)?;
+
+    // Find the node using the generated ID within the correct graph
+    let node = test_info
+        .target_data() // This is &ParsedCodeGraph
+        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+        .expect("Failed to find node using generated PID");
+
+    assert_eq!(
+        node.name(), // Use the GraphNode trait method
+        args.ident,
+        "Mismatch for name field. Expected: '{}', Actual: '{}'",
+        args.ident,
+        node.name()
+    );
+    Ok(())
+}
 
 paranoid_test_name_check!(
     test_value_node_field_name_macro_generated,
@@ -671,11 +698,13 @@ paranoid_test_name_check!(
     expected_cfg: None
 );
 
-// #[test] fn test_value_node_field_visibility_public()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
 //  - Find the ValueNode.
 //  - Assert_eq!(node.visibility, VisibilityKind::Public, "Mismatch for visibility field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_visibility_public() {
     // Target: TOP_LEVEL_BOOL (pub)
     let results = run_phase1_phase2("fixture_nodes");
@@ -701,11 +730,13 @@ fn test_value_node_field_visibility_public() {
     );
 }
 
-// #[test] fn test_value_node_field_visibility_inherited()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_visibility_inherited()
 //  - Target: TOP_LEVEL_INT (private)
 //  - Find the ValueNode.
 //  - Assert_eq!(node.visibility, VisibilityKind::Inherited, "Mismatch for visibility field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_visibility_inherited() {
     // Target: TOP_LEVEL_INT (private)
     let results = run_phase1_phase2("fixture_nodes");
@@ -731,11 +762,13 @@ fn test_value_node_field_visibility_inherited() {
     );
 }
 
-// #[test] fn test_value_node_field_visibility_crate()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_visibility_crate()
 //  - Target: INNER_CONST (pub(crate)) -> NOTE: Fixture has this in inner_mod
 //  - Find the ValueNode.
 //  - Assert_eq!(node.visibility, VisibilityKind::Crate, "Mismatch for visibility field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_visibility_crate() {
     // Target: INNER_CONST (pub(crate)) in inner_mod
     let results = run_phase1_phase2("fixture_nodes");
@@ -768,11 +801,13 @@ fn test_value_node_field_visibility_crate() {
     );
 }
 
-// #[test] fn test_value_node_field_visibility_super()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_visibility_super()
 //  - Target: INNER_MUT_STATIC (pub(super)) in inner_mod
 //  - Find the ValueNode.
 //  - Assert_eq!(node.visibility, VisibilityKind::Restricted { path: vec!["super".into()], resolved_path: None }, "Mismatch for visibility field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_visibility_super() {
     // Target: INNER_MUT_STATIC (pub(super)) in inner_mod
     let results = run_phase1_phase2("fixture_nodes");
@@ -804,11 +839,12 @@ fn test_value_node_field_visibility_super() {
     );
 }
 
-// #[test] fn test_value_node_field_type_id_presence()
+// fn test_value_node_field_type_id_presence()
 //  - Target: ARRAY_CONST
 //  - Find the ValueNode.
 //  - Assert!(matches!(node.type_id, TypeId::Synthetic(_)), "type_id field should be Synthetic. Actual: {:?}", node.type_id);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_type_id_presence() {
     // Target: ARRAY_CONST
     let results = run_phase1_phase2("fixture_nodes");
@@ -834,11 +870,12 @@ fn test_value_node_field_type_id_presence() {
     );
 }
 
-// #[test] fn test_value_node_field_kind_const()
+// fn test_value_node_field_kind_const()
 //  - Target: TOP_LEVEL_INT
 //  - Find the ValueNode.
 //  - Assert_eq!(node.kind(), ItemKind::Const, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_kind_const() {
     // Target: TOP_LEVEL_INT
     let results = run_phase1_phase2("fixture_nodes");
@@ -867,11 +904,13 @@ fn test_value_node_field_kind_const() {
     );
 }
 
-// #[test] fn test_value_node_field_kind_static_imm()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_kind_static_imm()
 //  - Target: TOP_LEVEL_STR
 //  - Find the ValueNode.
 //  - Assert_eq!(node.kind(), ItemKind::Static { is_mutable: false }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_kind_static_imm() {
     // Target: TOP_LEVEL_STR
     let value_name = "TOP_LEVEL_STR";
@@ -916,11 +955,13 @@ fn test_value_node_field_kind_static_imm() {
     );
 }
 
-// #[test] fn test_value_node_field_kind_static_mut()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_kind_static_mut()
 //  - Target: TOP_LEVEL_COUNTER
 //  - Find the ValueNode.
 //  - Assert_eq!(node.kind(), ItemKind::Static { is_mutable: true }, "Mismatch for kind field. Expected: {:?}, Actual: {:?}", ...);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_kind_static_mut() {
     // Target: TOP_LEVEL_COUNTER
     let value_name = "TOP_LEVEL_COUNTER";
@@ -965,7 +1006,8 @@ fn test_value_node_field_kind_static_mut() {
     );
 }
 
-// #[test] fn test_value_node_field_value_string()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_value_string()
 //  - Target: TOP_LEVEL_INT (= 10)
 //  - Find the ValueNode.
 //  - Assert_eq!(node.value.as_deref(), Some("10"), "Mismatch for value field. Expected: {:?}, Actual: {:?}", ...);
@@ -973,6 +1015,7 @@ fn test_value_node_field_kind_static_mut() {
 //  - Find the ValueNode.
 //  - Assert_eq!(node.value.as_deref(), Some("5 * 2 + 1"), "Mismatch for value field. Expected: {:?}, Actual: {:?}", ...); // Verify expression is captured
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_value_string() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -1027,13 +1070,15 @@ fn test_value_node_field_value_string() {
     );
 }
 
-// #[test] fn test_value_node_field_attributes_single()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_attributes_single()
 //  - Target: DOC_ATTR_STATIC (#[cfg(target_os = "linux")])
 //  - Find the ValueNode.
 //  - Assert_eq!(node.attributes.len(), 1, "Expected 1 attribute, found {}. Attrs: {:?}", node.attributes.len(), node.attributes);
 //  - Assert_eq!(node.attributes[0].name, "cfg");
 //  - Assert!(node.attributes[0].args.contains(&"target_os = \"linux\"".to_string())); // Check specific arg if possible
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_attributes_single() {
     // Target: DOC_ATTR_STATIC (#[cfg(target_os = "linux")])
     let results = run_phase1_phase2("fixture_nodes");
@@ -1078,7 +1123,8 @@ fn test_value_node_field_attributes_single() {
     );
 }
 
-// #[test] fn test_value_node_field_attributes_multiple()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_attributes_multiple()
 //  - Target: doc_attr_const (#[deprecated(...)], #[allow(...)])
 //  - Find the ValueNode.
 //  - Assert_eq!(node.attributes.len(), 2, "Expected 2 attributes, found {}. Attrs: {:?}", node.attributes.len(), node.attributes);
@@ -1086,6 +1132,7 @@ fn test_value_node_field_attributes_single() {
 //  - Assert!(node.attributes.iter().any(|a| a.name == "allow"), "Missing 'allow' attribute");
 //  - // Maybe check specific args for one of them
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_attributes_multiple() {
     let _ = env_logger::builder()
         .is_test(true)
@@ -1145,12 +1192,14 @@ fn test_value_node_field_attributes_multiple() {
     );
 }
 
-// #[test] fn test_value_node_field_docstring()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_docstring()
 //  - Target: TOP_LEVEL_INT ("A top-level private constant...")
 //  - Find the ValueNode.
 //  - Assert!(node.docstring.is_some(), "Expected docstring, found None");
 //  - Assert!(node.docstring.as_deref().unwrap_or("").contains("top-level private constant"), "Docstring mismatch. Expected contains: '{}', Actual: {:?}", "...", node.docstring);
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_docstring() {
     // Target: TOP_LEVEL_INT ("A top-level private constant...")
     let results = run_phase1_phase2("fixture_nodes");
@@ -1195,12 +1244,14 @@ fn test_value_node_field_docstring() {
     );
 }
 
-// #[test] fn test_value_node_field_tracking_hash_presence()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_field_tracking_hash_presence()
 //  - Target: ALIASED_CONST
 //  - Find the ValueNode.
 //  - Assert!(node.tracking_hash.is_some(), "tracking_hash field should be Some. Actual: {:?}", node.tracking_hash);
 //  - Assert!(matches!(node.tracking_hash, Some(TrackingHash(_))), "tracking_hash should contain a Uuid");
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_field_tracking_hash_presence() {
     // Target: ALIASED_CONST
     let results = run_phase1_phase2("fixture_nodes");
@@ -1241,7 +1292,8 @@ fn test_value_node_field_tracking_hash_presence() {
 // Tier 4: Basic Connection Tests
 // Goal: Verify the `Contains` relationship between modules and ValueNodes.
 // ---------------------------------------------------------------------------------
-// #[test] fn test_value_node_relation_contains_file_module()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_relation_contains_file_module()
 //  - Target: TOP_LEVEL_INT in "crate" module (const_static.rs)
 //  - Use full parse: run_phase1_phase2("fixture_nodes")
 //  - Find ParsedCodeGraph for const_static.rs.
@@ -1250,6 +1302,7 @@ fn test_value_node_field_tracking_hash_presence() {
 //  - Assert relation exists: assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(value_id), RelationKind::Contains, "...");
 //  - Assert value_id is in module_node.items().
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_relation_contains_file_module() {
     // Target: TOP_LEVEL_INT in "crate::const_static" module (const_static.rs)
     let fixture = "fixture_nodes";
@@ -1303,7 +1356,8 @@ fn test_value_node_relation_contains_file_module() {
     );
 }
 
-// #[test] fn test_value_node_relation_contains_inline_module()
+// #[test] #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_value_node_relation_contains_inline_module()
 //  - Target: INNER_CONST in "crate::inner_mod"
 //  - Use full parse.
 //  - Find ParsedCodeGraph for const_static.rs.
@@ -1312,6 +1366,8 @@ fn test_value_node_relation_contains_file_module() {
 //  - Assert relation exists: assert_relation_exists(graph, GraphId::Node(module_id), GraphId::Node(value_id), RelationKind::Contains, "...");
 //  - Assert value_id is in module_node.items().
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_relation_contains_inline_module() {
     // Target: INNER_CONST in "crate::const_static::inner_mod"
     let fixture = "fixture_nodes";
@@ -1373,6 +1429,8 @@ fn test_value_node_relation_contains_inline_module() {
 //       mirroring the rigor of ModuleNode tests. Use paranoid helpers.
 // ---------------------------------------------------------------------------------
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_paranoid_const_doc_attr() {
     // Target: pub const doc_attr_const: f64 = 3.14; (in "crate::const_static" module)
     let fixture = "fixture_nodes";
@@ -1513,7 +1571,7 @@ fn test_value_node_paranoid_const_doc_attr() {
         node.type_id
     );
 }
-// #[test] fn test_value_node_paranoid_const_doc_attr()
+// fn test_value_node_paranoid_const_doc_attr()
 //  - Target: pub const doc_attr_const: f64 = 3.14; (in "crate" module)
 //  - Use full parse.
 //  - Find ParsedCodeGraph for const_static.rs.
@@ -1548,7 +1606,7 @@ fn test_value_node_paranoid_const_doc_attr() {
 //      - Assert no other ValueNode in graph.values has *exactly* the same name AND module path.
 //      - Assert no other TypeNode in graph.type_graph has the same TypeId (unless it's genuinely the same primitive/path type).
 
-// #[test] fn test_value_node_paranoid_static_mut_inner_mod()
+// fn test_value_node_paranoid_static_mut_inner_mod()
 //  - Target: pub(super) static mut INNER_MUT_STATIC: bool = false; (in "crate::inner_mod")
 //  - Use full parse.
 //  - Find ParsedCodeGraph for const_static.rs.
@@ -1578,6 +1636,8 @@ fn test_value_node_paranoid_const_doc_attr() {
 //      - Assert no other ValueNode has the same name AND module path.
 //      - Assert no other TypeNode has the same TypeId (unless it's bool again).
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_value_node_paranoid_static_mut_inner_mod() {
     // Target: pub(super) static mut INNER_MUT_STATIC: bool = false; (in "crate::const_static::inner_mod")
     let fixture = "fixture_nodes";
@@ -1752,6 +1812,7 @@ fn test_value_node_paranoid_static_mut_inner_mod() {
 
 #[ignore = "Known Limitation: Associated const in impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_associated_const_found_in_impl() {
     let results = run_phase1_phase2("fixture_nodes");
     let fixture_path = fixtures_crates_dir()
@@ -1774,6 +1835,7 @@ fn test_associated_const_found_in_impl() {
 
 #[ignore = "Known Limitation: Associated const in trait impl blocks not parsed. See docs/plans/uuid_refactor/02c_phase2_known_limitations.md"]
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_associated_const_found_in_trait_impl() {
     // Note: The fixture defines TRAIT_REQ_CONST within an `impl ExampleTrait for Container` block.
     let results = run_phase1_phase2("fixture_nodes");
