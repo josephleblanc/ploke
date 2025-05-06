@@ -100,49 +100,40 @@ impl<'a> ParanoidArgs<'a> {
             .collect_vec();
 
         let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
-        let cfgs = self
-            .expected_cfg
-            .map(|c| strs_to_strings(c))
-            .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
-        let item_name = self
-            .expected_path
-            .last()
-            .expect("Must use name as last element of path for paranoid test helper.");
-        // let name_as_vec = vec![item_name.to_string()];
-        let name_as_vec = vec![item_name.to_string()];
+        
+        let cfgs_bytes_option: Option<Vec<u8>> = self.expected_cfg
+            .filter(|cfgs_slice| !cfgs_slice.is_empty()) // Only proceed if there are actual CFG strings
+            .map(|cfgs_slice| calculate_cfg_hash_bytes(&strs_to_strings(cfgs_slice)))
+            .flatten(); // Results in None if expected_cfg is None, or if cfgs_slice is empty, or if calculate_cfg_hash_bytes returns None.
+        
+        let actual_parent_scope_id_for_id_gen = Some(parent_module.id.base_tid());
+        let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
 
-        if self.ident == "TOP_LEVEL_BOOL" {
+        // New structured logging:
+        if log::log_enabled!(target: "temp_target", log::Level::Debug) { // Check if specific log is enabled
+            log::debug!(target: "temp_target", "DEBUG_CONST_STATIC: ParanoidArgs::generate_pid");
             log::debug!(target: "temp_target",
-                "DEBUG_CONST_STATIC: gemerate_pid self.ident: {}, namespace: {:?}",
+                "  Inputs for '{}' ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}",
                 self.ident,
-                target_data.crate_namespace
-            );
-            log::debug!(target: "temp_target",
-                "
-target_data.crate_namespace,        {},
-&target_file_path,                  {:?},
-&name_as_vec,                       {:?},
-self.ident,                         {},
-item_kind,                          {:?},
-Some(parent_module.id.base_tid()),  {:?},
-cfgs.as_deref(),                    {:?},",
+                self.item_kind, // Use self.item_kind from ParanoidArgs
                 target_data.crate_namespace,
                 &target_file_path,
-                &name_as_vec,
+                &exp_path_string, // This is the 'relative_path' for the item's ID context
                 self.ident,
-                item_kind,
-                Some(parent_module.id.base_tid()),
-                cfgs.as_deref(),
-            )
+                self.item_kind, // Use self.item_kind from ParanoidArgs
+                actual_parent_scope_id_for_id_gen,
+                actual_cfg_bytes_for_id_gen
+            );
         }
+
         let generated_id = NodeId::generate_synthetic(
             target_data.crate_namespace,
             &target_file_path,
-            &exp_path_string,
+            &exp_path_string, 
             self.ident,
-            item_kind,
-            Some(parent_module.id.base_tid()),
-            cfgs.as_deref(),
+            self.item_kind, // Use self.item_kind from ParanoidArgs
+            actual_parent_scope_id_for_id_gen, // Use the determined parent scope ID
+            actual_cfg_bytes_for_id_gen,       // Use the determined CFG bytes
         );
 
         let pid = match self.item_kind {
