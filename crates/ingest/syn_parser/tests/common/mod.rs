@@ -171,7 +171,8 @@ pub const LOG_PARANOID_CHECK: &str = "log_paranoid_check";
 
 impl ParanoidArgs<'_> {
     /// Logs the expected information stored in these ParanoidArgs.
-    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> anyhow::Result<()> {
+    /// Returns a SynParserError if checks fail (e.g., no root module, duplicate root modules).
+    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> Result<(), SynParserError> { // Changed return type
         let exp_fp = self.relative_file_path;
 
         log::debug!(target: LOG_PARANOID_CHECK,
@@ -186,7 +187,13 @@ impl ParanoidArgs<'_> {
         );
 
         let mut file_modules = parsed.modules().iter().filter(|m| m.is_file_based());
-        let local_root_module = file_modules.next().unwrap();
+        // Use ok_or to handle potential absence of a file-based root module gracefully
+        let local_root_module = file_modules.next().ok_or_else(|| {
+            SynParserError::InternalState(format!(
+                "No file-based root module found in ParsedCodeGraph for file: {}",
+                parsed.file_path.display()
+            ))
+        })?;
         log::debug!(target: LOG_PARANOID_CHECK,
             "\t{}: \n\t{} \n\t{}\n\t{}: {}",
                 "Root Module Path of Graph".log_step(),
@@ -195,12 +202,18 @@ impl ParanoidArgs<'_> {
                 "Match?".log_orange(),
                 self.expected_path == local_root_module.path(),
         );
-        match file_modules.next() {
-            Some(dup_local_file_mod) => panic!(
-                "Duplicate file-level module found: {:?}",
-                dup_local_file_mod
-            ),
-            None => Ok(()),
+        // Check for duplicate file-based modules and return an error instead of panicking
+        if let Some(dup_local_file_mod) = file_modules.next() {
+            Err(SynParserError::InternalState(format!(
+                "Duplicate file-level module found in ParsedCodeGraph for file '{}': First: '{}' ({}), Second: '{}' ({})",
+                parsed.file_path.display(),
+                local_root_module.name,
+                local_root_module.id,
+                dup_local_file_mod.name,
+                dup_local_file_mod.id
+            )))
+        } else {
+            Ok(()) // Return Ok if no duplicates found
         }
     }
 }
