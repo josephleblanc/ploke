@@ -303,6 +303,97 @@ impl<'a> TestInfo<'a> {
     pub fn test_pid(&self) -> PrimaryNodeId {
         self.test_pid
     }
+
+    /// Verifies the node found via `self.test_pid` against the expectations in `self.args`.
+    /// Logs checks in a style similar to `ExpectedConstData::find_node_by_values`.
+    /// Returns true if all checks pass, false otherwise.
+    pub fn verify_node_with_filter_style_logging(&self) -> Result<bool, SynParserError> {
+        let graph = &self.target_data.graph;
+        let actual_node = graph.find_node_unique(self.test_pid.into())?;
+
+        // Equivalent to ExpectedConstData::log_target_id
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "Checking Node ID '{}', Name '{}' against ParanoidArgs:",
+            self.test_pid.to_string().log_id(),
+            actual_node.name().log_name()
+        );
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "  Expected Values from ParanoidArgs:\n    Fixture: {}\n    Relative File Path: {}\n    Ident: {}\n    ItemKind: {:?}\n    Parent Path: {:?}\n    CFGs: {:?}",
+            self.args.fixture.log_info(),
+            self.args.relative_file_path.log_info(),
+            self.args.ident.log_info(),
+            self.args.item_kind,
+            self.args.expected_path.log_info_debug(),
+            self.args.expected_cfg.map(|c| c.join(", ")).unwrap_or_else(|| "None".to_string()).log_info()
+        );
+
+        let mut all_checks_pass = true;
+
+        // Check Ident (Name)
+        let expected_ident = self.args.ident;
+        let actual_name = actual_node.name();
+        let ident_match = expected_ident == actual_name;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "   {} | Expected Ident '{}' == Actual Name '{}': {}",
+            "Ident Match?".to_string().log_step(),
+            expected_ident.log_name(),
+            actual_name.log_name(),
+            ident_match.to_string().log_vis()
+        );
+        if !ident_match { all_checks_pass = false; }
+
+        // Check ItemKind
+        // NOTE: This uses actual_node.kind(). If AnyNodeId gets a .kind() method,
+        // actual_node.any_id().kind() would be more direct.
+        let expected_kind = self.args.item_kind;
+        let actual_kind = actual_node.kind();
+        let kind_match = expected_kind == actual_kind;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "   {} | Expected ItemKind '{:?}' == Actual ItemKind '{:?}': {}",
+            "ItemKind Match?".to_string().log_step(),
+            expected_kind,
+            actual_kind,
+            kind_match.to_string().log_vis()
+        );
+        if !kind_match { all_checks_pass = false; }
+
+        // Check CFGs
+        let mut expected_cfgs_sorted = self.args.expected_cfg
+            .map(|cfgs_slice| cfgs_slice.iter().map(|s| s.to_string()).collect::<Vec<String>>())
+            .unwrap_or_default();
+        expected_cfgs_sorted.sort_unstable();
+        let mut actual_cfgs_sorted = actual_node.cfgs().to_vec();
+        actual_cfgs_sorted.sort_unstable();
+        let cfgs_match = expected_cfgs_sorted == actual_cfgs_sorted;
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "   {} | Expected CFGs (sorted) '{:?}' == Actual CFGs (sorted) '{:?}': {}",
+            "CFGs Match?".to_string().log_step(),
+            expected_cfgs_sorted.log_green_debug(),
+            actual_cfgs_sorted.log_green_debug(),
+            cfgs_match.to_string().log_vis()
+        );
+        if !cfgs_match { all_checks_pass = false; }
+        
+        // Log Parent Module Path Check (informational, as it's part of ID generation)
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "   {} | Expected Parent Module Path '{:?}' was used for NodeId generation and lookup.",
+            "Parent Path Check?".to_string().log_step(),
+            self.args.expected_path.log_info_debug()
+        );
+
+        // Equivalent to ExpectedConstData::log_all_match
+        log::debug!(target: LOG_PARANOID_CHECK,
+            "       {}: {}\n{:-<50}", // Simplified compared to ConstNode's full debug print
+            "All Checks Passed".to_string().log_step(),
+            all_checks_pass.to_string().log_vis(),
+            ""
+        );
+        if !all_checks_pass {
+            log::debug!(target: LOG_PARANOID_CHECK, "Mismatch Details - Actual Node:\n{:#?}", actual_node);
+        }
+
+        Ok(all_checks_pass)
+    }
 }
 
 /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
