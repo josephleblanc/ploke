@@ -257,9 +257,10 @@ impl<'a> ParanoidArgs<'a> {
         let ident_match = self.is_ident_match_debug(actual_node);
         let kind_match = self.is_item_kind_match_debug(actual_node);
         let cfgs_match = self.is_cfgs_match_debug(actual_node);
+        let parent_path_match = self.is_parent_path_match_debug(actual_node);
         self.log_parent_module_path_check_info(); // This is informational as it's part of ID gen
 
-        let all_match = ident_match && kind_match && cfgs_match;
+        let all_match = ident_match && kind_match && cfgs_match && parent_path_match;
         log::debug!(target: LOG_PARANOID_CHECK,
             "        {}: {}",
             "All Checks Passed?".to_string().log_step(),
