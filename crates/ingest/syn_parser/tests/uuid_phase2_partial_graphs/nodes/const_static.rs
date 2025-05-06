@@ -286,6 +286,14 @@ static EXPECTED_ITEMS: &[ParanoidArgs] = &[
         expected_path: &["crate", "const_static"],
         item_kind: ItemKind::Const,
     },
+    ParanoidArgs { // New entry for TOP_LEVEL_BOOL
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_BOOL",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
     ParanoidArgs {
         fixture: "fixture_nodes",
         relative_file_path: "src/const_static.rs",
@@ -774,9 +782,7 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         ident: "TOP_LEVEL_BOOL",
         expected_cfg: None,
         expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const, // AI!: Make a new entry in `EXPECTED_ITEMS` for this item. Use
-                                    // the contents of the `tests/fixture_crates/fixture_nodes/src/const_static.rs` to ensure
-                                    // it is accurate AI!
+        item_kind: ItemKind::Const,
     };
     let args = EXPECTED_ITEMS
         .iter()
