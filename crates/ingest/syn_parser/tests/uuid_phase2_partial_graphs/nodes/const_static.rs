@@ -817,6 +817,7 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
+        // AI: Add checks here for new checks you just created in common/mod.rs AI!
         let _ = exp_const
             .find_node_by_values(
                 successful_graphs
