@@ -25,7 +25,7 @@ lazy_static! {
             is_mutable: true,
             value: Some("0"),
             attributes: vec![],
-            docstring_contains: Some("A top-level public mutable static counter."),
+            docstring: Some("A top-level public mutable static counter."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -36,7 +36,7 @@ lazy_static! {
             is_mutable: false,
             value: Some("\"Linux specific\""), // Correct value from fixture
             attributes: vec![], // cfg is handled separately
-            docstring_contains: Some("his is a documented static variable."), // AI: I removed the
+            docstring: Some("his is a documented static variable."), // AI: I removed the
             // `T` to see if the test would fail.
             tracking_hash_check: true,
             // Note: cfg string includes quotes as parsed by syn
@@ -51,7 +51,7 @@ lazy_static! {
             attributes: vec![
                  Attribute {name:"allow".to_string(),args:vec!["dead_code".to_string()],value:None },
             ],
-            docstring_contains: None,
+            docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
         });

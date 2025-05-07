@@ -133,21 +133,21 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "docstring" => {
-                // The field in Expected*Data is docstring_contains: Option<&'static str>
-                expected_fields_defs.push(quote! { pub docstring_contains: Option<&'static str> });
+                // The field in Expected*Data is docstring: Option<&'static str>
+                expected_fields_defs.push(quote! { pub docstring: Option<&'static str> });
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has docstring() -> Option<String> or Option<&str>
                         // The manual impl uses node.docstring.as_deref() which implies node.docstring is Option<String>
                         let actual_docstring = node.docstring.as_deref(); // Access field directly
-                        let check_passes = match self.docstring_contains {
-                            Some(expected_substr) => actual_docstring.map_or(false, |s| s.contains(expected_substr)),
+                        let check_passes = match self.docstring {
+                            Some(expected_doc) => actual_docstring.map_or(false, |s| s == expected_doc),
                             None => actual_docstring.is_none(),
                         };
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected contains '{}' in Actual '{}'",
-                            "Docstring Contains Match?".to_string().log_step(), check_passes.log_bool(),
-                            self.docstring_contains.unwrap_or("None").log_foreground_primary(), // Manual style
+                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "Docstring Match?".to_string().log_step(), check_passes.log_bool(),
+                            self.docstring.unwrap_or("None").log_foreground_primary(), // Manual style
                             actual_docstring.unwrap_or("None").log_foreground_secondary() // Manual style
                         );
                         check_passes

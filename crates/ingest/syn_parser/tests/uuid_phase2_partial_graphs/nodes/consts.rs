@@ -34,7 +34,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("10"),
             attributes: vec![],
-            docstring_contains: Some("top-level private constant"),
+            docstring: Some("top-level private constant"),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -48,7 +48,7 @@ lazy_static! {
                 // Corrected args for allow attribute
                 Attribute {name:"allow".to_string(),args:vec!["non_upper_case_globals".to_string(), "clippy :: approx_constant".to_string()],value:None },
             ],
-            docstring_contains: Some("This is a documented constant."),
+            docstring: Some("This is a documented constant."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -58,7 +58,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("true"),
             attributes: vec![],
-            docstring_contains: Some("top-level public constant"),
+            docstring: Some("top-level public constant"),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -68,7 +68,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("1"),
             attributes: vec![],
-            docstring_contains: None, // No doc comment
+            docstring: None, // No doc comment
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -78,7 +78,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("[1 , 2 , 3]"), // Assuming minimal spacing
             attributes: vec![],
-            docstring_contains: None,
+            docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -88,7 +88,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("SimpleStruct { x : 99 , y : true }"), // Assuming syn spacing
             attributes: vec![],
-            docstring_contains: Some("Constant struct instance."),
+            docstring: Some("Constant struct instance."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -98,7 +98,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("- 5"),
             attributes: vec![],
-            docstring_contains: Some("Constant using a type alias."),
+            docstring: Some("Constant using a type alias."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -108,7 +108,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("5 * 2 + 1"),
             attributes: vec![],
-            docstring_contains: None,
+            docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -118,7 +118,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("five ()"), // Assuming space before ()
             attributes: vec![],
-            docstring_contains: Some("Constant initialized with a call to a const function."),
+            docstring: Some("Constant initialized with a call to a const function."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
