@@ -5,16 +5,17 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro_error::{abort, proc_macro_error};
-use quote::{format_ident, quote, ToTokens}; // Added format_ident and ToTokens
+use quote::quote; // Removed unused format_ident, ToTokens
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, AttributeArgs, FnArg, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta,
-    Pat, PatType, Path, Result as SynResult, Stmt, Token, Type, Visibility,
+    parse_macro_input, Expr, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, Result as SynResult,
+    Token,
+    // Removed unused types: AttributeArgs, FnArg, Ident, Pat, PatType, Path, Stmt, Type, Visibility
 };
 
 // Assuming ItemKind is accessible via syn_parser::ItemKind
 use ploke_core::ItemKind;
-use syn_parser; // To access ItemKind via syn_parser::ItemKind
+// Removed unused: use syn_parser;
 
 // Helper struct to parse the arguments to the paranoid_test attribute
 #[derive(Debug)] // Added Debug derive
@@ -41,15 +42,22 @@ impl Parse for ParanoidTestArgs {
 
         for arg in args {
             match arg {
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, lit, .. })) => {
+                // Updated pattern to access value and check if it's a Lit
+                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) => {
                     let key = path
                         .get_ident()
                         .ok_or_else(|| syn::Error::new_spanned(&path, "Expected identifier key"))?;
                     let key_str = key.to_string();
 
+                    // Ensure the value is a literal expression
+                    let lit = match value {
+                        Expr::Lit(expr_lit) => expr_lit.lit,
+                        _ => return Err(syn::Error::new_spanned(value, "Expected literal value")),
+                    };
+
                     match key_str.as_str() {
                         "kind" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 // Map string to ItemKind variant
                                 kind = match lit_str.value().as_str() {
                                     "Const" => Some(ItemKind::Const),
@@ -176,7 +184,7 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
     let parsed_args = parse_macro_input!(args as ParanoidTestArgs);
 
     // Extract values from parsed_args
-    let kind = parsed_args.kind; // This is ItemKind
+    let kind_enum = parsed_args.kind; // This is ItemKind enum value
     let ident_str = parsed_args.ident;
     let fixture_str = parsed_args.fixture;
     let rel_path_str = parsed_args.relative_file_path;
@@ -190,8 +198,26 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
     // If invoked elsewhere, these paths need adjustment.
     let test_module_path = quote! { crate::uuid_phase2_partial_graphs::nodes::const_static }; // Adjust if needed
 
+    // Construct the path to the ItemKind variant for quoting
+    let kind_path = match kind_enum {
+        ItemKind::Const => quote! { ploke_core::ItemKind::Const },
+        ItemKind::Static => quote! { ploke_core::ItemKind::Static },
+        ItemKind::Function => quote! { ploke_core::ItemKind::Function },
+        ItemKind::Struct => quote! { ploke_core::ItemKind::Struct },
+        ItemKind::Enum => quote! { ploke_core::ItemKind::Enum },
+        ItemKind::Union => quote! { ploke_core::ItemKind::Union },
+        ItemKind::TypeAlias => quote! { ploke_core::ItemKind::TypeAlias },
+        ItemKind::Trait => quote! { ploke_core::ItemKind::Trait },
+        ItemKind::Impl => quote! { ploke_core::ItemKind::Impl },
+        ItemKind::Module => quote! { ploke_core::ItemKind::Module },
+        ItemKind::Macro => quote! { ploke_core::ItemKind::Macro },
+        ItemKind::Import => quote! { ploke_core::ItemKind::Import },
+        // Add other kinds as needed
+        _ => abort!(Span::call_site(), "Unsupported ItemKind for #[paranoid_test]: {:?}", kind_enum),
+    };
+
     let (node_type, expected_data_type, expected_data_map, downcast_method, specific_checks) =
-        match kind {
+        match kind_enum { // Match on the enum value here
             ItemKind::Const => (
                 quote! { syn_parser::parser::nodes::ConstNode },
                 quote! { #test_module_path::ExpectedConstData },
@@ -269,7 +295,7 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                 relative_file_path: #rel_path_str,
                 ident: #ident_str,
                 expected_path: #expected_path_slice,
-                item_kind: #kind, // Use the ItemKind directly
+                item_kind: #kind_path, // Use the quoted path to the ItemKind variant
                 expected_cfg: #expected_cfg_slice,
             };
 
