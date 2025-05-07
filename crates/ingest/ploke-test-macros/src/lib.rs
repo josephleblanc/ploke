@@ -154,7 +154,12 @@ impl Parse for ParanoidTestArgs {
                     }
                 }
                 // Handle other Meta types if necessary, or error out
-                _ => return Err(syn::Error::new_spanned(arg, "Expected key = \"value\" format")),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        arg,
+                        "Expected key = \"value\" format",
+                    ))
+                }
             }
         }
 
@@ -235,7 +240,9 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
         match kind_enum {
             // Match on the enum value here
             ItemKind::Const => (
-                quote! { syn_parser::parser::nodes::ConstNode },
+                // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
+                // quote! { syn_parser::parser::nodes::ConstNode },
+                quote! { ConstNode },
                 quote! { #test_module_path::ExpectedConstData },
                 quote! { #test_module_path::EXPECTED_CONSTS_DATA },
                 quote! { as_const },
@@ -246,7 +253,9 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                 },
             ),
             ItemKind::Static => (
-                quote! { syn_parser::parser::nodes::StaticNode },
+                // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
+                // quote! { syn_parser::parser::nodes::StaticNode },
+                quote! { StaticNode },
                 quote! { #test_module_path::ExpectedStaticData },
                 quote! { #test_module_path::EXPECTED_STATICS_DATA },
                 quote! { as_static },
@@ -286,16 +295,19 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
     };
 
     // Generate the test function body
+    // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
     let expanded = quote! {
         #(#test_fn_attrs)* // Keep original attributes
-        #test_fn_vis fn #test_fn_name() -> Result<(), syn_parser::error::SynParserError> {
+        #test_fn_vis fn #test_fn_name() -> Result<(), SynParserError> {
+            // NOTE: Removing the following dependencies, which are assumed to have been imported
+            // in the test file where these macros are invoked.
             // Use fully qualified paths to avoid import issues in generated code
             // Use crate:: instead of syn_parser:: where possible if invoked from syn_parser tests
-            use syn_parser::parser::graph::GraphAccess;
-            use syn_parser::parser::nodes::GraphNode;
-            use syn_parser::parser::nodes::HasAttributes; // Needed for ExpectedNodeData trait bounds
-            use syn_parser::parser::nodes::PrimaryNodeIdTrait; // Needed for to_pid()
-            use #test_module_path::ExpectedNodeData; // Import the base trait
+            // use syn_parser::parser::graph::GraphAccess;
+            // use syn_parser::parser::nodes::GraphNode;
+            // use syn_parser::parser::nodes::HasAttributes; // Needed for ExpectedNodeData trait bounds
+            // use syn_parser::parser::nodes::PrimaryNodeIdTrait; // Needed for to_pid()
+            // use #test_module_path::ExpectedNodeData; // Import the base trait
 
             let _ = env_logger::builder()
                 .is_test(true)
@@ -303,10 +315,12 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                 .try_init();
 
             // 1. Run phases
-            let successful_graphs = syn_parser::tests::common::run_phases_and_collect(#fixture_str);
+            let successful_graphs = run_phases_and_collect(#fixture_str);
 
+            // Removing this line, relying on `ParanoidArgs` being in scope at test site.
+            // let args = syn_parser::tests::common::ParanoidArgs {
             // 2. Define ParanoidArgs
-            let args = syn_parser::tests::common::ParanoidArgs {
+            let args = ParanoidArgs {
                 fixture: #fixture_str,
                 relative_file_path: #rel_path_str,
                 ident: #ident_str,
@@ -340,7 +354,7 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                         Ok(node) => {
                             // Downcast based on kind
                             if let Some(specific_node) = node.#downcast_method() {
-                                log::info!(target: #test_module_path::LOG_TEST_CONST, "Performing individual field checks for '{}' via ID lookup.", args.ident);
+                                log::info!(target: LOG_TEST_CONST, "Performing individual field checks for '{}' via ID lookup.", args.ident);
                                 // Call all check methods from the base trait
                                 assert!(expected_data.is_name_match_debug(specific_node), "Name mismatch");
                                 assert!(expected_data.is_vis_match_debug(specific_node), "Visibility mismatch");
@@ -369,7 +383,7 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                                     "Missing SyntacticRelation::Contains from parent module {} to node {}",
                                     parent_module_id, specific_node.id // Assuming specific_node has `id`
                                 );
-                                log::debug!(target: #test_module_path::LOG_TEST_CONST, "   Relation Check: Found Contains relation from parent module.");
+                                log::debug!(target: LOG_TEST_CONST, "   Relation Check: Found Contains relation from parent module.");
                                 // --- End Relation Check ---
 
                             } else {
@@ -377,17 +391,17 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                             }
                         }
                         Err(e) => {
-                             log::warn!(target: #test_module_path::LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Proceeding with value-based check only.", test_info.test_pid(), args.ident, e);
+                             log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Proceeding with value-based check only.", test_info.test_pid(), args.ident, e);
                         }
                     }
                 }
                 Err(e) => {
-                     log::warn!(target: #test_module_path::LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Proceeding with value-based check only.", args.ident, e);
+                     log::warn!(target: LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Proceeding with value-based check only.", args.ident, e);
                 }
             }
 
             // 6. Perform value-based lookup and count assertion
-            log::info!(target: #test_module_path::LOG_TEST_CONST, "Performing value-based lookup for '{}'.", args.ident);
+            log::info!(target: LOG_TEST_CONST, "Performing value-based lookup for '{}'.", args.ident);
             // Use the find_node_by_values method from the trait
             let matching_nodes_by_value: Vec<_> = expected_data.find_node_by_values(target_graph_data).collect();
             assert_eq!(
