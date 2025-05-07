@@ -7,7 +7,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, FieldsNamed, Type};
+use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, Type}; // Removed FieldsNamed
 
 // Placeholder for the base trait that generated structs will implement.
 // The actual trait definition might live here or be defined in syn_parser::tests::common
@@ -334,45 +334,46 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
              use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
              use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
              use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
-             // Import PrimaryNodeIdTrait if needed for to_pid() in find_node_by_values
+             // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
              use crate::parser::nodes::PrimaryNodeIdTrait;
 
              // Define the inherent check methods
              #(#inherent_check_method_impls)*
 
+             // --- Helper logging methods ---
+             fn log_target_id(&self, node: &crate::parser::nodes::#node_struct_name) {
+                 // Assuming node.id implements PrimaryNodeIdTrait for .to_pid()
+                 log::debug!(target: #log_target,
+                     "Checking {}",
+                     node.id.to_pid().to_string().log_id(),
+                 );
+             }
+
+             fn log_all_match(&self, node: &crate::parser::nodes::#node_struct_name) {
+                 // Note: The original manual impl logged the node details here.
+                 // We keep it simpler for the generated version, just confirming the pass.
+                 log::debug!(target: #log_target,
+                     "       {}: {}",
+                     "All Filters Passed for Node".to_string().log_step(),
+                     true.log_bool() // Indicate pass
+                 );
+             }
+             // --- End Helper logging methods ---
+
+
              // Define find_node_by_values as an inherent method
              pub fn find_node_by_values<'a>(
                  &'a self,
                  parsed: &'a crate::parser::ParsedCodeGraph,
-             ) -> Box<dyn Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a> {
-                  // Add an initial .inspect to log the target ID being checked, like in manual impl
-                  let initial_inspect = quote! {
-                      .inspect(move |node_candidate| {
-                         // Assuming node_candidate.id implements PrimaryNodeIdTrait for .to_pid()
-                         log::debug!(target: #log_target,
-                             "Checking {}",
-                             node_candidate.id.to_pid().to_string().log_id(),
-                         );
-                      })
-                  };
-                  // Add a final .inspect to log if all filters passed for a node
-                  let final_inspect = quote! {
-                     .inspect(move |_| {
-                         log::debug!(target: #log_target,
-                             "       {}: {}",
-                             "All Filters Passed for Node".to_string().log_step(),
-                             true.log_bool() // Indicate pass
-                         );
-                     })
-                  };
-
-                  Box::new(
-                     parsed.graph.#graph_collection_field.iter()
-                         #type_def_filter // Apply TypeDefNode filtering if necessary
-                         #initial_inspect // Add initial inspect
-                         #(#find_node_by_values_filters)* // Apply *selective* filters
-                         #final_inspect // Add final inspect
-                  )
+             // Change return type to use impl Trait
+             ) -> impl Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a {
+                  // Use helper methods directly in inspect calls
+                  parsed.graph.#graph_collection_field.iter()
+                      #type_def_filter // Apply TypeDefNode filtering if necessary
+                      .inspect(move |node_candidate| self.log_target_id(node_candidate)) // Use helper method
+                      #(#find_node_by_values_filters)* // Apply *selective* filters
+                      .inspect(move |node_candidate| self.log_all_match(node_candidate)) // Use helper method
+                  // No Box::new needed
              }
 
              // Define check_all_fields as an inherent method
