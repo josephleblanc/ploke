@@ -231,7 +231,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             // Handle `value: Option<String>` for ConstNode
             "value"
-                if (node_struct_name == "ConstNode" || node_struct_name == "StructNode")
+                if (node_struct_name == "ConstNode" || node_struct_name == "StaticNode" || node_struct_name == "StructNode")
                     && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
             {
                 expected_fields_defs.push(quote! { pub value: Option<&'static str> });
