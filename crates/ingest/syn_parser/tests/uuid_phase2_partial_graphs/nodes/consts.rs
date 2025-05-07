@@ -356,83 +356,101 @@ paranoid_test_name_check!(
     expected_cfg: None
 );
 
-paranoid_test_fields_and_values_const!(
-    test_top_level_bool_fields_and_values, // New test name
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "TOP_LEVEL_BOOL",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+paranoid_test_fields_and_values!(
+    test_top_level_bool_fields_and_values,
+    "crate::const_static::TOP_LEVEL_BOOL", // args_key
+    EXPECTED_CONSTS_ARGS,                  // args_map
+    EXPECTED_CONSTS_DATA,                  // expected_data_map
+    crate::parser::nodes::ConstNode,       // node_type
+    crate::parser::nodes::ExpectedConstNode, // expected_data_type
+    as_const,                              // downcast_method
+    LOG_TEST_CONST                         // log_target
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_top_level_int_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "TOP_LEVEL_INT",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None // TOP_LEVEL_INT has no cfgs
+    "crate::const_static::TOP_LEVEL_INT",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_doc_attr_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "doc_attr_const",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None // doc_attr_const itself has no #[cfg], its attributes are non-cfg
+    "crate::const_static::doc_attr_const",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_inner_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs", // Defined in this file
-    ident: "INNER_CONST",
-    expected_path: &["crate", "const_static", "inner_mod"], // Path to its parent module
-    expected_cfg: None // INNER_CONST has no cfgs
+    "crate::const_static::inner_mod::INNER_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_array_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "ARRAY_CONST",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+    "crate::const_static::ARRAY_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_struct_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "STRUCT_CONST",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+    "crate::const_static::STRUCT_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_aliased_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "ALIASED_CONST",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+    "crate::const_static::ALIASED_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_expr_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "EXPR_CONST",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+    "crate::const_static::EXPR_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
 
-paranoid_test_fields_and_values_const!(
+paranoid_test_fields_and_values!(
     test_fn_call_const_fields_and_values,
-    fixture: "fixture_nodes",
-    relative_file_path: "src/const_static.rs",
-    ident: "FN_CALL_CONST",
-    expected_path: &["crate", "const_static"],
-    expected_cfg: None
+    "crate::const_static::FN_CALL_CONST",
+    EXPECTED_CONSTS_ARGS,
+    EXPECTED_CONSTS_DATA,
+    crate::parser::nodes::ConstNode,
+    crate::parser::nodes::ExpectedConstNode,
+    as_const,
+    LOG_TEST_CONST
 );
