@@ -191,3 +191,36 @@ fn test_static_nodes() -> Result<(), SynParserError> {
     // assert!(expected_const_node.check_all_fields(node));
     Ok(())
 }
+
+paranoid_test_fields_and_values!(
+    test_top_level_counter_fields_and_values,
+    "crate::const_static::TOP_LEVEL_COUNTER",
+    EXPECTED_STATICS_ARGS,
+    EXPECTED_STATICS_DATA,
+    syn_parser::parser::nodes::StaticNode,
+    syn_parser::parser::nodes::ExpectedStaticNode,
+    as_static,
+    LOG_TEST_STATIC
+);
+
+paranoid_test_fields_and_values!(
+    test_doc_attr_static_fields_and_values,
+    "crate::const_static::DOC_ATTR_STATIC",
+    EXPECTED_STATICS_ARGS,
+    EXPECTED_STATICS_DATA,
+    syn_parser::parser::nodes::StaticNode,
+    syn_parser::parser::nodes::ExpectedStaticNode,
+    as_static,
+    LOG_TEST_STATIC
+);
+
+paranoid_test_fields_and_values!(
+    test_inner_mut_static_fields_and_values,
+    "crate::const_static::inner_mod::INNER_MUT_STATIC",
+    EXPECTED_STATICS_ARGS,
+    EXPECTED_STATICS_DATA,
+    syn_parser::parser::nodes::StaticNode,
+    syn_parser::parser::nodes::ExpectedStaticNode,
+    as_static,
+    LOG_TEST_STATIC
+);
