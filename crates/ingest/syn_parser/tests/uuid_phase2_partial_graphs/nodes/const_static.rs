@@ -194,7 +194,6 @@ struct ExpectedStaticData {
     cfgs: Vec<String>,
 }
 
-
 // --- Lazy Static Maps ---
 
 lazy_static! {
