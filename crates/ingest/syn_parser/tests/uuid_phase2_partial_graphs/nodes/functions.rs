@@ -1,12 +1,464 @@
 #![cfg(test)]
 
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{TypeId, TypeKind}; // Import TypeKind from ploke_core
+use crate::common::ParanoidArgs; // For EXPECTED_FUNCTIONS_ARGS
+use lazy_static::lazy_static;
+use ploke_core::{ItemKind, TypeId, TypeKind}; // Import ItemKind and TypeKind from ploke_core
+use std::collections::HashMap;
+use syn_parser::parser::nodes::{Attribute, ExpectedFunctionNode, GraphNode}; // For ExpectedFunctionNode and Attribute
 use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
-use syn_parser::parser::{
-    nodes::GraphNode,
-    // Remove TypeKind from here
-};
+                                               // Remove TypeKind from here, already imported from ploke_core
+
+pub const LOG_TEST_FUNCTION: &str = "log_test_function";
+
+lazy_static! {
+    static ref EXPECTED_FUNCTIONS_DATA: HashMap<&'static str, ExpectedFunctionNode> = {
+        let mut m = HashMap::new();
+
+        m.insert("process_tuple", ExpectedFunctionNode {
+            name: "process_tuple",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_slice", ExpectedFunctionNode {
+            name: "process_slice",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_array", ExpectedFunctionNode {
+            name: "process_array",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_ref", ExpectedFunctionNode {
+            name: "process_ref",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_mut_ref", ExpectedFunctionNode {
+            name: "process_mut_ref",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: false, // Returns implicit unit
+            body_is_some: true,
+        });
+        m.insert("apply_op", ExpectedFunctionNode {
+            name: "apply_op",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 3,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_const_ptr", ExpectedFunctionNode {
+            name: "process_const_ptr",
+            visibility: VisibilityKind::Inherited, // private
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("process_mut_ptr", ExpectedFunctionNode {
+            name: "process_mut_ptr",
+            visibility: VisibilityKind::Inherited, // private
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: false, // Returns implicit unit
+            body_is_some: true,
+        });
+        m.insert("draw_object", ExpectedFunctionNode {
+            name: "draw_object",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: false, // Returns implicit unit
+            body_is_some: true,
+        });
+        m.insert("process_impl_trait_arg", ExpectedFunctionNode {
+            name: "process_impl_trait_arg",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: false, // Returns implicit unit
+            body_is_some: true,
+        });
+        m.insert("create_impl_trait_return", ExpectedFunctionNode {
+            name: "create_impl_trait_return",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 0,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m.insert("inferred_type_example", ExpectedFunctionNode {
+            name: "inferred_type_example",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 0,
+            generic_param_count: 0,
+            return_type_is_some: false, // Returns implicit unit
+            body_is_some: true,
+        });
+        // consumes_point in src/func/return_types.rs
+        m.insert("consumes_point_in_func_mod", ExpectedFunctionNode { // Renamed key to be unique
+            name: "consumes_point",
+            visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true, // returns bool
+            body_is_some: true,
+        });
+        // generic_func in src/func/return_types.rs
+        m.insert("generic_func_in_func_mod", ExpectedFunctionNode { // Renamed key
+            name: "generic_func",
+            visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 2,
+            generic_param_count: 2,
+            return_type_is_some: true, // returns T
+            body_is_some: true,
+        });
+        // math_operation_consumer in src/func/return_types.rs
+        m.insert("math_operation_consumer", ExpectedFunctionNode {
+            name: "math_operation_consumer",
+            visibility: VisibilityKind::Inherited, // private
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 3,
+            generic_param_count: 0,
+            return_type_is_some: true, // returns i32
+            body_is_some: true,
+        });
+        // math_operation_producer in src/func/return_types.rs
+        m.insert("math_operation_producer", ExpectedFunctionNode {
+            name: "math_operation_producer",
+            visibility: VisibilityKind::Inherited, // private
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 0,
+            generic_param_count: 0,
+            return_type_is_some: true, // returns MathOperation
+            body_is_some: true,
+        });
+        // consumes_point in src/func/return_types.rs/restricted_duplicate
+        // Note: The existing test `test_function_node_consumes_point_in_restricted_duplicate`
+        // actually tests the one in `src/func/return_types.rs` due to its module_path.
+        // I will create a distinct entry for the one truly in `restricted_duplicate`.
+        m.insert("consumes_point_in_restricted_duplicate", ExpectedFunctionNode {
+            name: "consumes_point",
+            visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true, // returns bool
+            body_is_some: true,
+        });
+        // generic_func in src/func/return_types.rs/restricted_duplicate
+        m.insert("generic_func_in_restricted_duplicate", ExpectedFunctionNode {
+            name: "generic_func",
+            visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 2,
+            generic_param_count: 2,
+            return_type_is_some: true, // returns T
+            body_is_some: true,
+        });
+        // process_tuple in src/lib.rs/duplicate_names
+        m.insert("process_tuple_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+            name: "process_tuple",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        // process_slice in src/lib.rs/duplicate_names
+        m.insert("process_slice_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+            name: "process_slice",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        // process_array in src/lib.rs/duplicate_names
+        m.insert("process_array_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+            name: "process_array",
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            cfgs: vec![],
+            tracking_hash_check: true,
+            parameter_count: 1,
+            generic_param_count: 0,
+            return_type_is_some: true,
+            body_is_some: true,
+        });
+        m
+    };
+
+    static ref EXPECTED_FUNCTIONS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        m.insert("crate::process_tuple", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_tuple",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_slice", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_slice",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_array", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_array",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_ref", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_ref",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_mut_ref", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_mut_ref",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::apply_op", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "apply_op",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_const_ptr", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_const_ptr",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_mut_ptr", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_mut_ptr",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::draw_object", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "draw_object",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::process_impl_trait_arg", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_impl_trait_arg",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::create_impl_trait_return", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "create_impl_trait_return",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::inferred_type_example", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "inferred_type_example",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Function,
+        });
+        // Functions in src/func/return_types.rs
+        m.insert("crate::func::return_types::consumes_point", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs",
+            ident: "consumes_point_in_func_mod", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::func::return_types::generic_func", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs",
+            ident: "generic_func_in_func_mod", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::func::return_types::math_operation_consumer", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs",
+            ident: "math_operation_consumer",
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::func::return_types::math_operation_producer", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs",
+            ident: "math_operation_producer",
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types"],
+            item_kind: ItemKind::Function,
+        });
+        // Functions in src/func/return_types.rs/restricted_duplicate
+        m.insert("crate::func::return_types::restricted_duplicate::consumes_point", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs", // File is still return_types.rs
+            ident: "consumes_point_in_restricted_duplicate", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types", "restricted_duplicate"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::func::return_types::restricted_duplicate::generic_func", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/func/return_types.rs", // File is still return_types.rs
+            ident: "generic_func_in_restricted_duplicate", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "func", "return_types", "restricted_duplicate"],
+            item_kind: ItemKind::Function,
+        });
+        // Functions in src/lib.rs/duplicate_names
+        m.insert("crate::duplicate_names::process_tuple", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_tuple_in_duplicate_names", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "duplicate_names"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::duplicate_names::process_slice", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_slice_in_duplicate_names", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "duplicate_names"],
+            item_kind: ItemKind::Function,
+        });
+        m.insert("crate::duplicate_names::process_array", ParanoidArgs {
+            fixture: "fixture_types",
+            relative_file_path: "src/lib.rs",
+            ident: "process_array_in_duplicate_names", // Corresponds to DATA key
+            expected_cfg: None,
+            expected_path: &["crate", "duplicate_names"],
+            item_kind: ItemKind::Function,
+        });
+        m
+    };
+}
+
 
 // --- Test Cases ---
 
