@@ -14,7 +14,7 @@ use syn::{
     Lit,
     Meta,
     MetaNameValue,
-    NestedMeta,
+    // Removed NestedMeta
     Result as SynResult,
     Token,
     // Removed unused types: AttributeArgs, FnArg, Ident, Pat, PatType, Path, Stmt, Type, Visibility
@@ -44,13 +44,13 @@ impl Parse for ParanoidTestArgs {
         let mut expected_path: Option<Vec<String>> = None;
         let mut expected_cfg: Option<Vec<String>> = None; // Initialize as None
 
-        // Use syn::AttributeArgs which is Vec<NestedMeta>
-        let args = syn::punctuated::Punctuated::<NestedMeta, Token![,]>::parse_terminated(input)?;
+        // Parse the input stream as a punctuated sequence of Meta items
+        let args = syn::punctuated::Punctuated::<Meta, Token![,]>::parse_terminated(input)?;
 
         for arg in args {
             match arg {
-                // Updated pattern to access value and check if it's a Lit
-                NestedMeta::Meta(Meta::NameValue(MetaNameValue { path, value, .. })) => {
+                // Match directly on Meta::NameValue
+                Meta::NameValue(MetaNameValue { path, value, .. }) => {
                     let key = path
                         .get_ident()
                         .ok_or_else(|| syn::Error::new_spanned(&path, "Expected identifier key"))?;
@@ -153,12 +153,8 @@ impl Parse for ParanoidTestArgs {
                         _ => return Err(syn::Error::new_spanned(key, "Unknown argument name")),
                     }
                 }
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        arg,
-                        "Expected key = \"value\" format",
-                    ))
-                }
+                // Handle other Meta types if necessary, or error out
+                _ => return Err(syn::Error::new_spanned(arg, "Expected key = \"value\" format")),
             }
         }
 
