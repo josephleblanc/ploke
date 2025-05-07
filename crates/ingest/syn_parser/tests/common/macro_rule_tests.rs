@@ -193,8 +193,10 @@ macro_rules! paranoid_test_fields_and_values_const {
                                 });
 
                                 // --- Add Relation Check ---
-                                // Find parent module
-                                let parent_module = target_graph_data.find_module_by_path_checked(args.expected_path)?;
+                                // Convert expected_path from &[&str] to Vec<String> for the function call
+                                let expected_path_vec: Vec<String> = args.expected_path.iter().map(|s| s.to_string()).collect();
+                                // Find parent module using the Vec<String> slice
+                                let parent_module = target_graph_data.find_module_by_path_checked(&expected_path_vec)?;
                                 let parent_module_id = parent_module.module_id();
                                 let const_primary_id = const_node.id.to_pid(); // Get PrimaryNodeId
 
