@@ -5,7 +5,7 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use proc_macro_error::{abort, proc_macro_error};
-use quote::quote; // Removed unused format_ident, ToTokens
+use quote::{format_ident, quote}; // Removed unused format_ident, ToTokens
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
@@ -47,7 +47,6 @@ trait ExpectedNodeData<N> {
     // fn visibility(&self) -> &syn_parser::parser::types::VisibilityKind;
     // ...
 }
-
 
 // --- Attribute Macro Argument Parsing ---
 
@@ -267,31 +266,31 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
     // No changes needed to the mapping logic for now, but remove specific_checks
     let (node_type, expected_data_type, expected_data_map, downcast_method) = match kind_enum {
         ItemKind::Const => (
-                // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
-                // quote! { syn_parser::parser::nodes::ConstNode },
-                quote! { ConstNode },
-                quote! { #test_module_path::ExpectedConstData }, // Still need this to find the map
-                quote! { #test_module_path::EXPECTED_CONSTS_DATA }, // Still need this
-                quote! { as_const },
-                // Removed specific_checks quote! block
-            ),
-            ItemKind::Static => (
-                // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
-                // quote! { syn_parser::parser::nodes::StaticNode },
-                quote! { StaticNode },
-                quote! { #test_module_path::ExpectedStaticData }, // Still need this to find the map
-                quote! { #test_module_path::EXPECTED_STATICS_DATA }, // Still need this
-                quote! { as_static },
-                 // Removed specific_checks quote! block
-            ),
-            // Add other ItemKind mappings here, removing the last element (specific_checks)
-            // ItemKind::Function => (quote! { FunctionNode }, quote! { ExpectedFunctionData }, ...),
-            _ => abort!(
-                Span::call_site(),
-                "Unsupported ItemKind for #[paranoid_test]: {:?}",
-                kind_enum // Use the correct variable name
-            ),
-        };
+            // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
+            // quote! { syn_parser::parser::nodes::ConstNode },
+            quote! { ConstNode },
+            quote! { #test_module_path::ExpectedConstData }, // Still need this to find the map
+            quote! { #test_module_path::EXPECTED_CONSTS_DATA }, // Still need this
+            quote! { as_const },
+            // Removed specific_checks quote! block
+        ),
+        ItemKind::Static => (
+            // NOTE: Removing lines that will be brough into scope by test invocation site that uses references
+            // quote! { syn_parser::parser::nodes::StaticNode },
+            quote! { StaticNode },
+            quote! { #test_module_path::ExpectedStaticData }, // Still need this to find the map
+            quote! { #test_module_path::EXPECTED_STATICS_DATA }, // Still need this
+            quote! { as_static },
+            // Removed specific_checks quote! block
+        ),
+        // Add other ItemKind mappings here, removing the last element (specific_checks)
+        // ItemKind::Function => (quote! { FunctionNode }, quote! { ExpectedFunctionData }, ...),
+        _ => abort!(
+            Span::call_site(),
+            "Unsupported ItemKind for #[paranoid_test]: {:?}",
+            kind_enum // Use the correct variable name
+        ),
+    };
 
     // Convert expected_path Vec<String> to &[&str] literal for ParanoidArgs
     let expected_path_strs: Vec<syn::LitStr> = expected_path_vec
@@ -435,7 +434,6 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-
 // --- Derive Macro Implementation ---
 
 #[proc_macro_error]
@@ -451,7 +449,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
     let fields = match &input.data {
         Data::Struct(s) => match &s.fields {
             Fields::Named(f) => &f.named,
-            _ => abort!(s.fields.span(), "ExpectedData derive only supports structs with named fields"),
+            _ => abort!(
+                s.fields.span(),
+                "ExpectedData derive only supports structs with named fields"
+            ),
         },
         _ => abort!(input.span(), "ExpectedData derive only supports structs"),
     };
@@ -476,7 +477,9 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
         // Map original field to expected field and generate checks/filters
         match field_name_str.as_str() {
-            "id" | "span" | "fields" | "variants" | "methods" | "imports" | "exports" | "generic_params" | "module_def" | "parameters" | "return_type" | "super_traits" | "kind" => {
+            "id" | "span" | "fields" | "variants" | "methods" | "imports" | "exports"
+            | "generic_params" | "module_def" | "parameters" | "return_type" | "super_traits"
+            | "kind" => {
                 // Ignore these fields for the Expected*Data struct and checks
             }
             "name" => {
@@ -495,7 +498,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 find_filters.push(quote! { .filter(|n| n.name() == self.name) });
             }
             "visibility" => {
-                expected_fields.push(quote! { pub visibility: syn_parser::parser::types::VisibilityKind }); // Use qualified path
+                expected_fields
+                    .push(quote! { pub visibility: syn_parser::parser::types::VisibilityKind }); // Use qualified path
                 check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let check = self.visibility == *node.visibility(); // Assuming N impl GraphNode
@@ -507,10 +511,11 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| *n.visibility() == self.visibility) });
+                find_filters.push(quote! { .filter(|n| *n.visibility() == self.visibility) });
             }
-             "attributes" => {
-                expected_fields.push(quote! { pub attributes: Vec<syn_parser::parser::nodes::Attribute> }); // Use qualified path
+            "attributes" => {
+                expected_fields
+                    .push(quote! { pub attributes: Vec<syn_parser::parser::nodes::Attribute> }); // Use qualified path
                 check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let check = self.attributes == node.attributes(); // Assuming N impl HasAttributes
@@ -522,7 +527,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| n.attributes() == self.attributes) });
+                find_filters.push(quote! { .filter(|n| n.attributes() == self.attributes) });
             }
             "docstring" => {
                 expected_fields.push(quote! { pub docstring_contains: Option<&'static str> });
@@ -541,7 +546,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check_passes
                     }
                 });
-                 find_filters.push(quote! {
+                find_filters.push(quote! {
                      .filter(|n| {
                          let actual_docstring = n.docstring();
                          match self.docstring_contains {
@@ -553,7 +558,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             "cfgs" => {
                 expected_fields.push(quote! { pub cfgs: Vec<String> });
-                 check_methods.push(quote! {
+                check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let mut actual_cfgs = node.cfgs().to_vec(); // Assuming N impl GraphNode
                         actual_cfgs.sort_unstable();
@@ -568,19 +573,19 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! {
-                     .filter(|n| {
-                         let mut actual_cfgs = n.cfgs().to_vec();
-                         actual_cfgs.sort_unstable();
-                         let mut expected_cfgs_sorted = self.cfgs.clone();
-                         expected_cfgs_sorted.sort_unstable();
-                         expected_cfgs_sorted == actual_cfgs
-                     })
-                 });
+                find_filters.push(quote! {
+                    .filter(|n| {
+                        let mut actual_cfgs = n.cfgs().to_vec();
+                        actual_cfgs.sort_unstable();
+                        let mut expected_cfgs_sorted = self.cfgs.clone();
+                        expected_cfgs_sorted.sort_unstable();
+                        expected_cfgs_sorted == actual_cfgs
+                    })
+                });
             }
             "tracking_hash" => {
                 expected_fields.push(quote! { pub tracking_hash_check: bool });
-                 check_methods.push(quote! {
+                check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let actual_check_passes = node.tracking_hash().is_some(); // Assuming N impl GraphNode provides tracking_hash() -> Option<TrackingHash>
                          let check = self.tracking_hash_check == actual_check_passes;
@@ -592,11 +597,13 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| n.tracking_hash().is_some() == self.tracking_hash_check) });
+                find_filters.push(
+                    quote! { .filter(|n| n.tracking_hash().is_some() == self.tracking_hash_check) },
+                );
             }
             "type_id" => {
-                 expected_fields.push(quote! { pub type_id_check: bool });
-                 check_methods.push(quote! {
+                expected_fields.push(quote! { pub type_id_check: bool });
+                check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         // Need a way to get type_id from N. Add a trait?
                         // Assuming a method `get_type_id()` exists for relevant nodes.
@@ -610,12 +617,15 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| n.get_type_id().is_synthetic() == self.type_id_check) });
+                find_filters.push(
+                    quote! { .filter(|n| n.get_type_id().is_synthetic() == self.type_id_check) },
+                );
             }
-             "value" if matches!(field_type, Type::Path(p) if p.path.segments.last().map_or(false, |seg| seg.ident == "Option")) => {
-                 // Handle Option<String> fields like 'value'
-                 expected_fields.push(quote! { pub value: Option<&'static str> });
-                 check_methods.push(quote! {
+            "value" if matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
+            {
+                // Handle Option<String> fields like 'value'
+                expected_fields.push(quote! { pub value: Option<&'static str> });
+                check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let actual_value = node.get_value(); // Assuming N has get_value() -> Option<&str>
                         let check = self.value == actual_value;
@@ -627,12 +637,13 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| n.get_value() == self.value) });
+                find_filters.push(quote! { .filter(|n| n.get_value() == self.value) });
             }
-            "is_mutable" if matches!(field_type, Type::Path(p) if p.path.segments.last().map_or(false, |seg| seg.ident == "bool")) => {
-                 // Handle simple bool fields like 'is_mutable'
-                 expected_fields.push(quote! { pub is_mutable: bool });
-                 check_methods.push(quote! {
+            "is_mutable" if matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) =>
+            {
+                // Handle simple bool fields like 'is_mutable'
+                expected_fields.push(quote! { pub is_mutable: bool });
+                check_methods.push(quote! {
                     fn #check_method_name(&self, node: &N) -> bool {
                         let actual_value = node.is_mutable(); // Assuming N has is_mutable() -> bool
                         let check = self.is_mutable == actual_value;
@@ -644,12 +655,12 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                 find_filters.push(quote! { .filter(|n| n.is_mutable() == self.is_mutable) });
+                find_filters.push(quote! { .filter(|n| n.is_mutable() == self.is_mutable) });
             }
             // Add more field handlers here...
             _ => {
                 // Optionally warn or ignore unknown fields
-                 // log::warn!("Ignoring field {} in ExpectedData derive", field_name_str);
+                // log::warn!("Ignoring field {} in ExpectedData derive", field_name_str);
             }
         }
     }
@@ -675,18 +686,29 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         "ModuleNode" => quote! { modules },
         "ImportNode" => quote! { use_statements },
         "MacroNode" => quote! { macros },
-        _ => abort!(node_struct_name.span(), "Cannot determine graph collection field for {}", node_struct_name)
+        _ => abort!(
+            node_struct_name.span(),
+            "Cannot determine graph collection field for {}",
+            node_struct_name
+        ),
     };
 
     // Special handling for TypeDefNode variants
     let type_def_filter = match node_struct_name.to_string().as_str() {
-         "StructNode" => quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Struct(s) = n { Some(s) } else { None }) },
-         "EnumNode" => quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Enum(e) = n { Some(e) } else { None }) },
-         "UnionNode" => quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Union(u) = n { Some(u) } else { None }) },
-         "TypeAliasNode" => quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) },
-         _ => quote! {}, // No extra filtering needed for other node types
+        "StructNode" => {
+            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Struct(s) = n { Some(s) } else { None }) }
+        }
+        "EnumNode" => {
+            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Enum(e) = n { Some(e) } else { None }) }
+        }
+        "UnionNode" => {
+            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Union(u) = n { Some(u) } else { None }) }
+        }
+        "TypeAliasNode" => {
+            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
+        }
+        _ => quote! {}, // No extra filtering needed for other node types
     };
-
 
     let expected_node_data_impl = quote! {
         // Use fully qualified paths for traits/structs from syn_parser
@@ -739,7 +761,6 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
              )*
          }
     };
-
 
     // --- Combine Generated Code ---
     let output = quote! {
