@@ -246,7 +246,7 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
             _ => abort!(
                 Span::call_site(),
                 "Unsupported ItemKind for #[paranoid_test]: {:?}",
-                kind
+                kind_enum // Use the correct variable name
             ),
         };
 
