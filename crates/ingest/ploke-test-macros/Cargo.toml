@@ -21,3 +21,4 @@ lazy_static = "1.4.0" # Needed for accessing EXPECTED_*_DATA maps
 env_logger = "0.11" # For initializing logger in generated test
 itertools = "0.14.0" # May be needed by generated code
 colored = "3.0" # For logging styles used in ExpectedNodeData trait
+heck = "0.5" # For case conversion (e.g., snake_case to PascalCase)
