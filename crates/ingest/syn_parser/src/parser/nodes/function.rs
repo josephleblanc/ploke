@@ -11,7 +11,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for MethodNodeInfo
 
 /// Represents an associated function or method within an `impl` or `trait`.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct MethodNode {
     pub id: MethodNodeId, // Use typed ID
     pub name: String,
