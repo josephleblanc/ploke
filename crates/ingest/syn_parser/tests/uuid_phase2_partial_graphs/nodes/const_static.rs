@@ -1,5 +1,4 @@
 #![cfg(test)]
-use crate::common::gen_pid_paranoid;
 use crate::common::run_phase1_phase2;
 use crate::common::run_phases_and_collect;
 use crate::paranoid_test_fields_and_values_const;
@@ -15,7 +14,6 @@ use lazy_static::lazy_static;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::ItemKind;
 use ploke_core::NodeId;
-use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
 use std::collections::HashMap;
 use syn_parser::error::SynParserError;
@@ -44,7 +42,7 @@ impl ExpectedConstData {
     pub fn find_node_by_values<'a>(
         &'a self,
         parsed: &'a ParsedCodeGraph,
-    ) -> impl Iterator<Item = &ConstNode> {
+    ) -> impl Iterator<Item = &'a ConstNode> {
         parsed
             .graph
             .consts
@@ -632,8 +630,8 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
             .find(|pg| pg.file_path.ends_with(args.relative_file_path))
             .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
 
-        let found = exp_const.find_node_by_values(target_graph).count();
-        args.check_graph(target_graph);
+        let _found = exp_const.find_node_by_values(target_graph).count();
+        let _ = args.check_graph(target_graph);
     })?;
 
     // Find the node using the generated ID within the correct graph
@@ -642,9 +640,9 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
         .inspect_err(|e| {
             let target_graph = test_info.target_data();
-            args.check_graph(target_graph);
+            let _ = args.check_graph(target_graph);
             let count = exp_const.find_node_by_values(target_graph).count();
-            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, e);
+            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
         })?;
 
     assert_eq!(
