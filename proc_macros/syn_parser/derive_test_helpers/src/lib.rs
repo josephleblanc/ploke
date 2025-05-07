@@ -293,20 +293,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         }
     };
 
-    // --- Generate the inherent impl block for Expected*Data ---
-    let expected_data_inherent_impl = quote! {
-         impl #expected_data_struct_name {
-             // These use statements are for the *body* of the generated inherent methods
-             use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
-             use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
-             use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
-
-             // Define the inherent check methods
-             #(#inherent_check_method_impls)*
-         }
-    };
-
-    // --- Generate the `impl ExpectedNodeData` block ---
+    // Determine the graph collection field name and any necessary TypeDefNode filtering
     let graph_collection_field = match node_struct_name.to_string().as_str() {
         "ConstNode" => quote! { consts },
         "StaticNode" => quote! { statics },
@@ -337,84 +324,71 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         "TypeAliasNode" => {
             quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
         }
-        _ => quote! {},
+        _ => quote! {}, // No extra filtering needed for other node types
     };
 
-    let expected_node_data_trait_impl = quote! {
-        // Assuming ExpectedNodeData trait is at crate::common::ExpectedNodeData
-        impl crate::common::ExpectedNodeData<crate::parser::nodes::#node_struct_name> for #expected_data_struct_name {
-            fn find_node_by_values<'a>(
-                &'a self,
-                parsed: &'a crate::parser::ParsedCodeGraph,
-            ) -> Box<dyn Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a> {
-                 // These use statements are for the *body* of find_node_by_values
-                 use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug};
-                 use crate::parser::nodes::{GraphNode, HasAttributes};
-                 use ::ploke_core::IdTrait;
+    // --- Generate the inherent impl block for Expected*Data ---
+    let expected_data_inherent_impl = quote! {
+         impl #expected_data_struct_name {
+             // These use statements are for the *body* of ALL generated inherent methods
+             use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
+             use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
+             use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
+             // Import PrimaryNodeIdTrait if needed for to_pid() in find_node_by_values
+             use crate::parser::nodes::PrimaryNodeIdTrait;
 
-                 // Add an initial .inspect to log the target ID being checked, like in manual impl
-                 let initial_inspect = quote! {
-                     .inspect(move |node_candidate| { // Changed from `n` to `node_candidate` to avoid conflict if `n` is used in filters
-                        // Assuming the node type has an `id` field that is a typed ID,
-                        // and that typed ID has a `to_pid()` method returning PrimaryNodeId,
-                        // which then has `to_string()`.
-                        // This might need adjustment based on actual ID structure.
-                        // For ConstNode, it's `node_candidate.id` which is `ConstNodeId`.
-                        // If `ConstNodeId` doesn't have `to_pid()`, this needs to be `node_candidate.id.to_string()`
-                        // or `node_candidate.id.base_id().to_string()` if `base_id()` gives NodeId.
-                        // Let's assume `node_candidate.id` is displayable and gives enough info.
-                        // The manual impl uses `node.id.to_pid().to_string().log_id()`.
-                        // This requires `PrimaryNodeIdTrait` for `to_pid()`.
-                        // If #node_struct_name is ConstNode, then node_candidate.id is ConstNodeId.
-                        // ConstNodeId impl PrimaryNodeIdTrait, so .to_pid() is available.
-                        log::debug!(target: #log_target,
-                            "Checking {}",
-                            node_candidate.id.to_pid().to_string().log_id(),
-                        );
+             // Define the inherent check methods
+             #(#inherent_check_method_impls)*
+
+             // Define find_node_by_values as an inherent method
+             pub fn find_node_by_values<'a>(
+                 &'a self,
+                 parsed: &'a crate::parser::ParsedCodeGraph,
+             ) -> Box<dyn Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a> {
+                  // Add an initial .inspect to log the target ID being checked, like in manual impl
+                  let initial_inspect = quote! {
+                      .inspect(move |node_candidate| {
+                         // Assuming node_candidate.id implements PrimaryNodeIdTrait for .to_pid()
+                         log::debug!(target: #log_target,
+                             "Checking {}",
+                             node_candidate.id.to_pid().to_string().log_id(),
+                         );
+                      })
+                  };
+                  // Add a final .inspect to log if all filters passed for a node
+                  let final_inspect = quote! {
+                     .inspect(move |_| {
+                         log::debug!(target: #log_target,
+                             "       {}: {}",
+                             "All Filters Passed for Node".to_string().log_step(),
+                             true.log_bool() // Indicate pass
+                         );
                      })
-                 };
-                 // Add a final .inspect to log if all filters passed for a node
-                 let final_inspect = quote! {
-                    .inspect(move |_| { // Changed from `n` to `_` as we don't use it here
-                        log::debug!(target: #log_target,
-                            "       {}: {}", // Simplified log message
-                            "All Filters Passed for Node".to_string().log_step(),
-                            // "Logging Details Below:", // Removed for brevity, details are in individual checks
-                            // "", // Removed
-                            // n, // Removed: n is not available here, and printing the whole node is verbose
-                            // "" // Removed
-                        );
-                    })
-                 };
+                  };
 
+                  Box::new(
+                     parsed.graph.#graph_collection_field.iter()
+                         #type_def_filter // Apply TypeDefNode filtering if necessary
+                         #initial_inspect // Add initial inspect
+                         #(#find_node_by_values_filters)* // Apply *selective* filters
+                         #final_inspect // Add final inspect
+                  )
+             }
 
-                 Box::new(
-                    parsed.graph.#graph_collection_field.iter()
-                        #type_def_filter // Apply TypeDefNode filtering if necessary
-                        #initial_inspect // Add initial inspect
-                        #(#find_node_by_values_filters)* // Apply *selective* filters
-                        #final_inspect // Add final inspect
-                 )
+             // Define check_all_fields as an inherent method
+             pub fn check_all_fields(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                 let mut all_passed = true;
+                 #(#check_all_fields_logics)*
+                 all_passed
             }
-
-            fn check_all_fields(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
-                 // These use statements are for the *body* of check_all_fields
-                 use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug};
-                 use crate::parser::nodes::{GraphNode, HasAttributes};
-                 use ::ploke_core::IdTrait;
-
-                let mut all_passed = true;
-                #(#check_all_fields_logics)*
-                all_passed
-           }
-       }
+         }
     };
 
     // --- Combine Generated Code ---
     let output = quote! {
         #expected_struct_def
-        #expected_data_inherent_impl // Inherent methods for Expected*Data
-        #expected_node_data_trait_impl // Trait implementation for ExpectedNodeData
+        #expected_data_inherent_impl // Inherent methods for Expected*Data, including find/check
+        // No trait implementation block needed anymore
     };
 
     output.into()
