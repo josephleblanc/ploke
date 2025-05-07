@@ -9,7 +9,7 @@ use quote::{format_ident, quote, ToTokens}; // Added format_ident and ToTokens
 use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input, AttributeArgs, FnArg, Ident, ItemFn, Lit, Meta, MetaNameValue, NestedMeta,
-    Path, Pat, PatType, Result as SynResult, Stmt, Token, Type, Visibility,
+    Pat, PatType, Path, Result as SynResult, Stmt, Token, Type, Visibility,
 };
 
 // Assuming ItemKind is accessible via syn_parser::ItemKind
@@ -23,7 +23,7 @@ struct ParanoidTestArgs {
     ident: String,
     fixture: String,
     relative_file_path: String,
-    expected_path: Vec<String>, // Store as Vec<String> directly
+    expected_path: Vec<String>,        // Store as Vec<String> directly
     expected_cfg: Option<Vec<String>>, // Store as Option<Vec<String>>
 }
 
@@ -73,42 +73,56 @@ impl Parse for ParanoidTestArgs {
                                     }
                                 };
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for kind"));
+                                return Err(syn::Error::new_spanned(
+                                    lit,
+                                    "Expected string literal for kind",
+                                ));
                             }
                         }
                         "ident" => {
                             if let Lit::Str(lit_str) = lit {
                                 ident = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for ident"));
+                                return Err(syn::Error::new_spanned(
+                                    lit,
+                                    "Expected string literal for ident",
+                                ));
                             }
                         }
                         "fixture" => {
                             if let Lit::Str(lit_str) = lit {
                                 fixture = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for fixture"));
+                                return Err(syn::Error::new_spanned(
+                                    lit,
+                                    "Expected string literal for fixture",
+                                ));
                             }
                         }
                         "relative_file_path" => {
                             if let Lit::Str(lit_str) = lit {
                                 relative_file_path = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for relative_file_path"));
+                                return Err(syn::Error::new_spanned(
+                                    lit,
+                                    "Expected string literal for relative_file_path",
+                                ));
                             }
                         }
                         "expected_path" => {
                             if let Lit::Str(lit_str) = lit {
                                 // Assume comma-separated string like "crate,module,item"
-                                expected_path = Some(lit_str.value().split(',').map(String::from).collect());
+                                expected_path =
+                                    Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
                                 return Err(syn::Error::new_spanned(lit, "Expected string literal for expected_path (e.g., \"crate,module\")"));
                             }
                         }
-                         "expected_cfg" => {
+                        "expected_cfg" => {
                             if let Lit::Str(lit_str) = lit {
                                 // Assume comma-separated string like "cfg1,cfg2"
-                                expected_cfg = Some(lit_str.value().split(',').map(String::from).collect());
+                                expected_cfg =
+                                    Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
                                 return Err(syn::Error::new_spanned(lit, "Expected string literal for expected_cfg (e.g., \"cfg1,cfg2\")"));
                             }
@@ -116,16 +130,28 @@ impl Parse for ParanoidTestArgs {
                         _ => return Err(syn::Error::new_spanned(key, "Unknown argument name")),
                     }
                 }
-                _ => return Err(syn::Error::new_spanned(arg, "Expected key = \"value\" format")),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        arg,
+                        "Expected key = \"value\" format",
+                    ))
+                }
             }
         }
 
         // Check for missing mandatory arguments
-        let kind = kind.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'kind' argument"))?;
-        let ident = ident.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'ident' argument"))?;
-        let fixture = fixture.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'fixture' argument"))?;
-        let relative_file_path = relative_file_path.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'relative_file_path' argument"))?;
-        let expected_path = expected_path.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'expected_path' argument"))?;
+        let kind =
+            kind.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'kind' argument"))?;
+        let ident =
+            ident.ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'ident' argument"))?;
+        let fixture = fixture
+            .ok_or_else(|| syn::Error::new(Span::call_site(), "Missing 'fixture' argument"))?;
+        let relative_file_path = relative_file_path.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "Missing 'relative_file_path' argument")
+        })?;
+        let expected_path = expected_path.ok_or_else(|| {
+            syn::Error::new(Span::call_site(), "Missing 'expected_path' argument")
+        })?;
         // expected_cfg is optional, defaults to None if not provided
 
         Ok(ParanoidTestArgs {
@@ -138,7 +164,6 @@ impl Parse for ParanoidTestArgs {
         })
     }
 }
-
 
 #[proc_macro_error]
 #[proc_macro_attribute]
@@ -178,12 +203,12 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
                     assert!(expected_data.is_value_match_debug(specific_node), "Value mismatch");
                 },
             ),
-             ItemKind::Static => (
+            ItemKind::Static => (
                 quote! { syn_parser::parser::nodes::StaticNode },
                 quote! { #test_module_path::ExpectedStaticData },
                 quote! { #test_module_path::EXPECTED_STATICS_DATA },
                 quote! { as_static },
-                 // Specific checks for StaticNode
+                // Specific checks for StaticNode
                 quote! {
                     assert!(expected_data.is_type_id_check_match_debug(specific_node), "Type ID check mismatch");
                     assert!(expected_data.is_mutable_match_debug(specific_node), "Mutability mismatch");
@@ -192,7 +217,11 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
             ),
             // Add other ItemKind mappings here...
             // ItemKind::Function => (quote! { FunctionNode }, quote! { ExpectedFunctionData }, ...),
-            _ => abort!(Span::call_site(), "Unsupported ItemKind for #[paranoid_test]: {:?}", kind),
+            _ => abort!(
+                Span::call_site(),
+                "Unsupported ItemKind for #[paranoid_test]: {:?}",
+                kind
+            ),
         };
 
     // Convert expected_path Vec<String> to &[&str] literal for ParanoidArgs
@@ -213,7 +242,6 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
         }
         None => quote! { None },
     };
-
 
     // Generate the test function body
     let expanded = quote! {
