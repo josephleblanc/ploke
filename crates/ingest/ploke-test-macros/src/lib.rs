@@ -8,7 +8,14 @@ use proc_macro_error::{abort, proc_macro_error};
 use quote::quote; // Removed unused format_ident, ToTokens
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, Expr, ItemFn, Lit, Meta, MetaNameValue, NestedMeta, Result as SynResult,
+    parse_macro_input,
+    Expr,
+    ItemFn,
+    Lit,
+    Meta,
+    MetaNameValue,
+    NestedMeta,
+    Result as SynResult,
     Token,
     // Removed unused types: AttributeArgs, FnArg, Ident, Pat, PatType, Path, Stmt, Type, Visibility
 };
@@ -57,7 +64,8 @@ impl Parse for ParanoidTestArgs {
 
                     match key_str.as_str() {
                         "kind" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 // Map string to ItemKind variant
                                 kind = match lit_str.value().as_str() {
                                     "Const" => Some(ItemKind::Const),
@@ -81,46 +89,65 @@ impl Parse for ParanoidTestArgs {
                                     }
                                 };
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for kind")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(
+                                    &lit,
+                                    "Expected string literal for kind",
+                                )); // Pass borrowed lit
                             }
                         }
                         "ident" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 ident = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for ident")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(
+                                    &lit,
+                                    "Expected string literal for ident",
+                                )); // Pass borrowed lit
                             }
                         }
                         "fixture" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 fixture = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for fixture")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(
+                                    &lit,
+                                    "Expected string literal for fixture",
+                                )); // Pass borrowed lit
                             }
                         }
                         "relative_file_path" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 relative_file_path = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for relative_file_path")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(
+                                    &lit,
+                                    "Expected string literal for relative_file_path",
+                                )); // Pass borrowed lit
                             }
                         }
                         "expected_path" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 // Assume comma-separated string like "crate,module,item"
                                 expected_path =
                                     Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_path (e.g., \"crate,module\")")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_path (e.g., \"crate,module\")"));
+                                // Pass borrowed lit
                             }
                         }
                         "expected_cfg" => {
-                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
+                            if let Lit::Str(lit_str) = &lit {
+                                // Borrow lit here
                                 // Assume comma-separated string like "cfg1,cfg2"
                                 expected_cfg =
                                     Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
-                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_cfg (e.g., \"cfg1,cfg2\")")); // Pass borrowed lit
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_cfg (e.g., \"cfg1,cfg2\")"));
+                                // Pass borrowed lit
                             }
                         }
                         _ => return Err(syn::Error::new_spanned(key, "Unknown argument name")),
@@ -201,11 +228,16 @@ pub fn paranoid_test(args: TokenStream, input: TokenStream) -> TokenStream {
         ItemKind::Macro => quote! { ploke_core::ItemKind::Macro },
         ItemKind::Import => quote! { ploke_core::ItemKind::Import },
         // Add other kinds as needed
-        _ => abort!(Span::call_site(), "Unsupported ItemKind for #[paranoid_test]: {:?}", kind_enum),
+        _ => abort!(
+            Span::call_site(),
+            "Unsupported ItemKind for #[paranoid_test]: {:?}",
+            kind_enum
+        ),
     };
 
     let (node_type, expected_data_type, expected_data_map, downcast_method, specific_checks) =
-        match kind_enum { // Match on the enum value here
+        match kind_enum {
+            // Match on the enum value here
             ItemKind::Const => (
                 quote! { syn_parser::parser::nodes::ConstNode },
                 quote! { #test_module_path::ExpectedConstData },
