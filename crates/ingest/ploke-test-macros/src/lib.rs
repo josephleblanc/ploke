@@ -81,58 +81,46 @@ impl Parse for ParanoidTestArgs {
                                     }
                                 };
                             } else {
-                                return Err(syn::Error::new_spanned(
-                                    lit,
-                                    "Expected string literal for kind",
-                                ));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for kind")); // Pass borrowed lit
                             }
                         }
                         "ident" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 ident = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(
-                                    lit,
-                                    "Expected string literal for ident",
-                                ));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for ident")); // Pass borrowed lit
                             }
                         }
                         "fixture" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 fixture = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(
-                                    lit,
-                                    "Expected string literal for fixture",
-                                ));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for fixture")); // Pass borrowed lit
                             }
                         }
                         "relative_file_path" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 relative_file_path = Some(lit_str.value());
                             } else {
-                                return Err(syn::Error::new_spanned(
-                                    lit,
-                                    "Expected string literal for relative_file_path",
-                                ));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for relative_file_path")); // Pass borrowed lit
                             }
                         }
                         "expected_path" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 // Assume comma-separated string like "crate,module,item"
                                 expected_path =
                                     Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for expected_path (e.g., \"crate,module\")"));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_path (e.g., \"crate,module\")")); // Pass borrowed lit
                             }
                         }
                         "expected_cfg" => {
-                            if let Lit::Str(lit_str) = lit {
+                            if let Lit::Str(lit_str) = &lit { // Borrow lit here
                                 // Assume comma-separated string like "cfg1,cfg2"
                                 expected_cfg =
                                     Some(lit_str.value().split(',').map(String::from).collect());
                             } else {
-                                return Err(syn::Error::new_spanned(lit, "Expected string literal for expected_cfg (e.g., \"cfg1,cfg2\")"));
+                                return Err(syn::Error::new_spanned(&lit, "Expected string literal for expected_cfg (e.g., \"cfg1,cfg2\")")); // Pass borrowed lit
                             }
                         }
                         _ => return Err(syn::Error::new_spanned(key, "Unknown argument name")),
