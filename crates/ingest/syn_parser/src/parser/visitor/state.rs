@@ -92,13 +92,17 @@ impl VisitorState {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
             Visibility::Restricted(restricted) => {
-                let path = restricted
+                let path: Vec<_> = restricted
                     .path
                     .segments
                     .iter()
                     .map(|seg| seg.ident.to_string())
                     .collect();
-                VisibilityKind::Restricted(path)
+                match path.last() {
+                    Some(last_path) if last_path == "crate" => VisibilityKind::Crate,
+                    Some(_) => VisibilityKind::Restricted(path),
+                    None => panic!("Invalid State: match failed on Some/None"),
+                }
             }
             // Changed handling of inherited visibility
             Visibility::Inherited => VisibilityKind::Inherited,
