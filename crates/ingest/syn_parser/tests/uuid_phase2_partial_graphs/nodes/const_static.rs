@@ -231,6 +231,16 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
+        m.insert("INNER_CONST", ExpectedConstData {
+            name: "INNER_CONST",
+            visibility: VisibilityKind::Crate, // pub(crate)
+            type_id_check: true,
+            value: Some("1"),
+            attributes: vec![],
+            docstring_contains: None, // No doc comment
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
         // Add more const examples if needed
         m
     };
