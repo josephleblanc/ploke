@@ -112,24 +112,21 @@ macro_rules! paranoid_test_name_check {
 ///
 /// # Example
 /// ```ignore
+/// // Assuming EXPECTED_CONSTS_ARGS and EXPECTED_CONSTS_DATA are lazy_static HashMaps in scope
 /// paranoid_test_fields_and_values_const!(
 ///     my_const_full_check,
-///     fixture: "my_fixture",
-///     relative_file_path: "src/constants.rs",
-///     ident: "MY_SPECIAL_CONST",
-///     expected_path: &["crate", "constants_module"],
-///     expected_cfg: None
+///     "crate::constants::MY_SPECIAL_CONST", // Key to lookup args
+///     EXPECTED_CONSTS_ARGS,                 // Map containing ParanoidArgs
+///     EXPECTED_CONSTS_DATA                  // Map containing ExpectedConstNode
 /// );
 /// ```
 #[macro_export]
 macro_rules! paranoid_test_fields_and_values_const {
     (
         $test_name:ident,
-        fixture: $fixture_name:expr,
-        relative_file_path: $rel_path:expr,
-        ident: $item_ident:expr,
-        expected_path: $exp_path:expr,
-        expected_cfg: $cfg:expr
+        $args_key:expr,
+        $args_map:ident,
+        $expected_data_map:ident
     ) => {
         #[test]
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
@@ -138,27 +135,18 @@ macro_rules! paranoid_test_fields_and_values_const {
                 .format_timestamp(None)
                 .try_init();
 
-            // 1. Run phases
-            let successful_graphs = crate::common::run_phases_and_collect($fixture_name);
+            // 1. Look up ParanoidArgs and ExpectedConstData from provided maps
+            let args = $args_map.get($args_key).unwrap_or_else(|| {
+                panic!("ParanoidArgs not found for key: {}", $args_key);
+            });
+            let expected_data = $expected_data_map.get(args.ident).unwrap_or_else(|| {
+                 panic!("ExpectedConstData not found for ident: {}", args.ident);
+            });
 
-            // 2. Define ParanoidArgs
-            let args = crate::common::ParanoidArgs {
-                fixture: $fixture_name,
-                relative_file_path: $rel_path,
-                ident: $item_ident,
-                expected_path: $exp_path,
-                item_kind: ploke_core::ItemKind::Const, // Specific to ConstNode
-                expected_cfg: $cfg,
-            };
+            // 2. Run phases using fixture from retrieved args
+            let successful_graphs = crate::common::run_phases_and_collect(args.fixture);
 
-            // 3. Get ExpectedConstData
-            // Ensure EXPECTED_CONSTS_DATA is in scope, typically from the test module
-            // e.g., use crate::uuid_phase2_partial_graphs::nodes::const_static::EXPECTED_CONSTS_DATA;
-            let expected_data = crate::uuid_phase2_partial_graphs::nodes::consts::EXPECTED_CONSTS_DATA
-                .get($item_ident)
-                .unwrap_or_else(|| panic!("ExpectedConstData not found for ident: {}", $item_ident));
-
-            // 4. Find the target ParsedCodeGraph
+            // 3. Find the target ParsedCodeGraph using relative_file_path from retrieved args
             let target_graph_data = successful_graphs
                 .iter()
                 .find(|pg| pg.file_path.ends_with(args.relative_file_path))
