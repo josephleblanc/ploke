@@ -7,6 +7,7 @@ use crate::parser::nodes::{
 use crate::parser::nodes::{AssociatedItemNodeId, PrimaryNodeId};
 use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
+use log::error;
 use ploke_core::ItemKind;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
@@ -92,16 +93,30 @@ impl VisitorState {
         match vis {
             Visibility::Public(_) => VisibilityKind::Public,
             Visibility::Restricted(restricted) => {
-                let path: Vec<_> = restricted
+                let path_segments: Vec<_> = restricted
                     .path
                     .segments
                     .iter()
                     .map(|seg| seg.ident.to_string())
                     .collect();
-                match path.last() {
-                    Some(last_path) if last_path == "crate" => VisibilityKind::Crate,
-                    Some(_) => VisibilityKind::Restricted(path),
-                    None => panic!("Invalid State: match failed on Some/None"),
+
+                if path_segments.is_empty() {
+                    // This case handles `pub(in )` or similar where the path inside VisRestricted is empty.
+                    // According to VisibilityKind docs, an empty path in Restricted might imply Public,
+                    // but we will represent it as Restricted(empty_path) and log an error.
+                    error!(
+                        "Encountered syn::Visibility::Restricted with an empty path. \
+                        This might be due to an unusual 'pub(in )' construct. \
+                        Proceeding with VisibilityKind::Restricted(empty_path). Original syn::Visibility: {:?}",
+                        vis
+                    );
+                    VisibilityKind::Restricted(Vec::new())
+                } else if restricted.path.leading_colon.is_none() && path_segments.len() == 1 && path_segments[0] == "crate" {
+                    // This is the specific check for `pub(crate)`
+                    VisibilityKind::Crate
+                } else {
+                    // For all other restricted paths like `pub(super)`, `pub(in some::path)`
+                    VisibilityKind::Restricted(path_segments)
                 }
             }
             // Changed handling of inherited visibility
