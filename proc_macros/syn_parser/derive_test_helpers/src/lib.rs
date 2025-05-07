@@ -87,10 +87,12 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "visibility" => {
-                expected_fields_defs.push(quote! { pub visibility: crate::parser::types::VisibilityKind });
+                expected_fields_defs
+                    .push(quote! { pub visibility: crate::parser::types::VisibilityKind });
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has visibility()
@@ -106,10 +108,12 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "attributes" => {
-                expected_fields_defs.push(quote! { pub attributes: Vec<crate::parser::nodes::Attribute> });
+                expected_fields_defs
+                    .push(quote! { pub attributes: Vec<crate::parser::nodes::Attribute> });
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements HasAttributes trait
@@ -125,7 +129,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "docstring" => {
                 // The field in Expected*Data is docstring_contains: Option<&'static str>
@@ -151,7 +156,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "cfgs" => {
                 expected_fields_defs.push(quote! { pub cfgs: Vec<String> });
@@ -174,7 +180,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "tracking_hash" => {
                 // The field in Expected*Data is tracking_hash_check: bool
@@ -196,7 +203,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 check_all_fields_logics.push(quote! {
                     if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
-                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "type_id" => {
                 // The field in Expected*Data is type_id_check: bool
@@ -222,7 +230,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 // Not adding to find_node_by_values_filters by default, as per instructions.
             }
             // Handle `value: Option<String>` for ConstNode
-            "value" if node_struct_name == "ConstNode" && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) => {
+            "value"
+                if node_struct_name == "ConstNode"
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
+            {
                 expected_fields_defs.push(quote! { pub value: Option<&'static str> });
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
@@ -244,7 +255,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 // Not adding to find_node_by_values_filters by default.
             }
             // Handle `is_mutable: bool` for StaticNode
-            "is_mutable" if node_struct_name == "StaticNode" && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) => {
+            "is_mutable"
+                if node_struct_name == "StaticNode"
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) =>
+            {
                 expected_fields_defs.push(quote! { pub is_mutable: bool });
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
