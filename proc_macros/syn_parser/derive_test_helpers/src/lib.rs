@@ -42,36 +42,41 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
     };
 
     // --- Generate Fields for Expected*Data Struct ---
-    let mut expected_fields = Vec::new();
-    // --- Generate Implementations for Check Methods ---
-    let mut check_methods = Vec::new();
-    // --- Generate Filter Steps for find_node_by_values ---
-    let mut find_filters = Vec::new();
+    let mut expected_fields_defs = Vec::new();
+    // --- Generate Implementations for Inherent Check Methods ---
+    let mut inherent_check_method_impls = Vec::new();
+    // --- Generate Logic for check_all_fields ---
+    let mut check_all_fields_logics = Vec::new();
+    // --- Generate Filter Steps for find_node_by_values (selective) ---
+    let mut find_node_by_values_filters = Vec::new();
 
     // Define the log target (can be customized later)
-    let log_target = quote! { "log_test_node" }; // Use a generic target
+    let log_target = quote! { "log_test_node" }; // Use a generic target, e.g., from const_static.rs LOG_TEST_CONST
 
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap(); // We know fields are named
-        let field_name_str = field_name.to_string();
+        let field_ident = field.ident.as_ref().unwrap(); // We know fields are named
+        let field_name_str = field_ident.to_string();
         let field_type = &field.ty;
 
         // Generate check method name (e.g., name -> is_name_match_debug)
-        let check_method_name = format_ident!("is_{}_match_debug", field_name);
+        let check_method_name_ident = format_ident!("is_{}_match_debug", field_ident);
 
         // Map original field to expected field and generate checks/filters
         match field_name_str.as_str() {
             "id" | "span" | "fields" | "variants" | "methods" | "imports" | "exports"
             | "generic_params" | "module_def" | "parameters" | "return_type" | "super_traits"
             | "kind" => {
-                // Ignore these fields for the Expected*Data struct and checks
+                // These fields are typically not directly compared by value in Expected*Data,
+                // or are handled by ID regeneration or specific relation checks.
+                // We will not generate `is_*_match_debug` for them by default.
             }
             "name" => {
-                expected_fields.push(quote! { pub name: &'static str });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let check = self.name == node.name(); // Assuming N impl GraphNode
-                        log::debug!(target: #log_target,
+                expected_fields_defs.push(quote! { pub name: &'static str });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node implements GraphNode trait which has name()
+                        let check = self.name == node.name();
+                        log::debug!(target: #log_target, // Use the specific log target
                             "   {} {} | Expected '{}' == Actual '{}'",
                             "Name Match?".to_string().log_step(), check.log_bool(),
                             self.name.log_name(), node.name().log_name()
@@ -79,14 +84,17 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                find_filters.push(quote! { .filter(|n| n.name() == self.name) });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "visibility" => {
-                expected_fields
-                    .push(quote! { pub visibility: syn_parser::parser::types::VisibilityKind }); // Use qualified path
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let check = self.visibility == *node.visibility(); // Assuming N impl GraphNode
+                expected_fields_defs.push(quote! { pub visibility: crate::parser::types::VisibilityKind });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node implements GraphNode trait which has visibility()
+                        let check = self.visibility == *node.visibility();
                         log::debug!(target: #log_target,
                             "   {} {} | Expected '{}' == Actual '{}'",
                             "Visibility Match?".to_string().log_step(), check.log_bool(),
@@ -95,176 +103,201 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         check
                     }
                 });
-                find_filters.push(quote! { .filter(|n| *n.visibility() == self.visibility) });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "attributes" => {
-                expected_fields
-                    .push(quote! { pub attributes: Vec<syn_parser::parser::nodes::Attribute> }); // Use qualified path
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let check = self.attributes == node.attributes(); // Assuming N impl HasAttributes
+                expected_fields_defs.push(quote! { pub attributes: Vec<crate::parser::nodes::Attribute> });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node implements HasAttributes trait
+                        let check = self.attributes == node.attributes();
                         log::debug!(target: #log_target,
                             "   {} {} | Expected '{:?}' == Actual '{:?}'",
                             "Attributes Match?".to_string().log_step(), check.log_bool(),
-                            self.attributes, node.attributes()
+                            self.attributes.log_green_debug(), node.attributes().log_green_debug() // Using log_green_debug like manual
                         );
                         check
                     }
                 });
-                find_filters.push(quote! { .filter(|n| n.attributes() == self.attributes) });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "docstring" => {
-                expected_fields.push(quote! { pub docstring_contains: Option<&'static str> });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let actual_docstring = node.docstring(); // Assuming N impl GraphNode provides docstring() -> Option<&str>
+                // The field in Expected*Data is docstring_contains: Option<&'static str>
+                expected_fields_defs.push(quote! { pub docstring_contains: Option<&'static str> });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node implements GraphNode trait which has docstring() -> Option<String> or Option<&str>
+                        // The manual impl uses node.docstring.as_deref() which implies node.docstring is Option<String>
+                        let actual_docstring = node.docstring.as_deref(); // Access field directly
                         let check_passes = match self.docstring_contains {
                             Some(expected_substr) => actual_docstring.map_or(false, |s| s.contains(expected_substr)),
                             None => actual_docstring.is_none(),
                         };
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected contains '{:?}' in Actual '{:?}'",
+                            "   {} {} | Expected contains '{}' in Actual '{}'",
                             "Docstring Contains Match?".to_string().log_step(), check_passes.log_bool(),
-                            self.docstring_contains, actual_docstring
+                            self.docstring_contains.unwrap_or("None").log_foreground_primary(), // Manual style
+                            actual_docstring.unwrap_or("None").log_foreground_secondary() // Manual style
                         );
                         check_passes
                     }
                 });
-                find_filters.push(quote! {
-                     .filter(|n| {
-                         let actual_docstring = n.docstring();
-                         match self.docstring_contains {
-                            Some(expected_substr) => actual_docstring.map_or(false, |s| s.contains(expected_substr)),
-                            None => actual_docstring.is_none(),
-                         }
-                     })
-                 });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "cfgs" => {
-                expected_fields.push(quote! { pub cfgs: Vec<String> });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let mut actual_cfgs = node.cfgs().to_vec(); // Assuming N impl GraphNode
+                expected_fields_defs.push(quote! { pub cfgs: Vec<String> });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node implements GraphNode trait which has cfgs()
+                        let mut actual_cfgs = node.cfgs().to_vec();
                         actual_cfgs.sort_unstable();
                         let mut expected_cfgs_sorted = self.cfgs.clone();
                         expected_cfgs_sorted.sort_unstable();
                         let check = expected_cfgs_sorted == actual_cfgs;
-                        log::debug!(target: #log_target,
-                            "   {} {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}'",
-                            "CFGs Match?".to_string().log_step(), check.log_bool(),
-                            expected_cfgs_sorted, actual_cfgs
+                        log::debug!(target: #log_target, // Manual impl uses LOG_TEST_CONST, here using generic log_target
+                            "   {} {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}'", // Adjusted log to match manual closer
+                            "CFGs Match?".to_string().log_step(), check.log_bool(), // Manual uses log_green, then log_bool
+                            expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug()
                         );
                         check
                     }
                 });
-                find_filters.push(quote! {
-                    .filter(|n| {
-                        let mut actual_cfgs = n.cfgs().to_vec();
-                        actual_cfgs.sort_unstable();
-                        let mut expected_cfgs_sorted = self.cfgs.clone();
-                        expected_cfgs_sorted.sort_unstable();
-                        expected_cfgs_sorted == actual_cfgs
-                    })
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
                 });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "tracking_hash" => {
-                expected_fields.push(quote! { pub tracking_hash_check: bool });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let actual_check_passes = node.tracking_hash().is_some(); // Assuming N impl GraphNode provides tracking_hash() -> Option<TrackingHash>
-                         let check = self.tracking_hash_check == actual_check_passes;
-                         log::debug!(target: #log_target,
+                // The field in Expected*Data is tracking_hash_check: bool
+                expected_fields_defs.push(quote! { pub tracking_hash_check: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node has a public field tracking_hash: Option<TrackingHash>
+                        let actual_check_passes = node.tracking_hash.is_some(); // Access field directly
+                        let check = self.tracking_hash_check == actual_check_passes;
+                        log::debug!(target: #log_target,
                             "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TrackingHash Check Match?".to_string().log_step(), check.log_bool(),
-                            self.tracking_hash_check, actual_check_passes
+                            self.tracking_hash_check.to_string().log_name(),
+                            actual_check_passes.to_string().log_name()
                         );
                         check
                     }
                 });
-                find_filters.push(
-                    quote! { .filter(|n| n.tracking_hash().is_some() == self.tracking_hash_check) },
-                );
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters.push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
             "type_id" => {
-                expected_fields.push(quote! { pub type_id_check: bool });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        // Need a way to get type_id from N. Add a trait?
-                        // Assuming a method `get_type_id()` exists for relevant nodes.
-                        let actual_check_passes = node.get_type_id().is_synthetic(); // Assuming N has get_type_id() -> TypeId
+                // The field in Expected*Data is type_id_check: bool
+                expected_fields_defs.push(quote! { pub type_id_check: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node has a public field type_id: TypeId
+                        // And TypeId has an is_synthetic() method (from ploke_core::IdTrait)
+                        let actual_check_passes = node.type_id.is_synthetic(); // Access field directly
                         let check = self.type_id_check == actual_check_passes;
                         log::debug!(target: #log_target,
                             "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TypeId Check Match?".to_string().log_step(), check.log_bool(),
-                            self.type_id_check, actual_check_passes
+                            self.type_id_check.to_string().log_name(),
+                            actual_check_passes.to_string().log_name()
                         );
                         check
                     }
                 });
-                find_filters.push(
-                    quote! { .filter(|n| n.get_type_id().is_synthetic() == self.type_id_check) },
-                );
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                // Not adding to find_node_by_values_filters by default, as per instructions.
             }
-            "value" if matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
-            {
-                // Handle Option<String> fields like 'value'
-                expected_fields.push(quote! { pub value: Option<&'static str> });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let actual_value = node.get_value(); // Assuming N has get_value() -> Option<&str>
+            // Handle `value: Option<String>` for ConstNode
+            "value" if node_struct_name == "ConstNode" && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) => {
+                expected_fields_defs.push(quote! { pub value: Option<&'static str> });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node has public field value: Option<String>
+                        let actual_value = node.value.as_deref(); // Access field directly
                         let check = self.value == actual_value;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "   {} {} | Expected '{}' == Actual '{}'",
                             "Value Match?".to_string().log_step(), check.log_bool(),
-                            self.value, actual_value
+                            self.value.unwrap_or("None").log_foreground_primary(), // Manual style
+                            actual_value.unwrap_or("None").log_foreground_secondary() // Manual style
                         );
                         check
                     }
                 });
-                find_filters.push(quote! { .filter(|n| n.get_value() == self.value) });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                // Not adding to find_node_by_values_filters by default.
             }
-            "is_mutable" if matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) =>
-            {
-                // Handle simple bool fields like 'is_mutable'
-                expected_fields.push(quote! { pub is_mutable: bool });
-                check_methods.push(quote! {
-                    fn #check_method_name(&self, node: &N) -> bool {
-                        let actual_value = node.is_mutable(); // Assuming N has is_mutable() -> bool
+            // Handle `is_mutable: bool` for StaticNode
+            "is_mutable" if node_struct_name == "StaticNode" && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) => {
+                expected_fields_defs.push(quote! { pub is_mutable: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        // Assuming node has public field is_mutable: bool
+                        let actual_value = node.is_mutable; // Access field directly
                         let check = self.is_mutable == actual_value;
                         log::debug!(target: #log_target,
                             "   {} {} | Expected '{}' == Actual '{}'",
                             "Is Mutable Match?".to_string().log_step(), check.log_bool(),
-                            self.is_mutable, actual_value
+                            self.is_mutable.to_string().log_name(), // Manual style for bools might differ
+                            actual_value.to_string().log_name()
                         );
                         check
                     }
                 });
-                find_filters.push(quote! { .filter(|n| n.is_mutable() == self.is_mutable) });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                // Not adding to find_node_by_values_filters by default.
             }
-            // Add more field handlers here...
             _ => {
                 // Optionally warn or ignore unknown fields
-                // log::warn!("Ignoring field {} in ExpectedData derive", field_name_str);
             }
         }
     }
 
     // --- Generate the Expected*Data Struct Definition ---
     let expected_struct_def = quote! {
-        #[derive(Debug, Clone, PartialEq)] // Add derives as needed
+        #[derive(Debug, Clone, PartialEq)]
         pub struct #expected_data_struct_name {
-            #(#expected_fields),* // Expand generated fields
+            #(#expected_fields_defs),*
         }
     };
 
+    // --- Generate the inherent impl block for Expected*Data ---
+    let expected_data_inherent_impl = quote! {
+         impl #expected_data_struct_name {
+             // These use statements are for the *body* of the generated inherent methods
+             use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
+             use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
+             use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
+
+             // Define the inherent check methods
+             #(#inherent_check_method_impls)*
+         }
+    };
+
     // --- Generate the `impl ExpectedNodeData` block ---
-    // Determine the node collection field name (e.g., `graph.consts`, `graph.statics`)
-    // This requires mapping the node struct name to the field name in CodeGraph.
     let graph_collection_field = match node_struct_name.to_string().as_str() {
         "ConstNode" => quote! { consts },
         "StaticNode" => quote! { statics },
         "FunctionNode" => quote! { functions },
-        "StructNode" | "EnumNode" | "UnionNode" | "TypeAliasNode" => quote! { defined_types }, // Need further filtering for these
+        "StructNode" | "EnumNode" | "UnionNode" | "TypeAliasNode" => quote! { defined_types },
         "TraitNode" => quote! { traits },
         "ImplNode" => quote! { impls },
         "ModuleNode" => quote! { modules },
@@ -277,80 +310,97 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         ),
     };
 
-    // Special handling for TypeDefNode variants
     let type_def_filter = match node_struct_name.to_string().as_str() {
         "StructNode" => {
-            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Struct(s) = n { Some(s) } else { None }) }
+            quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::Struct(s) = n { Some(s) } else { None }) }
         }
         "EnumNode" => {
-            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Enum(e) = n { Some(e) } else { None }) }
+            quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::Enum(e) = n { Some(e) } else { None }) }
         }
         "UnionNode" => {
-            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::Union(u) = n { Some(u) } else { None }) }
+            quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::Union(u) = n { Some(u) } else { None }) }
         }
         "TypeAliasNode" => {
-            quote! { .filter_map(|n| if let syn_parser::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
+            quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
         }
-        _ => quote! {}, // No extra filtering needed for other node types
+        _ => quote! {},
     };
 
-    let expected_node_data_impl = quote! {
-        // Use fully qualified paths for traits/structs from syn_parser
-        impl crate::ExpectedNodeData<syn_parser::parser::nodes::#node_struct_name> for #expected_data_struct_name {
+    let expected_node_data_trait_impl = quote! {
+        // Assuming ExpectedNodeData trait is at crate::common::ExpectedNodeData
+        impl crate::common::ExpectedNodeData<crate::parser::nodes::#node_struct_name> for #expected_data_struct_name {
             fn find_node_by_values<'a>(
                 &'a self,
-                parsed: &'a syn_parser::parser::ParsedCodeGraph,
-            ) -> Box<dyn Iterator<Item = &'a syn_parser::parser::nodes::#node_struct_name> + 'a> {
-                 // Import necessary traits for logging/comparison if not already in scope
-                 use syn_parser::utils::{LogStyle, LogStyleBool, LogStyleDebug};
-                 use syn_parser::parser::nodes::{GraphNode, HasAttributes}; // Assuming these provide necessary methods
+                parsed: &'a crate::parser::ParsedCodeGraph,
+            ) -> Box<dyn Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a> {
+                 // These use statements are for the *body* of find_node_by_values
+                 use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug};
+                 use crate::parser::nodes::{GraphNode, HasAttributes};
+                 use ::ploke_core::IdTrait;
 
-                 Box::new(parsed.graph.#graph_collection_field.iter()
-                    #type_def_filter // Apply TypeDefNode filtering if necessary
-                    // Apply generated filters
-                    #(#find_filters)*
+                 // Add an initial .inspect to log the target ID being checked, like in manual impl
+                 let initial_inspect = quote! {
+                     .inspect(move |node_candidate| { // Changed from `n` to `node_candidate` to avoid conflict if `n` is used in filters
+                        // Assuming the node type has an `id` field that is a typed ID,
+                        // and that typed ID has a `to_pid()` method returning PrimaryNodeId,
+                        // which then has `to_string()`.
+                        // This might need adjustment based on actual ID structure.
+                        // For ConstNode, it's `node_candidate.id` which is `ConstNodeId`.
+                        // If `ConstNodeId` doesn't have `to_pid()`, this needs to be `node_candidate.id.to_string()`
+                        // or `node_candidate.id.base_id().to_string()` if `base_id()` gives NodeId.
+                        // Let's assume `node_candidate.id` is displayable and gives enough info.
+                        // The manual impl uses `node.id.to_pid().to_string().log_id()`.
+                        // This requires `PrimaryNodeIdTrait` for `to_pid()`.
+                        // If #node_struct_name is ConstNode, then node_candidate.id is ConstNodeId.
+                        // ConstNodeId impl PrimaryNodeIdTrait, so .to_pid() is available.
+                        log::debug!(target: #log_target,
+                            "Checking {}",
+                            node_candidate.id.to_pid().to_string().log_id(),
+                        );
+                     })
+                 };
+                 // Add a final .inspect to log if all filters passed for a node
+                 let final_inspect = quote! {
+                    .inspect(move |_| { // Changed from `n` to `_` as we don't use it here
+                        log::debug!(target: #log_target,
+                            "       {}: {}", // Simplified log message
+                            "All Filters Passed for Node".to_string().log_step(),
+                            // "Logging Details Below:", // Removed for brevity, details are in individual checks
+                            // "", // Removed
+                            // n, // Removed: n is not available here, and printing the whole node is verbose
+                            // "" // Removed
+                        );
+                    })
+                 };
+
+
+                 Box::new(
+                    parsed.graph.#graph_collection_field.iter()
+                        #type_def_filter // Apply TypeDefNode filtering if necessary
+                        #initial_inspect // Add initial inspect
+                        #(#find_node_by_values_filters)* // Apply *selective* filters
+                        #final_inspect // Add final inspect
                  )
             }
 
-            fn check_all_fields(&self, node: &syn_parser::parser::nodes::#node_struct_name) -> bool {
-                 // Import necessary traits for logging/comparison if not already in scope
-                 use syn_parser::utils::{LogStyle, LogStyleBool, LogStyleDebug};
-                 use syn_parser::parser::nodes::{GraphNode, HasAttributes}; // Assuming these provide necessary methods
-                 use ploke_core::IdTrait; // For TypeId::is_synthetic
+            fn check_all_fields(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                 // These use statements are for the *body* of check_all_fields
+                 use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug};
+                 use crate::parser::nodes::{GraphNode, HasAttributes};
+                 use ::ploke_core::IdTrait;
 
-                // Call all generated check methods defined in the separate impl block
                 let mut all_passed = true;
-                #( // Iterate through the check_method_name idents generated earlier
-                    if !self.#check_methods(node) { all_passed = false; }
-                )*
+                #(#check_all_fields_logics)*
                 all_passed
            }
        }
     };
 
-    // --- Generate the `impl Expected*Data` block with check methods ---
-    let expected_data_impl = quote! {
-         // Use fully qualified paths for traits/structs from syn_parser
-         impl #expected_data_struct_name {
-             // Define helper methods needed by check methods (e.g., log_step)
-             // Or assume they are brought into scope via use statements where the derive is applied.
-             // For simplicity, let's assume LogStyle utils are imported.
-
-             // Define the check methods
-             #( // Repeat for each generated check method
-                 // Add necessary trait bounds to N if methods assume them (e.g., GraphNode, HasAttributes)
-                 fn #check_methods<N: syn_parser::parser::nodes::GraphNode + syn_parser::parser::nodes::HasAttributes + std::fmt::Debug>(&self, node: &N) -> bool {
-                     // Implementation generated above
-                 }
-             )*
-         }
-    };
-
     // --- Combine Generated Code ---
     let output = quote! {
         #expected_struct_def
-        #expected_node_data_impl
-        // #expected_data_impl // Impl block with check methods - currently defined within ExpectedNodeData impl
+        #expected_data_inherent_impl // Inherent methods for Expected*Data
+        #expected_node_data_trait_impl // Trait implementation for ExpectedNodeData
     };
 
     output.into()
