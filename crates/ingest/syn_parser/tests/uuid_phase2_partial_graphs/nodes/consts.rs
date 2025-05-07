@@ -196,133 +196,133 @@ lazy_static! {
 }
 
 // Define the static array using ParanoidArgs
-// AI: Change this static array to instead be a lazy_static! hashmap that contains each of the
-// `ParanoidArgs` , where the key is the fully qualified path of the target e.g.
-// "crate::const::TOP_LEVEL_INT" for the first item below. AI!
-static EXPECTED_ITEMS: &[ParanoidArgs] = &[
-    // --- Top Level Items ---
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_INT",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_BOOL",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_STR",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Static,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_COUNTER",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Static,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_CRATE_STATIC", // pub(crate)
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Static,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "ARRAY_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TUPLE_STATIC",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Static,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "STRUCT_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "ALIASED_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "EXPR_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "FN_CALL_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "doc_attr_const",
-        expected_cfg: None, // Attributes are not CFGs
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "DOC_ATTR_STATIC",
-        expected_cfg: Some(&["target_os = \"linux\""]), // This one has a CFG
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Static,
-    },
-    // --- Inner Mod Items ---
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs", // Defined in this file
-        ident: "INNER_CONST",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
-        item_kind: ItemKind::Const,
-    },
-    ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs", // Defined in this file
-        ident: "INNER_MUT_STATIC",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
-        item_kind: ItemKind::Static,
-    },
-];
+lazy_static! {
+    static ref EXPECTED_ITEMS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        m.insert("crate::const_static::TOP_LEVEL_INT", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TOP_LEVEL_INT",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::TOP_LEVEL_BOOL", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TOP_LEVEL_BOOL",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::TOP_LEVEL_STR", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TOP_LEVEL_STR",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Static,
+        });
+        m.insert("crate::const_static::TOP_LEVEL_COUNTER", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TOP_LEVEL_COUNTER",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Static,
+        });
+        m.insert("crate::const_static::TOP_LEVEL_CRATE_STATIC", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TOP_LEVEL_CRATE_STATIC", // pub(crate)
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Static,
+        });
+        m.insert("crate::const_static::ARRAY_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "ARRAY_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::TUPLE_STATIC", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "TUPLE_STATIC",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Static,
+        });
+        m.insert("crate::const_static::STRUCT_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "STRUCT_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::ALIASED_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "ALIASED_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::EXPR_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "EXPR_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::FN_CALL_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "FN_CALL_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::doc_attr_const", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "doc_attr_const",
+            expected_cfg: None, // Attributes are not CFGs
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::DOC_ATTR_STATIC", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs",
+            ident: "DOC_ATTR_STATIC",
+            expected_cfg: Some(&["target_os = \"linux\""]), // This one has a CFG
+            expected_path: &["crate", "const_static"],
+            item_kind: ItemKind::Static,
+        });
+        // --- Inner Mod Items ---
+        m.insert("crate::const_static::inner_mod::INNER_CONST", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs", // Defined in this file
+            ident: "INNER_CONST",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+            item_kind: ItemKind::Const,
+        });
+        m.insert("crate::const_static::inner_mod::INNER_MUT_STATIC", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/const_static.rs", // Defined in this file
+            ident: "INNER_MUT_STATIC",
+            expected_cfg: None,
+            expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+            item_kind: ItemKind::Static,
+        });
+        m
+    };
+}
 
 // Replaced by macro invocation below
 // TODO: Comment out after verifying that both this test and the macro replacing it are correctly
@@ -338,21 +338,10 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Use ParanoidArgs to find the node
-    let args = ParanoidArgs {
-        fixture: "fixture_nodes",
-        relative_file_path: "src/const_static.rs",
-        ident: "TOP_LEVEL_BOOL",
-        expected_cfg: None,
-        expected_path: &["crate", "const_static"],
-        item_kind: ItemKind::Const,
-    };
-    let args = EXPECTED_ITEMS
-        .iter()
-        .find(|fixt| {
-            log::debug!("fixt: {}, args.ident: {}", fixt.ident, args.ident);
-            fixt.ident == args.ident
-        })
-        .unwrap();
+    let args_key = "crate::const_static::TOP_LEVEL_BOOL";
+    let args = EXPECTED_ITEMS.get(args_key).unwrap_or_else(|| {
+        panic!("ParanoidArgs not found for key: {}", args_key);
+    });
     let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
