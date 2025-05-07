@@ -734,14 +734,14 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                  use syn_parser::parser::nodes::{GraphNode, HasAttributes}; // Assuming these provide necessary methods
                  use ploke_core::IdTrait; // For TypeId::is_synthetic
 
-                 // Call all generated check methods
-                 let mut all_passed = true;
-                 #(
-                     if !self.#check_methods(node) { all_passed = false; }
-                 )*
-                 all_passed
-            }
-        }
+                // Call all generated check methods defined in the separate impl block
+                let mut all_passed = true;
+                #( // Iterate through the check_method_name idents generated earlier
+                    if !self.#check_method_name(node) { all_passed = false; }
+                )*
+                all_passed
+           }
+       }
     };
 
     // --- Generate the `impl Expected*Data` block with check methods ---
