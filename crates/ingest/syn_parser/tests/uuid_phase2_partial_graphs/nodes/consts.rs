@@ -34,7 +34,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("10"),
             attributes: vec![],
-            docstring: Some("top-level private constant"),
+            docstring: Some("A top-level private constant with a simple integer type."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -58,7 +58,7 @@ lazy_static! {
             type_id_check: true,
             value: Some("true"),
             attributes: vec![],
-            docstring: Some("top-level public constant"),
+            docstring: Some("A top-level public constant with a boolean type."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
