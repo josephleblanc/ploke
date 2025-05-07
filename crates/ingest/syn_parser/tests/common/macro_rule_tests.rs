@@ -154,7 +154,7 @@ macro_rules! paranoid_test_fields_and_values_const {
             // 3. Get ExpectedConstData
             // Ensure EXPECTED_CONSTS_DATA is in scope, typically from the test module
             // e.g., use crate::uuid_phase2_partial_graphs::nodes::const_static::EXPECTED_CONSTS_DATA;
-            let expected_data = crate::uuid_phase2_partial_graphs::nodes::const_static::EXPECTED_CONSTS_DATA
+            let expected_data = crate::uuid_phase2_partial_graphs::nodes::consts::EXPECTED_CONSTS_DATA
                 .get($item_ident)
                 .unwrap_or_else(|| panic!("ExpectedConstData not found for ident: {}", $item_ident));
 
@@ -177,16 +177,16 @@ macro_rules! paranoid_test_fields_and_values_const {
                     match test_info.target_data().find_node_unique(test_info.test_pid().into()) {
                         Ok(node) => {
                             if let Some(const_node) = node.as_const() {
-                                log::info!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "Performing individual field checks for '{}' via ID lookup.", args.ident);
+                                log::info!(target: crate::uuid_phase2_partial_graphs::nodes::consts::LOG_TEST_CONST, "Performing individual field checks for '{}' via ID lookup.", args.ident);
                                 assert!({
                                     ![
                                         expected_data.is_name_match_debug(const_node),
-                                        expected_data.is_vis_match_debug(const_node),
-                                        expected_data.is_attr_match_debug(const_node),
-                                        expected_data.is_type_id_check_match_debug(const_node),
+                                        expected_data.is_visibility_match_debug(const_node),
+                                        expected_data.is_attributes_match_debug(const_node),
+                                        expected_data.is_type_id_match_debug(const_node),
                                         expected_data.is_value_match_debug(const_node),
-                                        expected_data.is_docstring_contains_match_debug(const_node),
-                                        expected_data.is_tracking_hash_check_match_debug(const_node),
+                                        expected_data.is_docstring_match_debug(const_node),
+                                        expected_data.is_tracking_hash_match_debug(const_node),
                                         expected_data.is_cfgs_match_debug(const_node),
                                     ]
                                     .contains(&false)
@@ -211,7 +211,7 @@ macro_rules! paranoid_test_fields_and_values_const {
                                     "Missing SyntacticRelation::Contains from parent module {} to const node {}",
                                     parent_module_id, const_node.id
                                 );
-                                log::debug!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "   Relation Check: Found Contains relation from parent module.");
+                                log::debug!(target: crate::uuid_phase2_partial_graphs::nodes::consts::LOG_TEST_CONST, "   Relation Check: Found Contains relation from parent module.");
                                 // --- End Relation Check ---
 
                             } else {
@@ -219,17 +219,17 @@ macro_rules! paranoid_test_fields_and_values_const {
                             }
                         }
                         Err(e) => {
-                            log::warn!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Proceeding with value-based check only.", test_info.test_pid(), args.ident, e);
+                            log::warn!(target: crate::uuid_phase2_partial_graphs::nodes::consts::LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}' (Error: {:?}). Proceeding with value-based check only.", test_info.test_pid(), args.ident, e);
                         }
                     }
                 }
                 Err(e) => {
-                    log::warn!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Proceeding with value-based check only.", args.ident, e);
+                    log::warn!(target: crate::uuid_phase2_partial_graphs::nodes::consts::LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Proceeding with value-based check only.", args.ident, e);
                 }
             }
 
             // 6. Perform value-based lookup and count assertion
-            log::info!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "Performing value-based lookup for '{}'.", args.ident);
+            log::info!(target: crate::uuid_phase2_partial_graphs::nodes::consts::LOG_TEST_CONST, "Performing value-based lookup for '{}'.", args.ident);
             let matching_nodes_by_value: Vec<_> = expected_data.find_node_by_values(target_graph_data).collect();
             assert_eq!(
                 matching_nodes_by_value.len(),

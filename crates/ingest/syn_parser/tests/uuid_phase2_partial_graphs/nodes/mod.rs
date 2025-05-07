@@ -1,5 +1,5 @@
 // Declare node-specific test modules
-mod const_static;
+mod consts;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod enums;
 #[cfg(not(feature = "type_bearing_ids"))]
@@ -12,6 +12,7 @@ mod imports;
 mod macros;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod modules;
+mod statics;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod structs;
 #[cfg(not(feature = "type_bearing_ids"))]

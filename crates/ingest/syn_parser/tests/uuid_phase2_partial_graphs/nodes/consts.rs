@@ -33,22 +33,7 @@ pub struct ExpectedConstData {
 
 use syn_parser::parser::nodes::ExpectedConstNode;
 
-// Struct to hold expected fields for a StaticNode
-#[derive(Debug, Clone, PartialEq)]
-struct ExpectedStaticData {
-    name: &'static str,
-    visibility: VisibilityKind,
-    type_id_check: bool,
-    is_mutable: bool,
-    value: Option<&'static str>,
-    attributes: Vec<Attribute>,
-    docstring_contains: Option<&'static str>,
-    tracking_hash_check: bool,
-    cfgs: Vec<String>,
-}
-
 // --- Lazy Static Maps ---
-
 lazy_static! {
     // Map from ident -> ExpectedConstData
     static ref EXPECTED_CONSTS_DATA: HashMap<&'static str, ExpectedConstNode> = {
@@ -150,54 +135,11 @@ lazy_static! {
         // Add more const examples if needed
         m
     };
-
-    // Map from ident -> ExpectedStaticData
-    static ref EXPECTED_STATICS_DATA: HashMap<&'static str, ExpectedStaticData> = {
-        let mut m = HashMap::new();
-        m.insert("TOP_LEVEL_COUNTER", ExpectedStaticData {
-            name: "TOP_LEVEL_COUNTER",
-            visibility: VisibilityKind::Public,
-            type_id_check: true,
-            is_mutable: true,
-            value: Some("0"),
-            attributes: vec![],
-            docstring_contains: None,
-            tracking_hash_check: true,
-            cfgs: vec![],
-        });
-         m.insert("DOC_ATTR_STATIC", ExpectedStaticData {
-            name: "DOC_ATTR_STATIC",
-            visibility: VisibilityKind::Inherited,
-            type_id_check: true,
-            is_mutable: false,
-            value: Some("\"Linux specific\""), // Correct value from fixture
-            attributes: vec![], // cfg is handled separately
-            docstring_contains: Some("This is a documented static variable."), // Correct docstring
-            tracking_hash_check: true,
-            // Note: cfg string includes quotes as parsed by syn
-            cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here
-        });
-        m.insert("INNER_MUT_STATIC", ExpectedStaticData {
-            name: "INNER_MUT_STATIC",
-            visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
-            type_id_check: true,
-            is_mutable: true,
-            value: Some("false"),
-            attributes: vec![
-                 Attribute {name:"allow".to_string(),args:vec!["dead_code".to_string()],value:None },
-            ],
-            docstring_contains: None,
-            tracking_hash_check: true,
-            cfgs: vec![],
-        });
-        // Add more static examples if needed
-        m
-    };
 }
 
 // Define the static array using ParanoidArgs
 lazy_static! {
-    static ref EXPECTED_ITEMS: HashMap<&'static str, ParanoidArgs<'static>> = {
+    static ref EXPECTED_CONSTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
         let mut m = HashMap::new();
         m.insert("crate::const_static::TOP_LEVEL_INT", ParanoidArgs {
             fixture: "fixture_nodes",
@@ -339,7 +281,7 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
 
     // Use ParanoidArgs to find the node
     let args_key = "crate::const_static::TOP_LEVEL_BOOL";
-    let args = EXPECTED_ITEMS.get(args_key).unwrap_or_else(|| {
+    let args = EXPECTED_CONSTS_ARGS.get(args_key).unwrap_or_else(|| {
         panic!("ParanoidArgs not found for key: {}", args_key);
     });
     let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
@@ -389,16 +331,9 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         ]
         .contains(&false)
     });
-    let expected_const_node = ExpectedConstNode {
-        name: "TOP_LEVEL_BOOL",
-        visibility: VisibilityKind::Public,
-        type_id_check: true,
-        value: Some("true"),
-        attributes: vec![],
-        docstring_contains: Some("top-level public constant"),
-        tracking_hash_check: true,
-        cfgs: vec![],
-    };
+    let expected_const_node = EXPECTED_CONSTS_DATA
+        .get("crate::const_static::TOP_LEVEL_BOOL")
+        .expect("The specified node was not found in they map of expected const nodes.");
 
     let macro_found_node = expected_const_node
         .find_node_by_values(test_info.target_data())

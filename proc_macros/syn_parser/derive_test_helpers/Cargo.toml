@@ -14,7 +14,7 @@ proc-macro2 = {workspace = true}
 proc-macro-error = {workspace = true} # For better error reporting in derive
 heck = "0.5" # For case conversion
 
-syn_parser = { path = "../../../crates/ingest/syn_parser" }
+# syn_parser = { path = "../../../crates/ingest/syn_parser" }
 ploke-core = { path = "../../../crates/ploke-core" }
 
 # NOTE: This crate intentionally does NOT depend on syn_parser or ploke-core

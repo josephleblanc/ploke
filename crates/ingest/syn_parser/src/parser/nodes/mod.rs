@@ -1,14 +1,15 @@
+mod consts;
 mod enums;
 mod function;
 mod impls;
 mod import;
 mod macros;
 mod module;
+mod statics;
 mod structs;
 mod traits;
 mod type_alias;
 mod union;
-mod value;
 // private ids and methods here
 mod ids;
 // ----- ids public re-exports -----
@@ -27,17 +28,23 @@ use ploke_core::{ItemKind, TypeId};
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
+pub use consts::ConstNode;
 pub use enums::{EnumNode, VariantNode};
 pub use function::{FunctionNode, MethodNode, ParamData}; // Added MethodNode
 pub use impls::ImplNode;
 pub use import::{ImportKind, ImportNode};
 pub use macros::{MacroKind, MacroNode, ProcMacroKind};
 pub use module::{ModDisc, ModuleKind, ModuleNode};
+pub use statics::StaticNode;
 pub use structs::{FieldNode, StructNode};
 pub use traits::TraitNode;
 pub use type_alias::TypeAliasNode;
 pub use union::UnionNode;
-pub use value::{ConstNode, StaticNode};
+
+// test structures generated with proc macros:
+// This might be kind of a dirty way to do it, but I just hope it works:
+pub use consts::ExpectedConstNode;
+pub use statics::ExpectedStaticNode;
 
 // Re-export the generated *NodeInfo structs for internal use within the crate
 // NOTE: 2025-05-02:
