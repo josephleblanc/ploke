@@ -1,3 +1,94 @@
+//! Tests for `StaticNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! This analysis evaluates the coverage of `StaticNode`s based on the
+//! `tests/fixture_crates/fixture_nodes/src/const_static.rs` fixture and
+//! variations in `StaticNode` properties.
+//!
+//! ### 1. Coverage of `static` items from the `const_static.rs` fixture:
+//!
+//! **Fixture `static` items:**
+//! *   `TOP_LEVEL_STR: &str`
+//! *   `TOP_LEVEL_COUNTER: u32` (mutable)
+//! *   `TOP_LEVEL_CRATE_STATIC: &str` (pub(crate))
+//! *   `TUPLE_STATIC: (i32, bool)`
+//! *   `DOC_ATTR_STATIC: &str` (with cfg and doc)
+//! *   `inner_mod::INNER_MUT_STATIC: bool` (mutable, pub(super))
+//!
+//! **Coverage Status:**
+//! *   **Covered by `EXPECTED_STATICS_DATA` and `paranoid_test_fields_and_values!` macro:**
+//!     *   `TOP_LEVEL_COUNTER` (tested by `test_top_level_counter_fields_and_values`)
+//!     *   `DOC_ATTR_STATIC` (tested by `test_doc_attr_static_fields_and_values`)
+//!     *   `inner_mod::INNER_MUT_STATIC` (tested by `test_inner_mut_static_fields_and_values`)
+//! *   **Present in `EXPECTED_STATICS_ARGS` but NOT in `EXPECTED_STATICS_DATA` or tested by `paranoid_test_fields_and_values!`:**
+//!     *   `crate::const_static::TOP_LEVEL_STR`
+//!     *   `crate::const_static::TOP_LEVEL_CRATE_STATIC`
+//!     *   `crate::const_static::TUPLE_STATIC`
+//!
+//! **Conclusion for Fixture Coverage:**
+//! Out of the 6 top-level or inner-module `static` items in the fixture:
+//! *   3 are fully tested with detailed field checks.
+//! *   3 have `ParanoidArgs` defined but lack detailed field check tests.
+//!
+//! ### 2. Coverage of `StaticNode` Property Variations:
+//!
+//! Based on the items covered by `paranoid_test_fields_and_values!`:
+//!
+//! *   `id: StaticNodeId`: Implicitly covered.
+//! *   `name: String`: Good coverage (different unique names).
+//! *   `span: (usize, usize)`: Not directly asserted by value.
+//! *   `visibility: VisibilityKind`: Good coverage (`Public`, `Inherited`, `Restricted`). `Crate` visibility is in the fixture but not in a detailed test for `StaticNode`.
+//! *   `type_id: TypeId`: Good coverage for ensuring `TypeId` is synthetic.
+//! *   `is_mutable: bool`: Excellent coverage (both `true` and `false`).
+//! *   `value: Option<String>`: Good coverage for `Some` with different literal types (integer, string, boolean).
+//! *   `attributes: Vec<Attribute>`: Fair coverage (empty and simple `#[allow(dead_code)]`). More complex attributes could be added.
+//! *   `docstring: Option<String>`: Excellent coverage (`Some` and `None`).
+//! *   `tracking_hash: Option<TrackingHash>`: Good coverage for ensuring presence.
+//! *   `cfgs: Vec<String>`: Good coverage (no `cfg` and single `cfg`). Multiple `cfg`s on one item are not covered.
+//!
+//! **Conclusion for Property Variation Coverage:**
+//! Most `StaticNode` fields have good to excellent coverage.
+//! *   **Areas for potential expansion:** Testing `VisibilityKind::Crate`, more complex attributes, and multiple `cfg`s on a single static item.
+//!
+//! ## Differences in Testing `StaticNode` vs. Other Nodes
+//!
+//! Testing `StaticNode`s shares many similarities with testing other item nodes like `ConstNode`,
+//! particularly in checking common fields such as `name`, `visibility`, `type_id`, `attributes`,
+//! `docstring`, `cfgs`, and `tracking_hash`. The `paranoid_test_fields_and_values!` macro
+//! framework is designed to be generic enough to handle these commonalities.
+//!
+//! However, `StaticNode`s have specific characteristics that differentiate their testing:
+//!
+//! 1.  **`is_mutable: bool` Field:**
+//!     This field is unique to `StaticNode` (among `ConstNode` and `StaticNode`). Tests for
+//!     `StaticNode` must explicitly verify the correctness of this boolean flag, ensuring
+//!     that `static` items are correctly identified as mutable (`static mut`) or immutable.
+//!     The `ExpectedStaticNode` data structure includes an `is_mutable` field, and the
+//!     `derive(ExpectedData)` macro generates the corresponding `is_is_mutable_match_debug`
+//!     check.
+//!
+//! 2.  **`value: Option<String>` Field:**
+//!     While `ConstNode` also has a `value` field, the nature of expressions allowed for
+//!     `static` items can be slightly different. Static items require constant initializers,
+//!     but they don't have the same compile-time evaluation constraints as `const` items
+//!     (e.g., `static` initializers can involve non-`const fn` calls if the result is known
+//!     at link time, though `syn` parsing primarily captures the literal expression).
+//!     The tests focus on ensuring the parsed string representation of the initializer is correct.
+//!
+//! 3.  **Associated Statics:**
+//!     Unlike `const` items, `static` items cannot be directly associated with `impl` blocks
+//!     (i.e., `impl Foo { static BAR: i32 = 0; }` is not allowed). They can appear in traits
+//!     as associated items, but this is less common than associated constants. The current
+//!     fixture `const_static.rs` does not include associated statics, so this aspect is not
+//!     yet specifically tested for `StaticNode`s. If such patterns were to be supported and
+//!     parsed, specific tests would be needed.
+//!
+//! In summary, while the overall testing strategy is consistent, `StaticNode` tests place
+//! particular emphasis on the `is_mutable` flag and ensure that the parsing of their
+//! initializers is handled correctly, accommodating the range of expressions valid for
+//! static variable declarations.
+
 #![cfg(test)]
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
