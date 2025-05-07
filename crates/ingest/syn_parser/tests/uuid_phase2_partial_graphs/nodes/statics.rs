@@ -1,8 +1,7 @@
 #![cfg(test)]
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
-use crate::paranoid_test_fields_and_values_const;
-use crate::paranoid_test_name_check;
+use crate::paranoid_test_fields_and_values;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
 use std::collections::HashMap;
@@ -13,7 +12,7 @@ use syn_parser::parser::nodes::ExpectedStaticNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::types::VisibilityKind;
 
-const LOG_STATICS_TEST: &str = "log_statics_test";
+const LOG_TEST_STATIC: &str = "log_statics_test";
 
 lazy_static! {
     // Map from ident -> ExpectedStaticNode
@@ -26,7 +25,7 @@ lazy_static! {
             is_mutable: true,
             value: Some("0"),
             attributes: vec![],
-            docstring_contains: None,
+            docstring_contains: Some("A top-level public mutable static counter."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -116,6 +115,7 @@ lazy_static! {
     };
 }
 
+#[test]
 fn test_static_nodes() -> Result<(), SynParserError> {
     let _ = env_logger::builder()
         .is_test(true)
@@ -126,7 +126,7 @@ fn test_static_nodes() -> Result<(), SynParserError> {
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Use ParanoidArgs to find the node
-    let args_key = "crate::const_static::TOP_LEVEL_BOOL";
+    let args_key = "crate::const_static::TOP_LEVEL_COUNTER";
     let args = EXPECTED_STATICS_ARGS.get(args_key).unwrap_or_else(|| {
         panic!("ParanoidArgs not found for key: {}", args_key);
     });
@@ -134,7 +134,7 @@ fn test_static_nodes() -> Result<(), SynParserError> {
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
-        log::warn!(target: LOG_STATICS_TEST, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
+        log::warn!(target: LOG_TEST_STATIC, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
         let target_graph = successful_graphs
             .iter()
             .find(|pg| pg.file_path.ends_with(args.relative_file_path))
@@ -143,4 +143,51 @@ fn test_static_nodes() -> Result<(), SynParserError> {
         let _found = exp_const.find_node_by_values(target_graph).count();
         let _ = args.check_graph(target_graph);
     })?;
+
+    // Find the node using the generated ID within the correct graph
+    let node = test_info
+        .target_data() // This is &ParsedCodeGraph
+        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+        .inspect_err(|e| {
+            let target_graph = test_info.target_data();
+            let _ = args.check_graph(target_graph);
+            let count = exp_const.find_node_by_values(target_graph).count();
+            log::warn!(target: LOG_TEST_STATIC, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
+        })?;
+
+    assert_eq!(
+        node.name(), // Use the GraphNode trait method
+        args.ident,
+        "Mismatch for name field. Expected: '{}', Actual: '{}'",
+        args.ident,
+        node.name()
+    );
+
+    let node = node.as_static().unwrap();
+    assert!({
+        ![
+            exp_const.is_name_match_debug(node),
+            exp_const.is_visibility_match_debug(node),
+            exp_const.is_attributes_match_debug(node),
+            exp_const.is_type_id_match_debug(node),
+            exp_const.is_value_match_debug(node),
+            exp_const.is_docstring_match_debug(node),
+            exp_const.is_tracking_hash_match_debug(node),
+            exp_const.is_cfgs_match_debug(node),
+        ]
+        .contains(&false)
+    });
+    let expected_const_node = EXPECTED_STATICS_DATA
+        .get("TOP_LEVEL_COUNTER")
+        .expect("The specified node was not found in they map of expected const nodes.");
+
+    let macro_found_node = expected_const_node
+        .find_node_by_values(test_info.target_data())
+        .next()
+        .unwrap();
+    println!("ConstNode found using new macro: {:#?}", macro_found_node);
+    println!("ConstNode found using old methods: {:#?}", node);
+    assert!(macro_found_node.id.to_pid() == node.id.to_pid());
+    // assert!(expected_const_node.check_all_fields(node));
+    Ok(())
 }
