@@ -119,7 +119,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         // Assuming node implements HasAttributes trait
                         let check = self.attributes == node.attributes();
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "   {} {} | Expected '{}' == Actual '{}'",
                             "Attributes Match?".to_string().log_step(), check.log_bool(),
                             self.attributes.log_green_debug(), node.attributes().log_green_debug() // Using log_green_debug like manual
                         );
@@ -165,12 +165,12 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has cfgs()
                         let mut actual_cfgs = node.cfgs().to_vec();
-                        actual_cfgs.sort_unstable();
+                        format!("{:?}", actual_cfgs.sort_unstable());
                         let mut expected_cfgs_sorted = self.cfgs.clone();
-                        expected_cfgs_sorted.sort_unstable();
+                        format!("{:?}", expected_cfgs_sorted.sort_unstable());
                         let check = expected_cfgs_sorted == actual_cfgs;
                         log::debug!(target: #log_target, // Manual impl uses LOG_TEST_CONST, here using generic log_target
-                            "   {} {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}'", // Adjusted log to match manual closer
+                            "   {} {} | Expected (sorted) '{}' == Actual (sorted) '{}'", // Adjusted log to match manual closer
                             "CFGs Match?".to_string().log_step(), check.log_bool(), // Manual uses log_green, then log_bool
                             expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug()
                         );

@@ -2,7 +2,7 @@
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values; // Corrected macro name
-// Removed: use crate::paranoid_test_fields_and_values_const;
+                                            // Removed: use crate::paranoid_test_fields_and_values_const;
 use crate::paranoid_test_name_check;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::Attribute;
+use syn_parser::parser::nodes::ExpectedConstNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::types::VisibilityKind;
 
@@ -18,19 +19,6 @@ use syn_parser::parser::types::VisibilityKind;
 // They should be added when fixtures are updated or when testing traits/impls specifically.
 
 pub const LOG_TEST_CONST: &str = "log_test_const";
-
-// Struct to hold expected fields for a ConstNode
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExpectedConstData {
-    name: &'static str,
-    visibility: VisibilityKind,
-    type_id_check: bool, // Just check if it's Synthetic for now
-    value: Option<&'static str>,
-    attributes: Vec<Attribute>, // Store expected non-cfg attributes
-    docstring_contains: Option<&'static str>,
-    tracking_hash_check: bool, // Check if Some
-    cfgs: Vec<String>,
-}
 
 // Removed: use syn_parser::parser::nodes::ExpectedConstNode;
 // The generated struct is in crate::parser::nodes::consts
@@ -334,7 +322,7 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         .contains(&false)
     });
     let expected_const_node = EXPECTED_CONSTS_DATA
-        .get("crate::const_static::TOP_LEVEL_BOOL")
+        .get("TOP_LEVEL_BOOL")
         .expect("The specified node was not found in they map of expected const nodes.");
 
     let macro_found_node = expected_const_node
@@ -360,13 +348,13 @@ paranoid_test_name_check!(
 
 paranoid_test_fields_and_values!(
     test_top_level_bool_fields_and_values,
-    "crate::const_static::TOP_LEVEL_BOOL",   // args_key
-    EXPECTED_CONSTS_ARGS,                    // args_map
-    EXPECTED_CONSTS_DATA,                    // expected_data_map
-    crate::parser::nodes::ConstNode,         // node_type
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
-    as_const,                                // downcast_method
-    LOG_TEST_CONST                           // log_target
+    "crate::const_static::TOP_LEVEL_BOOL",        // args_key
+    EXPECTED_CONSTS_ARGS,                         // args_map
+    EXPECTED_CONSTS_DATA,                         // expected_data_map
+    syn_parser::parser::nodes::ConstNode,         // node_type
+    syn_parser::parser::nodes::ExpectedConstNode, // derived Expeced*Node
+    as_const,                                     // downcast_method
+    LOG_TEST_CONST                                // log_target
 );
 
 paranoid_test_fields_and_values!(
@@ -374,8 +362,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::TOP_LEVEL_INT",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -385,8 +373,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::doc_attr_const",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -396,8 +384,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::inner_mod::INNER_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -407,8 +395,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::ARRAY_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -418,8 +406,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::STRUCT_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -429,8 +417,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::ALIASED_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -440,8 +428,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::EXPR_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -451,8 +439,8 @@ paranoid_test_fields_and_values!(
     "crate::const_static::FN_CALL_CONST",
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
-    crate::parser::nodes::ConstNode,
-    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
+    syn_parser::parser::nodes::ConstNode,
+    syn_parser::parser::nodes::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
