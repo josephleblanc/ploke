@@ -30,7 +30,8 @@ members = [
     "tests/fixture_crates/fixture_path_resolution",
     "tests/fixture_crates/fixture_spp_edge_cases",
     "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
-    "crates/ingest/syn_parser_macros", # Add the new proc macro crate
+    "crates/ingest/syn_parser_macros",
+    "crates/ingest/ploke-test-macros", 
     # Add more modules as needed
 ]
 

@@ -932,3 +932,17 @@ impl<'a> CfgLogCtx<'a> {
         }
     }
 }
+
+pub trait LogStyleBool {
+    fn log_bool(&self) -> ColoredString;
+}
+
+impl LogStyleBool for bool {
+    fn log_bool(&self) -> ColoredString {
+        if *self {
+            self.to_string().log_green()
+        } else {
+            self.to_string().log_error()
+        }
+    }
+}

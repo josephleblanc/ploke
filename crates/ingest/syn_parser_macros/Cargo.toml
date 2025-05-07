@@ -12,6 +12,7 @@ proc-macro = true # Important: Marks this as a proc macro crate
 syn = { version = "2.0", features = ["full", "extra-traits"] } # Need full for parsing, extra-traits for derives
 quote = "1.0"
 proc-macro2 = "1.0"
+proc-macro-error = "1.0" # For better error reporting
 
 # Need access to NodeId type definition for path generation
 # This is a bit tricky, as proc macros can't directly depend on normal crates easily.

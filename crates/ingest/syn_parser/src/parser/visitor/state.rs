@@ -9,6 +9,7 @@ use crate::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind};
 use crate::utils::logging::LogErrorConversion; // Import the new logging trait
 use log::error;
 use ploke_core::ItemKind;
+use quote::ToTokens;
 use syn::{FnArg, Generics, Pat, PatIdent, PatType, TypeParam, Visibility};
 
 use super::calculate_cfg_hash_bytes;
@@ -107,11 +108,14 @@ impl VisitorState {
                     error!(
                         "Encountered syn::Visibility::Restricted with an empty path. \
                         This might be due to an unusual 'pub(in )' construct. \
-                        Proceeding with VisibilityKind::Restricted(empty_path). Original syn::Visibility: {:?}",
-                        vis
+                        Proceeding with VisibilityKind::Restricted(empty_path). Original syn::Visibility: {}",
+                        vis.to_token_stream().to_string()
                     );
                     VisibilityKind::Restricted(Vec::new())
-                } else if restricted.path.leading_colon.is_none() && path_segments.len() == 1 && path_segments[0] == "crate" {
+                } else if restricted.path.leading_colon.is_none()
+                    && path_segments.len() == 1
+                    && path_segments[0] == "crate"
+                {
                     // This is the specific check for `pub(crate)`
                     VisibilityKind::Crate
                 } else {

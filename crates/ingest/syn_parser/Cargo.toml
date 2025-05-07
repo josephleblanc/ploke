@@ -32,8 +32,7 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 thiserror = { workspace = true }                          # version 2
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
-# syn_parser_macros = { path = "../syn_parser_macros" } # Old proc macro, replaced
-ploke-test-macros = { path = "../ploke-test-macros", optional = true } # New proc macro for tests
+syn_parser_macros = { path = "../syn_parser_macros" }     # Add dependency on the
 anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
@@ -52,25 +51,24 @@ itertools = "0.14.0"
 tempfile = "3.10"     # For creating temporary files/dirs in tests
 env_logger = "0.11"   # Add env_logger for test logging
 lazy_static = "1.4.0" # Added lazy_static
+ploke-test-macros = { path = "../ploke-test-macros" } # for tests
 
 # Feature flags
 [features]
 default = ["type_bearing_ids", "validate", "reexport", "not_wip_marker"]
-# Add feature to enable test macros only when testing
-test_macros = ["dep:ploke-test-macros"]
 feature_a = []                                                           # Add feature_a used by fixture
 feature_b = []                                                           # Add feature_b used by test
 verbose_debug = []
-temp_target = []
-not_wip_marker = []
-
 # temporary transition cfg to allow comparison of
 # functionality with previous, non-type-bearing implementation. Will eventually
 # completely replace the original implementation, at which time this cfg should
 # be removed.
+temp_target = []
+not_wip_marker = []
 type_bearing_ids = []
 validate = []
 mod_tree_cfg = []
 reexport = []
 # Post-MVP feature
 workspace_vis = []
+
