@@ -1,0 +1,514 @@
+#![cfg(test)]
+use crate::common::run_phases_and_collect;
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values_const;
+use crate::paranoid_test_name_check;
+use lazy_static::lazy_static;
+use ploke_core::ItemKind;
+use std::collections::HashMap;
+use syn_parser::error::SynParserError;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::Attribute;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::types::VisibilityKind;
+
+// NOTE: Tests for associated types (`test_associated_type_found_in_impl`, `test_associated_type_found_in_trait`)
+// are omitted for now as the current `const_static.rs` fixture does not contain associated types.
+// They should be added when fixtures are updated or when testing traits/impls specifically.
+
+pub const LOG_TEST_CONST: &str = "log_test_const";
+
+// Struct to hold expected fields for a ConstNode
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExpectedConstData {
+    name: &'static str,
+    visibility: VisibilityKind,
+    type_id_check: bool, // Just check if it's Synthetic for now
+    value: Option<&'static str>,
+    attributes: Vec<Attribute>, // Store expected non-cfg attributes
+    docstring_contains: Option<&'static str>,
+    tracking_hash_check: bool, // Check if Some
+    cfgs: Vec<String>,
+}
+
+use syn_parser::parser::nodes::ExpectedConstNode;
+
+// Struct to hold expected fields for a StaticNode
+#[derive(Debug, Clone, PartialEq)]
+struct ExpectedStaticData {
+    name: &'static str,
+    visibility: VisibilityKind,
+    type_id_check: bool,
+    is_mutable: bool,
+    value: Option<&'static str>,
+    attributes: Vec<Attribute>,
+    docstring_contains: Option<&'static str>,
+    tracking_hash_check: bool,
+    cfgs: Vec<String>,
+}
+
+// --- Lazy Static Maps ---
+
+lazy_static! {
+    // Map from ident -> ExpectedConstData
+    static ref EXPECTED_CONSTS_DATA: HashMap<&'static str, ExpectedConstNode> = {
+        let mut m = HashMap::new();
+        m.insert("TOP_LEVEL_INT", ExpectedConstNode {
+            name: "TOP_LEVEL_INT",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("10"),
+            attributes: vec![],
+            docstring_contains: Some("top-level private constant"),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("doc_attr_const", ExpectedConstNode {
+            name: "doc_attr_const",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            value: Some("3.14"),
+            attributes: vec![
+                Attribute {name:"deprecated".to_string(),args:vec!["note = \"Use NEW_DOC_ATTR_CONST instead\"".to_string()],value:None },
+                // Corrected args for allow attribute
+                Attribute {name:"allow".to_string(),args:vec!["non_upper_case_globals".to_string(), "clippy :: approx_constant".to_string()],value:None },
+            ],
+            docstring_contains: Some("This is a documented constant."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("TOP_LEVEL_BOOL", ExpectedConstNode {
+            name: "TOP_LEVEL_BOOL",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            value: Some("true"),
+            attributes: vec![],
+            docstring_contains: Some("top-level public constant"),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("INNER_CONST", ExpectedConstNode {
+            name: "INNER_CONST",
+            visibility: VisibilityKind::Crate, // pub(crate)
+            type_id_check: true,
+            value: Some("1"),
+            attributes: vec![],
+            docstring_contains: None, // No doc comment
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("ARRAY_CONST", ExpectedConstNode {
+            name: "ARRAY_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("[1 , 2 , 3]"), // Assuming minimal spacing
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("STRUCT_CONST", ExpectedConstNode {
+            name: "STRUCT_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("SimpleStruct { x : 99 , y : true }"), // Assuming syn spacing
+            attributes: vec![],
+            docstring_contains: Some("Constant struct instance."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("ALIASED_CONST", ExpectedConstNode {
+            name: "ALIASED_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("- 5"),
+            attributes: vec![],
+            docstring_contains: Some("Constant using a type alias."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("EXPR_CONST", ExpectedConstNode {
+            name: "EXPR_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("5 * 2 + 1"),
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("FN_CALL_CONST", ExpectedConstNode {
+            name: "FN_CALL_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("five ()"), // Assuming space before ()
+            attributes: vec![],
+            docstring_contains: Some("Constant initialized with a call to a const function."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        // Add more const examples if needed
+        m
+    };
+
+    // Map from ident -> ExpectedStaticData
+    static ref EXPECTED_STATICS_DATA: HashMap<&'static str, ExpectedStaticData> = {
+        let mut m = HashMap::new();
+        m.insert("TOP_LEVEL_COUNTER", ExpectedStaticData {
+            name: "TOP_LEVEL_COUNTER",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            is_mutable: true,
+            value: Some("0"),
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+         m.insert("DOC_ATTR_STATIC", ExpectedStaticData {
+            name: "DOC_ATTR_STATIC",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            is_mutable: false,
+            value: Some("\"Linux specific\""), // Correct value from fixture
+            attributes: vec![], // cfg is handled separately
+            docstring_contains: Some("This is a documented static variable."), // Correct docstring
+            tracking_hash_check: true,
+            // Note: cfg string includes quotes as parsed by syn
+            cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here
+        });
+        m.insert("INNER_MUT_STATIC", ExpectedStaticData {
+            name: "INNER_MUT_STATIC",
+            visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
+            type_id_check: true,
+            is_mutable: true,
+            value: Some("false"),
+            attributes: vec![
+                 Attribute {name:"allow".to_string(),args:vec!["dead_code".to_string()],value:None },
+            ],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        // Add more static examples if needed
+        m
+    };
+}
+
+// Define the static array using ParanoidArgs
+// AI: Change this static array to instead be a lazy_static! hashmap that contains each of the
+// `ParanoidArgs` , where the key is the fully qualified path of the target e.g.
+// "crate::const::TOP_LEVEL_INT" for the first item below. AI!
+static EXPECTED_ITEMS: &[ParanoidArgs] = &[
+    // --- Top Level Items ---
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_INT",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_BOOL",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_STR",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_COUNTER",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_CRATE_STATIC", // pub(crate)
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "ARRAY_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TUPLE_STATIC",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "STRUCT_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "ALIASED_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "EXPR_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "FN_CALL_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "doc_attr_const",
+        expected_cfg: None, // Attributes are not CFGs
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "DOC_ATTR_STATIC",
+        expected_cfg: Some(&["target_os = \"linux\""]), // This one has a CFG
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Static,
+    },
+    // --- Inner Mod Items ---
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs", // Defined in this file
+        ident: "INNER_CONST",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+        item_kind: ItemKind::Const,
+    },
+    ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs", // Defined in this file
+        ident: "INNER_MUT_STATIC",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static", "inner_mod"], // Path within the file
+        item_kind: ItemKind::Static,
+    },
+];
+
+// Replaced by macro invocation below
+// TODO: Comment out after verifying that both this test and the macro replacing it are correctly
+// running before removing this test
+#[test]
+fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    // Original was Result<()> which is FixtureError
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_nodes");
+
+    // Use ParanoidArgs to find the node
+    let args = ParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: "src/const_static.rs",
+        ident: "TOP_LEVEL_BOOL",
+        expected_cfg: None,
+        expected_path: &["crate", "const_static"],
+        item_kind: ItemKind::Const,
+    };
+    let args = EXPECTED_ITEMS
+        .iter()
+        .find(|fixt| {
+            log::debug!("fixt: {}, args.ident: {}", fixt.ident, args.ident);
+            fixt.ident == args.ident
+        })
+        .unwrap();
+    let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
+
+    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+    let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
+        log::warn!(target: LOG_TEST_CONST, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
+        let target_graph = successful_graphs
+            .iter()
+            .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+            .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
+
+        let _found = exp_const.find_node_by_values(target_graph).count();
+        let _ = args.check_graph(target_graph);
+    })?;
+
+    // Find the node using the generated ID within the correct graph
+    let node = test_info
+        .target_data() // This is &ParsedCodeGraph
+        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+        .inspect_err(|e| {
+            let target_graph = test_info.target_data();
+            let _ = args.check_graph(target_graph);
+            let count = exp_const.find_node_by_values(target_graph).count();
+            log::warn!(target: LOG_TEST_CONST, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
+        })?;
+
+    assert_eq!(
+        node.name(), // Use the GraphNode trait method
+        args.ident,
+        "Mismatch for name field. Expected: '{}', Actual: '{}'",
+        args.ident,
+        node.name()
+    );
+
+    let node = node.as_const().unwrap();
+    assert!({
+        ![
+            exp_const.is_name_match_debug(node),
+            exp_const.is_visibility_match_debug(node),
+            exp_const.is_attributes_match_debug(node),
+            exp_const.is_type_id_match_debug(node),
+            exp_const.is_value_match_debug(node),
+            exp_const.is_docstring_match_debug(node),
+            exp_const.is_tracking_hash_match_debug(node),
+            exp_const.is_cfgs_match_debug(node),
+        ]
+        .contains(&false)
+    });
+    let expected_const_node = ExpectedConstNode {
+        name: "TOP_LEVEL_BOOL",
+        visibility: VisibilityKind::Public,
+        type_id_check: true,
+        value: Some("true"),
+        attributes: vec![],
+        docstring_contains: Some("top-level public constant"),
+        tracking_hash_check: true,
+        cfgs: vec![],
+    };
+
+    let macro_found_node = expected_const_node
+        .find_node_by_values(test_info.target_data())
+        .next()
+        .unwrap();
+    println!("ConstNode found using new macro: {:#?}", macro_found_node);
+    println!("ConstNode found using old methods: {:#?}", node);
+    assert!(macro_found_node.id.to_pid() == node.id.to_pid());
+    // assert!(expected_const_node.check_all_fields(node));
+    Ok(())
+}
+
+paranoid_test_name_check!(
+    test_value_node_field_name_macro_generated,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_BOOL",
+    expected_path: &["crate", "const_static"],
+    item_kind: ItemKind::Const,
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_top_level_bool_fields_and_values, // New test name
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_BOOL",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_top_level_int_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "TOP_LEVEL_INT",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None // TOP_LEVEL_INT has no cfgs
+);
+
+paranoid_test_fields_and_values_const!(
+    test_doc_attr_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "doc_attr_const",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None // doc_attr_const itself has no #[cfg], its attributes are non-cfg
+);
+
+paranoid_test_fields_and_values_const!(
+    test_inner_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs", // Defined in this file
+    ident: "INNER_CONST",
+    expected_path: &["crate", "const_static", "inner_mod"], // Path to its parent module
+    expected_cfg: None // INNER_CONST has no cfgs
+);
+
+paranoid_test_fields_and_values_const!(
+    test_array_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "ARRAY_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_struct_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "STRUCT_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_aliased_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "ALIASED_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_expr_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "EXPR_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_fn_call_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "FN_CALL_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
