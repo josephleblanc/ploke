@@ -1,8 +1,8 @@
 #![cfg(test)]
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
-use crate::paranoid_test_fields_and_values;
-use crate::paranoid_test_fields_and_values_const;
+use crate::paranoid_test_fields_and_values; // Corrected macro name
+// Removed: use crate::paranoid_test_fields_and_values_const;
 use crate::paranoid_test_name_check;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
@@ -32,7 +32,8 @@ pub struct ExpectedConstData {
     cfgs: Vec<String>,
 }
 
-use syn_parser::parser::nodes::ExpectedConstNode;
+// Removed: use syn_parser::parser::nodes::ExpectedConstNode;
+// The generated struct is in crate::parser::nodes::consts
 
 // --- Lazy Static Maps ---
 lazy_static! {
@@ -363,7 +364,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,                    // args_map
     EXPECTED_CONSTS_DATA,                    // expected_data_map
     crate::parser::nodes::ConstNode,         // node_type
-    crate::parser::nodes::ExpectedConstNode, // expected_data_type
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,                                // downcast_method
     LOG_TEST_CONST                           // log_target
 );
@@ -374,7 +375,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -385,7 +386,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -396,7 +397,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -407,7 +408,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -418,7 +419,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -429,7 +430,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -440,7 +441,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
@@ -451,7 +452,7 @@ paranoid_test_fields_and_values!(
     EXPECTED_CONSTS_ARGS,
     EXPECTED_CONSTS_DATA,
     crate::parser::nodes::ConstNode,
-    crate::parser::nodes::ExpectedConstNode,
+    crate::parser::nodes::consts::ExpectedConstNode, // Corrected path
     as_const,
     LOG_TEST_CONST
 );
