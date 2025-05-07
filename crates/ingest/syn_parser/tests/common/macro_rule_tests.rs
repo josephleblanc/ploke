@@ -191,6 +191,27 @@ macro_rules! paranoid_test_fields_and_values_const {
                                     ]
                                     .contains(&false)
                                 });
+
+                                // --- Add Relation Check ---
+                                // Find parent module
+                                let parent_module = target_graph_data.find_module_by_path_checked(args.expected_path)?;
+                                let parent_module_id = parent_module.module_id();
+                                let const_primary_id = const_node.id.to_pid(); // Get PrimaryNodeId
+
+                                // Check for Contains relation
+                                let relation_found = target_graph_data.relations().iter().any(|rel| {
+                                    matches!(rel, syn_parser::parser::relations::SyntacticRelation::Contains { source, target }
+                                        if *source == parent_module_id && *target == const_primary_id)
+                                });
+
+                                assert!(
+                                    relation_found,
+                                    "Missing SyntacticRelation::Contains from parent module {} to const node {}",
+                                    parent_module_id, const_node.id
+                                );
+                                log::debug!(target: crate::uuid_phase2_partial_graphs::nodes::const_static::LOG_TEST_CONST, "   Relation Check: Found Contains relation from parent module.");
+                                // --- End Relation Check ---
+
                             } else {
                                 panic!("Node found by ID for '{}' was not a ConstNode.", args.ident);
                             }
