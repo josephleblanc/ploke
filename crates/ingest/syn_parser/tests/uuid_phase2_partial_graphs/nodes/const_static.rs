@@ -213,9 +213,9 @@ lazy_static! {
             type_id_check: true,
             value: Some("3.14"),
             attributes: vec![
-                // Note: Arg parsing might simplify this in the future
                 Attribute {name:"deprecated".to_string(),args:vec!["note = \"Use NEW_DOC_ATTR_CONST instead\"".to_string()],value:None },
-                Attribute {name:"allow".to_string(),args:vec!["unused".to_string()],value:None },
+                // Corrected args for allow attribute
+                Attribute {name:"allow".to_string(),args:vec!["non_upper_case_globals".to_string(), "clippy :: approx_constant".to_string()],value:None },
             ],
             docstring_contains: Some("This is a documented constant."),
             tracking_hash_check: true,
@@ -238,6 +238,56 @@ lazy_static! {
             value: Some("1"),
             attributes: vec![],
             docstring_contains: None, // No doc comment
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("ARRAY_CONST", ExpectedConstData {
+            name: "ARRAY_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("[1, 2, 3]"), // Assuming minimal spacing
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("STRUCT_CONST", ExpectedConstData {
+            name: "STRUCT_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("SimpleStruct { x : 99 , y : true }"), // Assuming syn spacing
+            attributes: vec![],
+            docstring_contains: Some("Constant struct instance."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("ALIASED_CONST", ExpectedConstData {
+            name: "ALIASED_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("-5"),
+            attributes: vec![],
+            docstring_contains: Some("Constant using a type alias."),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("EXPR_CONST", ExpectedConstData {
+            name: "EXPR_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("5 * 2 + 1"),
+            attributes: vec![],
+            docstring_contains: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("FN_CALL_CONST", ExpectedConstData {
+            name: "FN_CALL_CONST",
+            visibility: VisibilityKind::Inherited,
+            type_id_check: true,
+            value: Some("five ()"), // Assuming space before ()
+            attributes: vec![],
+            docstring_contains: Some("Constant initialized with a call to a const function."),
             tracking_hash_check: true,
             cfgs: vec![],
         });
@@ -725,6 +775,52 @@ paranoid_test_fields_and_values_const!(
     expected_path: &["crate", "const_static", "inner_mod"], // Path to its parent module
     expected_cfg: None // INNER_CONST has no cfgs
 );
+
+paranoid_test_fields_and_values_const!(
+    test_array_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "ARRAY_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_struct_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "STRUCT_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_aliased_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "ALIASED_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_expr_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "EXPR_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
+paranoid_test_fields_and_values_const!(
+    test_fn_call_const_fields_and_values,
+    fixture: "fixture_nodes",
+    relative_file_path: "src/const_static.rs",
+    ident: "FN_CALL_CONST",
+    expected_path: &["crate", "const_static"],
+    expected_cfg: None
+);
+
 
 // fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
