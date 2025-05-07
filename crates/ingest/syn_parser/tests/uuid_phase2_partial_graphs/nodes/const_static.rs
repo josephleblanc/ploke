@@ -315,9 +315,9 @@ lazy_static! {
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
             is_mutable: false,
-            value: Some("true"),
+            value: Some("\"Linux specific\""), // Correct value from fixture
             attributes: vec![], // cfg is handled separately
-            docstring_contains: Some("A static variable with a doc comment and attribute."),
+            docstring_contains: Some("This is a documented static variable."), // Correct docstring
             tracking_hash_check: true,
             // Note: cfg string includes quotes as parsed by syn
             cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here
