@@ -231,7 +231,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             // Handle `value: Option<String>` for ConstNode
             "value"
-                if node_struct_name == "ConstNode"
+                if (node_struct_name == "ConstNode" || node_struct_name == "StructNode")
                     && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
             {
                 expected_fields_defs.push(quote! { pub value: Option<&'static str> });
@@ -329,13 +329,13 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
     // --- Generate the inherent impl block for Expected*Data ---
     let expected_data_inherent_impl = quote! {
+        use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
+        use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
+        use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
+        // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
+        use crate::parser::nodes::PrimaryNodeIdTrait;
          impl #expected_data_struct_name {
              // These use statements are for the *body* of ALL generated inherent methods
-             use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
-             use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
-             use ::ploke_core::IdTrait; // For TypeId::is_synthetic, etc.
-             // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
-             use crate::parser::nodes::PrimaryNodeIdTrait;
 
              // Define the inherent check methods
              #(#inherent_check_method_impls)*
