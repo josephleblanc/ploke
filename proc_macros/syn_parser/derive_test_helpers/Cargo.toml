@@ -1,0 +1,18 @@
+[package]
+name = "ploke-derive-test-helpers" # Renamed to avoid potential conflicts and be more descriptive
+version = "0.1.0"
+edition = "2021"
+description = "Derive macro for generating test helper structs and methods for ploke"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+proc-macro-error = "1.0" # For better error reporting in derive
+heck = "0.5" # For case conversion
+
+# NOTE: This crate intentionally does NOT depend on syn_parser or ploke-core
+# to avoid cyclic dependencies. It generates code that *uses* those crates.
