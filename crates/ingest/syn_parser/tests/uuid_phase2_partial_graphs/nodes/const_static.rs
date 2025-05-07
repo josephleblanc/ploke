@@ -194,6 +194,9 @@ struct ExpectedStaticData {
     cfgs: Vec<String>,
 }
 
+
+// --- Lazy Static Maps ---
+
 lazy_static! {
     // Map from ident -> ExpectedConstData
     static ref EXPECTED_CONSTS_DATA: HashMap<&'static str, ExpectedConstData> = {
