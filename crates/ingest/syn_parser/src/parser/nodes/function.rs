@@ -1,4 +1,5 @@
 use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use derive_test_helpers::ExpectedData;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
