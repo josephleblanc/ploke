@@ -1,6 +1,7 @@
 #![cfg(test)]
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values;
 use crate::paranoid_test_fields_and_values_const;
 use crate::paranoid_test_name_check;
 use lazy_static::lazy_static;
@@ -358,13 +359,13 @@ paranoid_test_name_check!(
 
 paranoid_test_fields_and_values!(
     test_top_level_bool_fields_and_values,
-    "crate::const_static::TOP_LEVEL_BOOL", // args_key
-    EXPECTED_CONSTS_ARGS,                  // args_map
-    EXPECTED_CONSTS_DATA,                  // expected_data_map
-    crate::parser::nodes::ConstNode,       // node_type
+    "crate::const_static::TOP_LEVEL_BOOL",   // args_key
+    EXPECTED_CONSTS_ARGS,                    // args_map
+    EXPECTED_CONSTS_DATA,                    // expected_data_map
+    crate::parser::nodes::ConstNode,         // node_type
     crate::parser::nodes::ExpectedConstNode, // expected_data_type
-    as_const,                              // downcast_method
-    LOG_TEST_CONST                         // log_target
+    as_const,                                // downcast_method
+    LOG_TEST_CONST                           // log_target
 );
 
 paranoid_test_fields_and_values!(
