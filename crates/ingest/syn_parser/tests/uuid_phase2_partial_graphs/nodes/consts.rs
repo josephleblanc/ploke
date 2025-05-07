@@ -1,3 +1,104 @@
+//! Tests for `ConstNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! This analysis evaluates the coverage of `ConstNode`s based on the
+//! `tests/fixture_crates/fixture_nodes/src/const_static.rs` fixture and
+//! variations in `ConstNode` properties.
+//!
+//! ### 1. Coverage of `const` items from the `const_static.rs` fixture:
+//!
+//! **Fixture `const` items (candidates for `ConstNode`):**
+//! *   `TOP_LEVEL_INT: i32`
+//! *   `TOP_LEVEL_BOOL: bool`
+//! *   `ARRAY_CONST: [u8; 3]`
+//! *   `STRUCT_CONST: SimpleStruct`
+//! *   `ALIASED_CONST: MyInt`
+//! *   `EXPR_CONST: i32`
+//! *   `FN_CALL_CONST: i32`
+//! *   `doc_attr_const: f64` (with attributes and doc)
+//! *   `Container::IMPL_CONST: usize` (associated const in an inherent `impl` block)
+//! *   `<Container as ExampleTrait>::TRAIT_REQ_CONST: bool` (associated const in a trait `impl`)
+//! *   `inner_mod::INNER_CONST: u8` (defined inside an inline module)
+//!
+//! **Coverage Status (via `paranoid_test_fields_and_values!`):**
+//! *   **Covered:**
+//!     *   `TOP_LEVEL_INT`
+//!     *   `doc_attr_const`
+//!     *   `TOP_LEVEL_BOOL`
+//!     *   `INNER_CONST`
+//!     *   `ARRAY_CONST`
+//!     *   `STRUCT_CONST`
+//!     *   `ALIASED_CONST`
+//!     *   `EXPR_CONST`
+//!     *   `FN_CALL_CONST`
+//! *   **Not Covered (lacking `EXPECTED_CONSTS_DATA` entries for detailed checks):**
+//!     *   `Container::IMPL_CONST`
+//!     *   The `ConstNode` for `ExampleTrait::TRAIT_REQ_CONST` implemented for `Container`.
+//!
+//! **Conclusion for Fixture Coverage:**
+//! Out of 11 `ConstNode` candidates from the fixture:
+//! *   9 standalone or module-level `const` items are fully tested with detailed field checks.
+//! *   2 associated `const` items are not yet covered by detailed field checks.
+//!
+//! ### 2. Coverage of `ConstNode` Property Variations:
+//!
+//! Based on the 9 items covered by `paranoid_test_fields_and_values!`:
+//!
+//! *   `id: ConstNodeId`: Implicitly covered.
+//! *   `name: String`: Excellent coverage (variety of names).
+//! *   `span: (usize, usize)`: Not directly asserted by value.
+//! *   `visibility: VisibilityKind`: Excellent coverage (`Inherited`, `Public`, `Crate`).
+//! *   `type_id: TypeId`: Excellent coverage (synthetic nature, various underlying types like `i32`, `f64`, `bool`, array, struct, type alias).
+//! *   `value: Option<String>`: Excellent coverage (integer, float, boolean, array, struct literals; arithmetic expression; `const fn` call).
+//! *   `attributes: Vec<Attribute>`: Good coverage (no attributes; multiple attributes with varied arguments).
+//! *   `docstring: Option<String>`: Excellent coverage (`Some` with content and `None`).
+//! *   `tracking_hash: Option<TrackingHash>`: Excellent coverage (presence for all tested items).
+//! *   `cfgs: Vec<String>`: Poor coverage (only items without `cfg` attributes are tested).
+//!
+//! **Conclusion for Property Variation Coverage:**
+//! Most `ConstNode` fields have good to excellent coverage.
+//! *   **Areas for potential expansion:**
+//!     *   `cfgs`: Add a fixture `const` item with a `#[cfg(...)]` attribute.
+//!     *   Associated `const` items: Add `EXPECTED_CONSTS_DATA` entries and tests for `Container::IMPL_CONST` and the trait `impl` const.
+//!
+//! ## Differences in Testing `ConstNode` vs. Other Nodes
+//!
+//! Testing `ConstNode`s is quite similar to testing `StaticNode`s, as both represent compile-time
+//! constant values and share many fields (`name`, `visibility`, `type_id`, `value`, `attributes`,
+//! `docstring`, `cfgs`, `tracking_hash`). The `paranoid_test_fields_and_values!` macro and
+//! the `ExpectedData` derive macro are designed to handle these commonalities.
+//!
+//! Key distinctions and focus areas for `ConstNode` tests include:
+//!
+//! 1.  **Absence of `is_mutable`:**
+//!     Unlike `StaticNode`, `ConstNode` does not have an `is_mutable` field because `const`
+//!     items are inherently immutable. This simplifies the `ExpectedConstNode` data structure
+//!     and its checks compared to `ExpectedStaticNode`.
+//!
+//! 2.  **Nature of `value: Option<String>`:**
+//!     The `value` field for `ConstNode` must represent an expression that can be fully evaluated
+//!     at compile time. This includes literals, simple arithmetic, and calls to `const fn`.
+//!     The tests for `ConstNode` specifically cover a range of such compile-time constant
+//!     expressions (e.g., `10`, `3.14`, `true`, `[1,2,3]`, `SimpleStruct{...}`, `5*2+1`, `five()`).
+//!     This contrasts slightly with `static` initializers, which can sometimes involve expressions
+//!     that are constant but not necessarily `const fn` (resolved at link time).
+//!
+//! 3.  **Associated Constants:**
+//!     `const` items can be associated with `struct`s, `enum`s, `union`s (via `impl` blocks) and
+//!     `trait`s (both in trait definitions and implementations). The fixture `const_static.rs`
+//!     includes examples like `Container::IMPL_CONST` and the trait constant
+//!     `ExampleTrait::TRAIT_REQ_CONST`. While `ParanoidArgs` are defined for these, full
+//!     `paranoid_test_fields_and_values!` tests (requiring `EXPECTED_CONSTS_DATA` entries)
+//!     are not yet implemented for these associated consts. Testing these thoroughly would
+//!     ensure `ConstNode` parsing is robust in these varied contexts, particularly regarding
+//!     name resolution and path determination within `impl` and `trait` scopes.
+//!
+//! In summary, `ConstNode` tests verify the accurate parsing of compile-time constant declarations,
+//! ensuring that their values, types, and other metadata are correctly captured, with a particular
+//! focus on the variety of expressions permissible for `const` initializers and their potential
+//! association with other items.
+
 #![cfg(test)]
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
