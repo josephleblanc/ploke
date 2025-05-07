@@ -392,6 +392,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         "ConstNode" => quote! { consts },
         "StaticNode" => quote! { statics },
         "FunctionNode" => quote! { functions },
+        "MethodNode" => quote! { impls }, // Placeholder, find_node_by_values will be special-cased
         "StructNode" | "EnumNode" | "UnionNode" | "TypeAliasNode" => quote! { defined_types },
         "TraitNode" => quote! { traits },
         "ImplNode" => quote! { impls },
@@ -418,10 +419,30 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         "TypeAliasNode" => {
             quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
         }
+        "MethodNode" => quote! {}, // No extra filtering needed, find_node_by_values is special-cased
         _ => quote! {}, // No extra filtering needed for other node types
     };
 
     // --- Generate the inherent impl block for Expected*Data ---
+    let find_node_by_values_body = if node_struct_name == "MethodNode" {
+        quote! {
+            // For MethodNode, value-based search across a single top-level collection is not straightforward
+            // as methods are nested. Return an empty iterator for now.
+            // Tests will rely on ID-based lookup.
+            std::iter::empty()
+        }
+    } else {
+        quote! {
+             // Use helper methods directly in inspect calls
+             parsed.graph.#graph_collection_field.iter()
+                 #type_def_filter // Apply TypeDefNode filtering if necessary
+                 .inspect(move |node_candidate| self.log_target_id(node_candidate)) // Use helper method
+                 #(#find_node_by_values_filters)* // Apply *selective* filters
+                 .inspect(move |node_candidate| self.log_all_match(node_candidate)) // Use helper method
+             // No Box::new needed
+        }
+    };
+
     let expected_data_inherent_impl = quote! {
         use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
         use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
@@ -461,13 +482,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                  parsed: &'a crate::parser::ParsedCodeGraph,
              // Change return type to use impl Trait
              ) -> impl Iterator<Item = &'a crate::parser::nodes::#node_struct_name> + 'a {
-                  // Use helper methods directly in inspect calls
-                  parsed.graph.#graph_collection_field.iter()
-                      #type_def_filter // Apply TypeDefNode filtering if necessary
-                      .inspect(move |node_candidate| self.log_target_id(node_candidate)) // Use helper method
-                      #(#find_node_by_values_filters)* // Apply *selective* filters
-                      .inspect(move |node_candidate| self.log_all_match(node_candidate)) // Use helper method
-                  // No Box::new needed
+                #find_node_by_values_body
              }
 
              // Define check_all_fields as an inherent method
