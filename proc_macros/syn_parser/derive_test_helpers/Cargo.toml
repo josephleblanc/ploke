@@ -1,5 +1,5 @@
 [package]
-name = "ploke-derive-test-helpers" # Renamed to avoid potential conflicts and be more descriptive
+name = "derive_test_helpers" # Renamed to avoid potential conflicts and be more descriptive
 version = "0.1.0"
 edition = "2021"
 description = "Derive macro for generating test helper structs and methods for ploke"
@@ -9,10 +9,13 @@ proc-macro = true
 
 [dependencies]
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-quote = "1.0"
-proc-macro2 = "1.0"
-proc-macro-error = "1.0" # For better error reporting in derive
+quote = {workspace = true}
+proc-macro2 = {workspace = true}
+proc-macro-error = {workspace = true} # For better error reporting in derive
 heck = "0.5" # For case conversion
+
+syn_parser = { path = "../../../crates/ingest/syn_parser" }
+ploke-core = { path = "../../../crates/ploke-core" }
 
 # NOTE: This crate intentionally does NOT depend on syn_parser or ploke-core
 # to avoid cyclic dependencies. It generates code that *uses* those crates.

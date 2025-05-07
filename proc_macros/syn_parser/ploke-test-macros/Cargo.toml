@@ -8,9 +8,9 @@ proc-macro = true
 
 [dependencies]
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-quote = "1.0"
-proc-macro2 = "1.0"
-proc-macro-error = "1.0" # For better error reporting
+quote = {workspace = true}
+proc-macro2 = {workspace = true}
+proc-macro-error = {workspace = true} # For better error reporting in derive
 log = "0.4" # For logging within the macro if needed
 
 # Need access to types defined in these crates

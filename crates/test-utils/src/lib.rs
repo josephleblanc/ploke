@@ -6,10 +6,10 @@
 )]
 
 use ploke_common::fixtures_dir;
+use ploke_core::NodeId;
 use syn_parser::parser::nodes::TypeDefNode;
 // TODO: Change import path of `CodeGraph` and `NodeId`, probably better organized to use `ploke-core`
 use syn_parser::CodeGraph;
-use syn_parser::NodeId;
 
 // Should return result
 pub fn parse_fixture(fixture_name: &str) {

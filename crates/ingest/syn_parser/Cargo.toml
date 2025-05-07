@@ -52,6 +52,7 @@ tempfile = "3.10"     # For creating temporary files/dirs in tests
 env_logger = "0.11"   # Add env_logger for test logging
 lazy_static = "1.4.0" # Added lazy_static
 ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros" }     # Add dependency on the
+derive_test_helpers = { path = "../../../proc_macros/syn_parser/derive_test_helpers" }
 
 # Feature flags
 [features]

@@ -547,6 +547,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_test_helpers"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "ploke-core",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+ "syn_parser",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2161,6 +2174,7 @@ dependencies = [
  "colored",
  "cozo",
  "dashmap 6.1.0",
+ "derive_test_helpers",
  "env_logger 0.11.8",
  "flume",
  "itertools 0.14.0",

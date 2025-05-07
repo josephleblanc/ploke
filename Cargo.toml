@@ -32,6 +32,7 @@ members = [
     "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
     "proc_macros/syn_parser/syn_parser_macros",
     "proc_macros/syn_parser/ploke-test-macros", 
+    "proc_macros/syn_parser/derive_test_helpers", 
     # Add more modules as needed
 ]
 
@@ -40,6 +41,7 @@ members = [
 syn = { version = "2.0.100", features = ["full", "visit"] }
 quote = "1"
 proc-macro2 = { version = "1", features = ["span-locations"] }
+proc-macro-error = "1.0" # For better error reporting in derive
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
