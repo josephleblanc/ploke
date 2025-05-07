@@ -281,6 +281,98 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 });
                 // Not adding to find_node_by_values_filters by default.
             }
+            // Handle `parameters: Vec<ParamData>` for FunctionNode and MethodNode
+            "parameters"
+                if (node_struct_name == "FunctionNode" || node_struct_name == "MethodNode")
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) =>
+            {
+                expected_fields_defs.push(quote! { pub parameter_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.parameters.len();
+                        let check = self.parameter_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "Parameter Count Match?".to_string().log_step(), check.log_bool(),
+                            self.parameter_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
+            // Handle `generic_params: Vec<GenericParamNode>` for FunctionNode and MethodNode
+            "generic_params"
+                if (node_struct_name == "FunctionNode" || node_struct_name == "MethodNode")
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) =>
+            {
+                expected_fields_defs.push(quote! { pub generic_param_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.generic_params.len();
+                        let check = self.generic_param_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "Generic Param Count Match?".to_string().log_step(), check.log_bool(),
+                            self.generic_param_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
+            // Handle `return_type: Option<TypeId>` for FunctionNode and MethodNode
+            "return_type"
+                if (node_struct_name == "FunctionNode" || node_struct_name == "MethodNode")
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
+            {
+                expected_fields_defs.push(quote! { pub return_type_is_some: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_is_some = node.return_type.is_some();
+                        let check = self.return_type_is_some == actual_is_some;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "Return Type Is Some Match?".to_string().log_step(), check.log_bool(),
+                            self.return_type_is_some.to_string().log_name(),
+                            actual_is_some.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
+            // Handle `body: Option<String>` for FunctionNode and MethodNode
+            "body"
+                if (node_struct_name == "FunctionNode" || node_struct_name == "MethodNode")
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
+            {
+                expected_fields_defs.push(quote! { pub body_is_some: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_is_some = node.body.is_some();
+                        let check = self.body_is_some == actual_is_some;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "Body Is Some Match?".to_string().log_step(), check.log_bool(),
+                            self.body_is_some.to_string().log_name(),
+                            actual_is_some.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
             _ => {
                 // Optionally warn or ignore unknown fields
             }
