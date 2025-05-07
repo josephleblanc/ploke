@@ -5,6 +5,7 @@ use crate::paranoid_test_fields_and_values_const;
 use syn_parser::parser::nodes::HasAttributes;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::utils::LogStyle;
+use syn_parser::utils::LogStyleBool;
 use syn_parser::utils::LogStyleDebug;
 // Use re-exports from paranoid mod
 use crate::common::FixtureError;
@@ -67,31 +68,31 @@ impl ExpectedConstData {
     }
     fn is_name_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected '{}' == Actual '{}': {}",
+            "   {} {} | Expected '{}' == Actual '{}'",
             "Names Match?".to_string().log_step(),
+            (self.name == node.name()).log_bool(),
             self.name.log_name(),
             node.name().log_name(), // Use GraphNode::name() which returns &str
-            (self.name == node.name()).to_string().log_vis() // Compare names and log boolean result
         );
         self.name == node.name()
     }
     fn is_vis_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected '{}' == Actual '{}': {}",
-            "Names Match?".to_string().log_step(),
+            "   {} {} | Expected '{}' == Actual '{}",
+            "Visibility Match?".to_string().log_step(),
+            (self.visibility == *node.visibility()).log_bool(), // Compare names and log boolean result
             self.visibility.log_vis_debug(),
-            node.visibility().log_vis_debug(), // Use GraphNode::name() which returns &str
-            (self.visibility == *node.visibility()).to_string().log_vis() // Compare names and log boolean result
+            node.visibility().log_vis_debug() // Use GraphNode::name() which returns &str
         );
         self.visibility == *node.visibility()
     }
     fn is_attr_match_debug(&self, node: &ConstNode) -> bool {
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected '{}' == Actual '{}': {}",
+            "   {} {} | Expected '{}' == Actual '{}'",
             "Names Match?".to_string().log_step(),
+            (self.attributes== node.attributes()).log_bool(), // Compare names and log boolean result
             self.attributes.log_green_debug(),
             node.attributes().log_green_debug(), // Use GraphNode::name() which returns &str
-            (self.attributes== node.attributes()).to_string().log_vis() // Compare names and log boolean result
         );
         self.attributes == node.attributes()
     }
@@ -99,11 +100,11 @@ impl ExpectedConstData {
     fn is_type_id_check_match_debug(&self, node: &ConstNode) -> bool {
         let actual_check_passes = matches!(node.type_id, TypeId::Synthetic(_));
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
+            "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
             "TypeId Check Match?".to_string().log_step(),
+            (self.type_id_check == actual_check_passes).log_bool(),
             self.type_id_check.to_string().log_name(),
             actual_check_passes.to_string().log_name(),
-            (self.type_id_check == actual_check_passes).to_string().log_vis()
         );
         self.type_id_check == actual_check_passes
     }
@@ -111,11 +112,11 @@ impl ExpectedConstData {
     fn is_value_match_debug(&self, node: &ConstNode) -> bool {
         let actual_value = node.value.as_deref();
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected '{}' == Actual '{}': {}",
+            "   {} {} | Expected '{}' == Actual '{}'",
             "Value Match?".to_string().log_step(),
+            (self.value == actual_value).log_bool(),
             self.value.unwrap_or("None").log_foreground_primary(),
             actual_value.unwrap_or("None").log_foreground_secondary(),
-            (self.value == actual_value).to_string().log_vis()
         );
         self.value == actual_value
     }
@@ -129,11 +130,11 @@ impl ExpectedConstData {
             None => actual_docstring.is_none(),
         };
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected contains '{}' in Actual '{}': {}",
+            "   {} {} | Expected contains '{}' in Actual '{}'",
             "Docstring Contains Match?".to_string().log_step(),
+            check_passes.log_bool(),
             self.docstring_contains.unwrap_or("no cfgs").log_foreground_primary(),
             actual_docstring.unwrap_or("no cfgs").log_foreground_secondary(),
-            check_passes.to_string().log_vis()
         );
         check_passes
     }
@@ -141,11 +142,11 @@ impl ExpectedConstData {
     fn is_tracking_hash_check_match_debug(&self, node: &ConstNode) -> bool {
         let actual_check_passes = matches!(node.tracking_hash, Some(TrackingHash(_)));
         log::debug!(target: LOG_TEST_CONST,
-            "   {} | Expected check pass '{}' == Actual check pass '{}': {}",
+            "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
             "TrackingHash Check Match?".to_string().log_step(),
+            (self.tracking_hash_check == actual_check_passes).log_bool(),
             self.tracking_hash_check.to_string().log_name(),
             actual_check_passes.to_string().log_name(),
-            (self.tracking_hash_check == actual_check_passes).to_string().log_vis()
         );
         self.tracking_hash_check == actual_check_passes
     }
@@ -160,9 +161,9 @@ impl ExpectedConstData {
         log::debug!(target: LOG_TEST_CONST,
             "   {} | Expected (sorted) '{}' == Actual (sorted) '{}': {}",
             "CFGs Match?".to_string().log_green(),
+            (expected_cfgs_sorted == actual_cfgs).log_bool(),
             expected_cfgs_sorted.log_green_debug(),
             actual_cfgs.log_green_debug(),
-            (expected_cfgs_sorted == actual_cfgs).to_string().log_vis()
         );
         expected_cfgs_sorted == actual_cfgs
     }
@@ -245,7 +246,7 @@ lazy_static! {
             name: "ARRAY_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
-            value: Some("[1, 2, 3]"), // Assuming minimal spacing
+            value: Some("[1 , 2 , 3]"), // Assuming minimal spacing
             attributes: vec![],
             docstring_contains: None,
             tracking_hash_check: true,
@@ -265,7 +266,7 @@ lazy_static! {
             name: "ALIASED_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
-            value: Some("-5"),
+            value: Some("- 5"),
             attributes: vec![],
             docstring_contains: Some("Constant using a type alias."),
             tracking_hash_check: true,
@@ -820,7 +821,6 @@ paranoid_test_fields_and_values_const!(
     expected_path: &["crate", "const_static"],
     expected_cfg: None
 );
-
 
 // fn test_value_node_field_visibility_public()
 //  - Target: TOP_LEVEL_BOOL (pub)
