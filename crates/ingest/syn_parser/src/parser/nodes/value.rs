@@ -7,9 +7,11 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // --- Const Node ---
 
 // Removed the macro invocation for ConstNodeInfo
+#[cfg(test)]
 use ploke_test_macros::ExpectedData;
+#[cfg_attr(test, derive(ExpectedData))] // Apply derive ONLY during test builds
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 /// Represents a `const` item.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive
 pub struct ConstNode {
     pub id: ConstNodeId, // Use typed ID
     pub name: String,

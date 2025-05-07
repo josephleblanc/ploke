@@ -32,7 +32,7 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 thiserror = { workspace = true }                          # version 2
 ploke-common = { path = "../../common" }
 ploke-core = { path = "../../ploke-core", features = [] }
-syn_parser_macros = { path = "../syn_parser_macros" }     # Add dependency on the
+syn_parser_macros = { path = "../../../proc_macros/syn_parser/syn_parser_macros" }     # Add dependency on the
 anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
@@ -51,7 +51,7 @@ itertools = "0.14.0"
 tempfile = "3.10"     # For creating temporary files/dirs in tests
 env_logger = "0.11"   # Add env_logger for test logging
 lazy_static = "1.4.0" # Added lazy_static
-ploke-test-macros = { path = "../ploke-test-macros" } # for tests
+ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros" }     # Add dependency on the
 
 # Feature flags
 [features]

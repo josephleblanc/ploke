@@ -14,9 +14,9 @@ proc-macro-error = "1.0" # For better error reporting
 log = "0.4" # For logging within the macro if needed
 
 # Need access to types defined in these crates
-syn_parser = { path = "../syn_parser" }
-ploke-core = { path = "../../ploke-core" }
-ploke-common = { path = "../../common" } # For fixtures_crates_dir, etc.
+syn_parser = { path = "../../../crates/ingest/syn_parser" }
+ploke-core = { path = "../../../crates/ploke-core" }
+ploke-common = { path = "../../../crates/common" } # For fixtures_crates_dir, etc.
 lazy_static = "1.4.0" # Needed for accessing EXPECTED_*_DATA maps
 env_logger = "0.11" # For initializing logger in generated test
 itertools = "0.14.0" # May be needed by generated code

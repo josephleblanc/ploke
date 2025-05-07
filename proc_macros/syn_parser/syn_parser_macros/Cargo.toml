@@ -14,8 +14,5 @@ quote = "1.0"
 proc-macro2 = "1.0"
 proc-macro-error = "1.0" # For better error reporting
 
-# Need access to NodeId type definition for path generation
-# This is a bit tricky, as proc macros can't directly depend on normal crates easily.
-# We'll handle this by assuming a fixed path in the generated code for now.
-# A more robust solution might involve configuration or helper crates.
-ploke-core = { path = "../../ploke-core", version = "0.1.0" } # Path relative to this macro crate
+
+ploke-core = { path = "../../../crates/ploke-core", version = "0.1.0" }
