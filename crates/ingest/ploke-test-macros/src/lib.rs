@@ -673,9 +673,9 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
         }
     };
 
-   // --- Generate the `impl ExpectedNodeData` block ---
-   // Determine the node collection field name (e.g., `graph.consts`, `graph.statics`)
-   // This requires mapping the node struct name to the field name in CodeGraph.
+  // --- Generate the `impl ExpectedNodeData` block ---
+  // Determine the node collection field name (e.g., `graph.consts`, `graph.statics`)
+  // This requires mapping the node struct name to the field name in CodeGraph.
     let graph_collection_field = match node_struct_name.to_string().as_str() {
         "ConstNode" => quote! { consts },
         "StaticNode" => quote! { statics },
@@ -734,6 +734,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                  use syn_parser::parser::nodes::{GraphNode, HasAttributes}; // Assuming these provide necessary methods
                  use ploke_core::IdTrait; // For TypeId::is_synthetic
 
+                // Call all generated check methods defined in the separate impl block
+                let mut all_passed = true;
+                #( // Iterate through the check_method_name idents generated earlier
+                    if !self.#check_method_name(node) { all_passed = false; }
                 // Call all generated check methods defined in the separate impl block
                 let mut all_passed = true;
                 #( // Iterate through the check_method_name idents generated earlier
