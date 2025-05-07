@@ -515,7 +515,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             quote! { .filter_map(|n| if let crate::parser::nodes::TypeDefNode::TypeAlias(t) = n { Some(t) } else { None }) }
         }
         "MethodNode" => quote! {}, // No extra filtering needed, find_node_by_values is special-cased
-        _ => quote! {}, // No extra filtering needed for other node types
+        _ => quote! {},            // No extra filtering needed for other node types
     };
 
     // --- Generate the inherent impl block for Expected*Data ---
