@@ -388,7 +388,7 @@ lazy_static! {
         m.insert("crate::func::return_types::consumes_point", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/func/return_types.rs",
-            ident: "consumes_point_in_func_mod", // Corresponds to DATA key
+            ident: "consumes_point", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "func", "return_types"],
             item_kind: ItemKind::Function,
@@ -396,7 +396,7 @@ lazy_static! {
         m.insert("crate::func::return_types::generic_func", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/func/return_types.rs",
-            ident: "generic_func_in_func_mod", // Corresponds to DATA key
+            ident: "generic_func", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "func", "return_types"],
             item_kind: ItemKind::Function,
@@ -421,7 +421,7 @@ lazy_static! {
         m.insert("crate::func::return_types::restricted_duplicate::consumes_point", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/func/return_types.rs", // File is still return_types.rs
-            ident: "consumes_point_in_restricted_duplicate", // Corresponds to DATA key
+            ident: "consumes_point", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "func", "return_types", "restricted_duplicate"],
             item_kind: ItemKind::Function,
@@ -429,7 +429,7 @@ lazy_static! {
         m.insert("crate::func::return_types::restricted_duplicate::generic_func", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/func/return_types.rs", // File is still return_types.rs
-            ident: "generic_func_in_restricted_duplicate", // Corresponds to DATA key
+            ident: "generic_func", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "func", "return_types", "restricted_duplicate"],
             item_kind: ItemKind::Function,
@@ -438,7 +438,7 @@ lazy_static! {
         m.insert("crate::duplicate_names::process_tuple", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/lib.rs",
-            ident: "process_tuple_in_duplicate_names", // Corresponds to DATA key
+            ident: "process_tuple", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "duplicate_names"],
             item_kind: ItemKind::Function,
@@ -446,7 +446,7 @@ lazy_static! {
         m.insert("crate::duplicate_names::process_slice", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/lib.rs",
-            ident: "process_slice_in_duplicate_names", // Corresponds to DATA key
+            ident: "process_slice", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "duplicate_names"],
             item_kind: ItemKind::Function,
@@ -454,7 +454,7 @@ lazy_static! {
         m.insert("crate::duplicate_names::process_array", ParanoidArgs {
             fixture: "fixture_types",
             relative_file_path: "src/lib.rs",
-            ident: "process_array_in_duplicate_names", // Corresponds to DATA key
+            ident: "process_array", // Corresponds to DATA key
             expected_cfg: None,
             expected_path: &["crate", "duplicate_names"],
             item_kind: ItemKind::Function,
