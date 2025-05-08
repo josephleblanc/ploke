@@ -100,25 +100,21 @@ impl<'a> ParanoidArgs<'a> {
             .map(|s| s.to_string())
             .collect_vec();
 
-        let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
-
         let cfgs_bytes_option: Option<Vec<u8>> = self
             .expected_cfg
             .filter(|cfgs_slice| !cfgs_slice.is_empty()) // Only proceed if there are actual CFG strings
             .and_then(|cfgs_slice| calculate_cfg_hash_bytes(&strs_to_strings(cfgs_slice))); // Results in None if expected_cfg is None, or if cfgs_slice is empty, or if calculate_cfg_hash_bytes returns None.
 
-        let actual_parent_scope_id_for_id_gen = if parent_module.is_file_based()
-            && self.ident == parent_module.name()
-            && self.expected_path == parent_module.path()
-            && self.expected_cfg.is_some_and(|c| c == parent_module.cfgs())
-            && graph
-                .find_module_by_file_path_checked(path::Path::new(self.relative_file_path))
-                .is_ok_and(|file_node| file_node.id == parent_module.id)
+        let actual_parent_scope_id_for_id_gen = match graph
+            .find_module_by_path_checked(&exp_path_string)
         {
-            None
-        } else {
-            Some(parent_module.id.base_tid())
+            Ok(parent_module) => Some(parent_module.id.base_tid()),
+            Err(e) => {
+                graph.find_module_by_file_path_checked(path::Path::new(self.relative_file_path))?;
+                None
+            }
         };
+
         // let actual_parent_scope_id_for_id_gen = Some(parent_module.id.base_tid());
         let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
 

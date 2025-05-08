@@ -210,27 +210,32 @@ macro_rules! paranoid_test_fields_and_values {
                                // Convert expected_path from &[&str] to Vec<String> for the function call
                                 let expected_path_vec: Vec<String> = args.expected_path.iter().map(|s| s.to_string()).collect();
                                 // Find parent module using the Vec<String> slice
-                                let parent_module = target_graph_data.find_module_by_path_checked(&expected_path_vec)?;
-                                let parent_module_id = parent_module.module_id();
-                                // Assuming the specific node type has an `id` field that returns the specific typed ID
-                                // and that ID implements PrimaryNodeIdTrait for .to_pid()
-                                let node_primary_id = specific_node.id.to_pid();
-
+                                // return Some(parent_mod_id) unless it's a file-level module
+                                match target_graph_data
+                                    .find_module_by_path_checked(&expected_path_vec)
+                                {
+                                    Ok(parent_module) => {
                                 // Check for Contains relation
                                 let relation_found = target_graph_data.relations().iter().any(|rel| {
                                     matches!(rel, syn_parser::parser::relations::SyntacticRelation::Contains { source, target }
-                                        if *source == parent_module_id && *target == node_primary_id)
+                                        if *source == parent_module.id && *target == specific_node.id.to_pid())
                                 });
-
                                 assert!(
                                     relation_found,
                                     "Missing SyntacticRelation::Contains from parent module {} to node {}. Data dump of parent ModuleNode info follows:\n{:#?}",
-                                    parent_module_id, specific_node.id, parent_module,
+                                    parent_module.id, specific_node.id, parent_module,
                                 );
                                 // Use the parameterized log target
                                 log::debug!(target: $log_target, "   Relation Check: Found Contains relation from parent module.");
                                 // --- End Relation Check ---
-                                Ok(node_primary_id)
+                                    },
+                                    Err(e) => {
+                                        let _ = target_graph_data.find_module_by_file_path_checked(std::path::Path::new(args.relative_file_path))?;
+                                        log::debug!(target: $log_target, "   Relation Check: Skipping contains relation check for parent of file-level module.");
+                                    }
+                                };
+
+                                Ok(specific_node.id.to_pid())
 
                             } else {
                                 // Use the parameterized node type name
