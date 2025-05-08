@@ -19,7 +19,7 @@ lazy_static! {
     static ref EXPECTED_FUNCTIONS_DATA: HashMap<&'static str, ExpectedFunctionNode> = {
         let mut m = HashMap::new();
 
-        m.insert("process_tuple", ExpectedFunctionNode {
+        m.insert("crate::process_tuple", ExpectedFunctionNode {
             name: "process_tuple",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -31,7 +31,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_slice", ExpectedFunctionNode {
+        m.insert("crate::process_slice", ExpectedFunctionNode {
             name: "process_slice",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -43,7 +43,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_array", ExpectedFunctionNode {
+        m.insert("crate::process_array", ExpectedFunctionNode {
             name: "process_array",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -55,7 +55,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_ref", ExpectedFunctionNode {
+        m.insert("crate::process_ref", ExpectedFunctionNode {
             name: "process_ref",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -67,7 +67,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_mut_ref", ExpectedFunctionNode {
+        m.insert("crate::process_mut_ref", ExpectedFunctionNode {
             name: "process_mut_ref",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -79,7 +79,7 @@ lazy_static! {
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
-        m.insert("apply_op", ExpectedFunctionNode {
+        m.insert("crate::apply_op", ExpectedFunctionNode {
             name: "apply_op",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -91,7 +91,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_const_ptr", ExpectedFunctionNode {
+        m.insert("crate::process_const_ptr", ExpectedFunctionNode {
             name: "process_const_ptr",
             visibility: VisibilityKind::Inherited, // private
             attributes: vec![],
@@ -103,7 +103,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("process_mut_ptr", ExpectedFunctionNode {
+        m.insert("crate::process_mut_ptr", ExpectedFunctionNode {
             name: "process_mut_ptr",
             visibility: VisibilityKind::Inherited, // private
             attributes: vec![],
@@ -115,7 +115,7 @@ lazy_static! {
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
-        m.insert("draw_object", ExpectedFunctionNode {
+        m.insert("crate::draw_object", ExpectedFunctionNode {
             name: "draw_object",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -127,7 +127,7 @@ lazy_static! {
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
-        m.insert("process_impl_trait_arg", ExpectedFunctionNode {
+        m.insert("crate::process_impl_trait_arg", ExpectedFunctionNode {
             name: "process_impl_trait_arg",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -139,7 +139,7 @@ lazy_static! {
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
-        m.insert("create_impl_trait_return", ExpectedFunctionNode {
+        m.insert("crate::create_impl_trait_return", ExpectedFunctionNode {
             name: "create_impl_trait_return",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -151,7 +151,7 @@ lazy_static! {
             return_type_is_some: true,
             body_is_some: true,
         });
-        m.insert("inferred_type_example", ExpectedFunctionNode {
+        m.insert("crate::inferred_type_example", ExpectedFunctionNode {
             name: "inferred_type_example",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -164,7 +164,7 @@ lazy_static! {
             body_is_some: true,
         });
         // consumes_point in src/func/return_types.rs
-        m.insert("consumes_point_in_func_mod", ExpectedFunctionNode { // Renamed key to be unique
+        m.insert("crate::func::return_types::consumes_point", ExpectedFunctionNode { // Renamed key to be unique
             name: "consumes_point",
             visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
             attributes: vec![],
@@ -177,7 +177,7 @@ lazy_static! {
             body_is_some: true,
         });
         // generic_func in src/func/return_types.rs
-        m.insert("generic_func_in_func_mod", ExpectedFunctionNode { // Renamed key
+        m.insert("crate::func::return_types::generic_func", ExpectedFunctionNode { // Renamed key
             name: "generic_func",
             visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
             attributes: vec![],
@@ -190,7 +190,7 @@ lazy_static! {
             body_is_some: true,
         });
         // math_operation_consumer in src/func/return_types.rs
-        m.insert("math_operation_consumer", ExpectedFunctionNode {
+        m.insert("crate::func::return_types::math_operation_consumer", ExpectedFunctionNode {
             name: "math_operation_consumer",
             visibility: VisibilityKind::Inherited, // private
             attributes: vec![],
@@ -203,7 +203,7 @@ lazy_static! {
             body_is_some: true,
         });
         // math_operation_producer in src/func/return_types.rs
-        m.insert("math_operation_producer", ExpectedFunctionNode {
+        m.insert("crate::func::return_types::math_operation_producer", ExpectedFunctionNode {
             name: "math_operation_producer",
             visibility: VisibilityKind::Inherited, // private
             attributes: vec![],
@@ -219,7 +219,7 @@ lazy_static! {
         // Note: The existing test `test_function_node_consumes_point_in_restricted_duplicate`
         // actually tests the one in `src/func/return_types.rs` due to its module_path.
         // I will create a distinct entry for the one truly in `restricted_duplicate`.
-        m.insert("consumes_point_in_restricted_duplicate", ExpectedFunctionNode {
+        m.insert("crate::func::return_types::restricted_duplicate::consumes_point", ExpectedFunctionNode {
             name: "consumes_point",
             visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
             attributes: vec![],
@@ -232,7 +232,7 @@ lazy_static! {
             body_is_some: true,
         });
         // generic_func in src/func/return_types.rs/restricted_duplicate
-        m.insert("generic_func_in_restricted_duplicate", ExpectedFunctionNode {
+        m.insert("crate::func::return_types::restricted_duplicate::generic_func", ExpectedFunctionNode {
             name: "generic_func",
             visibility: VisibilityKind::Restricted(vec!["crate".to_string()]), // pub(crate)
             attributes: vec![],
@@ -245,7 +245,7 @@ lazy_static! {
             body_is_some: true,
         });
         // process_tuple in src/lib.rs/duplicate_names
-        m.insert("process_tuple_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+        m.insert("crate::duplicate_names::process_tuple", ExpectedFunctionNode { // Renamed key
             name: "process_tuple",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -258,7 +258,7 @@ lazy_static! {
             body_is_some: true,
         });
         // process_slice in src/lib.rs/duplicate_names
-        m.insert("process_slice_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+        m.insert("crate::duplicate_names::process_slice", ExpectedFunctionNode { // Renamed key
             name: "process_slice",
             visibility: VisibilityKind::Public,
             attributes: vec![],
@@ -271,7 +271,7 @@ lazy_static! {
             body_is_some: true,
         });
         // process_array in src/lib.rs/duplicate_names
-        m.insert("process_array_in_duplicate_names", ExpectedFunctionNode { // Renamed key
+        m.insert("crate::duplicate_names::process_array", ExpectedFunctionNode { // Renamed key
             name: "process_array",
             visibility: VisibilityKind::Public,
             attributes: vec![],
