@@ -1,9 +1,61 @@
 use ploke_common::fixtures_crates_dir;
-use ploke_core::NodeId;
+use ploke_core::{ItemKind, NodeId};
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
-use syn_parser::parser::nodes::{GraphNode, ImportNode};
+use syn_parser::parser::nodes::{GraphNode, ImportNode, ExpectedModuleNode, ModDisc, Attribute};
+use crate::common::{paranoid::*, ParanoidArgs};
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+
+pub const LOG_TEST_MODULE: &str = "log_test_module";
+
+lazy_static! {
+    static ref EXPECTED_MODULES_DATA: HashMap<&'static str, ExpectedModuleNode> = {
+        let mut m = HashMap::new();
+
+        // Test case: `pub mod top_pub_mod;` (declaration in main.rs)
+        m.insert("crate::main_rs::top_pub_mod_declaration", ExpectedModuleNode {
+            name: "top_pub_mod",
+            path: &["crate", "top_pub_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, // Declarations should have 0 imports
+            exports_count: 0,
+            tracking_hash_check: true, // Declarations have a tracking hash
+            mod_disc: ModDisc::Declaration,
+            expected_file_path_suffix: None, // Not FileBased
+            items_count: 0, // Declarations don't have items in ModuleNode.items directly
+            file_attrs_count: 0, // Not FileBased
+            file_docs_is_some: false, // Not FileBased
+            cfgs: vec![],
+        });
+
+        m
+    };
+}
+
+lazy_static! {
+    static ref EXPECTED_MODULES_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+
+        m.insert("crate::main_rs::top_pub_mod_declaration", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/main.rs", // Declaration is in main.rs
+            ident: "top_pub_mod",
+            expected_path: &["crate"], // Parent module is the crate root
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
+
+        m
+    };
+}
+
+
+// TODO: Add a test using paranoid_test_fields_and_values! for the entry above
+// once we are confident the derive macro and ExpectedModuleNode are correct.
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
