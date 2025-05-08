@@ -1,3 +1,66 @@
+//! Tests for `ImportNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! *   **Fixture:** `tests/fixture_crates/fixture_nodes/src/imports.rs`
+//! *   **Tests:** `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/imports.rs` (using `paranoid_test_fields_and_values!`)
+//!
+//! ### 1. Coverage of Fixture Items:
+//!
+//! The `EXPECTED_IMPORTS_DATA` and `EXPECTED_IMPORTS_ARGS` maps cover all 26 distinct import items identified in the fixture (`use` statements and `extern crate` declarations), including those at the crate root and within the nested `sub_imports` module. This includes:
+//! *   Simple path imports (`std::collections::HashMap`, `std::fmt`, `crate::structs::TupleStruct`).
+//! *   Renamed imports (`as IoResult`, `as MySimpleStruct`, `as MyGenTrait`, `as SerdeAlias`).
+//! *   Grouped imports (`use crate::{...}`, `use std::{...}`).
+//! *   Glob import (`std::env::*;`).
+//! *   Relative path imports (`self::`, `super::`, `crate::`, `super::super::`).
+//! *   Absolute path import (`::std::time::Duration`).
+//! *   `extern crate` (simple and renamed).
+//! *   Imports within nested modules.
+//!
+//! **Conclusion for Fixture Coverage:** Excellent. All import statements from the fixture are covered by the `paranoid_test_fields_and_values!` tests.
+//!
+//! ### 2. Coverage of `ImportNode` Property Variations:
+//!
+//! Based on the 26 items covered:
+//!
+//! *   `id: ImportNodeId`: Implicitly covered by ID generation and lookup.
+//! *   `span: (usize, usize)`: Not directly asserted by value in the new tests (previously checked for non-zero in Tier 2).
+//! *   `source_path: Vec<String>`: Excellent coverage (various lengths, `std`, `crate`, `self`, `super`, `::` prefix via empty string).
+//! *   `kind: ImportKind`: Excellent coverage (`UseStatement(VisibilityKind::Inherited)` and `ExternCrate`). Note: Only `Inherited` visibility is present in the fixture's `use` statements.
+//! *   `visible_name: String`: Excellent coverage (simple names, renamed names, `*` for glob).
+//! *   `original_name: Option<String>`: Excellent coverage (`None` for direct imports, `Some` for renamed imports).
+//! *   `is_glob: bool`: Excellent coverage (both `true` and `false`).
+//! *   `is_self_import: bool`: Excellent coverage (both `true` for `std::fs::{self, File}` -> `fs` and `false` for others).
+//! *   `cfgs: Vec<String>`: Poor coverage (only items without `cfg` attributes are tested).
+//!
+//! **Conclusion for Property Variation Coverage:** Most fields have excellent coverage.
+//! *   **Areas for potential expansion:**
+//!     *   `cfgs`: Add fixture imports with `#[cfg(...)]` attributes.
+//!     *   `kind`: Add fixture imports with explicit visibility (`pub use`, `pub(crate) use`) to test `UseStatement` variants beyond `Inherited`.
+//!
+//! ### 3. Differences in Testing `ImportNode` vs. Other Nodes:
+//!
+//! Testing `ImportNode` focuses on correctly capturing the structure of `use` and `extern crate` statements:
+//!
+//! *   **Path Complexity:** `source_path` can involve various path prefixes (`std`, `crate`, `self`, `super`, `::`). Tests verify these are parsed correctly.
+//! *   **Renaming:** The interplay between `visible_name` and `original_name` for `as` clauses is specifically tested.
+//! *   **Special Cases:** Glob imports (`*`) and self imports (`some::path::{self}`) require specific handling for `visible_name`, `is_glob`, and `is_self_import`, which are covered.
+//! *   **`kind` Field:** Distinguishing between `UseStatement` and `ExternCrate` is crucial and tested.
+//! *   **No Value/Type:** Unlike `ConstNode` or `FunctionNode`, `ImportNode` doesn't have an associated `value` or complex `type_id` to check beyond its basic structure.
+//!
+//! ### 4. Lost Coverage from Old Tests:
+//!
+//! The refactoring replaces the previous tiered tests. The main coverage potentially lost is:
+//!
+//! *   **Explicit Span Checks:** The old Tier 2 tests explicitly checked that spans were non-zero. The new macro framework doesn't assert specific span values.
+//! *   **Explicit ID Regeneration Assertions:** Old Tier 2 tests sometimes included explicit calls to `NodeId::generate_synthetic` and asserted equality. While the new macro *uses* ID generation for lookup, it doesn't explicitly assert the regeneration logic itself in the same way.
+//! *   **`ModuleImports` Relation:** The old Tier 4 tests explicitly checked for the `RelationKind::ModuleImports` relation between the containing module and the import node. The new macro only checks for `RelationKind::Contains`. While `ModuleImports` might be redundant if `Contains` is present for all imports, this specific relation check is no longer performed by the macro-generated tests.
+//!
+//! ### 5. Suggestions for Future Inclusions:
+//!
+//! *   Add fixture items and corresponding tests for `use` statements with `pub`, `pub(crate)`, and `pub(in path)` visibility.
+//! *   Add fixture items and corresponding tests for `use` or `extern crate` statements with `#[cfg(...)]` attributes.
+
 #![cfg(test)]
 #![allow(unused_imports, non_snake_case)]
 //! To run tests with debug logging:
