@@ -1,3 +1,73 @@
+//! Tests for `FunctionNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! *   **Fixture:** `tests/fixture_crates/fixture_types/src/lib.rs` and `tests/fixture_crates/fixture_types/src/func/return_types.rs`
+//! *   **Tests:** `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/functions.rs` (using `paranoid_test_fields_and_values!`)
+//!
+//! ### 1. Coverage of Fixture Items:
+//!
+//! The `EXPECTED_FUNCTIONS_DATA` and `EXPECTED_FUNCTIONS_ARGS` maps cover 21 distinct standalone function items from the `fixture_types` crate. This includes:
+//! *   Functions at the crate root (`src/lib.rs`).
+//! *   Functions within the `func::return_types` module.
+//! *   Functions within the `func::return_types::restricted_duplicate` nested module.
+//! *   Functions within the `duplicate_names` module in `src/lib.rs`.
+//!
+//! The covered functions test a variety of signatures, visibilities, parameter types (including tuples, slices, arrays, references, function pointers, trait objects, impl Trait), and return types.
+//!
+//! **Conclusion for Fixture Coverage:** Excellent. All standalone functions from the specified fixture files are covered by the `paranoid_test_fields_and_values!` tests.
+//!
+//! ### 2. Coverage of `FunctionNode` Property Variations:
+//!
+//! Based on the 21 items covered:
+//!
+//! *   `id: FunctionNodeId`: Implicitly covered by ID generation and lookup.
+//! *   `name: String`: Excellent coverage (various unique names, including duplicates in different modules).
+//! *   `span: (usize, usize)`: Not directly asserted by value in the new tests.
+//! *   `visibility: VisibilityKind`: Excellent coverage (`Public`, `Inherited` (private), `Crate`).
+//! *   `parameters: Vec<ParamData>`: Tested via `parameter_count`. Detailed `ParamData` (name, type_id, mutability, self) checks are not part of `ExpectedFunctionNode` but are implicitly part of `TypeId` generation for function signatures.
+//! *   `return_type: Option<TypeId>`: Tested via `return_type_is_some`. The actual `TypeId` is not directly compared, but its presence/absence is.
+//! *   `generic_params: Vec<GenericParamNode>`: Tested via `generic_param_count`. Detailed `GenericParamNode` checks are not part of `ExpectedFunctionNode`.
+//! *   `attributes: Vec<Attribute>`: Good coverage (all tested functions currently have no attributes, so `vec![]` is consistently checked).
+//! *   `docstring: Option<String>`: Good coverage (all tested functions currently have no docstrings, so `None` is consistently checked).
+//! *   `body: Option<String>`: Tested via `body_is_some`. All tested functions have bodies.
+//! *   `tracking_hash: Option<TrackingHash>`: Tested via `tracking_hash_check: true`, ensuring presence.
+//! *   `cfgs: Vec<String>`: Poor coverage (all tested functions currently have no `cfg` attributes, so `vec![]` is consistently checked).
+//!
+//! **Conclusion for Property Variation Coverage:**
+//! *   **Excellent:** `name`, `visibility`, `parameter_count`, `generic_param_count`, `return_type_is_some`, `body_is_some`, `tracking_hash_check`.
+//! *   **Good (but limited variety):** `attributes` (only empty), `docstring` (only `None`).
+//! *   **Poor:** `cfgs` (only empty).
+//! *   **Not Directly Tested by `ExpectedFunctionNode`:** Specific details of `parameters` (like `ParamData` fields) and `generic_params` (like `GenericParamNode` fields), and the actual `TypeId` of `return_type`. These are indirectly involved in ID generation and type resolution but not asserted field-by-field in these tests.
+//!
+//! ### 3. Differences in Testing `FunctionNode` vs. Other Nodes:
+//!
+//! Testing `FunctionNode` focuses on:
+//! *   Signature elements: Presence and count of parameters and generic parameters, and presence of a return type.
+//! *   Basic metadata: Name, visibility, attributes, docstrings, CFGs.
+//! *   The `body_is_some` check confirms the function has a definition.
+//!
+//! Unlike `ConstNode` or `StaticNode`, there's no `value` to check. Unlike `ImportNode`, there's no complex path or renaming logic.
+//!
+//! ### 4. Lost Coverage from Old Tests (and `cfg`-gated tests):
+//!
+//! The `cfg`-gated tests (`test_function_node_consumes_point_in_restricted_duplicate` and `test_function_node_generic_func_in_restricted_duplicate`) performed more detailed checks on:
+//! *   Specific `TypeId`s of parameters and return types by looking them up in the `graph.type_graph` and asserting their `TypeKind`.
+//! *   Specific names of parameters.
+//! *   Specific names of generic type parameters (though not their bounds in detail).
+//!
+//! This level of detail for `TypeId` and parameter/generic names is **not currently replicated** by the `paranoid_test_fields_and_values!` macro for `FunctionNode`, as `ExpectedFunctionNode` only checks counts and presence.
+//!
+//! ### 5. Suggestions for Future Inclusions/Improvements:
+//!
+//! *   **Attributes & Docstrings:** Add fixture functions with attributes and docstrings to improve coverage for these fields.
+//! *   **CFGs:** Add fixture functions with `#[cfg(...)]` attributes.
+//! *   **Detailed Parameter/Generic/Return Type Checks:**
+//!     *   Consider expanding `ExpectedFunctionNode` (and the derive macro) to optionally include expected `TypeId`s or `TypeKind` representations for parameters and return types. This would be a significant enhancement.
+//!     *   Alternatively, create separate, more targeted tests (perhaps not using the `paranoid_test_fields_and_values!` macro) for verifying the detailed structure of `ParamData` and `GenericParamNode` for selected complex functions, similar to what the old `cfg`-gated tests were attempting.
+//! *   **No-Body Functions:** Add tests for functions declared in traits or `extern` blocks that have no body (`body_is_some: false`).
+//! *   **Async/Const/Unsafe Functions:** The current fixture doesn't heavily feature these. While the parser should handle them, specific tests could verify if any unique metadata related to these keywords (if stored on `FunctionNode`) is captured.
+
 #![cfg(test)]
 
 use crate::common::run_phases_and_collect;
