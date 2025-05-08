@@ -1,19 +1,9 @@
-use crate::common::uuid_ids_utils::*;
 use ploke_common::fixtures_crates_dir;
 use ploke_core::NodeId;
-use syn_parser::parser::nodes::GraphId;
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
-use syn_parser::parser::{
-    nodes::{GraphNode, ImportNode},
-    relations::RelationKind,
-};
-// ----- paranoid helper functions ------
-use crate::common::paranoid::{
-    find_declaration_node_paranoid, find_file_module_node_paranoid,
-    find_inline_module_node_paranoid,
-};
+use syn_parser::parser::nodes::{GraphNode, ImportNode};
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
@@ -1021,7 +1011,7 @@ fn test_module_node_mod_attributes_and_docs() {
 
 // #[test] // TODO: Add a fixture with attributes/docs on modules
 // #[cfg(not(feature = "type_bearing_ids"))]
-fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
+// fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
 //     // Requires a fixture with modules having attributes (#![...]) and doc comments (//! or /// mod)
 //     // e.g., Add attributes/docs to `inline_pub_mod` or a file-based module.
 //     // Verify:
