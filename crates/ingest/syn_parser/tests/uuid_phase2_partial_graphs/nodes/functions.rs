@@ -1,10 +1,14 @@
 #![cfg(test)]
 
-use crate::common::uuid_ids_utils::*;
-use crate::common::ParanoidArgs; // For EXPECTED_FUNCTIONS_ARGS
+use crate::common::run_phases_and_collect;
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values; // For EXPECTED_FUNCTIONS_ARGS
 use lazy_static::lazy_static;
-use ploke_core::{ItemKind, TypeId, TypeKind}; // Import ItemKind and TypeKind from ploke_core
+use ploke_core::{ItemKind, TypeId, TypeKind};
 use std::collections::HashMap;
+use syn_parser::error::SynParserError; // Import ItemKind and TypeKind from ploke_core
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::{Attribute, ExpectedFunctionNode, GraphNode}; // For ExpectedFunctionNode and Attribute
 use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
                                                // Remove TypeKind from here, already imported from ploke_core
@@ -458,7 +462,100 @@ lazy_static! {
         m
     };
 }
+// -- new test for functions
+// basic sanity check that the macro logic is working correctly.
+// DO NOT REMOVE
+#[test]
+fn test_function_node_standard() -> Result<(), SynParserError> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    // NOTE: Our current macro doesn't do a very good job of distinguishing between two identical
+    // Original was Result<()> which is FixtureError
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_types");
 
+    // Use ParanoidArgs to find the node
+    let args_key = "crate::duplicate_names::process_tuple";
+    let args = EXPECTED_FUNCTIONS_ARGS.get(args_key).unwrap_or_else(|| {
+        panic!("ParanoidArgs not found for key: {}", args_key);
+    });
+    let exp_func = EXPECTED_FUNCTIONS_DATA.get(args.ident).unwrap();
+
+    // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+    let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
+        log::warn!(target: LOG_TEST_FUNCTION, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
+        let target_graph = successful_graphs
+            .iter()
+            .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+            .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
+
+        let _found = exp_func.find_node_by_values(target_graph).count();
+        let _ = args.check_graph(target_graph);
+    })?;
+
+    // Find the node using the generated ID within the correct graph
+    let node = test_info
+        .target_data() // This is &ParsedCodeGraph
+        .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+        .inspect_err(|e| {
+            let target_graph = test_info.target_data();
+            let _ = args.check_graph(target_graph);
+            let count = exp_func.find_node_by_values(target_graph).count();
+            log::warn!(target: LOG_TEST_FUNCTION, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
+        })?;
+
+    assert_eq!(
+        node.name(), // Use the GraphNode trait method
+        args.ident,
+        "Mismatch for name field. Expected: '{}', Actual: '{}'",
+        args.ident,
+        node.name()
+    );
+
+    let node = node.as_function().unwrap();
+    assert!({
+        ![
+            exp_func.is_name_match_debug(node),
+            exp_func.is_visibility_match_debug(node),
+            exp_func.is_attributes_match_debug(node),
+            exp_func.is_body_match_debug(node),
+            exp_func.is_docstring_match_debug(node),
+            exp_func.is_tracking_hash_match_debug(node),
+            exp_func.is_cfgs_match_debug(node),
+        ]
+        .contains(&false)
+    });
+    let expected_func_node = EXPECTED_FUNCTIONS_DATA
+        .get("process_tuple")
+        .expect("The specified node was not found in they map of expected function nodes.");
+
+    let mut node_matches_iter = expected_func_node
+        .find_node_by_values(test_info.target_data())
+        .filter(|func| func.id.to_pid() == node.id.to_pid());
+    let macro_found_node = node_matches_iter.next().unwrap();
+    println!(
+        "FucntionNode found using new macro: {:#?}",
+        macro_found_node
+    );
+    println!("FunctionNode found using old methods: {:#?}", node);
+    assert!(macro_found_node.id.to_pid() == node.id.to_pid());
+    assert!(node_matches_iter.next().is_none());
+    // assert!(expected_const_node.check_all_fields(node));
+    Ok(())
+}
+
+paranoid_test_fields_and_values!(
+    test_function_node_new_macro,
+    "crate::process_tuple",                          // args_key
+    EXPECTED_FUNCTIONS_ARGS,                         // args_map
+    EXPECTED_FUNCTIONS_DATA,                         // expected_data_map
+    syn_parser::parser::nodes::FunctionNode,         // node_type
+    syn_parser::parser::nodes::ExpectedFunctionNode, // derived Expeced*Node
+    as_function,                                     // downcast_method
+    LOG_TEST_FUNCTION                                // log_target
+);
 
 // --- Test Cases ---
 
