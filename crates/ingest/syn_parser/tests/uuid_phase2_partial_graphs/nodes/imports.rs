@@ -16,26 +16,253 @@ use syn_parser::parser::{
 use lazy_static::lazy_static;
 
 // macro-related
-use crate::paranoid_test_fields_and_values; // For EXPECTED_FUNCTIONS_ARGS
+use crate::paranoid_test_fields_and_values;
 use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
 
-// This is what we want:
+pub const LOG_TEST_IMPORT: &str = "log_test_import";
+
 lazy_static! {
     static ref EXPECTED_IMPORTS_DATA: HashMap<&'static str, ExpectedImportNode> = {
         let mut m = HashMap::new();
-        // m.insert("path::to::import_name", ExpectedImportNode {
-        //     source_path: &[&'static str],
-        //     visible_name: &'static str,
-        //     original_name: Option< &'static str >,
-        //     is_glob: bool,
-        //     is_self_import: bool,
-        //     cfgs: &[&'static str],
-        // });
 
-        m.insert("crate::HashMap", ExpectedImportNode {
-            // more here
-            cfgs: todo!()
+        // --- Module Path: ["crate"] ---
+        m.insert("crate::TupleStruct", ExpectedImportNode {
+            source_path: &["crate", "structs", "TupleStruct"],
+            visible_name: "TupleStruct",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
         });
+        m.insert("crate::HashMap", ExpectedImportNode {
+            source_path: &["std", "collections", "HashMap"],
+            visible_name: "HashMap",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::fmt", ExpectedImportNode {
+            source_path: &["std", "fmt"],
+            visible_name: "fmt",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::Arc", ExpectedImportNode {
+            source_path: &["std", "sync", "Arc"],
+            visible_name: "Arc",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::MySimpleStruct", ExpectedImportNode {
+            source_path: &["crate", "structs", "SampleStruct"],
+            visible_name: "MySimpleStruct",
+            original_name: Some("SampleStruct"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::IoResult", ExpectedImportNode {
+            source_path: &["std", "io", "Result"],
+            visible_name: "IoResult",
+            original_name: Some("Result"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::EnumWithData", ExpectedImportNode {
+            source_path: &["crate", "enums", "EnumWithData"],
+            visible_name: "EnumWithData",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::SampleEnum1", ExpectedImportNode {
+            source_path: &["crate", "enums", "SampleEnum1"],
+            visible_name: "SampleEnum1",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::MyGenTrait", ExpectedImportNode {
+            source_path: &["crate", "traits", "GenericTrait"],
+            visible_name: "MyGenTrait",
+            original_name: Some("GenericTrait"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::SimpleTrait", ExpectedImportNode {
+            source_path: &["crate", "traits", "SimpleTrait"],
+            visible_name: "SimpleTrait",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::fs", ExpectedImportNode {
+            source_path: &["std", "fs"],
+            visible_name: "fs",
+            original_name: None,
+            is_glob: false,
+            is_self_import: true,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::File", ExpectedImportNode {
+            source_path: &["std", "fs", "File"],
+            visible_name: "File",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::Path", ExpectedImportNode {
+            source_path: &["std", "path", "Path"],
+            visible_name: "Path",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::PathBuf", ExpectedImportNode {
+            source_path: &["std", "path", "PathBuf"],
+            visible_name: "PathBuf",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::env_glob", ExpectedImportNode {
+            source_path: &["std", "env"],
+            visible_name: "*",
+            original_name: None,
+            is_glob: true,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::SubItem", ExpectedImportNode {
+            source_path: &["self", "sub_imports", "SubItem"],
+            visible_name: "SubItem",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::AttributedStruct", ExpectedImportNode {
+            source_path: &["super", "structs", "AttributedStruct"],
+            visible_name: "AttributedStruct",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::SimpleId", ExpectedImportNode {
+            source_path: &["crate", "type_alias", "SimpleId"],
+            visible_name: "SimpleId",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::Duration", ExpectedImportNode {
+            source_path: &["std", "time", "Duration"],
+            visible_name: "Duration",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::serde_extern", ExpectedImportNode {
+            source_path: &["serde"],
+            visible_name: "serde",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::ExternCrate,
+            cfgs: vec![],
+        });
+        m.insert("crate::SerdeAlias", ExpectedImportNode {
+            source_path: &["serde"],
+            visible_name: "SerdeAlias",
+            original_name: Some("serde"),
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::ExternCrate,
+            cfgs: vec![],
+        });
+
+        // --- Module Path: ["crate", "sub_imports"] ---
+        m.insert("crate::sub_imports::fmt", ExpectedImportNode {
+            source_path: &["super", "fmt"],
+            visible_name: "fmt",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::sub_imports::DocumentedEnum", ExpectedImportNode {
+            source_path: &["crate", "enums", "DocumentedEnum"],
+            visible_name: "DocumentedEnum",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::sub_imports::Arc", ExpectedImportNode {
+            source_path: &["std", "sync", "Arc"],
+            visible_name: "Arc",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::sub_imports::NestedItem", ExpectedImportNode {
+            source_path: &["self", "nested_sub", "NestedItem"],
+            visible_name: "NestedItem",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+        m.insert("crate::sub_imports::TupleStruct", ExpectedImportNode {
+            source_path: &["super", "super", "structs", "TupleStruct"],
+            visible_name: "TupleStruct",
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            kind: ImportKind::UseStatement(VisibilityKind::Inherited),
+            cfgs: vec![],
+        });
+
         m
     };
 }
@@ -43,16 +270,218 @@ lazy_static! {
 lazy_static! {
     static ref EXPECTED_IMPORTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
         let mut m = HashMap::new();
-        // example
-        m.insert("path::to::import_name", ParanoidArgs {
+
+        // --- Module Path: ["crate"] ---
+        m.insert("crate::TupleStruct", ParanoidArgs {
             fixture: "fixture_nodes",
             relative_file_path: "src/imports.rs",
-            ident: "import_name",
-            expected_cfg: None, // todo
+            ident: "TupleStruct",
+            expected_cfg: None,
             expected_path: &["crate"],
             item_kind: ItemKind::Import,
         });
-        // more here.
+        m.insert("crate::HashMap", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "HashMap",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::fmt", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "fmt",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::Arc", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "Arc",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::MySimpleStruct", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "MySimpleStruct",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::IoResult", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "IoResult",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::EnumWithData", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "EnumWithData",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::SampleEnum1", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "SampleEnum1",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::MyGenTrait", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "MyGenTrait",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::SimpleTrait", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "SimpleTrait",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::fs", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "fs",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::File", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "File",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::Path", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "Path",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::PathBuf", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "PathBuf",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::env_glob", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "*",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::SubItem", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "SubItem",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::AttributedStruct", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "AttributedStruct",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::SimpleId", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "SimpleId",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::Duration", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "Duration",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::serde_extern", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "serde",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::ExternCrate,
+        });
+        m.insert("crate::SerdeAlias", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "SerdeAlias",
+            expected_cfg: None,
+            expected_path: &["crate"],
+            item_kind: ItemKind::ExternCrate,
+        });
+
+        // --- Module Path: ["crate", "sub_imports"] ---
+        m.insert("crate::sub_imports::fmt", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "fmt",
+            expected_cfg: None,
+            expected_path: &["crate", "sub_imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::sub_imports::DocumentedEnum", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "DocumentedEnum",
+            expected_cfg: None,
+            expected_path: &["crate", "sub_imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::sub_imports::Arc", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "Arc",
+            expected_cfg: None,
+            expected_path: &["crate", "sub_imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::sub_imports::NestedItem", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "NestedItem",
+            expected_cfg: None,
+            expected_path: &["crate", "sub_imports"],
+            item_kind: ItemKind::Import,
+        });
+        m.insert("crate::sub_imports::TupleStruct", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "TupleStruct",
+            expected_cfg: None,
+            expected_path: &["crate", "sub_imports"],
+            item_kind: ItemKind::Import,
+        });
 
         m
     };
