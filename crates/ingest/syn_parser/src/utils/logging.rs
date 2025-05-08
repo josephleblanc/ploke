@@ -137,6 +137,9 @@ pub trait LogStyle: AsRef<str> {
     fn log_yellow(&self) -> ColoredString {
         self.as_ref().color(COLOR_YELLOW)
     }
+    fn log_warning(&self) -> ColoredString {
+        self.as_ref().color(COLOR_YELLOW).bold() // Using yellow bold for warnings
+    }
     fn log_magenta(&self) -> ColoredString {
         self.as_ref().color(COLOR_MAGENTA)
     }
@@ -192,6 +195,9 @@ pub trait LogStyleDebug: Debug {
     }
     fn log_yellow_debug(&self) -> ColoredString {
         format!("{:?}", self).color(COLOR_YELLOW)
+    }
+    fn log_warning_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_YELLOW).bold()
     }
     fn log_magenta_debug(&self) -> ColoredString {
         format!("{:?}", self).color(COLOR_MAGENTA)

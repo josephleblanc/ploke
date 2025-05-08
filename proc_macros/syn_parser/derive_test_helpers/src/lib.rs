@@ -102,16 +102,16 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         if node.is_decl() && actual_count != 0 { // ModuleKind::Declaration should have 0 imports
                             log::warn!(target: #log_target,
                                 "   {: <23} {} | ModuleKind::Declaration should have 0 imports, but found {}.",
-                                "Imports Count Warning".to_string().log_warning(),
-                                actual_count.to_string().log_error(),
+                                "Imports Count Warning".to_string().log_warning(), // This is a String, log_warning() is fine
+                                actual_count.to_string().log_error(), // This is a String, log_error() is fine
                             );
                             check = false; // Fail the check if a declaration has imports
                         }
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected count '{}' == Actual count '{}'",
-                            "Imports Count Match?".to_string().log_step(), check.log_bool(),
-                            self.imports_count.to_string().log_name(),
-                            actual_count.to_string().log_name()
+                            "Imports Count Match?".to_string().log_step(), check.log_bool(), // String, bool
+                            self.imports_count.to_string().log_name(), // String
+                            actual_count.to_string().log_name() // String
                         );
                         check
                     }
@@ -169,10 +169,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
                         let disc_check = self.mod_disc == actual_mod_disc;
                         log::debug!(target: #log_target,
-                            "   {: <23} {} | Expected disc '{:?}' == Actual disc '{:?}'",
+                            "   {: <23} {} | Expected disc '{}' == Actual disc '{}'",
                             "ModuleKind Disc Match?".to_string().log_step(), disc_check.log_bool(),
-                            self.mod_disc,
-                            actual_mod_disc
+                            self.mod_disc.log_name_debug(), // Use log_*_debug
+                            actual_mod_disc.log_name_debug() // Use log_*_debug
                         );
                         if !disc_check { overall_check = false; }
 
@@ -182,8 +182,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected items count '{}' == Actual items count '{}'",
                             "Items Count Match?".to_string().log_step(), items_count_check.log_bool(),
-                            self.items_count,
-                            actual_items_count
+                            self.items_count.log_name_debug(), // Use log_*_debug
+                            actual_items_count.log_name_debug() // Use log_*_debug
                         );
                         if !items_count_check { overall_check = false; }
 
@@ -192,15 +192,15 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             if let Some(expected_suffix) = self.expected_file_path_suffix {
                                 let path_check = node.file_path().map_or(false, |fp| fp.ends_with(expected_suffix));
                                 log::debug!(target: #log_target,
-                                    "   {: <23} {} | Expected path suffix '{}' in Actual path '{:?}'",
+                                    "   {: <23} {} | Expected path suffix '{}' in Actual path '{}'",
                                     "File Path Suffix Match?".to_string().log_step(), path_check.log_bool(),
-                                    expected_suffix,
-                                    node.file_path()
+                                    expected_suffix.log_path(), // Use log_path for path strings
+                                    node.file_path().log_path_debug() // Use log_*_debug for Option<PathBuf>
                                 );
                                 if !path_check { overall_check = false; }
                             } else {
                                 // If expected_file_path_suffix is None for a FileBased module, it's an error in test data
-                                log::warn!(target: #log_target, "Expected file path suffix is None for a FileBased module. This is likely an error in test data.");
+                                log::warn!(target: #log_target, "Expected file path suffix is None for a FileBased module. This is likely an error in test data."); // String literal, no formatting needed
                                 overall_check = false;
                             }
 
@@ -210,8 +210,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             log::debug!(target: #log_target,
                                 "   {: <23} {} | Expected file_attrs count '{}' == Actual file_attrs count '{}'",
                                 "File Attrs Count Match?".to_string().log_step(), attrs_count_check.log_bool(),
-                                self.file_attrs_count,
-                                actual_file_attrs_count
+                                self.file_attrs_count.log_name_debug(), // Use log_*_debug
+                                actual_file_attrs_count.log_name_debug() // Use log_*_debug
                             );
                             if !attrs_count_check { overall_check = false; }
 
@@ -221,15 +221,15 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             log::debug!(target: #log_target,
                                 "   {: <23} {} | Expected file_docs_is_some '{}' == Actual file_docs_is_some '{}'",
                                 "File Docs Is Some Match?".to_string().log_step(), docs_is_some_check.log_bool(),
-                                self.file_docs_is_some,
-                                actual_file_docs_is_some
+                                self.file_docs_is_some.log_name_debug(), // Use log_*_debug
+                                actual_file_docs_is_some.log_name_debug() // Use log_*_debug
                             );
                             if !docs_is_some_check { overall_check = false; }
 
                         } else {
                             // If not FileBased, expected_file_path_suffix should be None
                             if self.expected_file_path_suffix.is_some() {
-                                log::warn!(target: #log_target, "Expected file path suffix is Some for a non-FileBased module. This is likely an error in test data.");
+                                log::warn!(target: #log_target, "Expected file path suffix is Some for a non-FileBased module. This is likely an error in test data."); // String literal
                                 overall_check = false;
                             }
                         }
@@ -367,10 +367,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has name()
                         let check = self.name == node.name();
-                        log::debug!(target: #log_target, // Use the specific log target
+                        log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Name Match?".to_string().log_step(), check.log_bool(),
-                            self.name.log_name(), node.name().log_name()
+                            self.name.log_name(), node.name().log_name() // String, String
                         );
                         check
                     }
@@ -391,7 +391,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Visibility Match?".to_string().log_step(), check.log_bool(),
-                            self.visibility.log_vis_debug(), node.visibility().log_vis_debug()
+                            self.visibility.log_vis_debug(), node.visibility().log_vis_debug() // VisibilityKind, VisibilityKind
                         );
                         check
                     }
@@ -412,7 +412,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Attributes Match?".to_string().log_step(), check.log_bool(),
-                            self.attributes.log_green_debug(), node.attributes().log_green_debug() // Using log_green_debug like manual
+                            self.attributes.log_green_debug(), node.attributes().log_green_debug() // Vec<Attribute>, &[Attribute]
                         );
                         check
                     }
@@ -438,8 +438,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Docstring Match?".to_string().log_step(), check_passes.log_bool(),
-                            self.docstring.unwrap_or("None").log_foreground_primary(), // Manual style
-                            actual_docstring.unwrap_or("None").log_foreground_secondary() // Manual style
+                            self.docstring.log_foreground_primary_debug(), // Option<&str>
+                            actual_docstring.log_foreground_secondary_debug() // Option<&str>
                         );
                         check_passes
                     }
@@ -460,10 +460,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let mut expected_cfgs_sorted = self.cfgs.clone();
                         format!("{:?}", expected_cfgs_sorted.sort_unstable());
                         let check = expected_cfgs_sorted == actual_cfgs;
-                        log::debug!(target: #log_target, // Manual impl uses LOG_TEST_CONST, here using generic log_target
-                            "   {: <23} {} | Expected (sorted) '{}' == Actual (sorted) '{}'", // Adjusted log to match manual closer
-                            "CFGs Match?".to_string().log_step(), check.log_bool(), // Manual uses log_green, then log_bool
-                            expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug()
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected (sorted) '{}' == Actual (sorted) '{}'",
+                            "CFGs Match?".to_string().log_step(), check.log_bool(),
+                            expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug() // Vec<String>, Vec<String>
                         );
                         check
                     }
@@ -485,10 +485,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TrackingHash Check Match?".to_string().log_step(), check.log_bool(),
-                            self.tracking_hash_check.to_string().log_name(),
-                            actual_check_passes.to_string().log_name()
+                            self.tracking_hash_check.log_name_debug(), // bool
+                            actual_check_passes.log_name_debug() // bool
                         );
-                        check
+check
                     }
                 });
                 check_all_fields_logics.push(quote! {
@@ -509,8 +509,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TypeId Check Match?".to_string().log_step(), check.log_bool(),
-                            self.type_id_check.to_string().log_name(),
-                            actual_check_passes.to_string().log_name()
+                            self.type_id_check.log_name_debug(), // bool
+                            actual_check_passes.log_name_debug() // bool
                         );
                         check
                     }
@@ -536,8 +536,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Value Match?".to_string().log_step(), check.log_bool(),
-                            self.value.unwrap_or("None").log_foreground_primary(), // Manual style
-                            actual_value.unwrap_or("None").log_foreground_secondary() // Manual style
+                            self.value.log_foreground_primary_debug(), // Option<&str>
+                            actual_value.log_foreground_secondary_debug() // Option<&str>
                         );
                         check
                     }
@@ -586,7 +586,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Visible Name Match?".to_string().log_step(), check.log_bool(),
-                            self.visible_name.log_name(), node.visible_name.log_name()
+                            self.visible_name.log_name(), node.visible_name.log_name() // String, String
                         );
                         check
                     }
@@ -609,8 +609,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Original Name Match?".to_string().log_step(), check.log_bool(),
-                            self.original_name.log_name_debug(), // Log Option<&str>
-                            actual_original.log_name_debug()
+                            self.original_name.log_name_debug(), 
+                            actual_original.log_name_debug() // Option<&str>, Option<&str>
                         );
                         check
                     }
@@ -632,8 +632,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Glob Match?".to_string().log_step(), check.log_bool(),
-                            self.is_glob.log_green_debug(), // Use log_bool for bool
-                            node.is_glob.log_green_debug()
+                            self.is_glob.log_green_debug(), 
+                            node.is_glob.log_green_debug() // bool, bool
                         );
                         check
                     }
@@ -655,8 +655,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Self Import Match?".to_string().log_step(), check.log_bool(),
-                            self.is_self_import.log_bool(),
-                            node.is_self_import.log_bool()
+                            self.is_self_import.log_bool(), 
+                            node.is_self_import.log_bool() // bool, bool
                         );
                         check
                     }
@@ -679,8 +679,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Kind Match?".to_string().log_step(), check.log_bool(),
-                            self.kind.log_vis_debug(), // Use appropriate style
-                            node.kind.log_vis_debug()
+                            self.kind.log_vis_debug(), 
+                            node.kind.log_vis_debug() // ImportKind, ImportKind
                         );
                         check
                     }
@@ -708,8 +708,8 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Mutable Match?".to_string().log_step(), check.log_bool(),
-                            self.is_mutable.to_string().log_name(), // Manual style for bools might differ
-                            actual_value.to_string().log_name()
+                            self.is_mutable.log_name_debug(), // bool
+                            actual_value.log_name_debug() // bool
                         );
                         check
                     }
