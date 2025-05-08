@@ -129,7 +129,7 @@ lazy_static! {
     // Map from ident -> ExpectedConstData
     static ref EXPECTED_CONSTS_DATA: HashMap<&'static str, ExpectedConstNode> = {
         let mut m = HashMap::new();
-        m.insert("TOP_LEVEL_INT", ExpectedConstNode {
+        m.insert("crate::const_static::TOP_LEVEL_INT", ExpectedConstNode {
             name: "TOP_LEVEL_INT",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -139,7 +139,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("doc_attr_const", ExpectedConstNode {
+        m.insert("crate::const_static::doc_attr_const", ExpectedConstNode {
             name: "doc_attr_const",
             visibility: VisibilityKind::Public,
             type_id_check: true,
@@ -153,7 +153,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("TOP_LEVEL_BOOL", ExpectedConstNode {
+        m.insert("crate::const_static::TOP_LEVEL_BOOL", ExpectedConstNode {
             name: "TOP_LEVEL_BOOL",
             visibility: VisibilityKind::Public,
             type_id_check: true,
@@ -163,7 +163,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("INNER_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::inner_mod::INNER_CONST", ExpectedConstNode {
             name: "INNER_CONST",
             visibility: VisibilityKind::Crate, // pub(crate)
             type_id_check: true,
@@ -173,7 +173,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("ARRAY_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::ARRAY_CONST", ExpectedConstNode {
             name: "ARRAY_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -183,7 +183,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("STRUCT_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::STRUCT_CONST", ExpectedConstNode {
             name: "STRUCT_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -193,7 +193,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("ALIASED_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::ALIASED_CONST", ExpectedConstNode {
             name: "ALIASED_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -203,7 +203,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("EXPR_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::EXPR_CONST", ExpectedConstNode {
             name: "EXPR_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -213,7 +213,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        m.insert("FN_CALL_CONST", ExpectedConstNode {
+        m.insert("crate::const_static::FN_CALL_CONST", ExpectedConstNode {
             name: "FN_CALL_CONST",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
