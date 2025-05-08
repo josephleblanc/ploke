@@ -153,11 +153,11 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 });
             }
 
-            // == General Skip Arm (parameters, generic_params, return_type removed) ==
+            // == General Skip Arm ==
+            // Fields skipped by default unless specifically handled below or for a specific node type
             "id" | "span" | "fields" | "variants" | "methods" | "imports" | "exports"
-            | "module_def" | "super_traits" | "kind"
-            // Note: "parameters", "generic_params", "return_type", "body" are handled above for FunctionNode.
-            // If they appear on other nodes, they will fall through to this skip or the `_` arm.
+            | "module_def" | "super_traits"
+            // Note: `kind` is handled below for ImportNode
              => {
                 // These fields are typically not directly compared by value in Expected*Data,
                 // or are handled by ID regeneration or specific relation checks.
@@ -351,6 +351,151 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 });
                 // Not adding to find_node_by_values_filters by default.
             }
+            // == ImportNode Specific Handlers ==
+            "source_path"
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) =>
+            {
+                expected_fields_defs.push(quote! { pub source_path: &'static [&'static str] });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let expected_vec: Vec<String> = self.source_path.iter().map(|s| s.to_string()).collect();
+                        let check = expected_vec == node.source_path; // Compare Vec<String> == Vec<String>
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected {:?} == Actual {:?}",
+                            "Source Path Match?".to_string().log_step(), check.log_bool(),
+                            expected_vec.log_name_debug(), // Log the Vec<String>
+                            node.source_path.log_name_debug()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            "visible_name"
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "String")) =>
+            {
+                // Use the existing 'name' handler logic but target 'visible_name' field
+                expected_fields_defs.push(quote! { pub visible_name: &'static str });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let check = self.visible_name == node.visible_name; // Access field directly
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "Visible Name Match?".to_string().log_step(), check.log_bool(),
+                            self.visible_name.log_name(), node.visible_name.log_name()
+                        );
+                        check
+                    }
+                });
+                 check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+             "original_name"
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Option")) =>
+            {
+                expected_fields_defs.push(quote! { pub original_name: Option<&'static str> });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_original = node.original_name.as_deref();
+                        let check = self.original_name == actual_original;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "Original Name Match?".to_string().log_step(), check.log_bool(),
+                            self.original_name.log_name_debug(), // Log Option<&str>
+                            actual_original.log_name_debug()
+                        );
+                        check
+                    }
+                });
+                 check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+             "is_glob"
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) =>
+            {
+                expected_fields_defs.push(quote! { pub is_glob: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let check = self.is_glob == node.is_glob;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "Is Glob Match?".to_string().log_step(), check.log_bool(),
+                            self.is_glob.log_bool(), // Use log_bool for bool
+                            node.is_glob.log_bool()
+                        );
+                        check
+                    }
+                });
+                 check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+             "is_self_import"
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "bool")) =>
+            {
+                expected_fields_defs.push(quote! { pub is_self_import: bool });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let check = self.is_self_import == node.is_self_import;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "Is Self Import Match?".to_string().log_step(), check.log_bool(),
+                            self.is_self_import.log_bool(),
+                            node.is_self_import.log_bool()
+                        );
+                        check
+                    }
+                });
+                 check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            "kind" // For ImportNode
+                if node_struct_name == "ImportNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "ImportKind")) =>
+            {
+                // Use full path in generated code for clarity
+                expected_fields_defs.push(quote! { pub kind: crate::parser::nodes::ImportKind });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let check = self.kind == node.kind;
+                        log::debug!(target: #log_target,
+                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "Kind Match?".to_string().log_step(), check.log_bool(),
+                            self.kind.log_vis_debug(), // Use appropriate style
+                            node.kind.log_vis_debug()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+
+            // == End ImportNode Specific Handlers ==
+
             // Handle `is_mutable: bool` for StaticNode
             "is_mutable"
                 if node_struct_name == "StaticNode"
