@@ -1,12 +1,17 @@
-use ploke_common::fixtures_crates_dir;
-use ploke_core::{ItemKind, NodeId};
+use ploke_core::ItemKind;
+use syn_parser::parser::graph::GraphAccess;
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
-use syn_parser::parser::nodes::{GraphNode, ImportNode, ExpectedModuleNode, ModDisc, Attribute};
-use crate::common::{paranoid::*, ParanoidArgs};
+use crate::common::ParanoidArgs;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use syn_parser::parser::nodes::{ExpectedModuleNode, GraphNode, ImportNode, ModDisc};
+
+// macro-related imports
+use crate::paranoid_test_fields_and_values;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
 
 pub const LOG_TEST_MODULE: &str = "log_test_module";
 
@@ -15,7 +20,7 @@ lazy_static! {
         let mut m = HashMap::new();
 
         // Test case: `pub mod top_pub_mod;` (declaration in main.rs)
-        m.insert("crate::main_rs::top_pub_mod_declaration", ExpectedModuleNode {
+        m.insert("crate::top_pub_mod_declaration", ExpectedModuleNode {
             name: "top_pub_mod",
             path: &["crate", "top_pub_mod"],
             visibility: VisibilityKind::Public,
@@ -26,7 +31,7 @@ lazy_static! {
             tracking_hash_check: true, // Declarations have a tracking hash
             mod_disc: ModDisc::Declaration,
             expected_file_path_suffix: None, // Not FileBased
-            items_count: 0, // Declarations don't have items in ModuleNode.items directly
+            items_count: 1, // Declarations don't have items in ModuleNode.items directly
             file_attrs_count: 0, // Not FileBased
             file_docs_is_some: false, // Not FileBased
             cfgs: vec![],
@@ -40,7 +45,7 @@ lazy_static! {
     static ref EXPECTED_MODULES_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
         let mut m = HashMap::new();
 
-        m.insert("crate::main_rs::top_pub_mod_declaration", ParanoidArgs {
+        m.insert("crate::top_pub_mod_declaration", ParanoidArgs {
             fixture: "file_dir_detection",
             relative_file_path: "src/main.rs", // Declaration is in main.rs
             ident: "top_pub_mod",
@@ -53,6 +58,16 @@ lazy_static! {
     };
 }
 
+paranoid_test_fields_and_values!(
+    node_top_pub_mod_declaration,
+    "crate::top_pub_mod_declaration",
+    EXPECTED_MODULES_ARGS,                         // args_map
+    EXPECTED_MODULES_DATA,                         // expected_data_map
+    syn_parser::parser::nodes::ModuleNode,         // node_type
+    syn_parser::parser::nodes::ExpectedModuleNode, // derived Expeced*Node
+    as_module,                                     // downcast_method
+    LOG_TEST_MODULE                                // log_target
+);
 
 // TODO: Add a test using paranoid_test_fields_and_values! for the entry above
 // once we are confident the derive macro and ExpectedModuleNode are correct.
