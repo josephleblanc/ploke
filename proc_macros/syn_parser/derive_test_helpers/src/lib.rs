@@ -66,7 +66,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             // == ModuleNode Specific Handlers (Placed BEFORE general handlers) ==
             "path" // For ModuleNode
                 if node_struct_name == "ModuleNode"
-                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "String" ))) =>
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Simplified Vec check
             {
                 expected_fields_defs.push(quote! { pub path: &'static [&'static str] });
                 inherent_check_method_impls.push(quote! {
@@ -92,7 +92,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             "imports" // For ModuleNode
                 if node_struct_name == "ModuleNode"
-                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "ImportNode" ))) =>
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Simplified Vec check
             {
                 expected_fields_defs.push(quote! { pub imports_count: usize });
                 inherent_check_method_impls.push(quote! {
@@ -122,7 +122,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             "exports" // For ModuleNode
                 if node_struct_name == "ModuleNode"
-                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "ImportNodeId" ))) =>
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Simplified Vec check
             {
                 expected_fields_defs.push(quote! { pub exports_count: usize });
                 inherent_check_method_impls.push(quote! {
