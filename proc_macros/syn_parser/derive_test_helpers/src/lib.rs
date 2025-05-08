@@ -104,6 +104,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                                 "   {: <23} {} | ModuleKind::Declaration should have 0 imports, but found {}.",
                                 "Imports Count Warning".to_string().log_warning(), // This is a String, log_warning() is fine
                                 actual_count.to_string().log_error(), // This is a String, log_error() is fine
+                                actual_count.to_string().log_error() // Provide the argument for the third placeholder
                             );
                             check = false; // Fail the check if a declaration has imports
                         }
