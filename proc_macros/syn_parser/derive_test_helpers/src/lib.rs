@@ -63,6 +63,195 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
         // Map original field to expected field and generate checks/filters
         match field_name_str.as_str() {
+            // == ModuleNode Specific Handlers (Placed BEFORE general handlers) ==
+            "path" // For ModuleNode
+                if node_struct_name == "ModuleNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "String" ))) =>
+            {
+                expected_fields_defs.push(quote! { pub path: &'static [&'static str] });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let expected_vec: Vec<String> = self.path.iter().map(|s| s.to_string()).collect();
+                        let check = expected_vec == node.path; // Compare Vec<String> == Vec<String>
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
+                            "Path Match?".to_string().log_step(), check.log_bool(),
+                            "│ Expected: ",
+                            expected_vec.log_name_debug(),
+                            "│ Actual:   ",
+                            node.path.log_name_debug()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            "imports" // For ModuleNode
+                if node_struct_name == "ModuleNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "ImportNode" ))) =>
+            {
+                expected_fields_defs.push(quote! { pub imports_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.imports.len();
+                        let mut check = self.imports_count == actual_count;
+                        if node.is_decl() && actual_count != 0 { // ModuleKind::Declaration should have 0 imports
+                            log::warn!(target: #log_target,
+                                "   {: <23} {} | ModuleKind::Declaration should have 0 imports, but found {}.",
+                                "Imports Count Warning".to_string().log_warning(),
+                                actual_count.to_string().log_error(),
+                            );
+                            check = false; // Fail the check if a declaration has imports
+                        }
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Imports Count Match?".to_string().log_step(), check.log_bool(),
+                            self.imports_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
+            "exports" // For ModuleNode
+                if node_struct_name == "ModuleNode"
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec" && p.path.segments.first().is_some_and(|s| s.ident == "ImportNodeId" ))) =>
+            {
+                expected_fields_defs.push(quote! { pub exports_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.exports.len();
+                        let check = self.exports_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Exports Count Match?".to_string().log_step(), check.log_bool(),
+                            self.exports_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+            }
+            "module_def" // For ModuleNode
+                if node_struct_name == "ModuleNode"
+                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "ModuleKind")) =>
+            {
+                // Add ModDisc field to ExpectedModuleNode
+                expected_fields_defs.push(quote! { pub mod_disc: crate::parser::nodes::ModDisc });
+                // Add expected_file_path_suffix field (Option)
+                expected_fields_defs.push(quote! { pub expected_file_path_suffix: Option<&'static str> });
+                // Add items_count field
+                expected_fields_defs.push(quote! { pub items_count: usize });
+                // Add file_attrs_count field
+                expected_fields_defs.push(quote! { pub file_attrs_count: usize });
+                // Add file_docs_is_some field
+                expected_fields_defs.push(quote! { pub file_docs_is_some: bool });
+
+
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let mut overall_check = true;
+                        let actual_mod_disc = match node.module_def {
+                            crate::parser::nodes::ModuleKind::FileBased { .. } => crate::parser::nodes::ModDisc::FileBased,
+                            crate::parser::nodes::ModuleKind::Inline { .. } => crate::parser::nodes::ModDisc::Inline,
+                            crate::parser::nodes::ModuleKind::Declaration { .. } => crate::parser::nodes::ModDisc::Declaration,
+                        };
+
+                        let disc_check = self.mod_disc == actual_mod_disc;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected disc '{:?}' == Actual disc '{:?}'",
+                            "ModuleKind Disc Match?".to_string().log_step(), disc_check.log_bool(),
+                            self.mod_disc,
+                            actual_mod_disc
+                        );
+                        if !disc_check { overall_check = false; }
+
+                        // Check items_count
+                        let actual_items_count = node.items().map_or(0, |items_slice| items_slice.len());
+                        let items_count_check = self.items_count == actual_items_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected items count '{}' == Actual items count '{}'",
+                            "Items Count Match?".to_string().log_step(), items_count_check.log_bool(),
+                            self.items_count,
+                            actual_items_count
+                        );
+                        if !items_count_check { overall_check = false; }
+
+                        if actual_mod_disc == crate::parser::nodes::ModDisc::FileBased {
+                            // Check expected_file_path_suffix
+                            if let Some(expected_suffix) = self.expected_file_path_suffix {
+                                let path_check = node.file_path().map_or(false, |fp| fp.ends_with(expected_suffix));
+                                log::debug!(target: #log_target,
+                                    "   {: <23} {} | Expected path suffix '{}' in Actual path '{:?}'",
+                                    "File Path Suffix Match?".to_string().log_step(), path_check.log_bool(),
+                                    expected_suffix,
+                                    node.file_path()
+                                );
+                                if !path_check { overall_check = false; }
+                            } else {
+                                // If expected_file_path_suffix is None for a FileBased module, it's an error in test data
+                                log::warn!(target: #log_target, "Expected file path suffix is None for a FileBased module. This is likely an error in test data.");
+                                overall_check = false;
+                            }
+
+                            // Check file_attrs_count
+                            let actual_file_attrs_count = node.file_attrs().map_or(0, |attrs| attrs.len());
+                            let attrs_count_check = self.file_attrs_count == actual_file_attrs_count;
+                            log::debug!(target: #log_target,
+                                "   {: <23} {} | Expected file_attrs count '{}' == Actual file_attrs count '{}'",
+                                "File Attrs Count Match?".to_string().log_step(), attrs_count_check.log_bool(),
+                                self.file_attrs_count,
+                                actual_file_attrs_count
+                            );
+                            if !attrs_count_check { overall_check = false; }
+
+                            // Check file_docs_is_some
+                            let actual_file_docs_is_some = node.file_docs().is_some();
+                            let docs_is_some_check = self.file_docs_is_some == actual_file_docs_is_some;
+                            log::debug!(target: #log_target,
+                                "   {: <23} {} | Expected file_docs_is_some '{}' == Actual file_docs_is_some '{}'",
+                                "File Docs Is Some Match?".to_string().log_step(), docs_is_some_check.log_bool(),
+                                self.file_docs_is_some,
+                                actual_file_docs_is_some
+                            );
+                            if !docs_is_some_check { overall_check = false; }
+
+                        } else {
+                            // If not FileBased, expected_file_path_suffix should be None
+                            if self.expected_file_path_suffix.is_some() {
+                                log::warn!(target: #log_target, "Expected file path suffix is Some for a non-FileBased module. This is likely an error in test data.");
+                                overall_check = false;
+                            }
+                        }
+                        overall_check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                // Add mod_disc to find_node_by_values_filters
+                find_node_by_values_filters.push(quote! {
+                    .filter(|n| {
+                        let actual_disc = match n.module_def {
+                            crate::parser::nodes::ModuleKind::FileBased { .. } => crate::parser::nodes::ModDisc::FileBased,
+                            crate::parser::nodes::ModuleKind::Inline { .. } => crate::parser::nodes::ModDisc::Inline,
+                            crate::parser::nodes::ModuleKind::Declaration { .. } => crate::parser::nodes::ModDisc::Declaration,
+                        };
+                        self.mod_disc == actual_disc
+                    })
+                });
+            }
+
             // == FunctionNode Specific Handlers (Placed BEFORE the general skip arm) ==
             "parameters" // For FunctionNode
                 if node_struct_name == "FunctionNode"
@@ -155,12 +344,19 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
             // == General Skip Arm ==
             // Fields skipped by default unless specifically handled below or for a specific node type
-            "id" | "span" | "fields" | "variants" | "methods" | "imports" | "exports"
-            | "module_def" | "super_traits"
+            "id" | "span" | "fields" | "variants" | "methods" | 
+            // "imports" | "exports" | "module_def" | // Handled above for ModuleNode
+            "super_traits"
             // Note: `kind` is handled below for ImportNode
              => {
                 // These fields are typically not directly compared by value in Expected*Data,
                 // or are handled by ID regeneration or specific relation checks.
+                // Special skip for ModuleNode fields handled above
+                if node_struct_name == "ModuleNode" && (field_name_str == "imports" || field_name_str == "exports" || field_name_str == "module_def" || field_name_str == "path") {
+                    // Already handled, do nothing
+                } else {
+                    // Original skip logic for other nodes or unhandled fields
+                }
                 // We will not generate `is_*_match_debug` for them by default.
             }
 
