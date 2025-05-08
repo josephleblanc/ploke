@@ -74,7 +74,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_count = node.parameters.len();
                         let check = self.parameter_count == actual_count;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
                             "Parameter Count Match?".to_string().log_step(), check.log_bool(),
                             self.parameter_count.to_string().log_name(),
                             actual_count.to_string().log_name()
@@ -96,7 +96,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_count = node.generic_params.len();
                         let check = self.generic_param_count == actual_count;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
                             "Generic Param Count Match?".to_string().log_step(), check.log_bool(),
                             self.generic_param_count.to_string().log_name(),
                             actual_count.to_string().log_name()
@@ -118,7 +118,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_is_some = node.return_type.is_some();
                         let check = self.return_type_is_some == actual_is_some;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "   {: <23} {} | Expected is_some '{}' == Actual is_some '{}'",
                             "Return Type Is Some Match?".to_string().log_step(), check.log_bool(),
                             self.return_type_is_some.to_string().log_name(),
                             actual_is_some.to_string().log_name()
@@ -140,7 +140,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_is_some = node.body.is_some();
                         let check = self.body_is_some == actual_is_some;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "   {: <23} {} | Expected is_some '{}' == Actual is_some '{}'",
                             "Body Is Some Match?".to_string().log_step(), check.log_bool(),
                             self.body_is_some.to_string().log_name(),
                             actual_is_some.to_string().log_name()
@@ -172,7 +172,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         // Assuming node implements GraphNode trait which has name()
                         let check = self.name == node.name();
                         log::debug!(target: #log_target, // Use the specific log target
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Name Match?".to_string().log_step(), check.log_bool(),
                             self.name.log_name(), node.name().log_name()
                         );
@@ -193,7 +193,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         // Assuming node implements GraphNode trait which has visibility()
                         let check = self.visibility == *node.visibility();
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Visibility Match?".to_string().log_step(), check.log_bool(),
                             self.visibility.log_vis_debug(), node.visibility().log_vis_debug()
                         );
@@ -214,7 +214,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         // Assuming node implements HasAttributes trait
                         let check = self.attributes == node.attributes();
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Attributes Match?".to_string().log_step(), check.log_bool(),
                             self.attributes.log_green_debug(), node.attributes().log_green_debug() // Using log_green_debug like manual
                         );
@@ -240,7 +240,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             None => actual_docstring.is_none(),
                         };
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Docstring Match?".to_string().log_step(), check_passes.log_bool(),
                             self.docstring.unwrap_or("None").log_foreground_primary(), // Manual style
                             actual_docstring.unwrap_or("None").log_foreground_secondary() // Manual style
@@ -265,7 +265,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         format!("{:?}", expected_cfgs_sorted.sort_unstable());
                         let check = expected_cfgs_sorted == actual_cfgs;
                         log::debug!(target: #log_target, // Manual impl uses LOG_TEST_CONST, here using generic log_target
-                            "   {} {} | Expected (sorted) '{}' == Actual (sorted) '{}'", // Adjusted log to match manual closer
+                            "   {: <23} {} | Expected (sorted) '{}' == Actual (sorted) '{}'", // Adjusted log to match manual closer
                             "CFGs Match?".to_string().log_step(), check.log_bool(), // Manual uses log_green, then log_bool
                             expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug()
                         );
@@ -287,7 +287,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_check_passes = node.tracking_hash.is_some(); // Access field directly
                         let check = self.tracking_hash_check == actual_check_passes;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
+                            "   {: <23} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TrackingHash Check Match?".to_string().log_step(), check.log_bool(),
                             self.tracking_hash_check.to_string().log_name(),
                             actual_check_passes.to_string().log_name()
@@ -311,7 +311,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_check_passes = node.type_id.is_synthetic(); // Access field directly
                         let check = self.type_id_check == actual_check_passes;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected check pass '{}' == Actual check pass '{}'",
+                            "   {: <23} {} | Expected check pass '{}' == Actual check pass '{}'",
                             "TypeId Check Match?".to_string().log_step(), check.log_bool(),
                             self.type_id_check.to_string().log_name(),
                             actual_check_passes.to_string().log_name()
@@ -338,7 +338,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_value = node.value.as_deref(); // Access field directly
                         let check = self.value == actual_value;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Value Match?".to_string().log_step(), check.log_bool(),
                             self.value.unwrap_or("None").log_foreground_primary(), // Manual style
                             actual_value.unwrap_or("None").log_foreground_secondary() // Manual style
@@ -362,9 +362,11 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let expected_vec: Vec<String> = self.source_path.iter().map(|s| s.to_string()).collect();
                         let check = expected_vec == node.source_path; // Compare Vec<String> == Vec<String>
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected {:?} == Actual {:?}",
+                            "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
                             "Source Path Match?".to_string().log_step(), check.log_bool(),
+                            "│ Expected: ",
                             expected_vec.log_name_debug(), // Log the Vec<String>
+                            "│ Actual:   ",
                             node.source_path.log_name_debug()
                         );
                         check
@@ -386,7 +388,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let check = self.visible_name == node.visible_name; // Access field directly
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Visible Name Match?".to_string().log_step(), check.log_bool(),
                             self.visible_name.log_name(), node.visible_name.log_name()
                         );
@@ -409,7 +411,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_original = node.original_name.as_deref();
                         let check = self.original_name == actual_original;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Original Name Match?".to_string().log_step(), check.log_bool(),
                             self.original_name.log_name_debug(), // Log Option<&str>
                             actual_original.log_name_debug()
@@ -432,10 +434,10 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let check = self.is_glob == node.is_glob;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Glob Match?".to_string().log_step(), check.log_bool(),
-                            self.is_glob.log_bool(), // Use log_bool for bool
-                            node.is_glob.log_bool()
+                            self.is_glob.log_green_debug(), // Use log_bool for bool
+                            node.is_glob.log_green_debug()
                         );
                         check
                     }
@@ -455,7 +457,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let check = self.is_self_import == node.is_self_import;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Self Import Match?".to_string().log_step(), check.log_bool(),
                             self.is_self_import.log_bool(),
                             node.is_self_import.log_bool()
@@ -479,7 +481,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let check = self.kind == node.kind;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{:?}' == Actual '{:?}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Kind Match?".to_string().log_step(), check.log_bool(),
                             self.kind.log_vis_debug(), // Use appropriate style
                             node.kind.log_vis_debug()
@@ -508,7 +510,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_value = node.is_mutable; // Access field directly
                         let check = self.is_mutable == actual_value;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Is Mutable Match?".to_string().log_step(), check.log_bool(),
                             self.is_mutable.to_string().log_name(), // Manual style for bools might differ
                             actual_value.to_string().log_name()
@@ -532,7 +534,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_count = node.parameters.len();
                         let check = self.parameter_count == actual_count;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
                             "Parameter Count Match?".to_string().log_step(), check.log_bool(),
                             self.parameter_count.to_string().log_name(),
                             actual_count.to_string().log_name()
@@ -555,7 +557,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_count = node.generic_params.len();
                         let check = self.generic_param_count == actual_count;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected count '{}' == Actual count '{}'",
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
                             "Generic Param Count Match?".to_string().log_step(), check.log_bool(),
                             self.generic_param_count.to_string().log_name(),
                             actual_count.to_string().log_name()
@@ -578,7 +580,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_is_some = node.return_type.is_some();
                         let check = self.return_type_is_some == actual_is_some;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "   {: <23} {} | Expected is_some '{}' == Actual is_some '{}'",
                             "Return Type Is Some Match?".to_string().log_step(), check.log_bool(),
                             self.return_type_is_some.to_string().log_name(),
                             actual_is_some.to_string().log_name()
@@ -601,7 +603,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                         let actual_is_some = node.body.is_some();
                         let check = self.body_is_some == actual_is_some;
                         log::debug!(target: #log_target,
-                            "   {} {} | Expected is_some '{}' == Actual is_some '{}'",
+                            "   {: <23} {} | Expected is_some '{}' == Actual is_some '{}'",
                             "Body Is Some Match?".to_string().log_step(), check.log_bool(),
                             self.body_is_some.to_string().log_name(),
                             actual_is_some.to_string().log_name()
