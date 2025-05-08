@@ -1,3 +1,4 @@
+use derive_test_helpers::ExpectedData;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -76,7 +77,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ExpectedData)] // Add derive
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
     pub id: ImportNodeId, // Use typed ID

@@ -5,7 +5,6 @@ mod enums;
 mod functions;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod impls;
-#[cfg(not(feature = "type_bearing_ids"))]
 mod imports;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod macros;

@@ -45,6 +45,7 @@ pub use union::UnionNode;
 // This might be kind of a dirty way to do it, but I just hope it works:
 pub use consts::ExpectedConstNode;
 pub use function::ExpectedFunctionNode;
+pub use import::ExpectedImportNode;
 pub use statics::ExpectedStaticNode;
 
 // Re-export the generated *NodeInfo structs for internal use within the crate

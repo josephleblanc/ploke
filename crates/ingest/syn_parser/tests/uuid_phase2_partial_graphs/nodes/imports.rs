@@ -1,62 +1,63 @@
-use crate::common::paranoid::*; // Use re-exports from paranoid mod
-use crate::common::uuid_ids_utils::*;
+#![cfg(test)]
+#![allow(unused_imports)]
+use std::collections::HashMap;
+
+use crate::common::{paranoid::*, ParanoidArgs}; // Use re-exports from paranoid mod
 use ploke_common::fixtures_crates_dir;
-use ploke_core::NodeId;
-use syn_parser::parser::nodes::GraphId;
+use ploke_core::{ItemKind, NodeId};
 use syn_parser::parser::nodes::ImportKind;
 use syn_parser::parser::types::VisibilityKind;
 // Import ImportKind
 use syn_parser::parser::{
     graph::CodeGraph,
     nodes::{GraphNode, ImportNode}, // Import ImportNode
-    relations::RelationKind,
 };
 
-// Test Plan: docs/plans/uuid_refactor/testing/imports_testing.md
+use lazy_static::lazy_static;
 
-// Helper function for Tier 2 tests to find a node without full paranoia
-fn find_import_node_basic<'a>(
-    graph: &'a CodeGraph,
-    module_path: &[String],
-    // Use criteria that are usually unique enough for basic checks
-    visible_name: &str,
-    expected_path_suffix: &[String], // Check suffix as path can be long
-) -> &'a ImportNode {
-    // Find the module node first
-    let module_node = graph
-        .modules
-        .iter()
-        .find(|m| m.path().as_slice() == module_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ModuleNode not found for definition path: {:?} while looking for import '{}'",
-                module_path, visible_name
-            )
+// macro-related
+use crate::paranoid_test_fields_and_values; // For EXPECTED_FUNCTIONS_ARGS
+use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
+
+// This is what we want:
+lazy_static! {
+    static ref EXPECTED_IMPORTS_DATA: HashMap<&'static str, ExpectedImportNode> = {
+        let mut m = HashMap::new();
+        // m.insert("path::to::import_name", ExpectedImportNode {
+        //     source_path: &[&'static str],
+        //     visible_name: &'static str,
+        //     original_name: Option< &'static str >,
+        //     is_glob: bool,
+        //     is_self_import: bool,
+        //     cfgs: &[&'static str],
+        // });
+
+        m.insert("crate::HashMap", ExpectedImportNode {
+            // more here
+            cfgs: todo!()
         });
-
-    let module_items = module_node.items().unwrap_or_else(|| {
-        panic!(
-            "ModuleNode {:?} ({}) does not have items (neither Inline nor FileBased?)",
-            module_node.path, module_node.name,
-        )
-    });
-
-    // Find the import node by visible name, path suffix, and ensure it's in the module's items
-    graph
-        .use_statements // Check the global list
-        .iter()
-        .find(|i| -> bool {
-            i.visible_name == visible_name
-                && i.source_path.ends_with(expected_path_suffix)
-                && module_items.contains(&i.id)
-        })
-        .unwrap_or_else(|| {
-            panic!(
-                "ImportNode '{}' ending with path {:?} not found within module path {:?}",
-                visible_name, expected_path_suffix, module_path
-            )
-        })
+        m
+    };
 }
+
+lazy_static! {
+    static ref EXPECTED_IMPORTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        // example
+        m.insert("path::to::import_name", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/imports.rs",
+            ident: "import_name",
+            expected_cfg: None, // todo
+            expected_path: &["crate"],
+            item_kind: ItemKind::Import,
+        });
+        // more here.
+
+        m
+    };
+}
+
 // --- Tier 1: Basic Smoke Tests ---
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
