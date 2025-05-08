@@ -37,6 +37,24 @@ lazy_static! {
             cfgs: vec![],
         });
 
+        // Test case: `top_pub_mod` (definition in top_pub_mod.rs)
+        m.insert("file::top_pub_mod_rs::top_pub_mod_definition", ExpectedModuleNode {
+            name: "top_pub_mod",
+            path: &["crate", "top_pub_mod"], // Its canonical path
+            visibility: VisibilityKind::Inherited, // File-level modules are inherently private to their file unless re-exported by a parent
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, // No imports directly in top_pub_mod.rs
+            exports_count: 0,
+            tracking_hash_check: false, // File-level root module definitions don't have a separate tracking hash in current impl
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/top_pub_mod.rs"), // Relative to fixture root
+            items_count: 6, // top_pub_func, duplicate_name, top_pub_priv_func, mod nested_pub, mod nested_priv, mod path_visible_mod
+            file_attrs_count: 0, // No file-level attributes in top_pub_mod.rs
+            file_docs_is_some: false, // No file-level doc comments in top_pub_mod.rs
+            cfgs: vec![],
+        });
+
         m
     };
 }
@@ -54,6 +72,15 @@ lazy_static! {
             expected_cfg: None,
         });
 
+        m.insert("file::top_pub_mod_rs::top_pub_mod_definition", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/top_pub_mod.rs", // Definition is in this file
+            ident: "top_pub_mod", // The name of the module itself
+            expected_path: &["crate", "top_pub_mod"], // The path of the module itself (for value-based lookup context)
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
+
         m
     };
 }
@@ -61,6 +88,17 @@ lazy_static! {
 paranoid_test_fields_and_values!(
     node_top_pub_mod_declaration,
     "crate::top_pub_mod_declaration",
+    EXPECTED_MODULES_ARGS,                         // args_map
+    EXPECTED_MODULES_DATA,                         // expected_data_map
+    syn_parser::parser::nodes::ModuleNode,         // node_type
+    syn_parser::parser::nodes::ExpectedModuleNode, // derived Expeced*Node
+    as_module,                                     // downcast_method
+    LOG_TEST_MODULE                                // log_target
+);
+
+paranoid_test_fields_and_values!(
+    node_top_pub_mod_definition,
+    "file::top_pub_mod_rs::top_pub_mod_definition",
     EXPECTED_MODULES_ARGS,                         // args_map
     EXPECTED_MODULES_DATA,                         // expected_data_map
     syn_parser::parser::nodes::ModuleNode,         // node_type
