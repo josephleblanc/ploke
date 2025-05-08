@@ -9,6 +9,12 @@ pub const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibili
 pub const LOG_TARGET_RELS: &str = "rels"; // Define log target for relation checks
 pub const LOG_TARGET_NODE_ID: &str = "node_id";
 
+/// Good for debugging the inputs to id generation. Shows the inputs for each generated ID.
+/// Logs generated inputs to id gen during:
+/// - parsing by `VisitorState` in internal.rs
+/// - testing by `ParanoidArgs` in tests/common/mod.rs
+pub const LOG_TEST_ID_REGEN: &str = "test_id_regen";
+
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
     r: 122,
