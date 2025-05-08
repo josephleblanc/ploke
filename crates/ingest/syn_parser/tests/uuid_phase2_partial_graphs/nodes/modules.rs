@@ -20,10 +20,11 @@ lazy_static! {
         let mut m = HashMap::new();
 
         // Test case: `pub mod top_pub_mod;` (declaration in main.rs)
-        m.insert("crate::top_pub_mod_declaration", ExpectedModuleNode {
-            name: "top_pub_mod",
-            path: &["crate", "top_pub_mod"],
-            visibility: VisibilityKind::Public,
+        // Key format: "decl::{file_where_decl_is}::{module_name_at_decl}"
+        m.insert("decl::main_rs::top_pub_mod", ExpectedModuleNode {
+            name: "top_pub_mod", // Name of the module as declared
+            path: &["crate", "top_pub_mod"], // Canonical path of the module
+            visibility: VisibilityKind::Public, // Visibility of the `mod ...;` statement
             attributes: vec![],
             docstring: None,
             imports_count: 0, // Declarations should have 0 imports
@@ -38,10 +39,11 @@ lazy_static! {
         });
 
         // Test case: `top_pub_mod` (definition in top_pub_mod.rs)
-        m.insert("file::top_pub_mod_rs::top_pub_mod_definition", ExpectedModuleNode {
-            name: "top_pub_mod",
-            path: &["crate", "top_pub_mod"], // Its canonical path
-            visibility: VisibilityKind::Inherited, // File-level modules are inherently private to their file unless re-exported by a parent
+        // Key format: "file::{path_to_definition_file}::{module_name_as_per_file_rules}"
+        m.insert("file::top_pub_mod_rs::top_pub_mod", ExpectedModuleNode {
+            name: "top_pub_mod", // Name of the module (often from file stem or parent decl)
+            path: &["crate", "top_pub_mod"], // Canonical path
+            visibility: VisibilityKind::Inherited, // File-level module definitions have inherited visibility
             attributes: vec![],
             docstring: None,
             imports_count: 0, // No imports directly in top_pub_mod.rs
@@ -55,6 +57,160 @@ lazy_static! {
             cfgs: vec![],
         });
 
+        // --- main.rs declarations ---
+        m.insert("decl::main_rs::top_priv_mod", ExpectedModuleNode {
+            name: "top_priv_mod",
+            path: &["crate", "top_priv_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::crate_visible_mod", ExpectedModuleNode {
+            name: "crate_visible_mod",
+            path: &["crate", "crate_visible_mod"],
+            visibility: VisibilityKind::Crate, // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::logical_name", ExpectedModuleNode {
+            name: "logical_name",
+            path: &["crate", "logical_name"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![Attribute::new_path_attribute("custom_path/real_file.rs")],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::example_mod", ExpectedModuleNode {
+            name: "example_mod",
+            path: &["crate", "example_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- main.rs inline definitions ---
+        m.insert("inline::main_rs::inline_pub_mod", ExpectedModuleNode {
+            name: "inline_pub_mod",
+            path: &["crate", "inline_pub_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], // cfg(test) is extracted to cfgs
+            docstring: Some("An inline public module doc comment."),
+            imports_count: 1, // use std::collections::HashMap;
+            exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Inline, expected_file_path_suffix: None,
+            items_count: 5, // HashMap import, inline_pub_func, duplicate_name, inline_nested_priv decl, super_visible_inline decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec!["test".to_string()],
+        });
+        m.insert("inline::main_rs::inline_priv_mod", ExpectedModuleNode {
+            name: "inline_priv_mod",
+            path: &["crate", "inline_priv_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Inline, expected_file_path_suffix: None,
+            items_count: 2, // inline_priv_func, inline_nested_pub decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- File-based module definitions (other than top_pub_mod.rs) ---
+        m.insert("file::top_priv_mod_rs::top_priv_mod", ExpectedModuleNode {
+            name: "top_priv_mod",
+            path: &["crate", "top_priv_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/top_priv_mod.rs"),
+            items_count: 4, // nested_pub_in_priv decl, nested_priv_in_priv decl, top_priv_func, top_priv_priv_func
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::crate_visible_mod_rs::crate_visible_mod", ExpectedModuleNode {
+            name: "crate_visible_mod",
+            path: &["crate", "crate_visible_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/crate_visible_mod.rs"),
+            items_count: 3, // crate_vis_func, nested_priv decl, nested_crate_vis decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::custom_path_real_file_rs::real_file", ExpectedModuleNode {
+            name: "real_file", // Name from file stem due to #[path]
+            path: &["crate", "custom_path", "real_file"], // Path from file system
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/custom_path/real_file.rs"),
+            items_count: 2, // item_in_real_file, nested_in_real_file decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::example_mod_mod_rs::example_mod", ExpectedModuleNode {
+            name: "example_mod",
+            path: &["crate", "example_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/mod.rs"),
+            items_count: 5, // example_submod decl, example_private_submod decl, mod_sibling_one decl, mod_sibling_two decl, item_in_example_mod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- example_mod/mod.rs declarations ---
+        m.insert("decl::example_mod_mod_rs::example_submod", ExpectedModuleNode {
+            name: "example_submod", path: &["crate", "example_mod", "example_submod"], visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::example_mod_mod_rs::example_private_submod", ExpectedModuleNode {
+            name: "example_private_submod", path: &["crate", "example_mod", "example_private_submod"], visibility: VisibilityKind::Inherited, // private mod
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- example_mod/example_submod/mod.rs definition ---
+        m.insert("file::example_mod_example_submod_mod_rs::example_submod", ExpectedModuleNode {
+            name: "example_submod", path: &["crate", "example_mod", "example_submod"], visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_submod/mod.rs"),
+            items_count: 4, // submod_sibling_one, submod_sibling_private, submod_sibling_two, item_in_example_submod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- Crate root module (main.rs file itself) ---
+        m.insert("file::main_rs::crate", ExpectedModuleNode {
+            name: "file_dir_detection", // Crate name
+            path: &["crate"],
+            visibility: VisibilityKind::Public, // Crate root is implicitly public
+            attributes: vec![], // Outer attributes of the crate, not file-level #![...]
+            docstring: None, // Crate-level docstring is on file_docs
+            imports_count: 2, // use std::path::Path; pub use ... as reexported_func;
+            exports_count: 0, // Phase 2, exports not populated yet
+            tracking_hash_check: false, // File-level root
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/main.rs"),
+            items_count: 13, // example_mod, top_pub_mod, top_priv_mod, crate_visible_mod, logical_name, inline_pub_mod, inline_priv_mod, main_pub_func, main_priv_func, reexported_func (ImportNode), duplicate_name, main, use std::path::Path (ImportNode)
+            file_attrs_count: 1, // #![allow(unused)]
+            file_docs_is_some: true, // //! This is the crate root doc comment.
+            cfgs: vec![], // No cfgs on the crate module item itself
+        });
+
+
+        // TODO: Add more entries for all modules in the fixture. This is a representative start.
+        // Key areas to cover:
+        // - Deeply nested modules (declarations and definitions)
+        // - Modules in subdirectories (e.g., example_mod/example_private_submod/...)
+        // - Inline modules within other inline or file-based modules
+        // - Modules with file-level attributes and doc comments (e.g. main.rs itself)
+
         m
     };
 }
@@ -63,7 +219,7 @@ lazy_static! {
     static ref EXPECTED_MODULES_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
         let mut m = HashMap::new();
 
-        m.insert("crate::top_pub_mod_declaration", ParanoidArgs {
+        m.insert("decl::main_rs::top_pub_mod", ParanoidArgs {
             fixture: "file_dir_detection",
             relative_file_path: "src/main.rs", // Declaration is in main.rs
             ident: "top_pub_mod",
@@ -72,40 +228,209 @@ lazy_static! {
             expected_cfg: None,
         });
 
-        m.insert("file::top_pub_mod_rs::top_pub_mod_definition", ParanoidArgs {
+        m.insert("file::top_pub_mod_rs::top_pub_mod", ParanoidArgs {
             fixture: "file_dir_detection",
             relative_file_path: "src/top_pub_mod.rs", // Definition is in this file
             ident: "top_pub_mod", // The name of the module itself
-            expected_path: &["crate"], // The path of the module itself (for value-based lookup context)
+            expected_path: &["crate", "top_pub_mod"], // The path of the module itself
             item_kind: ItemKind::Module,
             expected_cfg: None,
         });
 
+        // --- main.rs declarations ---
+        m.insert("decl::main_rs::top_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "top_priv_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::crate_visible_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "crate_visible_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::logical_name", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "logical_name",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::example_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "example_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- main.rs inline definitions ---
+        m.insert("inline::main_rs::inline_pub_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "inline_pub_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: Some(&["test"]),
+        });
+        m.insert("inline::main_rs::inline_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "inline_priv_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- File-based module definitions ---
+        m.insert("file::top_priv_mod_rs::top_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/top_priv_mod.rs", ident: "top_priv_mod",
+            expected_path: &["crate", "top_priv_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::crate_visible_mod_rs::crate_visible_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/crate_visible_mod.rs", ident: "crate_visible_mod",
+            expected_path: &["crate", "crate_visible_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::custom_path_real_file_rs::real_file", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/custom_path/real_file.rs", ident: "real_file",
+            expected_path: &["crate", "custom_path", "real_file"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::example_mod_mod_rs::example_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_mod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- example_mod/mod.rs declarations ---
+        m.insert("decl::example_mod_mod_rs::example_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_submod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::example_mod_mod_rs::example_private_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_private_submod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- example_mod/example_submod/mod.rs definition ---
+        m.insert("file::example_mod_example_submod_mod_rs::example_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/example_submod/mod.rs", ident: "example_submod",
+            expected_path: &["crate", "example_mod", "example_submod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- Crate root module (main.rs file itself) ---
+        m.insert("file::main_rs::crate", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/main.rs",
+            ident: "file_dir_detection", // Crate name is the ident for the root module node
+            expected_path: &["crate"], // Its own path
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
+
+
+        // TODO: Add more entries for all modules in the fixture.
         m
     };
 }
 
 paranoid_test_fields_and_values!(
-    node_top_pub_mod_declaration,
-    "crate::top_pub_mod_declaration",
+    node_decl_main_rs_top_pub_mod,
+    "decl::main_rs::top_pub_mod",
     EXPECTED_MODULES_ARGS,                         // args_map
     EXPECTED_MODULES_DATA,                         // expected_data_map
     syn_parser::parser::nodes::ModuleNode,         // node_type
     syn_parser::parser::nodes::ExpectedModuleNode, // derived Expeced*Node
     as_module,                                     // downcast_method
-    LOG_TEST_MODULE                                // log_target
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_top_pub_mod_rs_top_pub_mod,
+    "file::top_pub_mod_rs::top_pub_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_top_priv_mod,
+    "decl::main_rs::top_priv_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_top_priv_mod_rs_top_priv_mod,
+    "file::top_priv_mod_rs::top_priv_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_crate_visible_mod,
+    "decl::main_rs::crate_visible_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_crate_visible_mod_rs_crate_visible_mod,
+    "file::crate_visible_mod_rs::crate_visible_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_logical_name,
+    "decl::main_rs::logical_name",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_custom_path_real_file_rs_real_file,
+    "file::custom_path_real_file_rs::real_file",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_inline_main_rs_inline_pub_mod,
+    "inline::main_rs::inline_pub_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_inline_main_rs_inline_priv_mod,
+    "inline::main_rs::inline_priv_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_example_mod,
+    "decl::main_rs::example_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_mod_rs_example_mod,
+    "file::example_mod_mod_rs::example_mod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_mod_rs_example_submod,
+    "decl::example_mod_mod_rs::example_submod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_submod_mod_rs_example_submod,
+    "file::example_mod_example_submod_mod_rs::example_submod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_mod_rs_example_private_submod,
+    "decl::example_mod_mod_rs::example_private_submod",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_main_rs_crate,
+    "file::main_rs::crate",
+    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module, LOG_TEST_MODULE
 );
 
-paranoid_test_fields_and_values!(
-    node_top_pub_mod_definition,
-    "file::top_pub_mod_rs::top_pub_mod_definition",
-    EXPECTED_MODULES_ARGS,                         // args_map
-    EXPECTED_MODULES_DATA,                         // expected_data_map
-    syn_parser::parser::nodes::ModuleNode,         // node_type
-    syn_parser::parser::nodes::ExpectedModuleNode, // derived Expeced*Node
-    as_module,                                     // downcast_method
-    LOG_TEST_MODULE                                // log_target
-);
 
 // TODO: Add a test using paranoid_test_fields_and_values! for the entry above
 // once we are confident the derive macro and ExpectedModuleNode are correct.
