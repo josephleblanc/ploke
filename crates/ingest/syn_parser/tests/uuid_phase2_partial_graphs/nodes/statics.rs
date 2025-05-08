@@ -109,7 +109,7 @@ lazy_static! {
     // Map from ident -> ExpectedStaticNode
     static ref EXPECTED_STATICS_DATA: HashMap<&'static str, ExpectedStaticNode> = {
         let mut m = HashMap::new();
-        m.insert("TOP_LEVEL_COUNTER", ExpectedStaticNode {
+        m.insert("crate::const_static::TOP_LEVEL_COUNTER", ExpectedStaticNode {
             name: "TOP_LEVEL_COUNTER",
             visibility: VisibilityKind::Public,
             type_id_check: true,
@@ -120,7 +120,7 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-         m.insert("DOC_ATTR_STATIC", ExpectedStaticNode {
+         m.insert("crate::const_static::DOC_ATTR_STATIC", ExpectedStaticNode {
             name: "DOC_ATTR_STATIC",
             visibility: VisibilityKind::Inherited,
             type_id_check: true,
@@ -132,7 +132,7 @@ lazy_static! {
             // Note: cfg string includes quotes as parsed by syn
             cfgs: vec!["target_os = \"linux\"".to_string()], // Store expected cfgs here
         });
-        m.insert("INNER_MUT_STATIC", ExpectedStaticNode {
+        m.insert("crate::const_static::inner_mod::INNER_MUT_STATIC", ExpectedStaticNode {
             name: "INNER_MUT_STATIC",
             visibility: VisibilityKind::Restricted(vec!["super".to_string()]),
             type_id_check: true,
@@ -217,11 +217,11 @@ fn test_static_nodes() -> Result<(), SynParserError> {
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Use ParanoidArgs to find the node
-    let args_key = "crate::const_static::TOP_LEVEL_COUNTER";
-    let args = EXPECTED_STATICS_ARGS.get(args_key).unwrap_or_else(|| {
-        panic!("ParanoidArgs not found for key: {}", args_key);
+    let expected_key = "crate::const_static::TOP_LEVEL_COUNTER";
+    let args = EXPECTED_STATICS_ARGS.get(expected_key).unwrap_or_else(|| {
+        panic!("ParanoidArgs not found for key: {}", expected_key);
     });
-    let exp_const = EXPECTED_STATICS_DATA.get(args.ident).unwrap();
+    let exp_static = EXPECTED_STATICS_DATA.get(expected_key).unwrap();
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
@@ -231,7 +231,7 @@ fn test_static_nodes() -> Result<(), SynParserError> {
             .find(|pg| pg.file_path.ends_with(args.relative_file_path))
             .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
 
-        let _found = exp_const.find_node_by_values(target_graph).count();
+        let _found = exp_static.find_node_by_values(target_graph).count();
         let _ = args.check_graph(target_graph);
     })?;
 
@@ -242,7 +242,7 @@ fn test_static_nodes() -> Result<(), SynParserError> {
         .inspect_err(|e| {
             let target_graph = test_info.target_data();
             let _ = args.check_graph(target_graph);
-            let count = exp_const.find_node_by_values(target_graph).count();
+            let count = exp_static.find_node_by_values(target_graph).count();
             log::warn!(target: LOG_TEST_STATIC, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
         })?;
 
@@ -257,28 +257,47 @@ fn test_static_nodes() -> Result<(), SynParserError> {
     let node = node.as_static().unwrap();
     assert!({
         ![
-            exp_const.is_name_match_debug(node),
-            exp_const.is_visibility_match_debug(node),
-            exp_const.is_attributes_match_debug(node),
-            exp_const.is_type_id_match_debug(node),
-            exp_const.is_value_match_debug(node),
-            exp_const.is_docstring_match_debug(node),
-            exp_const.is_tracking_hash_match_debug(node),
-            exp_const.is_cfgs_match_debug(node),
+            exp_static.is_name_match_debug(node),
+            exp_static.is_visibility_match_debug(node),
+            exp_static.is_attributes_match_debug(node),
+            exp_static.is_type_id_match_debug(node),
+            exp_static.is_value_match_debug(node),
+            exp_static.is_docstring_match_debug(node),
+            exp_static.is_tracking_hash_match_debug(node),
+            exp_static.is_cfgs_match_debug(node),
         ]
         .contains(&false)
     });
-    let expected_const_node = EXPECTED_STATICS_DATA
-        .get("TOP_LEVEL_COUNTER")
-        .expect("The specified node was not found in they map of expected const nodes.");
+    let expected_static_node = EXPECTED_STATICS_DATA
+        .get("crate::const_static::TOP_LEVEL_COUNTER")
+        .expect("The specified node was not found in they map of expected static nodes.");
 
-    let macro_found_node = expected_const_node
+    let mut node_matches_iter = expected_static_node
         .find_node_by_values(test_info.target_data())
-        .next()
-        .unwrap();
-    println!("ConstNode found using new macro: {:#?}", macro_found_node);
-    println!("ConstNode found using old methods: {:#?}", node);
+        .filter(|stat| stat.id.to_pid() == node.id.to_pid());
+    let macro_found_node = node_matches_iter.next().unwrap();
+    println!(
+        "FucntionNode found using new macro: {:#?}",
+        macro_found_node
+    );
+    println!("StaticNode found using old methods: {:#?}", node);
     assert!(macro_found_node.id.to_pid() == node.id.to_pid());
+    for dup in node_matches_iter {
+        assert!(
+            node.id.to_pid() != dup.id.to_pid(),
+            "Duplicate StaticNodeId found"
+        );
+        log::warn!(target: LOG_TEST_STATIC,
+            "{}: {}\n{}\n\t{}\n\t{} {}\n\t{}",
+            "Duplicate values on different path: ",
+            "",
+            "Two targets were found with matching values.",
+            "This indicates that there were duplicate statics at different path locations.",
+            "That is fine, so long as you expected to find a duplicate static with the same",
+            "name, vis, attrs, docstring, trackinghash, and cfgs in two different files.",
+            "If you are seeing this check it means their Ids were correctly not duplicates."
+        );
+    }
     // assert!(expected_const_node.check_all_fields(node));
     Ok(())
 }

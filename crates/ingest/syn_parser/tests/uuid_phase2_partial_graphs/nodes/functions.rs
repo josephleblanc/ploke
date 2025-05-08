@@ -477,11 +477,11 @@ fn test_function_node_standard() -> Result<(), SynParserError> {
     let successful_graphs = run_phases_and_collect("fixture_types");
 
     // Use ParanoidArgs to find the node
-    let args_key = "crate::duplicate_names::process_tuple";
-    let args = EXPECTED_FUNCTIONS_ARGS.get(args_key).unwrap_or_else(|| {
-        panic!("ParanoidArgs not found for key: {}", args_key);
+    let data_key = "crate::duplicate_names::process_tuple";
+    let args = EXPECTED_FUNCTIONS_ARGS.get(data_key).unwrap_or_else(|| {
+        panic!("ParanoidArgs not found for key: {}", data_key);
     });
-    let exp_func = EXPECTED_FUNCTIONS_DATA.get(args.ident).unwrap();
+    let exp_func = EXPECTED_FUNCTIONS_DATA.get(data_key).unwrap();
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
@@ -528,26 +528,41 @@ fn test_function_node_standard() -> Result<(), SynParserError> {
         .contains(&false)
     });
     let expected_func_node = EXPECTED_FUNCTIONS_DATA
-        .get("process_tuple")
+        .get("crate::duplicate_names::process_tuple")
         .expect("The specified node was not found in they map of expected function nodes.");
 
-    let mut node_matches_iter = expected_func_node
+    let mut value_matches_iter: HashMap<_, _> = expected_func_node
         .find_node_by_values(test_info.target_data())
-        .filter(|func| func.id.to_pid() == node.id.to_pid());
-    let macro_found_node = node_matches_iter.next().unwrap();
-    println!(
-        "FucntionNode found using new macro: {:#?}",
-        macro_found_node
-    );
-    println!("FunctionNode found using old methods: {:#?}", node);
+        .map(|n| (n.id, n))
+        .collect();
+    let macro_found_node = value_matches_iter.remove(&node.id).unwrap();
     assert!(macro_found_node.id.to_pid() == node.id.to_pid());
-    assert!(node_matches_iter.next().is_none());
+    for (dup_id, dup_node) in value_matches_iter {
+        assert!(
+            node.id.to_pid() != dup_id.to_pid(),
+            "{}, Expected ({}), Actual ({})\nData dump:\n {:#?}",
+            "Duplicate FunctionNodeId found.",
+            node.id.to_pid(),
+            dup_id.to_pid(),
+            dup_node
+        );
+        log::warn!(target: LOG_TEST_FUNCTION,
+            "{}: {}\n{}\n\t{}\n\t{} {}\n\t{}",
+            "Duplicate values on different path: ",
+            "",
+            "Two targets were found with matching values.",
+            "This indicates that there were duplicate functions at different path locations.",
+            "That is fine, so long as you expected to find a duplicate function with the same",
+            "name, vis, attrs, docstring, trackinghash, and cfgs in two different files.",
+            "If you are seeing this check it means their Ids were correctly not duplicates."
+        );
+    }
     // assert!(expected_const_node.check_all_fields(node));
     Ok(())
 }
 
 paranoid_test_fields_and_values!(
-    test_function_node_new_macro,
+    test_function_node_basic,
     "crate::process_tuple",                          // args_key
     EXPECTED_FUNCTIONS_ARGS,                         // args_map
     EXPECTED_FUNCTIONS_DATA,                         // expected_data_map
@@ -555,6 +570,17 @@ paranoid_test_fields_and_values!(
     syn_parser::parser::nodes::ExpectedFunctionNode, // derived Expeced*Node
     as_function,                                     // downcast_method
     LOG_TEST_FUNCTION                                // log_target
+);
+
+paranoid_test_fields_and_values!(
+    test_dup_value_in_other_path,
+    "crate::duplicate_names::process_tuple", // args_key
+    EXPECTED_FUNCTIONS_ARGS,                 // args_map
+    EXPECTED_FUNCTIONS_DATA,                 // expected_data_map
+    syn_parser::parser::nodes::FunctionNode, // node_type
+    syn_parser::parser::nodes::ExpectedFunctionNode, // derived Expeced*Node
+    as_function,                             // downcast_method
+    LOG_TEST_FUNCTION                        // log_target
 );
 
 // --- Test Cases ---

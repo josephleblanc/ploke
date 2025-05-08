@@ -2,7 +2,6 @@
 mod consts;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod enums;
-#[cfg(not(feature = "type_bearing_ids"))]
 mod functions;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod impls;

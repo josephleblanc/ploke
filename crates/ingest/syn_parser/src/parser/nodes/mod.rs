@@ -44,6 +44,7 @@ pub use union::UnionNode;
 // test structures generated with proc macros:
 // This might be kind of a dirty way to do it, but I just hope it works:
 pub use consts::ExpectedConstNode;
+pub use function::ExpectedFunctionNode;
 pub use statics::ExpectedStaticNode;
 
 // Re-export the generated *NodeInfo structs for internal use within the crate

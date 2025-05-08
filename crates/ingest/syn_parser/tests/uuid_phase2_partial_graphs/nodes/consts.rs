@@ -358,10 +358,9 @@ lazy_static! {
 }
 
 // Replaced by macro invocation below
-// TODO: Comment out after verifying that both this test and the macro replacing it are correctly
-// running before removing this test
 #[test]
-fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
+// NOTE: This test will remain as a basic sanity check that the test macros are working correctly.
+fn test_const_node_field_name_standard() -> Result<(), SynParserError> {
     let _ = env_logger::builder()
         .is_test(true)
         .format_timestamp(None) // Disable timestamps
@@ -371,11 +370,11 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
     let successful_graphs = run_phases_and_collect("fixture_nodes");
 
     // Use ParanoidArgs to find the node
-    let args_key = "crate::const_static::TOP_LEVEL_BOOL";
-    let args = EXPECTED_CONSTS_ARGS.get(args_key).unwrap_or_else(|| {
-        panic!("ParanoidArgs not found for key: {}", args_key);
+    let data_key = "crate::const_static::TOP_LEVEL_BOOL";
+    let args = EXPECTED_CONSTS_ARGS.get(data_key).unwrap_or_else(|| {
+        panic!("ParanoidArgs not found for key: {}", data_key);
     });
-    let exp_const = EXPECTED_CONSTS_DATA.get(args.ident).unwrap();
+    let exp_const = EXPECTED_CONSTS_DATA.get(data_key).unwrap();
 
     // Generate the expected PrimaryNodeId using the method on ParanoidArgs
     let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
@@ -423,15 +422,13 @@ fn test_value_node_field_name_standard() -> Result<(), SynParserError> {
         .contains(&false)
     });
     let expected_const_node = EXPECTED_CONSTS_DATA
-        .get("TOP_LEVEL_BOOL")
+        .get("crate::const_static::TOP_LEVEL_BOOL")
         .expect("The specified node was not found in they map of expected const nodes.");
 
     let macro_found_node = expected_const_node
         .find_node_by_values(test_info.target_data())
         .next()
         .unwrap();
-    println!("ConstNode found using new macro: {:#?}", macro_found_node);
-    println!("ConstNode found using old methods: {:#?}", node);
     assert!(macro_found_node.id.to_pid() == node.id.to_pid());
     // assert!(expected_const_node.check_all_fields(node));
     Ok(())

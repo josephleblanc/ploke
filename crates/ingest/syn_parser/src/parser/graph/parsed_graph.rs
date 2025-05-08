@@ -64,13 +64,14 @@ impl ParsedCodeGraph {
             .unwrap_or_default() // Return empty HashSet if crate_context is None
     }
 
+    // TODO: Turn this test back on once we complete the migration to using typed ids.
     /// Returns an iterator over the dependency names declared in the crate's Cargo.toml.
     ///
     /// Returns an empty iterator if the crate context (including dependency information)
     /// is not available. This avoids cloning the names or collecting into a new structure.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use syn_parser::parser::ParsedCodeGraph; // Adjust path
     /// # use std::collections::HashMap;
     /// # let graph: ParsedCodeGraph = /* ... initialize ... */;
