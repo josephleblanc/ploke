@@ -1,14 +1,16 @@
+#![cfg(test)]
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId, TrackingHash, TypeId, TypeKind};
+use ploke_core::{ItemKind, NodeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
-use std::path::Path;
+use std::path::{self, Path};
 use syn_parser::error::SynParserError; // Import directly from ploke_core
-use syn_parser::parser::graph::{CodeGraph, GraphAccess, GraphNode}; // Added GraphNode
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode, VisibilityKind}; // Remove TypeKind from here
+use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
-use syn_parser::utils::{LogStyle, LogStyleDebug}; // Added LogStyle imports
+use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
+use syn_parser::utils::LogStyle; // Added LogStyle imports
 use syn_parser::TestIds;
 use thiserror::Error; // Ensure thiserror is imported
 
@@ -71,15 +73,14 @@ impl<'a> ParanoidArgs<'a> {
     /// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
     /// correctly matches when using the expected inputs for the typed id node generation.
     /// - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
-    /// in the `ParanoidArgs`.
+    ///   in the `ParanoidArgs`.
     pub fn generate_pid(
         &'a self,
         parsed_graphs: &'a [ParsedCodeGraph],
-    ) -> Result<TestInfo, SynParserError> {
+    ) -> Result<TestInfo<'a>, SynParserError> {
         // 1. Construct the absolute expected file path
         let fixture_root = fixtures_crates_dir().join(self.fixture);
         let target_file_path = fixture_root.join(self.relative_file_path);
-        let item_kind = ItemKind::Const;
 
         // 2. Find the specific ParsedCodeGraph for the target file
         let target_data = parsed_graphs
@@ -100,20 +101,33 @@ impl<'a> ParanoidArgs<'a> {
             .collect_vec();
 
         let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
-        
-        let cfgs_bytes_option: Option<Vec<u8>> = self.expected_cfg
+
+        let cfgs_bytes_option: Option<Vec<u8>> = self
+            .expected_cfg
             .filter(|cfgs_slice| !cfgs_slice.is_empty()) // Only proceed if there are actual CFG strings
-            .map(|cfgs_slice| calculate_cfg_hash_bytes(&strs_to_strings(cfgs_slice)))
-            .flatten(); // Results in None if expected_cfg is None, or if cfgs_slice is empty, or if calculate_cfg_hash_bytes returns None.
-        
-        let actual_parent_scope_id_for_id_gen = Some(parent_module.id.base_tid());
+            .and_then(|cfgs_slice| calculate_cfg_hash_bytes(&strs_to_strings(cfgs_slice))); // Results in None if expected_cfg is None, or if cfgs_slice is empty, or if calculate_cfg_hash_bytes returns None.
+
+        let actual_parent_scope_id_for_id_gen = if parent_module.is_file_based()
+            && self.ident == parent_module.name()
+            && self.expected_path == parent_module.path()
+            && self.expected_cfg.is_some_and(|c| c == parent_module.cfgs())
+            && graph
+                .find_module_by_file_path_checked(path::Path::new(self.relative_file_path))
+                .is_ok_and(|file_node| file_node.id == parent_module.id)
+        {
+            None
+        } else {
+            Some(parent_module.id.base_tid())
+        };
+        // let actual_parent_scope_id_for_id_gen = Some(parent_module.id.base_tid());
         let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
 
         // New structured logging:
-        if log::log_enabled!(target: "temp_target", log::Level::Debug) { // Check if specific log is enabled
-            log::debug!(target: "temp_target", "DEBUG_CONST_STATIC: ParanoidArgs::generate_pid");
-            log::debug!(target: "temp_target",
-                "  Inputs for '{}' ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}",
+        if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug) {
+            // Check if specific log is enabled
+            log::debug!(target: LOG_TEST_ID_REGEN, "ParanoidArgs::generate_pid");
+            log::debug!(target: LOG_TEST_ID_REGEN,
+                "  Inputs for {} ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}",
                 self.ident,
                 self.item_kind, // Use self.item_kind from ParanoidArgs
                 target_data.crate_namespace,
@@ -129,9 +143,9 @@ impl<'a> ParanoidArgs<'a> {
         let generated_id = NodeId::generate_synthetic(
             target_data.crate_namespace,
             &target_file_path,
-            &exp_path_string, 
+            &exp_path_string,
             self.ident,
-            self.item_kind, // Use self.item_kind from ParanoidArgs
+            self.item_kind,                    // Use self.item_kind from ParanoidArgs
             actual_parent_scope_id_for_id_gen, // Use the determined parent scope ID
             actual_cfg_bytes_for_id_gen,       // Use the determined CFG bytes
         );
@@ -172,7 +186,8 @@ pub const LOG_PARANOID_CHECK: &str = "log_paranoid_check";
 impl ParanoidArgs<'_> {
     /// Logs the expected information stored in these ParanoidArgs.
     /// Returns a SynParserError if checks fail (e.g., no root module, duplicate root modules).
-    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> Result<(), SynParserError> { // Changed return type
+    pub fn check_graph(&self, parsed: &ParsedCodeGraph) -> Result<(), SynParserError> {
+        // Changed return type
         let exp_fp = self.relative_file_path;
 
         log::debug!(target: LOG_PARANOID_CHECK,
@@ -251,80 +266,6 @@ impl<'a> TestInfo<'a> {
     }
 }
 
-/// Regenerates the exact uuid::Uuid using the v5 hashing method to check that the node id
-/// correctly matches when using the expected inputs for the typed id node generation.
-///     - Returns a result with the typed PrimaryNodeId matching the input type of `item_kind` provided
-///     in the `ParanoidArgs`.
-pub fn gen_pid_paranoid(
-    args: ParanoidArgs,
-    parsed_graphs: &[ParsedCodeGraph],
-) -> Result<PrimaryNodeId, SynParserError> {
-    // 1. Construct the absolute expected file path
-    let fixture_root = fixtures_crates_dir().join(args.fixture);
-    let target_file_path = fixture_root.join(args.relative_file_path);
-    let item_kind = ItemKind::Const;
-
-    // 2. Find the specific ParsedCodeGraph for the target file
-    let target_data = parsed_graphs
-        .iter()
-        .find(|data| data.file_path == target_file_path)
-        .unwrap_or_else(|| {
-            panic!(
-                "ParsedCodeGraph for '{}' not found in results",
-                target_file_path.display()
-            )
-        });
-    let graph = &target_data.graph;
-    let exp_path_string = args
-        .expected_path
-        .iter()
-        .copied()
-        .map(|s| s.to_string())
-        .collect_vec();
-
-    let parent_module = graph.find_module_by_path_checked(&exp_path_string)?;
-    let cfgs = args
-        .expected_cfg
-        .map(strs_to_strings)
-        .map(|c| calculate_cfg_hash_bytes(c.as_slice()).unwrap());
-    let item_name = args
-        .expected_path
-        .last()
-        .expect("Must use name as last element of path for paranoid test helper.");
-    let name_as_vec = vec![item_name.to_string()];
-
-    let generated_id = NodeId::generate_synthetic(
-        target_data.crate_namespace,
-        &target_file_path,
-        &name_as_vec,
-        args.ident,
-        item_kind,
-        Some(parent_module.id.base_tid()),
-        cfgs.as_deref(),
-    );
-
-    let pid = match args.item_kind {
-        ItemKind::Function => FunctionNodeId::new_test(generated_id).into(),
-        ItemKind::Struct => StructNodeId::new_test(generated_id).into(),
-        ItemKind::Enum => EnumNodeId::new_test(generated_id).into(),
-        ItemKind::Union => UnionNodeId::new_test(generated_id).into(),
-        ItemKind::TypeAlias => TypeAliasNodeId::new_test(generated_id).into(),
-        ItemKind::Trait => TraitNodeId::new_test(generated_id).into(),
-        ItemKind::Impl => ImplNodeId::new_test(generated_id).into(),
-        ItemKind::Module => ModuleNodeId::new_test(generated_id).into(),
-        ItemKind::Const => ConstNodeId::new_test(generated_id).into(),
-        ItemKind::Static => StaticNodeId::new_test(generated_id).into(),
-        ItemKind::Macro => MacroNodeId::new_test(generated_id).into(),
-        ItemKind::Import => ImportNodeId::new_test(generated_id).into(),
-        // TODO: Decide what to do about handling ExternCrate. We kind of do want everything to
-        // have a NodeId of some kind, and this will do for now, but we also want to
-        // distinguish between an ExternCrate statement and something else... probably.
-        ItemKind::ExternCrate => ImportNodeId::new_test(generated_id).into(),
-        _ => panic!("You can't use this test helper on Secondary/Assoc nodes, at least not yet."),
-    };
-    Ok(pid)
-}
-
 fn strs_to_strings(strs: &[&str]) -> Vec<String> {
     strs.iter().copied().map(String::from).collect()
 }
@@ -334,7 +275,7 @@ use {
     syn_parser::parser::analyze_files_parallel,
 };
 
-use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+use ploke_common::{fixtures_crates_dir, workspace_root};
 #[cfg(not(feature = "type_bearing_ids"))]
 pub use resolution::build_tree_for_tests;
 

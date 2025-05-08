@@ -259,7 +259,23 @@ macro_rules! paranoid_test_fields_and_values {
             // collected.
             let matched_nodes_by_value: Vec<_> = expected_data.find_node_by_values(target_graph_data).collect();
             // Checks for actual match of node id in values.
-            let node_pid_match = node_pid_result?;
+            let node_pid_match = node_pid_result.inspect_err(|_| {
+                log::trace!(target: $log_target,
+                    "Found {} matches by value.\n{:=^60}\n{}\n {:=^60}\n{:#?}",
+                    matched_nodes_by_value.len(),
+                    " Matched Items ",
+                    matched_nodes_by_value
+                        .iter()
+                        .enumerate()
+                        .map(|(i, node)| {
+                            format!("Match #{}:\n\tName: {}\n\tExpected Path: {:?}\n\tId: {}\n\tFull Id: {:?}",
+                                i, args.ident, args.expected_path, node.id, node.id
+                            )
+                    }).collect::<Vec<String>>().join("\n"),
+                    " Matched Item Info Dump ",
+                    matched_nodes_by_value
+                );
+            })?;
             let value_matches_not_pid = matched_nodes_by_value.iter().filter(|n| n.id.to_pid() != node_pid_match);
             for value_dup_node in value_matches_not_pid {
             // Sanity Check: Not really necessary to assert here after filter.

@@ -1,4 +1,3 @@
-//! Public interface for typed node identifiers.
 //!
 //! This module re-exports the strictly encapsulated ID types defined in the private
 //! `internal` module, along with necessary public traits and enums for working

@@ -1,3 +1,4 @@
+use derive_test_helpers::ExpectedData;
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,7 +23,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 ///
 /// It stores metadata like name, visibility, attributes, documentation, span,
 /// contained imports, and its definition kind (`ModuleKind`).
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, GenerateNodeInfo)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, GenerateNodeInfo, ExpectedData)] // Add derive
 pub struct ModuleNode {
     /// The type-safe identifier for this specific module node.
     pub id: ModuleNodeId,
@@ -30,6 +31,10 @@ pub struct ModuleNode {
     pub name: String,
     /// The fully resolved definition path of this module (e.g., `["crate", "foo", "bar"]`).
     /// This path is constructed during parsing and module tree building.
+    /// During initial parsing this path is not verifiable due to inherent limitations of parallel
+    /// parsing with no shared cross-thread communication, however after module tree construction
+    /// the path of all modules should be canonical. Until then it is a best guess (pending
+    /// resolution of the `[#path]` attribute, either for itself or potentially parent modules.)
     pub path: Vec<String>,
     /// The visibility of the module declaration (`pub`, `pub(crate)`, etc.).
     pub visibility: VisibilityKind,

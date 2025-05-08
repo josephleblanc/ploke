@@ -213,15 +213,22 @@ impl<'a> CodeVisitor<'a> {
             }
             syn::UseTree::Glob(glob) => {
                 // Base case: A glob import.
+                // NOTE: Previously the '*" glob was being replaced with the str, "<glob>", for ID
+                // generation, but this doesn't really make any sense, especially if the original
+                // name is not differentiated. Instead, we will just use the "*" as the name, and
+                // then if we run into issues later, we can use a replacement and store the "*" as
+                // the `original_name`.
                 let registration_result = self.register_new_node_id(
-                    "<glob>", // Use placeholder name
+                    "*", // Use the literal "*" glob symbol directly.
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
                 // Check if registration failed
                 if registration_result.is_none() {
+                    let mut glob_name_err_msg = base_path.clone();
+                    glob_name_err_msg.push("*".to_string());
                     let err = CodeVisitorError::RegistrationFailed {
-                        item_name: "<glob>".to_string(),
+                        item_name: glob_name_err_msg.join("::"),
                         item_kind: ItemKind::Import,
                     };
                     error!(target: LOG_TARGET_TRACE, "{}", err);
@@ -300,7 +307,6 @@ impl<'a> CodeVisitor<'a> {
                         .iter()
                         // new lines for condensed items
                         .take(3)
-                        .into_iter()
                         .chain(current_mod.items().into_iter().rev().take(3).flatten())
                         // end new condensed items changes
                         .map(|id| id.log_id_debug())
@@ -517,6 +523,10 @@ impl<'a> CodeVisitor<'a> {
             self.state.current_scope_cfgs
         );
     }
+    #[allow(
+        dead_code,
+        reason = "useful later for when we implement associated item parsing"
+    )]
     fn pop_assoc_scope(&mut self, name: &str) {
         let popped_id = self.state.current_assoc_defn_scope.pop();
         let popped_cfgs = self.state.current_scope_cfgs.clone(); // Log before restoring

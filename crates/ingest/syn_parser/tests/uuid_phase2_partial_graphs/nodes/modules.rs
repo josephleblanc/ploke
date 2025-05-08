@@ -31,7 +31,7 @@ lazy_static! {
             tracking_hash_check: true, // Declarations have a tracking hash
             mod_disc: ModDisc::Declaration,
             expected_file_path_suffix: None, // Not FileBased
-            items_count: 1, // Declarations don't have items in ModuleNode.items directly
+            items_count: 0, // Declarations don't have items in ModuleNode.items directly
             file_attrs_count: 0, // Not FileBased
             file_docs_is_some: false, // Not FileBased
             cfgs: vec![],
@@ -76,7 +76,7 @@ lazy_static! {
             fixture: "file_dir_detection",
             relative_file_path: "src/top_pub_mod.rs", // Definition is in this file
             ident: "top_pub_mod", // The name of the module itself
-            expected_path: &["crate", "top_pub_mod"], // The path of the module itself (for value-based lookup context)
+            expected_path: &["crate"], // The path of the module itself (for value-based lookup context)
             item_kind: ItemKind::Module,
             expected_cfg: None,
         });

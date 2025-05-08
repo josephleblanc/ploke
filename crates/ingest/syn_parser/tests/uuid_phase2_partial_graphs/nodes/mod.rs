@@ -47,19 +47,20 @@
 //! Other node types not yet refactored (e.g., `StructNode`, `EnumNode`, `TraitNode`) will
 //! require similar analysis once updated.
 
-// Declare node-specific test modules
+// -- Files that have been updated for the new typed id system are here:
 mod consts;
-#[cfg(not(feature = "type_bearing_ids"))]
-mod enums;
 mod functions;
-#[cfg(not(feature = "type_bearing_ids"))]
-mod impls;
 mod imports;
-#[cfg(not(feature = "type_bearing_ids"))]
-mod macros;
-#[cfg(not(feature = "type_bearing_ids"))]
 mod modules;
 mod statics;
+
+// -- Files that have yet to be updated are gated behind the cfgs below:
+#[cfg(not(feature = "type_bearing_ids"))]
+mod enums;
+#[cfg(not(feature = "type_bearing_ids"))]
+mod impls;
+#[cfg(not(feature = "type_bearing_ids"))]
+mod macros;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod structs;
 #[cfg(not(feature = "type_bearing_ids"))]

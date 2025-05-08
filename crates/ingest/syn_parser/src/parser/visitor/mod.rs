@@ -146,6 +146,16 @@ pub fn analyze_file_phase2(
         None,                      // Root module has no parent scope ID within the file context
         root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
     );
+    // #[cfg(test)]
+    debug_file_module_id_gen(
+        crate_namespace,
+        &file_path,
+        &root_module_parent_path,
+        &root_module_name,
+        ItemKind::Module,
+        None,
+        root_cfg_bytes.as_deref(),
+    );
 
     // 3. Create the root module node using the derived path and name
     // Determine visibility: Public only for crate root (main.rs/lib.rs), Inherited otherwise
@@ -212,6 +222,44 @@ pub fn analyze_file_phase2(
         crate_namespace,
         state.code_graph,
     ))
+}
+
+// TODO: Figure out how to get the test cfg working correctly
+// #[cfg(test)]
+fn debug_file_module_id_gen(
+    crate_namespace: uuid::Uuid,
+    file_path: &std::path::Path,
+    relative_path: &[String],
+    item_name: &str,
+    item_kind: ItemKind, // Use ItemKind from this crate
+    parent_scope_id: Option<NodeId>,
+    cfg_bytes: Option<&[u8]>,
+) {
+    use log::debug;
+
+    use crate::utils::logging::LOG_TEST_ID_REGEN;
+
+    if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
+        if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
+            && debug_target_item == item_name
+        // allow for filtering by command env variable
+        {
+            // Check if specific log is enabled
+            debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " FileBased Id Generation ".log_header());
+            debug!(target: LOG_TEST_ID_REGEN,
+                "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
+                item_name.log_name(), // item name being processed by visitor
+                item_kind.log_comment_debug(),
+                crate_namespace,
+                file_path.as_os_str().log_comment_debug(),
+                relative_path.log_path_debug(), // This is the 'relative_path' for the item's ID context
+                item_name.log_name(),
+                item_kind.log_comment_debug(),
+                parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+                cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
+            );
+        }
+    }
 }
 
 fn debug_relationships(visitor: &CodeVisitor<'_>) {

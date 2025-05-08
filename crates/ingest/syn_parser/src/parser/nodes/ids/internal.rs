@@ -9,9 +9,11 @@ use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
-use crate::utils::LOG_TARGET_NODE_ID;
+use crate::utils::{LogStyle, LogStyleDebug, LOG_TARGET_NODE_ID};
 use log::debug;
-use ploke_core::{NodeId, TypeKind};// Removed IdConversionError import
+use ploke_core::{NodeId, TypeKind};
+use uuid::Uuid;
+// Removed IdConversionError import
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
@@ -108,9 +110,34 @@ pub(in crate::parser) trait GeneratesAnyNodeId {
         item_kind: ItemKind,
         cfg_bytes: Option<&[u8]>, // NEW: Accept CFG bytes
     ) -> AnyNodeId;
+
+    fn log_id_gen(&self, name: &str, item_kind: ItemKind, cfg_bytes: Option<&[u8]>, primary_parent_scope_id: Option<NodeId>) {
+        if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
+            if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug) 
+            && debug_target_item == name // allow for filtering by command env variable
+            { // Check if specific log is enabled
+                debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " VisitorState Id Generation ".log_header()); 
+                debug!(target: LOG_TEST_ID_REGEN,
+                    "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
+                    name.log_name(), // item name being processed by visitor
+                    item_kind.log_comment_debug(),
+                    self.crate_namespace(),
+                    &self.current_file_path().as_os_str().log_comment_debug(),
+                    &self.current_module_path().log_path_debug(), // This is the 'relative_path' for the item's ID context
+                    name.log_name(),
+                    item_kind.log_comment_debug(),
+                    primary_parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+                    cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
+                );
+            }
+        }
+    }
+    fn crate_namespace(&self) -> Uuid;
+    fn current_file_path(&self) -> &std::path::Path;
+    fn current_module_path(&self) -> &[String];
 }
 
-pub const LOG_TEMP_TARGET: &str = "temp_target";
+pub const LOG_TEST_ID_REGEN: &str = "test_id_regen";
 impl GeneratesAnyNodeId for VisitorState {
     fn generate_synthetic_node_id(
         &self,
@@ -126,37 +153,7 @@ impl GeneratesAnyNodeId for VisitorState {
             .map(|p_id| p_id.base_id());
 
         // MODIFIED CONDITION FOR LOGGING:
-        if (item_kind == ItemKind::Const || item_kind == ItemKind::Static) &&
-           log::log_enabled!(target: LOG_TEMP_TARGET, log::Level::Debug) { // Check if specific log is enabled
-            debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC: VisitorState"); // Add context label
-            debug!(target: LOG_TEMP_TARGET,
-                "  Inputs for '{}' ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}",
-                name, // item name being processed by visitor
-                item_kind, // item kind being processed
-                self.crate_namespace,
-                &self.current_file_path,
-                &self.current_module_path, // This is the 'relative_path' for the item's ID context
-                name,
-                item_kind,
-                primary_parent_scope_id, // The actual parent_scope_id used by visitor
-                cfg_bytes // The actual cfg_bytes used by visitor
-            );
-        }
-        // if name == "TOP_LEVEL_BOOL" {
-        //
-        //     debug!(target: LOG_TEMP_TARGET, "DEBUG_CONST_STATIC");
-        // debug!(target: LOG_TARGET_NODE_ID,
-        //     "[Visitor generate_synthetic_node_id for '{}' ({:?})]",
-        //     name, item_kind
-        // );
-        // debug!(target: LOG_TARGET_NODE_ID, "  crate_namespace: {}", self.crate_namespace);
-        // debug!(target: LOG_TARGET_NODE_ID, "  file_path: {:?}", self.current_file_path);
-        // debug!(target: LOG_TARGET_NODE_ID, "  relative_path: {:?}", self.current_module_path);
-        // debug!(target: LOG_TARGET_NODE_ID, "  item_name: {}", name);
-        // debug!(target: LOG_TARGET_NODE_ID, "  item_kind: {:?}", item_kind);
-        // debug!(target: LOG_TARGET_NODE_ID, "  primary_parent_scope_id: {:?}", primary_parent_scope_id);
-        // debug!(target: LOG_TARGET_NODE_ID, "  cfg_bytes: {:?}", cfg_bytes);
-        // }
+        self.log_id_gen(name, item_kind, cfg_bytes, primary_parent_scope_id);
 
         let node_id = NodeId::generate_synthetic(
             self.crate_namespace,
@@ -190,6 +187,16 @@ impl GeneratesAnyNodeId for VisitorState {
             // distinguish between an ExternCrate statement and something else... probably.
             ItemKind::ExternCrate => ImportNodeId(node_id).into(),
         }
+    }
+
+    fn crate_namespace(&self) -> Uuid {
+        self.crate_namespace
+    }
+    fn current_file_path(&self) -> &std::path::Path {
+        &self.current_file_path
+    }
+    fn current_module_path(&self) -> &[String] {
+        &self.current_module_path
     }
 }
 
