@@ -288,32 +288,33 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 find_node_by_values_filters
                     .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
-            "generic_params" // For EnumNode (and others like FunctionNode, StructNode, etc.)
+            // "generic_params" for EnumNode is handled by the general "generic_params" arm below.
+
+            // == General Handler for "generic_params" (applicable to EnumNode, FunctionNode, StructNode, etc.) ==
+            "generic_params"
                 if (node_struct_name == "EnumNode" || node_struct_name == "FunctionNode" || node_struct_name == "StructNode" || node_struct_name == "TraitNode" || node_struct_name == "ImplNode" || node_struct_name == "TypeAliasNode" || node_struct_name == "UnionNode")
                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Assuming Vec<GenericParamNode>
             {
-                // Check if this field is specifically 'generic_params' to avoid conflict with 'parameters' for FunctionNode
-                if field_name_str == "generic_params" {
-                    expected_fields_defs.push(quote! { pub generic_params_count: usize });
-                    inherent_check_method_impls.push(quote! {
-                        pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
-                            let actual_count = node.generic_params.len();
-                            let check = self.generic_params_count == actual_count;
-                            log::debug!(target: #log_target,
-                                "   {: <23} {} | Expected count '{}' == Actual count '{}'",
-                                "Generic Params Count Match?".to_string().log_step(), check.log_bool(),
-                                self.generic_params_count.to_string().log_name(),
-                                actual_count.to_string().log_name()
-                            );
-                            check
-                        }
-                    });
-                    check_all_fields_logics.push(quote! {
-                        if !self.#check_method_name_ident(node) { all_passed = false; }
-                    });
-                    find_node_by_values_filters
-                        .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
-                }
+                // This field is 'generic_params', so we generate 'generic_params_count'
+                expected_fields_defs.push(quote! { pub generic_params_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.generic_params.len();
+                        let check = self.generic_params_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Generic Params Count Match?".to_string().log_step(), check.log_bool(),
+                            self.generic_params_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
 
             // == FunctionNode Specific Handlers (Placed BEFORE the general skip arm) ==
