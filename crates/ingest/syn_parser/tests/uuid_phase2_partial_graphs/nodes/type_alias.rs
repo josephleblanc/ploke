@@ -1,12 +1,116 @@
+use crate::common::run_phases_and_collect;
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values;
+use lazy_static::lazy_static;
+use ploke_core::{ItemKind, TypeId, TypeKind};
+use std::collections::HashMap;
+use syn_parser::error::SynParserError;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::{Attribute, ExpectedTypeAliasNode, PrimaryNodeIdTrait};
+
+// Keep old imports for existing tests
 use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{TypeId, TypeKind};
 use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::GenericParamKind};
 
-// --- Test Cases ---
+
+pub const LOG_TEST_TYPE_ALIAS: &str = "log_test_type_alias";
+
+lazy_static! {
+    static ref EXPECTED_TYPE_ALIASES_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        let fixture_name = "fixture_nodes";
+        let rel_path = "src/type_alias.rs";
+
+        m.insert("crate::type_alias::SimpleId", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SimpleId",
+            expected_path: &["crate", "type_alias"], item_kind: ItemKind::TypeAlias, expected_cfg: None,
+        });
+        m.insert("crate::type_alias::GenericContainer", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "GenericContainer",
+            expected_path: &["crate", "type_alias"], item_kind: ItemKind::TypeAlias, expected_cfg: None,
+        });
+        m.insert("crate::type_alias::DisplayableContainer", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "DisplayableContainer",
+            expected_path: &["crate", "type_alias"], item_kind: ItemKind::TypeAlias, expected_cfg: None,
+        });
+        m
+    };
+
+    static ref EXPECTED_TYPE_ALIASES_DATA: HashMap<&'static str, ExpectedTypeAliasNode> = {
+        let mut m = HashMap::new();
+
+        m.insert("crate::type_alias::SimpleId", ExpectedTypeAliasNode {
+            name: "SimpleId",
+            visibility: VisibilityKind::Public,
+            type_id_check: true, // Expecting the TypeId to be synthetic
+            generic_params_count: 0,
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("crate::type_alias::GenericContainer", ExpectedTypeAliasNode {
+            name: "GenericContainer",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            generic_params_count: 1,
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("crate::type_alias::DisplayableContainer", ExpectedTypeAliasNode {
+            name: "DisplayableContainer",
+            visibility: VisibilityKind::Public,
+            type_id_check: true,
+            generic_params_count: 1, // <T: std::fmt::Display>
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m
+    };
+}
+
+paranoid_test_fields_and_values!(
+    test_type_alias_simple_id_macro,
+    "crate::type_alias::SimpleId",
+    EXPECTED_TYPE_ALIASES_ARGS,
+    EXPECTED_TYPE_ALIASES_DATA,
+    syn_parser::parser::nodes::TypeAliasNode,
+    syn_parser::parser::nodes::ExpectedTypeAliasNode,
+    as_type_alias,
+    LOG_TEST_TYPE_ALIAS
+);
+
+paranoid_test_fields_and_values!(
+    test_type_alias_generic_container_macro,
+    "crate::type_alias::GenericContainer",
+    EXPECTED_TYPE_ALIASES_ARGS,
+    EXPECTED_TYPE_ALIASES_DATA,
+    syn_parser::parser::nodes::TypeAliasNode,
+    syn_parser::parser::nodes::ExpectedTypeAliasNode,
+    as_type_alias,
+    LOG_TEST_TYPE_ALIAS
+);
+
+paranoid_test_fields_and_values!(
+    test_type_alias_displayable_container_macro,
+    "crate::type_alias::DisplayableContainer",
+    EXPECTED_TYPE_ALIASES_ARGS,
+    EXPECTED_TYPE_ALIASES_DATA,
+    syn_parser::parser::nodes::TypeAliasNode,
+    syn_parser::parser::nodes::ExpectedTypeAliasNode,
+    as_type_alias,
+    LOG_TEST_TYPE_ALIAS
+);
+
+// --- Old Test Cases (Kept as per instruction) ---
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]

@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for TypeAliasNodeInfo
 
 // Represents a type alias (type NewType = OldType)
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct TypeAliasNode {
     pub id: TypeAliasNodeId, // Use typed ID
     pub name: String,
