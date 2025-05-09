@@ -1,19 +1,20 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*, ParanoidArgs};
-use ploke_core::{ItemKind, TypeId, TypeKind}; // Import TypeKind from ploke_core
-use syn_parser::parser::{
-    nodes::{GraphId, GraphNode, ExpectedStructNode, Attribute}, // Added ExpectedStructNode, Attribute
-    relations::RelationKind,                   // Added for relation checks
-    types::{GenericParamKind, VisibilityKind}, // Remove TypeKind from here
-};
-use std::collections::HashMap;
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values;
 use lazy_static::lazy_static;
-use crate::paranoid_test_fields_and_values; // Import the test macro
-    
+use ploke_core::{ItemKind, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use std::collections::HashMap;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::{
+    nodes::{Attribute, ExpectedStructNode, GraphNode}, // Added ExpectedStructNode, Attribute
+    types::{GenericParamKind, VisibilityKind},         // Remove TypeKind from here
+}; // Import the test macro
+
 pub const LOG_TEST_STRUCT: &str = "log_test_struct";
-    
+
 lazy_static! {
     static ref EXPECTED_STRUCTS_DATA: HashMap<&'static str, ExpectedStructNode> = {
         let mut m = HashMap::new();
@@ -35,7 +36,7 @@ lazy_static! {
         m
     };
 }
-    
+
 lazy_static! {
     static ref EXPECTED_STRUCTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
         let mut m = HashMap::new();
@@ -53,7 +54,7 @@ lazy_static! {
         m
     };
 }
-    
+
 paranoid_test_fields_and_values!(
     test_sample_struct_fields_and_values,
     "crate::structs::SampleStruct",
@@ -64,9 +65,9 @@ paranoid_test_fields_and_values!(
     as_struct,
     LOG_TEST_STRUCT
 );
-    
+
 // --- Old Test Cases (to be refactored/removed later) ---
-    
+
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_generic_struct_paranoid() {
