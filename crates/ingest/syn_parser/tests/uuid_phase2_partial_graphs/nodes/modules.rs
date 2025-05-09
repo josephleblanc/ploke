@@ -212,6 +212,50 @@ lazy_static! {
         // - Inline modules within other inline or file-based modules
         // - Modules with file-level attributes and doc comments (e.g. main.rs itself)
 
+        // --- deeply_nested_mod (declared in subsubsubmod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod", ExpectedModuleNode {
+            name: "deeply_nested_mod",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- deeply_nested_mod (defined in deeply_nested_mod/mod.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod", ExpectedModuleNode {
+            name: "deeply_nested_mod",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs"),
+            items_count: 2, // pub mod deeply_nested_file; fn item_in_deeply_nested_mod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- deeply_nested_file (declared in deeply_nested_mod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file", ExpectedModuleNode {
+            name: "deeply_nested_file",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod", "deeply_nested_file"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        // --- deeply_nested_file (defined in deeply_nested_file.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file", ExpectedModuleNode {
+            name: "deeply_nested_file",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod", "deeply_nested_file"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs"),
+            items_count: 1, // fn item_in_deeply_nested_file
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
         m
     };
 }
@@ -313,6 +357,43 @@ lazy_static! {
 
 
         // TODO: Add more entries for all modules in the fixture.
+
+        // --- deeply_nested_mod (declared in subsubsubmod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs",
+            ident: "deeply_nested_mod",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod"],
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_mod (defined in deeply_nested_mod/mod.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs",
+            ident: "deeply_nested_mod",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod"], // Parent path for ID gen
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_file (declared in deeply_nested_mod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs",
+            ident: "deeply_nested_file",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_file (defined in deeply_nested_file.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs",
+            ident: "deeply_nested_file",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"], // Parent path for ID gen
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
         m
     };
 }
@@ -470,6 +551,46 @@ paranoid_test_fields_and_values!(
 paranoid_test_fields_and_values!(
     node_file_main_rs_crate,
     "file::main_rs::crate",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs_deeply_nested_mod,
+    "decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs_deeply_nested_mod,
+    "file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs_deeply_nested_file,
+    "decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs_deeply_nested_file,
+    "file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file",
     EXPECTED_MODULES_ARGS,
     EXPECTED_MODULES_DATA,
     syn_parser::parser::nodes::ModuleNode,
