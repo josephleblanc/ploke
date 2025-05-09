@@ -3,7 +3,7 @@ use syn_parser::parser::graph::GraphAccess;
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 // Import EnumNode specifically
-use crate::common::ParanoidArgs;
+use crate::common::{new_path_attribute, ParanoidArgs};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use syn_parser::parser::nodes::{ExpectedModuleNode, GraphNode, ImportNode, ModDisc};
@@ -13,6 +13,15 @@ use crate::paranoid_test_fields_and_values;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
 
+// failures:
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_crate_visible_mod_rs_crate_visible_mod
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_custom_path_real_file_rs_real_file
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_example_mod_example_submod_mod_rs_example_submod
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_example_mod_mod_rs_example_mod
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_main_rs_crate
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_top_priv_mod_rs_top_priv_mod
+//     uuid_phase2_partial_graphs::nodes::modules::node_file_top_pub_mod_rs_top_pub_mod
+//
 pub const LOG_TEST_MODULE: &str = "log_test_module";
 
 lazy_static! {
@@ -70,7 +79,7 @@ lazy_static! {
         });
         m.insert("decl::main_rs::crate_visible_mod", ExpectedModuleNode {
             name: "crate_visible_mod",
-            path: &["crate", "crate_visible_mod"],
+            path: &["crate", "crate_visible_mod"], // in src/main.rs
             visibility: VisibilityKind::Crate, // pub(crate)
             attributes: vec![],
             docstring: None,
@@ -82,7 +91,7 @@ lazy_static! {
             name: "logical_name",
             path: &["crate", "logical_name"],
             visibility: VisibilityKind::Public,
-            attributes: vec![Attribute::new_path_attribute("custom_path/real_file.rs")],
+            attributes: vec![new_path_attribute("custom_path/real_file.rs")],
             docstring: None,
             imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
@@ -158,7 +167,7 @@ lazy_static! {
             visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
             imports_count: 0, exports_count: 0, tracking_hash_check: false,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/mod.rs"),
-            items_count: 5, // example_submod decl, example_private_submod decl, mod_sibling_one decl, mod_sibling_two decl, item_in_example_mod
+            items_count: 6, // example_submod decl, example_private_submod decl, mod_sibling_one decl, mod_sibling_two decl, mod mod_sibling_private, item_in_example_mod
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
         });
 
@@ -187,7 +196,8 @@ lazy_static! {
 
         // --- Crate root module (main.rs file itself) ---
         m.insert("file::main_rs::crate", ExpectedModuleNode {
-            name: "file_dir_detection", // Crate name
+            name: "crate", // Name is just "crate" for now, might replace with actual crate name,
+                           // e.g. "my_project", "serde", "anyhow", later
             path: &["crate"],
             visibility: VisibilityKind::Public, // Crate root is implicitly public
             attributes: vec![], // Outer attributes of the crate, not file-level #![...]
@@ -232,7 +242,7 @@ lazy_static! {
             fixture: "file_dir_detection",
             relative_file_path: "src/top_pub_mod.rs", // Definition is in this file
             ident: "top_pub_mod", // The name of the module itself
-            expected_path: &["crate", "top_pub_mod"], // The path of the module itself
+            expected_path: &["crate"], // The path of the module's parent defaults to "crate" itself
             item_kind: ItemKind::Module,
             expected_cfg: None,
         });
@@ -268,19 +278,19 @@ lazy_static! {
         // --- File-based module definitions ---
         m.insert("file::top_priv_mod_rs::top_priv_mod", ParanoidArgs {
             fixture: "file_dir_detection", relative_file_path: "src/top_priv_mod.rs", ident: "top_priv_mod",
-            expected_path: &["crate", "top_priv_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
         });
         m.insert("file::crate_visible_mod_rs::crate_visible_mod", ParanoidArgs {
             fixture: "file_dir_detection", relative_file_path: "src/crate_visible_mod.rs", ident: "crate_visible_mod",
-            expected_path: &["crate", "crate_visible_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
         });
         m.insert("file::custom_path_real_file_rs::real_file", ParanoidArgs {
             fixture: "file_dir_detection", relative_file_path: "src/custom_path/real_file.rs", ident: "real_file",
-            expected_path: &["crate", "custom_path", "real_file"], item_kind: ItemKind::Module, expected_cfg: None,
+            expected_path: &["crate", "custom_path"], item_kind: ItemKind::Module, expected_cfg: None,
         });
         m.insert("file::example_mod_mod_rs::example_mod", ParanoidArgs {
             fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_mod",
-            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
         });
 
         // --- example_mod/mod.rs declarations ---
@@ -296,15 +306,16 @@ lazy_static! {
         // --- example_mod/example_submod/mod.rs definition ---
         m.insert("file::example_mod_example_submod_mod_rs::example_submod", ParanoidArgs {
             fixture: "file_dir_detection", relative_file_path: "src/example_mod/example_submod/mod.rs", ident: "example_submod",
-            expected_path: &["crate", "example_mod", "example_submod"], item_kind: ItemKind::Module, expected_cfg: None,
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
         });
 
         // --- Crate root module (main.rs file itself) ---
         m.insert("file::main_rs::crate", ParanoidArgs {
             fixture: "file_dir_detection",
             relative_file_path: "src/main.rs",
-            ident: "file_dir_detection", // Crate name is the ident for the root module node
-            expected_path: &["crate"], // Its own path
+            ident: "crate", // root name is "crate" for now, might replace later with actual crate
+                            // name.
+            expected_path: &[], // Its own path
             item_kind: ItemKind::Module,
             expected_cfg: None,
         });
@@ -328,109 +339,153 @@ paranoid_test_fields_and_values!(
 paranoid_test_fields_and_values!(
     node_file_top_pub_mod_rs_top_pub_mod,
     "file::top_pub_mod_rs::top_pub_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_main_rs_top_priv_mod,
     "decl::main_rs::top_priv_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_top_priv_mod_rs_top_priv_mod,
     "file::top_priv_mod_rs::top_priv_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_main_rs_crate_visible_mod,
     "decl::main_rs::crate_visible_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_crate_visible_mod_rs_crate_visible_mod,
     "file::crate_visible_mod_rs::crate_visible_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_main_rs_logical_name,
     "decl::main_rs::logical_name",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_custom_path_real_file_rs_real_file,
     "file::custom_path_real_file_rs::real_file",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_inline_main_rs_inline_pub_mod,
     "inline::main_rs::inline_pub_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_inline_main_rs_inline_priv_mod,
     "inline::main_rs::inline_priv_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_main_rs_example_mod,
     "decl::main_rs::example_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_example_mod_mod_rs_example_mod,
     "file::example_mod_mod_rs::example_mod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_example_mod_mod_rs_example_submod,
     "decl::example_mod_mod_rs::example_submod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_example_mod_example_submod_mod_rs_example_submod,
     "file::example_mod_example_submod_mod_rs::example_submod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_decl_example_mod_mod_rs_example_private_submod,
     "decl::example_mod_mod_rs::example_private_submod",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
 paranoid_test_fields_and_values!(
     node_file_main_rs_crate,
     "file::main_rs::crate",
-    EXPECTED_MODULES_ARGS, EXPECTED_MODULES_DATA,
-    syn_parser::parser::nodes::ModuleNode, syn_parser::parser::nodes::ExpectedModuleNode,
-    as_module, LOG_TEST_MODULE
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
 );
-
 
 // TODO: Add a test using paranoid_test_fields_and_values! for the entry above
 // once we are confident the derive macro and ExpectedModuleNode are correct.

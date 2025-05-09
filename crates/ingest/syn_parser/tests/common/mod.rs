@@ -109,7 +109,7 @@ impl<'a> ParanoidArgs<'a> {
             .find_module_by_path_checked(&exp_path_string)
         {
             Ok(parent_module) => Some(parent_module.id.base_tid()),
-            Err(e) => {
+            Err(_) => {
                 graph.find_module_by_file_path_checked(path::Path::new(self.relative_file_path))?;
                 None
             }
@@ -226,6 +226,18 @@ impl ParanoidArgs<'_> {
         } else {
             Ok(()) // Return Ok if no duplicates found
         }
+    }
+}
+
+/// Helper test function.
+/// Creates a new Attribute representing `#[path = "some_value"]`.
+pub fn new_path_attribute(value: &str) -> Attribute {
+    // Note: This does not exist in the `Attrbiute` definition in the actual crate because there
+    // should not be a case in which we are creating an attribute, we only parse them.
+    Attribute {
+        name: "path".to_string(),
+        args: Vec::new(),
+        value: Some(value.to_string()),
     }
 }
 

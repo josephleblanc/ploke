@@ -229,7 +229,7 @@ macro_rules! paranoid_test_fields_and_values {
                                 log::debug!(target: $log_target, "   Relation Check: Found Contains relation from parent module.");
                                 // --- End Relation Check ---
                                     },
-                                    Err(e) => {
+                                    Err(_) => {
                                         let _ = target_graph_data.find_module_by_file_path_checked(std::path::Path::new(args.relative_file_path))?;
                                         log::debug!(target: $log_target, "   Relation Check: Skipping contains relation check for parent of file-level module.");
                                     }

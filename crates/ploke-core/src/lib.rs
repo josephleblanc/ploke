@@ -422,8 +422,8 @@ mod ids {
         ///     - e.g. for canonical: `crate::module_a::Item`
         ///     - e.g. for public path: `my_project::module_a::Item`
         ///     - Note: if public path had in main.rs, `pub use my_project::module_a::Item`, the
-        ///     shortest public path would be `my_project::Item`, but canonical path would still be
-        ///     `crate::module_a::Item`
+        ///       shortest public path would be `my_project::Item`, but canonical path would still be
+        ///       `crate::module_a::Item`
         /// * `item_kind` - The kind of item, used to determine Node vs. Type variant.
         ///     - Note: Might remove this. Needs design attention
         /// * `cfg`: Required to distinguish identical nodes that have mutually exclusive cfgs

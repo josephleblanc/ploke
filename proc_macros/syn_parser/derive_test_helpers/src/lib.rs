@@ -186,7 +186,17 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                             self.items_count.log_name_debug(), // Use log_*_debug
                             actual_items_count.log_name_debug() // Use log_*_debug
                         );
-                        if !items_count_check { overall_check = false; }
+                        if !items_count_check { 
+                            // Log some extra debugging data for mismatches here:
+                            if let Some(node_items) = node.items() {
+                                log::debug!(target: #log_target,
+                                    "       {: <23} {:#?} ",
+                                    "Actual Items:".to_string().log_step(),
+                                    node.items() // Use log_*_debug
+                                );
+                            }
+                            overall_check = false; 
+                        }
 
                         if actual_mod_disc == crate::parser::nodes::ModDisc::FileBased {
                             // Check expected_file_path_suffix
