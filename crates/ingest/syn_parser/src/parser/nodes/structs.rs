@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Struct Node ---
-
+    
 // Removed the macro invocation for StructNodeInfo
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+    
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct StructNode {
     pub id: StructNodeId, // Use typed ID
     pub name: String,

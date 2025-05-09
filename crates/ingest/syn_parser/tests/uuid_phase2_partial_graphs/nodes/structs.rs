@@ -1,16 +1,72 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{TypeId, TypeKind}; // Import TypeKind from ploke_core
+use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*, ParanoidArgs};
+use ploke_core::{ItemKind, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::{
-    nodes::{GraphId, GraphNode},
+    nodes::{GraphId, GraphNode, ExpectedStructNode, Attribute}, // Added ExpectedStructNode, Attribute
     relations::RelationKind,                   // Added for relation checks
     types::{GenericParamKind, VisibilityKind}, // Remove TypeKind from here
 };
-
-// --- Test Cases ---
-
+use std::collections::HashMap;
+use lazy_static::lazy_static;
+use crate::paranoid_test_fields_and_values; // Import the test macro
+    
+pub const LOG_TEST_STRUCT: &str = "log_test_struct";
+    
+lazy_static! {
+    static ref EXPECTED_STRUCTS_DATA: HashMap<&'static str, ExpectedStructNode> = {
+        let mut m = HashMap::new();
+        m.insert(
+            "crate::structs::SampleStruct",
+            ExpectedStructNode {
+                name: "SampleStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1, // Has one field: pub field: String
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+                // Note: `value` field from ConstNode/StaticNode is not applicable here.
+                // Note: `type_id_check` from ConstNode/StaticNode is not applicable here.
+            },
+        );
+        m
+    };
+}
+    
+lazy_static! {
+    static ref EXPECTED_STRUCTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        m.insert(
+            "crate::structs::SampleStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "SampleStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m
+    };
+}
+    
+paranoid_test_fields_and_values!(
+    test_sample_struct_fields_and_values,
+    "crate::structs::SampleStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+    
+// --- Old Test Cases (to be refactored/removed later) ---
+    
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_generic_struct_paranoid() {

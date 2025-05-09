@@ -49,7 +49,8 @@ pub use function::ExpectedFunctionNode;
 pub use import::ExpectedImportNode;
 pub use module::ExpectedModuleNode;
 pub use statics::ExpectedStaticNode;
-
+pub use structs::ExpectedStructNode;
+    
 // Re-export the generated *NodeInfo structs for internal use within the crate
 // NOTE: 2025-05-02:
 // - Deleted all other *NodeInfo types, since we now use ids/internal.rs for NodeId gen through
