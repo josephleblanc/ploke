@@ -166,8 +166,14 @@ macro_rules! paranoid_test_fields_and_values {
                  panic!("{} not found for key: {}", stringify!($expected_data_type), $data_key);
             });
 
-            // 2. Run phases using fixture from retrieved args
-            let successful_graphs = crate::common::run_phases_and_collect(args.fixture);
+            // 2. Use the lazy_static parsed fixture based on args.fixture
+            let successful_graphs = match args.fixture {
+                "fixture_nodes" => &*crate::common::PARSED_FIXTURE_CRATE_NODES,
+                "fixture_crate_dir_detection" => &*crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                // Add other fixture names and their corresponding lazy_static variables here
+                // e.g., "fixture_types" => &*crate::common::PARSED_FIXTURE_CRATE_TYPES,
+                _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
+            };
 
             // 3. Find the target ParsedCodeGraph using relative_file_path from retrieved args
             let target_graph_data = successful_graphs
