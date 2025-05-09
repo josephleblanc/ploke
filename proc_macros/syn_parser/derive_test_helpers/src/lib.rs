@@ -669,7 +669,7 @@ check
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let expected_vec: Vec<String> = self.source_path.iter().map(|s| s.to_string()).collect();
-                        let check = expected_vec == node.source_path; // Compare Vec<String> == Vec<String>
+                        let check = &expected_vec == &node.source_path; // Compare &Vec<String> == &Vec<String>
                         log::debug!(target: #log_target,
                             "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
                             "Source Path Match?".to_string().log_step(), check.log_bool(),
@@ -1185,7 +1185,7 @@ check
                     }
                     ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
                         if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
-                            if actual_is_mutable != &expected_mut { // Compare &bool with &bool
+                            if *actual_is_mutable != expected_mut { // Compare bool with bool
                                 log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
                                     expected_mut.log_bool(), actual_is_mutable.log_bool());
                                 overall_match = false;
