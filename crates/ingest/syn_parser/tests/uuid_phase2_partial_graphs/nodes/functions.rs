@@ -74,12 +74,12 @@ use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values; // For EXPECTED_FUNCTIONS_ARGS
 use lazy_static::lazy_static;
-use ploke_core::{ItemKind, TypeId, TypeKind};
+use ploke_core::ItemKind;
 use std::collections::HashMap;
 use syn_parser::error::SynParserError; // Import ItemKind and TypeKind from ploke_core
 use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::ExpectedFunctionNode; // For ExpectedFunctionNode and Attribute
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
-use syn_parser::parser::nodes::{Attribute, ExpectedFunctionNode, GraphNode}; // For ExpectedFunctionNode and Attribute
 use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
                                                // Remove TypeKind from here, already imported from ploke_core
 
@@ -97,7 +97,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -109,7 +109,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -121,7 +121,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -133,7 +133,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -145,7 +145,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
@@ -157,7 +157,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 3,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -169,7 +169,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -181,7 +181,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
@@ -193,7 +193,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
@@ -205,7 +205,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
@@ -217,7 +217,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 0,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -229,7 +229,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 0,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: false, // Returns implicit unit
             body_is_some: true,
         });
@@ -242,7 +242,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true, // returns bool
             body_is_some: true,
         });
@@ -255,7 +255,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 2,
-            generic_param_count: 2,
+            generic_params_count: 2,
             return_type_is_some: true, // returns T
             body_is_some: true,
         });
@@ -268,7 +268,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 3,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true, // returns i32
             body_is_some: true,
         });
@@ -281,7 +281,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 0,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true, // returns MathOperation
             body_is_some: true,
         });
@@ -294,7 +294,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true, // returns bool
             body_is_some: true,
         });
@@ -307,7 +307,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 2,
-            generic_param_count: 2,
+            generic_params_count: 2,
             return_type_is_some: true, // returns T
             body_is_some: true,
         });
@@ -320,7 +320,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -333,7 +333,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });
@@ -346,7 +346,7 @@ lazy_static! {
             cfgs: vec![],
             tracking_hash_check: true,
             parameter_count: 1,
-            generic_param_count: 0,
+            generic_params_count: 0,
             return_type_is_some: true,
             body_is_some: true,
         });

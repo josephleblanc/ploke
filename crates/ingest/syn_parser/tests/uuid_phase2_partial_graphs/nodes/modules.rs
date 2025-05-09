@@ -79,20 +79,17 @@
 //! *   If precise span checking for module declarations or inline blocks becomes critical, consider adding specific assertions for `declaration_span` or `inline_span`, possibly through an extension to `ExpectedModuleNode` or separate, targeted tests.
 //! *   Add tests for modules containing `extern crate` items, ensuring they are correctly included in `items_count` and that the corresponding `ImportNode` is created.
 //! *   Add tests for modules that are part of a `#[cfg_attr(..., path = "...")]` scenario.
-use ploke_core::ItemKind;
-use syn_parser::parser::graph::GraphAccess;
-// Import TypeAliasNode specifically
-use syn_parser::parser::types::VisibilityKind;
-// Import EnumNode specifically
 use crate::common::{new_path_attribute, ParanoidArgs};
 use lazy_static::lazy_static;
+use ploke_core::ItemKind;
 use std::collections::HashMap;
-use syn_parser::parser::nodes::{ExpectedModuleNode, GraphNode, ImportNode, ModDisc};
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::{ExpectedModuleNode, ModDisc};
+use syn_parser::parser::types::VisibilityKind;
 
 // macro-related imports
 use crate::paranoid_test_fields_and_values;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
-use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
 
 pub const LOG_TEST_MODULE: &str = "log_test_module";
 
