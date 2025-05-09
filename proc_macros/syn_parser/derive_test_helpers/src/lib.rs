@@ -623,9 +623,15 @@ check
                 // Add Option<ExpectedTypeDetails> to Expected*Node struct
                 expected_fields_defs.push(quote! { pub expected_type_details: Option<ExpectedTypeDetails> });
 
-                // The check_all_fields logic will call a new helper method.
-                // No separate is_type_id_match_debug needed here, it's part of check_type_id_details.
-                // The actual call to check_type_id_details will be added to check_all_fields_logics later.
+                // Add the call to check_type_id_details to the check_all_fields_logics
+                // This ensures it's only called if the node has a type_id field.
+                let field_name_literal = field_ident.to_string();
+                check_all_fields_logics.push(quote! {
+                    // Ensure node.#field_ident is indeed a TypeId before calling
+                    if !self.check_type_id_details(#field_name_literal, &node.#field_ident, graph, #log_target) {
+                        all_passed = false;
+                    }
+                });
             }
             // Handle `value: Option<String>` for ConstNode
             "value"
@@ -1086,14 +1092,13 @@ check
                  let mut all_passed = true;
                  #(#check_all_fields_logics)*
 
-                 // Special handling for type_id field after other checks
-                 if stringify!(#node_struct_name) == "TypeAliasNode" || stringify!(#node_struct_name) == "ConstNode" || stringify!(#node_struct_name) == "StaticNode" { // Add other nodes with type_id here
-                    if !self.check_type_id_details("type_id", &node.type_id, graph, #log_target) {
-                        all_passed = false;
-                    }
-                 }
-                 // TODO: Add similar blocks for Option<TypeId> fields (e.g., return_type on FunctionNode)
-                 // and Vec<TypeId> fields (e.g., super_traits on TraitNode) if they exist on the node.
+                 // The call to check_type_id_details is now part of check_all_fields_logics
+                 // if the original node had a "type_id" field.
+                 // No further unconditional calls needed here.
+
+                 // TODO: Add similar conditional logic for Option<TypeId> fields (e.g., return_type on FunctionNode)
+                 // and Vec<TypeId> fields (e.g., super_traits on TraitNode) if they exist on the node,
+                 // by adding specific arms in the field processing loop.
 
                  all_passed
             }
