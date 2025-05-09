@@ -1,3 +1,84 @@
+//! Tests for `ModuleNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! *   **Fixture:** `tests/fixture_crates/file_dir_detection/`
+//! *   **Tests:** `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/modules.rs` (using `paranoid_test_fields_and_values!`)
+//!
+//! ### 1. Coverage of Fixture Items:
+//!
+//! The `EXPECTED_MODULES_DATA` and `EXPECTED_MODULES_ARGS` maps cover 19 distinct module declarations or definitions from the `file_dir_detection` fixture. This includes:
+//! *   Crate root module (`main.rs`).
+//! *   Top-level file-based modules (e.g., `top_pub_mod.rs`, `top_priv_mod.rs`).
+//! *   Inline modules (e.g., `inline_pub_mod`, `inline_priv_mod` in `main.rs`).
+//! *   Modules declared with `#[path]` attributes (e.g., `logical_name` pointing to `custom_path/real_file.rs`).
+//! *   Nested modules, both file-based (e.g., `example_mod/mod.rs`, `example_mod/example_submod/mod.rs`) and inline.
+//! *   Deeply nested modules (e.g., `deeply_nested_mod` and `deeply_nested_file`).
+//! *   Modules within subdirectories.
+//!
+//! **Conclusion for Fixture Coverage:** Good. A diverse range of module structures (declarations, file-based definitions, inline definitions, path attributes, nesting) from the fixture are covered by the `paranoid_test_fields_and_values!` tests.
+//!
+//! ### 2. Coverage of `ModuleNode` Property Variations:
+//!
+//! Based on the 19 items covered by `paranoid_test_fields_and_values!`:
+//!
+//! *   `id: ModuleNodeId`: Implicitly covered by ID generation and lookup.
+//! *   `name: String`: Excellent coverage (e.g., "crate", "top_pub_mod", "inline_pub_mod", "real_file" from file stem, "logical_name").
+//! *   `path: Vec<String>`: Excellent coverage (crate root `["crate"]`, simple `["crate", "foo"]`, nested `["crate", "foo", "bar"]`, path-attribute influenced paths like `["crate", "custom_path", "real_file"]`).
+//! *   `visibility: VisibilityKind`: Good coverage (`Public`, `Inherited`, `Crate`). `VisibilityKind::Restricted` (e.g., `pub(in path)`) is not explicitly tested.
+//! *   `attributes: Vec<Attribute>`: Good coverage (no attributes, `#[path = "..."]`, `#[cfg(...)]` which is then moved to `cfgs` field).
+//! *   `docstring: Option<String>`: Good coverage (`Some` for `inline_pub_mod`, `None` for most declarations and file-based module definitions). File-level docstrings (`//!`) are checked via `file_docs_is_some`.
+//! *   `imports: Vec<ImportNode>`: Covered by `ExpectedModuleNode.imports_count`. Good coverage (modules with 0, 1, or 2 imports are tested).
+//! *   `exports: Vec<ImportNodeId>`: Covered by `ExpectedModuleNode.exports_count`. Currently always 0 as Phase 2 does not populate `exports`. This is a known limitation.
+//! *   `span: (usize, usize)`: Not directly asserted by value.
+//! *   `tracking_hash: Option<TrackingHash>`: Covered by `ExpectedModuleNode.tracking_hash_check`. Excellent coverage (checked for `Some` on declarations/inline modules, and `None` for file-based root module definitions as per current implementation).
+//! *   `module_def: ModuleKind`:
+//!     *   `mod_disc: ModDisc`: Excellent coverage (all three variants `FileBased`, `Inline`, `Declaration` are tested).
+//!     *   `expected_file_path_suffix: Option<&'static str>`: Excellent coverage (checked for `FileBased` modules, `None` for others).
+//!     *   `items_count: usize`: Good coverage (various counts, including 0 for declarations, and counts for items within file-based and inline modules).
+//!     *   `file_attrs_count: usize`: Good coverage (tested for `main.rs` which has `#![allow(unused)]`).
+//!     *   `file_docs_is_some: bool`: Good coverage (tested for `main.rs` which has `//! ...`).
+//! *   `cfgs: Vec<String>`: Fair coverage (tested `#[cfg(test)]` on `inline_pub_mod`). More complex `cfg` attributes or combinations are not explicitly tested.
+//!
+//! **Conclusion for Property Variation Coverage:** Most `ModuleNode` fields have good to excellent coverage.
+//! *   **Areas for potential expansion:**
+//!     *   `VisibilityKind::Restricted`.
+//!     *   More complex `#[cfg(...)]` attributes.
+//!     *   Testing `exports_count` once Phase 3 populates `ModuleNode.exports`.
+//!
+//! ### 3. Differences in Testing `ModuleNode` vs. Other Nodes:
+//!
+//! Testing `ModuleNode`s has several unique aspects:
+//!
+//! *   **`ModuleKind` Variants:** The core distinction is between `FileBased`, `Inline`, and `Declaration` modules. `ExpectedModuleNode` uses `mod_disc` and associated fields (`expected_file_path_suffix`, `items_count`, `file_attrs_count`, `file_docs_is_some`) to verify these.
+//! *   **Declarations vs. Definitions:** The parser creates distinct `ModuleNode`s for a module declaration (`mod foo;`) and its definition (e.g., `foo.rs` or `mod foo {}`). Tests verify properties specific to each, like `tracking_hash` presence or `imports_count` (declarations should have 0).
+//! *   **`#[path]` Attribute:** The `logical_name` test case specifically covers a `mod logical_name;` declaration with a `#[path = "custom_path/real_file.rs"]` attribute. The test for the `Declaration` node checks for this attribute, while the test for the `FileBased` definition node (`real_file`) verifies its file-derived path and name.
+//! *   **File-Level vs. Item-Level Metadata:** For `FileBased` modules, `ModuleNode.module_def.FileBased.file_attrs` and `file_docs` capture `#![...]` and `//!` from the module's file. These are distinct from attributes/docs on the `mod item;` itself (which are on `ModuleNode.attributes` and `ModuleNode.docstring`). `ExpectedModuleNode` checks these via `file_attrs_count` and `file_docs_is_some`.
+//! *   **`items` Field:** `ExpectedModuleNode.items_count` verifies the number of `PrimaryNodeId`s directly contained within a module's definition. The `paranoid_test_fields_and_values!` macro also asserts the `SyntacticRelation::Contains` between the parent module and the tested node.
+//! *   **`imports` and `exports`:** `imports_count` checks the number of `ImportNode`s parsed directly within the module. `exports_count` is for re-exported `ImportNodeId`s, which are not populated in Phase 2.
+//!
+//! ### 4. Lost Coverage from Old Tests:
+//!
+//! The refactoring to `paranoid_test_fields_and_values!` replaces older, more manual tests. Potential areas of lost coverage include:
+//!
+//! *   **Explicit Span Checks:** Older tests might have explicitly checked `ModuleNode.span`, `ModuleKind::Declaration.declaration_span`, or `ModuleKind::Inline.span` for non-zero values or specific ranges. The new macro framework does not assert specific span values.
+//! *   **Explicit ID Regeneration Assertions:** While the new macro framework uses ID generation for lookup, it doesn't explicitly assert the regeneration logic for module IDs in the same direct way some older tests might have.
+//! *   **Specific Relation Checks (Phase 3 concepts):**
+//!     *   `RelationKind::ModuleDeclarationResolvesToDefinition`: Older tests (potentially targeting Phase 3 logic) would have checked the link between a `ModuleNode` of kind `Declaration` and its corresponding `FileBased` or `Inline` definition node. This relation is established in Phase 3 and not covered by the current Phase 2 `paranoid_test_fields_and_values!` tests for `ModuleNode`.
+//! *   **`ModuleKind::Declaration.resolved_definition` Field:** This `Option<ModuleNodeId>` field is populated during Phase 3 to link a declaration to its definition. Phase 2 tests would only see this as `None`. The `ExpectedModuleNode` does not currently have a field to check this.
+//! *   **Detailed `items` List Verification:** Old tests might have asserted the exact set and order of `PrimaryNodeId`s within a `ModuleNode.items` list. The new `ExpectedModuleNode.items_count` only checks the length. However, individual tests for other node types (e.g., `FunctionNode`) do verify their `Contains` relation from their parent module, providing indirect coverage.
+//!
+//! ### 5. Suggestions for Future Inclusions:
+//!
+//! *   Add fixture modules using `pub(in path) some_module;` to test `VisibilityKind::Restricted`.
+//! *   Expand `cfgs` coverage with more complex `#[cfg(...)]` attributes on modules (e.g., `#[cfg(all(unix, target_pointer_width = "64"))]`).
+//! *   Once Phase 3 logic is integrated into testing:
+//!     *   Add tests to verify that `ModuleNode.exports` (and `ExpectedModuleNode.exports_count`) are correctly populated for modules containing `pub use` statements.
+//!     *   Add tests to verify that `ModuleKind::Declaration.resolved_definition` is correctly populated.
+//!     *   Add tests to verify the presence of `RelationKind::ModuleDeclarationResolvesToDefinition`.
+//! *   If precise span checking for module declarations or inline blocks becomes critical, consider adding specific assertions for `declaration_span` or `inline_span`, possibly through an extension to `ExpectedModuleNode` or separate, targeted tests.
+//! *   Add tests for modules containing `extern crate` items, ensuring they are correctly included in `items_count` and that the corresponding `ImportNode` is created.
+//! *   Add tests for modules that are part of a `#[cfg_attr(..., path = "...")]` scenario.
 use ploke_core::ItemKind;
 use syn_parser::parser::graph::GraphAccess;
 // Import TypeAliasNode specifically
