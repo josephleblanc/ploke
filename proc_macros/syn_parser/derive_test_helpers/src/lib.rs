@@ -1069,6 +1069,7 @@ check
             // Helper method to check TypeId details
             #[allow(unused_variables, clippy::cognitive_complexity)] // actual_type_id might be unused if details are None
             fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
+                use ::ploke_core::TypeKind; // Ensure TypeKind is in scope for matching
                 if self.expected_type_details.is_none() {
                     log::debug!(target: log_target, "   Skipping detailed check for TypeId field '{}' as no expected_type_details were provided.", field_name_str.log_name_debug());
                     return true; // Detailed check is optional
@@ -1196,7 +1197,8 @@ check
                         // to be a standalone function or a method on ExpectedTypeDetails itself.
                         impl RecursiveExpectedDetailsHolder {
                             #[allow(unused_variables, clippy::cognitive_complexity)]
-                            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
+                            fn check_recursive_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
+                                use ::ploke_core::TypeKind; // Ensure TypeKind is in scope for matching
                                 if self.expected_type_details.is_none() { return true; }
                                 let expected_details = self.expected_type_details.as_ref().unwrap();
                                 let actual_type_node = match graph.resolve_type(*actual_type_id) { // Pass TypeId by value
@@ -1267,7 +1269,7 @@ check
                         };
 
                         log::debug!(target: log_target, "      Recursively checking first related type (of field '{}')...", field_name_str.log_name_debug());
-                        if !recursive_checker.check_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
+                        if !recursive_checker.check_recursive_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
                             overall_match = false;
                         }
                     }
@@ -1476,7 +1478,7 @@ check
                     }
                     ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
                         if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
-                            if *actual_is_mutable != expected_mut { // Compare bool with bool
+                            if actual_is_mutable != expected_mut { // actual_is_mutable is bool, expected_mut is bool
                                 log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
                                     expected_mut.log_bool(), actual_is_mutable.log_bool());
                                 overall_match = false;
