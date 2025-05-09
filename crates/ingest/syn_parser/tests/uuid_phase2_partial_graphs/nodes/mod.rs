@@ -71,7 +71,6 @@ mod statics;
 mod impls;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod macros;
-#[cfg(not(feature = "type_bearing_ids"))]
 mod structs;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod traits;
@@ -81,3 +80,5 @@ mod type_alias;
 mod unions;
 // Add other node types here later:
 //   const_alias
+
+use crate::common::{PARSED_FIXTURE_CRATE_DIR_DETECTION, PARSED_FIXTURE_CRATE_NODES};

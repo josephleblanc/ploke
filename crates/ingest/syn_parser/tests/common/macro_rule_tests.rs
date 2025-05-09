@@ -169,9 +169,8 @@ macro_rules! paranoid_test_fields_and_values {
             // 2. Use the lazy_static parsed fixture based on args.fixture
             let successful_graphs = match args.fixture {
                 "fixture_nodes" => &*crate::common::PARSED_FIXTURE_CRATE_NODES,
-                "fixture_crate_dir_detection" => &*crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
-                // Add other fixture names and their corresponding lazy_static variables here
-                // e.g., "fixture_types" => &*crate::common::PARSED_FIXTURE_CRATE_TYPES,
+                "file_dir_detection" => &*crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_types" => &*crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
 

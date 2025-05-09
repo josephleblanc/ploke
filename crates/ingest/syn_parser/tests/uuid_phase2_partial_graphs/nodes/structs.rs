@@ -1,13 +1,14 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::ParanoidArgs;
+use crate::common::{run_phase1_phase2, run_phases_and_collect, ParanoidArgs};
 use crate::paranoid_test_fields_and_values;
+use anyhow::Result;
 use lazy_static::lazy_static;
 use ploke_core::{ItemKind, TypeId, TypeKind}; // Import TypeKind from ploke_core
 use std::collections::HashMap;
 use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::nodes::{AsAnyNodeId, PrimaryNodeIdTrait};
 use syn_parser::parser::{
     nodes::{Attribute, ExpectedStructNode, GraphNode}, // Added ExpectedStructNode, Attribute
     types::{GenericParamKind, VisibilityKind},         // Remove TypeKind from here
@@ -249,43 +250,32 @@ paranoid_test_fields_and_values!(
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]
-fn test_struct_node_generic_struct_paranoid() {
+fn test_struct_node_generic_struct_paranoid() -> Result<()> {
     let fixture_name = "fixture_nodes";
-    let results: Vec<_> = run_phase1_phase2(fixture_name)
-        .into_iter()
-        .map(|res| res.expect("Parsing failed")) // Collect successful parses
-        .collect();
+    let all_parsed = run_phases_and_collect(fixture_name);
 
     let struct_name = "GenericStruct";
     let relative_file_path = "src/structs.rs";
     // Module path *within structs.rs* during Phase 2 parse is just ["crate"]
     let module_path = vec!["crate".to_string(), "structs".to_string()];
 
-    let struct_node = find_struct_node_paranoid(
-        &results,
-        fixture_name,
-        relative_file_path,
-        &module_path,
-        struct_name,
-    );
+    let struct_id_args = EXPECTED_STRUCTS_ARGS
+        .get("crate::structs::GenericStruct")
+        .expect("Struct Data key not found, see EXPECTED_STRUCTS_ARGS for available keys.");
 
-    // --- Assertions ---
-    let graph = &results // Need graph for type/relation lookups
+    let test_info = struct_id_args.generate_pid(&all_parsed)?;
+    // Basic Node Properties covered by macro paranoid_test_fields_and_values
+    let parsed = all_parsed
         .iter()
-        .find(|data| data.file_path.ends_with(relative_file_path))
-        .unwrap()
-        .graph;
-
-    // Basic Node Properties
-    assert!(matches!(struct_node.id(), NodeId::Synthetic(_)));
-    assert!(
-        struct_node.tracking_hash.is_some(),
-        "Tracking hash should be present"
-    );
-    assert_eq!(struct_node.name(), struct_name);
-    assert_eq!(struct_node.visibility(), VisibilityKind::Public);
-    assert!(struct_node.attributes.is_empty());
-    assert!(struct_node.docstring.is_none());
+        .find(|pg| {
+            pg.find_any_node_checked(test_info.test_pid().as_any())
+                .ok()
+                .is_some()
+        })
+        .unwrap();
+    let struct_node = parsed
+        .find_any_node_checked(test_info.test_pid().as_any())
+        .map(|n| n.as_struct().expect("If this node has been tested by the macro, then there is a problem with the macro."))?;
 
     // Generics <T>
     assert_eq!(struct_node.generic_params.len(), 1);
@@ -361,6 +351,7 @@ fn test_struct_node_generic_struct_paranoid() {
     // 3. Field Type Relation (FieldNode -> TypeId)
     // This isn't typically stored as a separate Relation edge, but implicitly via FieldNode.type_id.
     // We already checked the type_id and TypeNode above.
+    Ok(())
 }
 
 #[test]

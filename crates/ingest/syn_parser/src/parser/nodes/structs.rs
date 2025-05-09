@@ -1,4 +1,6 @@
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use crate::parser::types::GenericParamNode;
+use derive_test_helpers::ExpectedData;
+// Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
@@ -6,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::*; // Keep for other node types, VisibilityKind etc.
 
 // --- Struct Node ---
-    
+
 // Removed the macro invocation for StructNodeInfo
-    
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct StructNode {
     pub id: StructNodeId, // Use typed ID

@@ -1096,8 +1096,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
         let span = item_enum.extract_span_bytes();
 
+        let enum_node_id: EnumNodeId = enum_any_id.try_into().unwrap();
+        // Push the enum's base ID onto the scope stack BEFORE processing its generics
+        // Use helper function for logging
+        self.push_primary_scope(&enum_name, enum_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
+
         // Process variants
         let mut variants = Vec::new();
+
         for variant in &item_enum.variants {
             let variant_name = variant.ident.to_string();
 
@@ -1137,7 +1143,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let mut fields = Vec::new();
             match &variant.fields {
                 syn::Fields::Named(fields_named) => {
-                    for field in &fields_named.named {
+                    for (i, field) in fields_named.named.iter().enumerate() {
                         let field_name = field.ident.as_ref().map(|ident| ident.to_string());
 
                         // --- CFG Handling for Variant Field (Raw Strings) ---
@@ -1155,16 +1161,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
                         // Generate base ID for the field
                         let field_any_id = self.state.generate_synthetic_node_id(
-                            &field_name
-                                .clone()
-                                .unwrap_or_else(|| format!("unnamed_field_in_{}", variant_name)),
+                            &field_name.clone().unwrap_or_else(|| {
+                                format!("unnamed_field{}_in_{}", i, variant_name)
+                            }),
                             ItemKind::Field,
                             field_cfg_bytes.as_deref(), // Pass field's CFG bytes
                         );
                         self.debug_new_id(
-                            &field_name
-                                .clone()
-                                .unwrap_or("unnamed_enum_field".to_string()),
+                            &field_name.clone().unwrap_or_else(|| {
+                                format!("unnamed_field{}_in_{}", i, variant_name)
+                            }),
                             field_any_id,
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
@@ -1207,7 +1213,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             field_cfg_bytes.as_deref(),
                         );
                         let type_id = get_or_create_type(self.state, &field.ty);
-                        self.debug_new_id("unnamed_enum_field", field_any_id);
+                        self.debug_new_id(&field_name_placeholder, field_any_id);
 
                         let field_node_id: FieldNodeId = field_any_id.try_into().unwrap();
                         let field_node = FieldNode {
@@ -1260,11 +1266,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 self.state.code_graph.relations.push(relation);
             }
         }
-
-        let enum_node_id: EnumNodeId = enum_any_id.try_into().unwrap();
-        // Push the enum's base ID onto the scope stack BEFORE processing its generics
-        // Use helper function for logging
-        self.push_primary_scope(&enum_name, enum_node_id.into(), &provisional_effective_cfgs); // Clone cfgs for push
 
         // Process generic parameters
         let generic_params = self.state.process_generics(&item_enum.generics);
