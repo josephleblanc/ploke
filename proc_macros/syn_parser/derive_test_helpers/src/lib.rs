@@ -4,6 +4,8 @@
 
 extern crate proc_macro;
 
+use ploke_core::TypeKind;
+use ploke_core::TypeId;
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use quote::{format_ident, quote};
@@ -23,6 +25,7 @@ use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields, Type};
 #[proc_macro_error]
 #[proc_macro_derive(ExpectedData)]
 pub fn derive_expected_data(input: TokenStream) -> TokenStream {
+
     let input = parse_macro_input!(input as DeriveInput);
     let node_struct_name = &input.ident;
 
