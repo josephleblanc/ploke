@@ -530,11 +530,11 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements HasAttributes trait
-                        let check = self.attributes == node.attributes();
+                        let check = &self.attributes == node.attributes(); // Compare Vec<Attribute> with &[Attribute]
                         log::debug!(target: #log_target,
-                            "   {: <23} {} | Expected '{}' == Actual '{}'",
+                            "   {: <23} {} | Expected '{:?}' == Actual '{:?}'",
                             "Attributes Match?".to_string().log_step(), check.log_bool(),
-                            self.attributes.log_green_debug(), node.attributes().log_green_debug() // Vec<Attribute>, &[Attribute]
+                            self.attributes, node.attributes()
                         );
                         check
                     }
@@ -577,15 +577,15 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has cfgs()
-                        let mut actual_cfgs = node.cfgs().to_vec();
-                        format!("{:?}", actual_cfgs.sort_unstable());
+                        let mut actual_cfgs_sorted = node.cfgs().to_vec();
+                        actual_cfgs_sorted.sort_unstable(); // Sort for consistent comparison
                         let mut expected_cfgs_sorted = self.cfgs.clone();
-                        format!("{:?}", expected_cfgs_sorted.sort_unstable());
-                        let check = expected_cfgs_sorted == actual_cfgs;
+                        expected_cfgs_sorted.sort_unstable();
+                        let check = expected_cfgs_sorted == actual_cfgs_sorted;
                         log::debug!(target: #log_target,
-                            "   {: <23} {} | Expected (sorted) '{}' == Actual (sorted) '{}'",
+                            "   {: <23} {} | Expected (sorted) '{:?}' == Actual (sorted) '{:?}'",
                             "CFGs Match?".to_string().log_step(), check.log_bool(),
-                            expected_cfgs_sorted.log_green_debug(), actual_cfgs.log_green_debug() // Vec<String>, Vec<String>
+                            expected_cfgs_sorted, actual_cfgs_sorted
                         );
                         check
                     }
@@ -1195,20 +1195,8 @@ check
                             }
                         }
                     }
-                    ("Primitive", TypeKind::Primitive(actual_primitive_name)) => {
-                        if let Some(ExpectedPathOrStr::Str(expected_primitive_name)) = expected_details.expected_path_or_str {
-                            if actual_primitive_name != expected_primitive_name {
-                                log::debug!(target: log_target, "         Primitive Name Mismatch: Expected '{}', Actual '{}'",
-                                    expected_primitive_name.log_name_debug(), actual_primitive_name.log_name_debug());
-                                overall_match = false;
-                            } else {
-                                log::debug!(target: log_target, "         Primitive Name Match: '{}'", actual_primitive_name.log_name_debug());
-                            }
-                        } else if expected_details.expected_path_or_str.is_some() {
-                            log::warn!(target: log_target, "         WARN: Expected str for Primitive TypeKind, but expected_path_or_str was not Str variant for primitive name.");
-                            overall_match = false;
-                        }
-                    }
+                    // ("Primitive", TypeKind::Primitive(actual_primitive_name)) => { // Removed: TypeKind::Primitive does not exist
+                    // }
                     // If kind names matched but actual TypeKind variant is different, it's a mismatch.
                     (expected_name, actual_kind) if expected_name != actual_kind_name => {
                         // This case should ideally be caught by the first check, but as a safeguard:
@@ -1258,9 +1246,9 @@ check
                                 let actual_kind_name_rec = match &actual_type_node.kind {
                                     TypeKind::Named { .. } => "Named",
                                     TypeKind::Reference { .. } => "Reference",
-                                    TypeKind::Tuple => "Tuple",
                                     TypeKind::Slice => "Slice",
                                     TypeKind::Array { .. } => "Array",
+                                    TypeKind::Tuple => "Tuple",
                                     TypeKind::Function { .. } => "FunctionPointer",
                                     TypeKind::Never => "Never",
                                     TypeKind::Inferred => "Inferred",
@@ -1270,7 +1258,7 @@ check
                                     TypeKind::Paren { .. } => "Paren",
                                     TypeKind::Macro { .. } => "Macro",
                                     TypeKind::Unknown { .. } => "Unknown",
-                                    TypeKind::Primitive(_) => "Primitive",
+                                    // TypeKind::Primitive does not exist
                                     _ => "Other",
                                 };
                                 if actual_kind_name_rec != expected_details.expected_type_kind_name {
@@ -1292,16 +1280,8 @@ check
                                             }
                                         }
                                     }
-                                    ("Primitive", TypeKind::Primitive(actual_primitive_name_rec)) => {
-                                        if let Some(ExpectedPathOrStr::Str(expected_primitive_name_rec)) = expected_details.expected_path_or_str {
-                                            if actual_primitive_name_rec != expected_primitive_name_rec {
-                                                 log::debug!(target: log_target, "            Recursive Primitive Name Mismatch: Expected '{}', Actual '{}'", expected_primitive_name_rec.log_name_debug(), actual_primitive_name_rec.log_name_debug());
-                                                current_match = false;
-                                            } else {
-                                                log::debug!(target: log_target, "            Recursive Primitive Name Match: '{}'", actual_primitive_name_rec.log_name_debug());
-                                            }
-                                        }
-                                    }
+                                    // ("Primitive", TypeKind::Primitive(actual_primitive_name_rec)) => { // Removed
+                                    // }
                                      _ => { /* Add more detailed recursive checks if needed */ }
                                 }
                                 // Check recursive related_types_count
