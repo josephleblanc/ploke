@@ -13,15 +13,6 @@ use crate::paranoid_test_fields_and_values;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::{Attribute, ExpectedImportNode};
 
-// failures:
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_crate_visible_mod_rs_crate_visible_mod
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_custom_path_real_file_rs_real_file
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_example_mod_example_submod_mod_rs_example_submod
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_example_mod_mod_rs_example_mod
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_main_rs_crate
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_top_priv_mod_rs_top_priv_mod
-//     uuid_phase2_partial_graphs::nodes::modules::node_file_top_pub_mod_rs_top_pub_mod
-//
 pub const LOG_TEST_MODULE: &str = "log_test_module";
 
 lazy_static! {
