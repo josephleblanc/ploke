@@ -28,7 +28,36 @@ lazy_static! {
             tracking_hash_check: true,
             cfgs: vec![],
         });
-        // Add more enums later
+        m.insert("crate::enums::SampleEnum1", ExpectedEnumNode {
+            name: "SampleEnum1",
+            visibility: VisibilityKind::Public,
+            variants_count: 2,
+            generic_params_count: 0,
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("crate::enums::EnumWithData", ExpectedEnumNode {
+            name: "EnumWithData",
+            visibility: VisibilityKind::Public,
+            variants_count: 2,
+            generic_params_count: 0,
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        m.insert("crate::enums::DocumentedEnum", ExpectedEnumNode {
+            name: "DocumentedEnum",
+            visibility: VisibilityKind::Public,
+            variants_count: 2,
+            generic_params_count: 0,
+            attributes: vec![],
+            docstring: Some("This is a documented enum"),
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
         m
     };
 }
@@ -40,11 +69,34 @@ lazy_static! {
             fixture: "fixture_nodes",
             relative_file_path: "src/enums.rs",
             ident: "SampleEnum",
-            expected_path: &["crate", "enums"], // Assuming enums.rs is module 'enums'
+            expected_path: &["crate", "enums"],
             item_kind: ItemKind::Enum,
             expected_cfg: None,
         });
-        // Add more enums later
+        m.insert("crate::enums::SampleEnum1", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/enums.rs",
+            ident: "SampleEnum1",
+            expected_path: &["crate", "enums"],
+            item_kind: ItemKind::Enum,
+            expected_cfg: None,
+        });
+        m.insert("crate::enums::EnumWithData", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/enums.rs",
+            ident: "EnumWithData",
+            expected_path: &["crate", "enums"],
+            item_kind: ItemKind::Enum,
+            expected_cfg: None,
+        });
+        m.insert("crate::enums::DocumentedEnum", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/enums.rs",
+            ident: "DocumentedEnum",
+            expected_path: &["crate", "enums"],
+            item_kind: ItemKind::Enum,
+            expected_cfg: None,
+        });
         m
     };
 }
@@ -52,6 +104,39 @@ lazy_static! {
 paranoid_test_fields_and_values!(
     test_sample_enum_fields_and_values,
     "crate::enums::SampleEnum",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_sample_enum1_fields_and_values,
+    "crate::enums::SampleEnum1",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_enum_with_data_fields_and_values,
+    "crate::enums::EnumWithData",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_documented_enum_fields_and_values,
+    "crate::enums::DocumentedEnum",
     EXPECTED_ENUMS_ARGS,
     EXPECTED_ENUMS_DATA,
     syn_parser::parser::nodes::EnumNode,
