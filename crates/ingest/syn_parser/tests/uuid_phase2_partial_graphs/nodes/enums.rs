@@ -259,6 +259,86 @@ lazy_static! {
                 cfgs: vec![],
             },
         );
+        // --- New Enums for Isolated Generic Property Testing ---
+        m.insert(
+            "crate::enums::JustTypeGeneric",
+            ExpectedEnumNode {
+                name: "JustTypeGeneric",
+                visibility: VisibilityKind::Public,
+                variants_count: 2,
+                generic_params_count: 2,
+                attributes: vec![],
+                docstring: Some("Enum solely for testing type generics."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::enums::JustLifetimeGeneric",
+            ExpectedEnumNode {
+                name: "JustLifetimeGeneric",
+                visibility: VisibilityKind::Public,
+                variants_count: 2,
+                generic_params_count: 2,
+                attributes: vec![],
+                docstring: Some("Enum solely for testing lifetime generics."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::enums::JustConstGeneric",
+            ExpectedEnumNode {
+                name: "JustConstGeneric",
+                visibility: VisibilityKind::Public,
+                variants_count: 2,
+                generic_params_count: 2,
+                attributes: vec![],
+                docstring: Some("Enum solely for testing const generics."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::enums::JustWhereClause",
+            ExpectedEnumNode {
+                name: "JustWhereClause",
+                visibility: VisibilityKind::Public,
+                variants_count: 1,
+                generic_params_count: 1, // NOTE: Where clause details are not checked by ExpectedEnumNode
+                attributes: vec![],
+                docstring: Some("Enum solely for testing a simple where clause."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        // --- New Enums for Isolated Complex Field Testing ---
+        m.insert(
+            "crate::enums::OnlyTupleVariants",
+            ExpectedEnumNode {
+                name: "OnlyTupleVariants",
+                visibility: VisibilityKind::Public,
+                variants_count: 2,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: Some("Enum solely for testing multi-field tuple variants."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::enums::OnlyStructVariants",
+            ExpectedEnumNode {
+                name: "OnlyStructVariants",
+                visibility: VisibilityKind::Public,
+                variants_count: 2,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: Some("Enum solely for testing multi-field struct variants."),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
         m
     };
 }
@@ -377,6 +457,74 @@ lazy_static! {
                 expected_cfg: None,
             },
         );
+        // --- New Enums for Isolated Generic Property Testing ---
+        m.insert(
+            "crate::enums::JustTypeGeneric",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "JustTypeGeneric",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::enums::JustLifetimeGeneric",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "JustLifetimeGeneric",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::enums::JustConstGeneric",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "JustConstGeneric",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::enums::JustWhereClause",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "JustWhereClause",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
+        // --- New Enums for Isolated Complex Field Testing ---
+        m.insert(
+            "crate::enums::OnlyTupleVariants",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "OnlyTupleVariants",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::enums::OnlyStructVariants",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/enums.rs",
+                ident: "OnlyStructVariants",
+                expected_path: &["crate", "enums"],
+                item_kind: ItemKind::Enum,
+                expected_cfg: None,
+            },
+        );
         m
     };
 }
@@ -484,6 +632,74 @@ paranoid_test_fields_and_values!(
 paranoid_test_fields_and_values!(
     test_enum_with_mixed_variants_fields_and_values,
     "crate::enums::EnumWithMixedVariants",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+// --- Tests for New Enums for Isolated Generic Property Testing ---
+paranoid_test_fields_and_values!(
+    test_just_type_generic_fields_and_values,
+    "crate::enums::JustTypeGeneric",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_just_lifetime_generic_fields_and_values,
+    "crate::enums::JustLifetimeGeneric",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_just_const_generic_fields_and_values,
+    "crate::enums::JustConstGeneric",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_just_where_clause_fields_and_values,
+    "crate::enums::JustWhereClause",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+// --- Tests for New Enums for Isolated Complex Field Testing ---
+paranoid_test_fields_and_values!(
+    test_only_tuple_variants_fields_and_values,
+    "crate::enums::OnlyTupleVariants",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+paranoid_test_fields_and_values!(
+    test_only_struct_variants_fields_and_values,
+    "crate::enums::OnlyStructVariants",
     EXPECTED_ENUMS_ARGS,
     EXPECTED_ENUMS_DATA,
     syn_parser::parser::nodes::EnumNode,
