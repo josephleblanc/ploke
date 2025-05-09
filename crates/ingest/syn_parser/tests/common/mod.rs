@@ -1,12 +1,12 @@
 #![cfg(test)]
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId, TypeKind};
+use ploke_core::{ItemKind, NodeId, TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode}; // Remove TypeKind from here
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeNode}; // Remove TypeKind from here
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{nodes::*, ExtractSpan, ParsedCodeGraph};
 use syn_parser::utils::logging::LOG_TEST_ID_REGEN;
@@ -243,6 +243,15 @@ pub fn new_path_attribute(value: &str) -> Attribute {
         args: Vec::new(),
         value: Some(value.to_string()),
     }
+}
+
+/// Helper to find a TypeNode by its ID. Panics if not found.
+pub fn find_type_node(graph: &CodeGraph, type_id: TypeId) -> &TypeNode {
+    graph
+        .type_graph
+        .iter()
+        .find(|tn| tn.id == type_id)
+        .unwrap_or_else(|| panic!("TypeNode not found for TypeId: {}", type_id))
 }
 
 #[derive(Debug, Clone)]

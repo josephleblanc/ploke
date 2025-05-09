@@ -1,3 +1,4 @@
+use crate::parser::graph::GraphAccess;
 use crate::parser::types::GenericParamNode;
 use derive_test_helpers::ExpectedData; // Import ExpectedData
 use ploke_core::TrackingHash;

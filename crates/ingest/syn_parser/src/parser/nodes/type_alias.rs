@@ -1,4 +1,8 @@
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use crate::parser::graph;
+use crate::parser::graph::GraphAccess;
+use crate::parser::types::GenericParamNode;
+use derive_test_helpers::ExpectedData;
+// Removed define_node_info_struct import
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
@@ -35,7 +39,7 @@ impl GraphNode for TypeAliasNode {
     fn any_id(&self) -> AnyNodeId {
         self.id.into() // Return base NodeId
     }
-    fn visibility(&self) ->&VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         &self.visibility
     }
 

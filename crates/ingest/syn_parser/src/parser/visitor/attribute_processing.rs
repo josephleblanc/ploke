@@ -1,6 +1,6 @@
 // Removed cfg_expr::Expression import
 use quote::ToTokens;
-use syn::{parse::Parser, spanned::Spanned};
+use syn::parse::Parser;
 
 use crate::parser::nodes::Attribute;
 
@@ -38,11 +38,6 @@ pub(crate) fn extract_docstring(attrs: &[syn::Attribute]) -> Option<String> {
 /// Parses a single syn::Attribute into our custom Attribute struct.
 /// Uses the `attr.meta` field for structured parsing of different attribute forms.
 fn parse_attribute(attr: &syn::Attribute) -> Attribute {
-    let span = {
-        let byte_range = attr.span().byte_range();
-        (byte_range.start, byte_range.end)
-    };
-
     match &attr.meta {
         // Case 1: Simple path attribute, e.g., #[test]
         syn::Meta::Path(path) => Attribute {

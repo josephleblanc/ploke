@@ -1,3 +1,4 @@
+use crate::parser::graph::GraphAccess;
 use derive_test_helpers::ExpectedData;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};

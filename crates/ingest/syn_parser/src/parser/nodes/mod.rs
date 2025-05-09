@@ -52,7 +52,7 @@ pub use statics::ExpectedStaticNode;
 pub use structs::ExpectedStructNode;
 pub use traits::ExpectedTraitNode;
 pub use type_alias::ExpectedTypeAliasNode;
-    
+
 // Re-export the generated *NodeInfo structs for internal use within the crate
 // NOTE: 2025-05-02:
 // - Deleted all other *NodeInfo types, since we now use ids/internal.rs for NodeId gen through
@@ -61,6 +61,9 @@ pub use type_alias::ExpectedTypeAliasNode;
 // want to refactor the way the root module is created in `visitor/mod.rs`. Leaving it here for
 // now.
 pub(crate) use module::ModuleNodeInfo;
+
+// local re-exports for convenience:
+pub(crate) use crate::parser::graph::GraphAccess;
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq

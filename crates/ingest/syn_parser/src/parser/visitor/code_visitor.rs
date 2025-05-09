@@ -2091,7 +2091,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         };
         self.state.code_graph.relations.push(module_import_relation);
         // TODO: Figure out what the heck this is all about
-        let type_id = {
+        let _type_id = {
             // 1. Construct a representative syn::Type for the external crate.
             //    Using just the crate name as the path is simplest.
             let syn_type_path = syn::parse_str::<syn::TypePath>(&crate_name).unwrap_or_else(|_| {
