@@ -991,7 +991,7 @@ check
     let expected_data_inherent_impl = quote! {
         use crate::utils::{LogStyle, LogStyleBool, LogStyleDebug}; // For logging styles
         use crate::parser::nodes::{GraphNode, HasAttributes}; // For accessing node fields via traits
-        use ::ploke_core::{IdTrait, TypeId, TypeKind}; // For TypeId::is_synthetic, etc. Add TypeKind
+        use ::ploke_core::{IdTrait, TypeKind}; // For TypeId::is_synthetic, etc. Add TypeKind
         // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
         use crate::parser::nodes::PrimaryNodeIdTrait;
 
@@ -1102,17 +1102,17 @@ check
             #[allow(unused_variables, clippy::cognitive_complexity)] // actual_type_id might be unused if details are None
             fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &syn_parser::parser::graph::CodeGraph, log_target: &str) -> bool {
                 if self.expected_type_details.is_none() {
-                    log::debug!(target: log_target, "   Skipping detailed check for TypeId field '{}' as no expected_type_details were provided.", field_name_str.log_name());
+                    log::debug!(target: log_target, "   Skipping detailed check for TypeId field '{}' as no expected_type_details were provided.", field_name_str.log_name_debug());
                     return true; // Detailed check is optional
                 }
 
                 let expected_details = self.expected_type_details.as_ref().unwrap();
-                log::debug!(target: log_target, "   Performing detailed check for TypeId field '{}'...", field_name_str.log_name());
+                log::debug!(target: log_target, "   Performing detailed check for TypeId field '{}'...", field_name_str.log_name_debug());
 
-                let actual_type_node = match graph.resolve_type(*actual_type_id) {
+                let actual_type_node = match graph.resolve_type(actual_type_id) {
                     Some(tn) => tn,
                     None => {
-                        log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id(), field_name_str.log_name());
+                        log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id(), field_name_str.log_name_debug());
                         return false;
                     }
                 };
@@ -1136,10 +1136,10 @@ check
 
                 if actual_kind_name != expected_details.expected_type_kind_name {
                     log::debug!(target: log_target, "      TypeKind Name Mismatch: Expected '{}', Actual '{}'",
-                        expected_details.expected_type_kind_name.log_name(), actual_kind_name.log_name());
+                        expected_details.expected_type_kind_name.log_name_debug(), actual_kind_name.log_name_debug());
                     overall_match = false;
                 } else {
-                    log::debug!(target: log_target, "      TypeKind Name Match: '{}'", actual_kind_name.log_name());
+                    log::debug!(target: log_target, "      TypeKind Name Match: '{}'", actual_kind_name.log_name_debug());
                 }
 
                 // 2. Check specific details based on expected_type_kind_name
@@ -1147,7 +1147,7 @@ check
                     ("Named", TypeKind::Named { path: actual_path, .. }) => {
                         if let Some(ExpectedPathOrStr::Path(expected_path_slice)) = expected_details.expected_path_or_str {
                             let expected_path_vec: Vec<String> = expected_path_slice.iter().map(|s| s.to_string()).collect();
-                            if *actual_path != expected_path_vec {
+                            if actual_path != expected_path_vec {
                                 log::debug!(target: log_target, "         Named Path Mismatch: Expected '{:?}', Actual '{:?}'",
                                     expected_path_vec.log_path_debug(), actual_path.log_path_debug());
                                 overall_match = false;
@@ -1163,10 +1163,10 @@ check
                         if let Some(ExpectedPathOrStr::Str(expected_str)) = expected_details.expected_path_or_str {
                             if actual_type_str != expected_str {
                                 log::debug!(target: log_target, "         Unknown type_str Mismatch: Expected '{}', Actual '{}'",
-                                    expected_str.log_name(), actual_type_str.log_name());
+                                    expected_str.log_name_debug(), actual_type_str.log_name_debug());
                                 overall_match = false;
                             } else {
-                                log::debug!(target: log_target, "         Unknown type_str Match: '{}'", actual_type_str.log_name());
+                                log::debug!(target: log_target, "         Unknown type_str Match: '{}'", actual_type_str.log_name_debug());
                             }
                         } else if expected_details.expected_path_or_str.is_some() {
                              log::warn!(target: log_target, "         WARN: Expected str for Unknown TypeKind, but expected_path_or_str was not Str variant.");
@@ -1175,7 +1175,7 @@ check
                     }
                     ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
                         if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
-                            if *actual_is_mutable != expected_mut {
+                            if actual_is_mutable != expected_mut {
                                 log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
                                     expected_mut.log_bool(), actual_is_mutable.log_bool());
                                 overall_match = false;
@@ -1188,10 +1188,10 @@ check
                         if let Some(ExpectedPathOrStr::Str(expected_primitive_name)) = expected_details.expected_path_or_str {
                             if actual_primitive_name != expected_primitive_name {
                                 log::debug!(target: log_target, "         Primitive Name Mismatch: Expected '{}', Actual '{}'",
-                                    expected_primitive_name.log_name(), actual_primitive_name.log_name());
+                                    expected_primitive_name.log_name_debug(), actual_primitive_name.log_name_debug());
                                 overall_match = false;
                             } else {
-                                log::debug!(target: log_target, "         Primitive Name Match: '{}'", actual_primitive_name.log_name());
+                                log::debug!(target: log_target, "         Primitive Name Match: '{}'", actual_primitive_name.log_name_debug());
                             }
                         } else if expected_details.expected_path_or_str.is_some() {
                             log::warn!(target: log_target, "         WARN: Expected str for Primitive TypeKind, but expected_path_or_str was not Str variant for primitive name.");
@@ -1202,7 +1202,7 @@ check
                     (expected_name, actual_kind) if expected_name != actual_kind_name => {
                         // This case should ideally be caught by the first check, but as a safeguard:
                         log::debug!(target: log_target, "      Mismatched TypeKind variant: Expected based on name '{}', but actual was '{:?}'",
-                            expected_details.expected_type_kind_name.log_name(), actual_kind.log_name_debug());
+                            expected_details.expected_type_kind_name.log_name_debug(), actual_kind.log_name_debug());
                         overall_match = false;
                     }
                     _ => { /* Other TypeKinds not yet checked in detail, or kind name mismatch already handled */ }
@@ -1212,10 +1212,10 @@ check
                 if let Some(expected_count) = expected_details.expected_related_types_count {
                     if actual_type_node.related_types.len() != expected_count {
                         log::debug!(target: log_target, "      Related Types Count Mismatch: Expected '{}', Actual '{}'",
-                            expected_count.log_name(), actual_type_node.related_types.len().log_name());
+                            expected_count.log_name_debug(), actual_type_node.related_types.len().log_name_debug());
                         overall_match = false;
                     } else {
-                        log::debug!(target: log_target, "      Related Types Count Match: '{}'", expected_count.log_name());
+                        log::debug!(target: log_target, "      Related Types Count Match: '{}'", expected_count.log_name_debug());
                     }
                 }
 
@@ -1237,7 +1237,7 @@ check
                                 // For this example, we'll assume it's available or re-implement parts.
                                 if self.expected_type_details.is_none() { return true; }
                                 let expected_details = self.expected_type_details.as_ref().unwrap();
-                                let actual_type_node = match graph.resolve_type(*actual_type_id) { Some(tn) => tn, None => return false };
+                                let actual_type_node = match graph.resolve_type(actual_type_id) { Some(tn) => tn, None => return false };
                                 let mut current_match = true;
                                 let actual_kind_name_rec = match actual_type_node.kind {
                                     TypeKind::Named { .. } => "Named", TypeKind::Reference { .. } => "Reference", TypeKind::Unknown { .. } => "Unknown", TypeKind::Primitive { .. } => "Primitive", _ => "Other"
@@ -1248,7 +1248,7 @@ check
                                 current_match
                             }
                         }
-                        let checker = RecursiveChecker { expected_type_details: Some(*expected_first_related_details_boxed.clone()) }; // Clone the details for the checker
+                        let checker = RecursiveChecker { expected_type_details: Some(expected_first_related_details_boxed.clone()) }; // Clone the details for the checker
 
                         log::debug!(target: log_target, "      Recursively checking first related type...");
                         if !checker.check_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
