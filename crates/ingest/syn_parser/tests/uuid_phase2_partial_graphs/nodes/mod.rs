@@ -51,6 +51,13 @@
 //!     *   Detailed variant/field checks: The `ExpectedEnumNode` primarily checks counts (`variants_count`, `generic_params_count`). Specifics of variant names, fields within variants (names, types, visibilities, attributes), discriminants, and attributes/docstrings/CFGs on individual variants are not deeply validated by the current macro.
 //!     *   Generic parameter details: Names, kinds (type, lifetime, const), bounds, and `where` clause predicates for enum generics are not checked beyond `generic_params_count`.
 //!     *   `cfg` interactions: Tests for enums or variants whose structure changes based on `#[cfg]` attributes (e.g., `CfgEnum`, `GenericEnum`'s conditional variant) are currently disabled due to the complexity of managing feature flags in the test environment for precise `variants_count` assertions.
+//! *   **`TraitNode`:**
+//!     *   Detailed method checks: Verification of specific method names, parameter details (count, `is_self`, type via `TypeId` lookup), return type details (presence, `TypeId` lookup), and docstrings for individual methods is missing (currently only `methods_count` is checked).
+//!     *   Detailed supertrait checks: Verification of specific `TypeId`s of supertraits and their resolved names/paths (e.g., knowing a trait inherits from `SimpleTrait` specifically) is missing (currently only `super_traits_count` is checked).
+//!     *   Generic parameter details: Checks for specific generic parameter names, kinds (type, lifetime, const), or bounds for trait generics are missing (currently only `generic_params_count` is checked).
+//!     *   `cfgs`: Coverage is poor; all tested traits currently have no `cfg` attributes.
+//!     *   Associated types/consts: These are not direct fields on `TraitNode`. Methods related to them are part of `methods_count`.
+//!     *   `unsafe` flag: `TraitNode` does not currently have an `is_unsafe` field; if added, tests would be needed.
 //!
 //! ## General Notes:
 //!
