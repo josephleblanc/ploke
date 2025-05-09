@@ -190,6 +190,61 @@ paranoid_test_fields_and_values!(
     LOG_TEST_STRUCT
 );
 
+paranoid_test_fields_and_values!(
+    test_tuple_struct_fields_and_values,
+    "crate::structs::TupleStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_unit_struct_fields_and_values,
+    "crate::structs::UnitStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_generic_struct_fields_and_values,
+    "crate::structs::GenericStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_attributed_struct_fields_and_values,
+    "crate::structs::AttributedStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_documented_struct_fields_and_values,
+    "crate::structs::DocumentedStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
 // --- Old Test Cases (to be refactored/removed later) ---
 
 #[test]
