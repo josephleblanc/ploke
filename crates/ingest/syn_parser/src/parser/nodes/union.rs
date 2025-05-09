@@ -1,5 +1,7 @@
-use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
-use ploke_core::{TrackingHash};
+use crate::parser::types::GenericParamNode;
+use derive_test_helpers::ExpectedData;
+// Removed define_node_info_struct import
+use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
 
@@ -10,7 +12,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for UnionNodeInfo
 
 // Represents a union definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive
 pub struct UnionNode {
     pub id: UnionNodeId, // Use typed ID
     pub name: String,
@@ -35,7 +37,7 @@ impl GraphNode for UnionNode {
     fn any_id(&self) -> AnyNodeId {
         self.id.into() // Return base NodeId
     }
-    fn visibility(&self) ->&VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         &self.visibility
     }
 

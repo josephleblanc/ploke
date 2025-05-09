@@ -1,7 +1,11 @@
+#![allow(non_snake_case)]
+
 use crate::common::find_type_node;
 use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values;
+use crate::paranoid_test_setup;
+use crate::run_paranoid_test;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
 use ploke_core::TypeId;
@@ -12,7 +16,9 @@ use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::ExpectedTypeAliasNode;
 use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::nodes::TypeAliasNode;
 use syn_parser::parser::types::GenericParamKind;
+use syn_parser::parser::ParsedCodeGraph;
 
 // Keep old imports for existing tests
 // Import TypeKind from ploke_core
@@ -38,6 +44,14 @@ lazy_static! {
         m.insert("crate::type_alias::DisplayableContainer", ParanoidArgs {
             fixture: fixture_name, relative_file_path: rel_path, ident: "DisplayableContainer",
             expected_path: &["crate", "type_alias"], item_kind: ItemKind::TypeAlias, expected_cfg: None,
+        });
+        m.insert("crate::type_alias::Mapping", ParanoidArgs {
+            fixture: fixture_name,
+            relative_file_path: rel_path,
+            expected_path: &["crate", "type_alias"],
+            ident: "Mapping",
+            item_kind: ItemKind::TypeAlias,
+            expected_cfg: None,
         });
         m
     };
@@ -73,6 +87,16 @@ lazy_static! {
             tracking_hash_check:true,cfgs:vec![],
             type_id_check: true
         });
+        m.insert("crate::type_alias::Mapping", ExpectedTypeAliasNode {
+            name: "Mapping",                       // same as key path ending
+            visibility: VisibilityKind::Public, // usually Public
+            type_id_check: true,            // t/f, hanlde more specific elsewhere
+            generic_params_count: 2,       // basic check, more detailed elsehwere
+            attributes: vec![],           // usually empty, otherwise vec of &'static str
+            docstring: None,                  // usually empty (None)
+            tracking_hash_check: true,      // usually true, handle more specific checks in other tests
+            cfgs: vec![]                  // usually empty
+        });
         m
     };
 }
@@ -99,8 +123,103 @@ paranoid_test_fields_and_values!(
     LOG_TEST_TYPE_ALIAS
 );
 
-paranoid_test_fields_and_values!(
-    test_type_alias_displayable_container_macro,
+// Covers:
+//  - Multiple generic parameters
+//  - Type lookup of generic parameters, confirming
+//      - name
+//      - bounds
+//      - defalut (some/none)
+//  - aliased type id, checking
+//      - presence/variant of `TypeId`
+//      - path of typed id, here "std", "collections", "HashMap"
+//      - presence + name of associated types (here K, V)
+paranoid_test_setup!(
+    setup_mapping,
+    "crate::type_alias::Mapping",
+    EXPECTED_TYPE_ALIASES_ARGS,
+    EXPECTED_TYPE_ALIASES_DATA,
+    syn_parser::parser::nodes::TypeAliasNode,
+    syn_parser::parser::nodes::ExpectedTypeAliasNode,
+    as_type_alias,
+    LOG_TEST_TYPE_ALIAS
+);
+
+run_paranoid_test! { setup_mapping, test_display_mapping, check_generic_params_mapping }
+
+fn check_generic_params_mapping(
+    setup_data: (TypeAliasNode, &ParsedCodeGraph),
+) -> Result<(), SynParserError> {
+    let (type_alias_node, graph_data) = setup_data;
+
+    let generic_param_k = &type_alias_node.generic_params[0];
+    match &generic_param_k.kind {
+        GenericParamKind::Type {
+            name,
+            bounds,
+            default,
+        } => {
+            assert_eq!(name, "K"); // should be T
+            assert_eq!(bounds.len(), 0, "Expected no trait bounds on K");
+            assert!(default.is_none());
+        }
+        _ => panic!(
+            "Expected GenericParamKind::Type for K, found {:?}",
+            generic_param_k.kind
+        ),
+    }
+
+    let generic_param_v = &type_alias_node.generic_params[1];
+    match &generic_param_v.kind {
+        GenericParamKind::Type {
+            name,
+            bounds,
+            default,
+        } => {
+            assert_eq!(name, "V"); // should be T
+            assert_eq!(bounds.len(), 0, "Expected no trait bounds on K");
+            assert!(default.is_none());
+        }
+        _ => panic!(
+            "Expected GenericParamKind::Type for V, found {:?}",
+            generic_param_v
+        ),
+    }
+    // 2. Check the aliased TypeId: resolves to Vec<T>
+    let aliased_type_id = type_alias_node.type_id;
+    assert!(
+        matches!(aliased_type_id, TypeId::Synthetic(_)),
+        "Aliased TypeId should be Synthetic"
+    );
+    let aliased_type_node = find_type_node(&graph_data.graph, aliased_type_id);
+
+    // Check the related types K and V for std::collections::HashMap<K, V>
+    assert_eq!(
+        aliased_type_node.related_types.len(),
+        2,
+        "std::collections::HashMap<K, V> should have two related types (K, V)"
+    );
+    let related_type_id_for_vec_k = aliased_type_node.related_types[0];
+    let related_type_node_for_vec_k = find_type_node(&graph_data.graph, related_type_id_for_vec_k);
+    assert!(
+        matches!(&related_type_node_for_vec_k.kind, TypeKind::Named { path, .. } if path == &["K".to_string()]),
+        "Expected related type 'K' for HashMap, found {:?}",
+        related_type_node_for_vec_k.kind
+    );
+    let related_type_id_for_vec_v = aliased_type_node.related_types[1];
+    let related_type_node_for_vec_v = find_type_node(&graph_data.graph, related_type_id_for_vec_v);
+    assert!(
+        matches!(&related_type_node_for_vec_v.kind, TypeKind::Named { path, .. } if path == &["V".to_string()]),
+        "Expected related type 'T' for Vec, found {:?}",
+        related_type_node_for_vec_v.kind
+    );
+
+    Ok(())
+}
+
+// --- New Manual Detailed Test ---
+
+paranoid_test_setup!(
+    setup_display_container,
     "crate::type_alias::DisplayableContainer",
     EXPECTED_TYPE_ALIASES_ARGS,
     EXPECTED_TYPE_ALIASES_DATA,
@@ -110,43 +229,12 @@ paranoid_test_fields_and_values!(
     LOG_TEST_TYPE_ALIAS
 );
 
-// --- New Manual Detailed Test ---
+run_paranoid_test! { setup_display_container, test_display_container, check_generic_params }
 
-#[test]
-fn test_type_alias_displayable_container_detailed_type_check() -> Result<(), SynParserError> {
-    let _ = env_logger::builder().is_test(true).try_init();
-    let fixture_name = "fixture_nodes";
-    let successful_graphs = run_phases_and_collect(fixture_name);
-
-    let alias_name = "DisplayableContainer";
-    let relative_file_path = "src/type_alias.rs";
-    let module_path_vec = vec!["crate".to_string(), "type_alias".to_string()];
-
-    // Find the TypeAliasNode using ParanoidArgs and generated PID
-    let args = ParanoidArgs {
-        fixture: fixture_name,
-        relative_file_path,
-        ident: alias_name,
-        expected_path: &["crate", "type_alias"],
-        item_kind: ItemKind::TypeAlias,
-        expected_cfg: None,
-    };
-    let test_info = args.generate_pid(&successful_graphs)?;
-    let graph_data = test_info.target_data();
-    let type_alias_node = graph_data
-        .find_node_unique(test_info.test_pid().into())?
-        .as_type_alias()
-        .unwrap_or_else(|| {
-            panic!(
-                "Node found by ID for '{}' was not a TypeAliasNode.",
-                alias_name
-            )
-        });
-
-    // --- Assertions ---
-    assert_eq!(type_alias_node.name(), alias_name);
-    assert_eq!(type_alias_node.visibility(), &VisibilityKind::Public);
-
+fn check_generic_params(
+    setup_data: (TypeAliasNode, &ParsedCodeGraph),
+) -> Result<(), SynParserError> {
+    let (type_alias_node, graph_data) = setup_data;
     // 1. Check Generic Parameters of the TypeAliasNode: <T: std::fmt::Display>
     assert_eq!(type_alias_node.generic_params.len(), 1);
     let generic_param_t = &type_alias_node.generic_params[0];
@@ -156,7 +244,7 @@ fn test_type_alias_displayable_container_detailed_type_check() -> Result<(), Syn
             bounds,
             default,
         } => {
-            assert_eq!(name, "T");
+            assert_eq!(name, "T"); // should be T
             assert_eq!(bounds.len(), 1, "Expected one trait bound (Display)");
             assert!(default.is_none());
 
@@ -198,13 +286,6 @@ fn test_type_alias_displayable_container_detailed_type_check() -> Result<(), Syn
         aliased_type_node.related_types.len(),
         1,
         "Vec<T> should have one related type (T)"
-    );
-    let related_type_id_for_vec_t = aliased_type_node.related_types[0];
-    let related_type_node_for_vec_t = find_type_node(&graph_data.graph, related_type_id_for_vec_t);
-    assert!(
-        matches!(&related_type_node_for_vec_t.kind, TypeKind::Named { path, .. } if path == &["T".to_string()]),
-        "Expected related type 'T' for Vec, found {:?}",
-        related_type_node_for_vec_t.kind
     );
 
     // Ensure the 'T' from Vec<T> is the same TypeId as the 'T' from the generic_params

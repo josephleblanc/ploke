@@ -969,7 +969,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         for (field, i) in item_union.fields.named.iter().zip(u8::MIN..u8::MAX) {
             let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
             let field_ref = field_name.get_or_insert_default();
-            field_ref.extend("unnamed_field".chars().chain(union_name.as_str().chars()));
+            field_ref.extend("_field_".chars().chain(union_name.as_str().chars()));
             field_ref.push(i.into());
 
             // --- CFG Handling for Field (Raw Strings) ---
@@ -987,14 +987,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             let field_any_id = self.state.generate_synthetic_node_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
+                    .unwrap_or_else(|| format!("_unnamed_field_{}_in_{}", i, union_name)),
                 ItemKind::Field,
                 field_cfg_bytes.as_deref(), // Pass field's CFG bytes
             );
             self.debug_new_id(
                 &field_name
                     .clone()
-                    .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, union_name)),
+                    .unwrap_or_else(|| format!("_unnamed_field_{}_in_{}", i, union_name)),
                 field_any_id,
             );
             let type_id = get_or_create_type(self.state, &field.ty);

@@ -75,14 +75,13 @@ mod statics;
 mod structs;
 mod traits;
 mod type_alias;
+mod unions;
 
 // -- Files that have yet to be updated are gated behind the cfgs below:
 #[cfg(not(feature = "type_bearing_ids"))]
 mod impls;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod macros;
-#[cfg(not(feature = "type_bearing_ids"))]
-mod unions;
 // Add other node types here later:
 //   const_alias
 

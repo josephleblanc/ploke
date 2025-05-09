@@ -334,11 +334,12 @@ macro_rules! paranoid_test_setup {
         $downcast_method:ident,
         $log_target:ident
     ) => {
-        fn $setup_name() -> Result<$expected_data_type, syn_parser::error::SynParserError> {
-            let _ = env_logger::builder()
-                .is_test(true)
-                .format_timestamp(None)
-                .try_init();
+        fn $setup_name() -> Result<( $node_type, &'static ParsedCodeGraph ), syn_parser::error::SynParserError> {
+            // NOTE: See if the logging works in the other macro below and delete this if so
+            // let _ = env_logger::builder()
+            //     .is_test(true)
+            //     .format_timestamp(None)
+            //     .try_init();
 
             // 1. Look up ParanoidArgs and ExpectedConstData from provided maps
             let args = $args_map.get($data_key).unwrap_or_else(|| {
@@ -358,7 +359,7 @@ macro_rules! paranoid_test_setup {
             };
 
             // 3. Find the target ParsedCodeGraph using relative_file_path from retrieved args
-            let target_graph_data = successful_graphs
+            let graph_data = successful_graphs
                 .iter()
                 .find(|pg| pg.file_path.ends_with(args.relative_file_path))
                 .unwrap_or_else(|| {
@@ -368,7 +369,7 @@ macro_rules! paranoid_test_setup {
                     )
                 });
 
-            args.check_graph(target_graph_data)?; // Log graph context
+            args.check_graph(graph_data)?; // Log graph context
 
             // 5. Attempt ID-based lookup and individual field checks
             // Store the matching id to disambiguate value matches.
@@ -399,12 +400,12 @@ macro_rules! paranoid_test_setup {
                                 let expected_path_vec: Vec<String> = args.expected_path.iter().map(|s| s.to_string()).collect();
                                 // Find parent module using the Vec<String> slice
                                 // return Some(parent_mod_id) unless it's a file-level module
-                                match target_graph_data
+                                match graph_data
                                     .find_module_by_path_checked(&expected_path_vec)
                                 {
                                     Ok(parent_module) => {
                                 // Check for Contains relation
-                                let relation_found = target_graph_data.relations().iter().any(|rel| {
+                                let relation_found = graph_data.relations().iter().any(|rel| {
                                     matches!(rel, syn_parser::parser::relations::SyntacticRelation::Contains { source, target }
                                         if *source == parent_module.id && *target == specific_node.id.to_pid())
                                 });
@@ -418,12 +419,12 @@ macro_rules! paranoid_test_setup {
                                 // --- End Relation Check ---
                                     },
                                     Err(_) => {
-                                        let _ = target_graph_data.find_module_by_file_path_checked(std::path::Path::new(args.relative_file_path))?;
+                                        let _ = graph_data.find_module_by_file_path_checked(std::path::Path::new(args.relative_file_path))?;
                                         log::debug!(target: $log_target, "   Relation Check: Skipping contains relation check for parent of file-level module.");
                                     }
                                 };
 
-                                Ok(specific_node)
+                                Ok(specific_node.clone())
 
                             } else {
                                 // Use the parameterized node type name
@@ -450,7 +451,7 @@ macro_rules! paranoid_test_setup {
             // Iterator in `find_node_by_values` prints logging info
             // This should allow all logging info to be shown while the value matched nodes are
             // collected.
-            let matched_nodes_by_value: Vec<_> = expected_data.find_node_by_values(target_graph_data).collect();
+            let matched_nodes_by_value: Vec<_> = expected_data.find_node_by_values(graph_data).collect();
             // Checks for actual match of node id in values.
             let target_node = node_result.inspect_err(|_| {
                 log::trace!(target: $log_target,
@@ -501,7 +502,7 @@ macro_rules! paranoid_test_setup {
                     value_and_pid_matches,
             );
 
-            Ok(target_node)
+            Ok(( target_node, graph_data ))
         }
     };
 }
@@ -517,7 +518,9 @@ macro_rules! run_paranoid_test {
                 .try_init();
 
             let item = $setup()?;
-            $($test_body(item))?
+            $(
+                $test_body(item)?
+            )?;
             Ok(())
         }
     };

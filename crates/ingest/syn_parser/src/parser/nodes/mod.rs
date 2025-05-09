@@ -52,6 +52,7 @@ pub use statics::ExpectedStaticNode;
 pub use structs::ExpectedStructNode;
 pub use traits::ExpectedTraitNode;
 pub use type_alias::ExpectedTypeAliasNode;
+pub use union::ExpectedUnionNode;
 
 // Re-export the generated *NodeInfo structs for internal use within the crate
 // NOTE: 2025-05-02:

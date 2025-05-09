@@ -188,6 +188,18 @@ impl SyntacticRelation {
             _ => None,
         }
     }
+    pub fn union_field(&self, src: UnionNodeId) -> Option<FieldNodeId> {
+        match self {
+            Self::UnionField { source: s, target } if *s == src => Some(*target),
+            _ => None,
+        }
+    }
+    pub fn field_of_union(&self, trg: FieldNodeId) -> Option<UnionNodeId> {
+        match self {
+            Self::UnionField { source, target: t } if *t == trg => Some(*source),
+            _ => None,
+        }
+    }
 
     /// Returns the source NodeId of the relation as a generic TypeId.
     pub fn source(&self) -> AnyNodeId {

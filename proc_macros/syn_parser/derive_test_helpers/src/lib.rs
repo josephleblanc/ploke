@@ -292,7 +292,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
             // == StructNode Specific Handlers ==
             "fields" // For StructNode
-                if node_struct_name == "StructNode"
+                if node_struct_name == "StructNode" 
                    && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Assuming Vec<FieldNode>
             {
                 expected_fields_defs.push(quote! { pub fields_count: usize });
