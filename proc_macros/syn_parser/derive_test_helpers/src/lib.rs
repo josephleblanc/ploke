@@ -1088,7 +1088,7 @@ check
              }
 
              // Define check_all_fields as an inherent method
-             pub fn check_all_fields(&self, node: &crate::parser::nodes::#node_struct_name, graph: &syn_parser::parser::graph::CodeGraph) -> bool {
+             pub fn check_all_fields(&self, node: &crate::parser::nodes::#node_struct_name, graph: &crate::parser::graph::CodeGraph) -> bool {
                  let mut all_passed = true;
                  #(#check_all_fields_logics)*
 
@@ -1105,7 +1105,7 @@ check
 
             // Helper method to check TypeId details
             #[allow(unused_variables, clippy::cognitive_complexity)] // actual_type_id might be unused if details are None
-            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &syn_parser::parser::graph::CodeGraph, log_target: &str) -> bool {
+            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
                 if self.expected_type_details.is_none() {
                     log::debug!(target: log_target, "   Skipping detailed check for TypeId field '{}' as no expected_type_details were provided.", field_name_str.log_name_debug());
                     return true; // Detailed check is optional
@@ -1247,7 +1247,7 @@ check
                         // to be a standalone function or a method on ExpectedTypeDetails itself.
                         impl RecursiveExpectedDetailsHolder {
                             #[allow(unused_variables, clippy::cognitive_complexity)]
-                            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &syn_parser::parser::graph::CodeGraph, log_target: &str) -> bool {
+                            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
                                 if self.expected_type_details.is_none() { return true; }
                                 let expected_details = self.expected_type_details.as_ref().unwrap();
                                 let actual_type_node = match graph.resolve_type(actual_type_id) {
