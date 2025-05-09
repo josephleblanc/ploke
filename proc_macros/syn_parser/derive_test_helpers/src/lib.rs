@@ -1117,7 +1117,7 @@ check
                 let actual_type_node = match graph.resolve_type(actual_type_id) {
                     Some(tn) => tn,
                     None => {
-                        log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id(), field_name_str.log_name_debug());
+                        log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id_debug(), field_name_str.log_name_debug());
                         return false;
                     }
                 };
@@ -1125,18 +1125,24 @@ check
                 let mut overall_match = true;
 
                 // 1. Check TypeKind variant name
-                let actual_kind_name = match actual_type_node.kind {
+                let actual_kind_name = match &actual_type_node.kind { // Match on reference
                     TypeKind::Named { .. } => "Named",
                     TypeKind::Reference { .. } => "Reference",
-                    TypeKind::Tuple { .. } => "Tuple",
-                    TypeKind::Slice { .. } => "Slice",
-                    TypeKind::Array { .. } => "Array",
-                    TypeKind::FunctionPointer { .. } => "FunctionPointer",
+                    TypeKind::Tuple => "Tuple",
+                    TypeKind::Slice => "Slice",
+                    TypeKind::Array { .. } => "Array", // Has fields like size
+                    TypeKind::Function { .. } => "FunctionPointer", // Renamed from FunctionPointer, has fields
+                    TypeKind::Never => "Never",
+                    TypeKind::Inferred => "Inferred",
+                    TypeKind::RawPointer { .. } => "RawPointer",
                     TypeKind::TraitObject { .. } => "TraitObject",
+                    TypeKind::ImplTrait { .. } => "ImplTrait",
+                    TypeKind::Paren { .. } => "Paren",
+                    TypeKind::Macro { .. } => "Macro",
                     TypeKind::Unknown { .. } => "Unknown",
-                    TypeKind::Primitive { .. } => "Primitive",
-                    // Add all TypeKind variants
-                    _ => "Other", // Placeholder for unhandled TypeKinds
+                    TypeKind::Primitive(_) => "Primitive", // Is TypeKind::Primitive(String)
+                    // Note: TypeKind::Path is not a variant in ploke_core::TypeKind
+                    // TypeKind::Group, TypeKind::Verbatim, TypeKind::Ellipsis are also not in ploke_core::TypeKind
                 };
 
                 if actual_kind_name != expected_details.expected_type_kind_name {
@@ -1230,33 +1236,97 @@ check
                         log::debug!(target: log_target, "      First Related Type Check: Expected details for first related type, but actual_type_node.related_types is empty.");
                         overall_match = false;
                     } else {
-                        // Create a temporary Expected*Node-like struct for the recursive call
-                        // This is a bit of a hack; ideally, check_type_id_details would be on ExpectedTypeDetails itself.
-                        struct RecursiveChecker { expected_type_details: Option<ExpectedTypeDetails> }
-                        impl RecursiveChecker {
-                            // Minimal version of check_type_id_details for recursion
+                        // For recursive calls, we create a temporary 'self-like' structure
+                        // that only contains the expected_type_details for the next level.
+                        struct RecursiveExpectedDetailsHolder {
+                            expected_type_details: Option<ExpectedTypeDetails>,
+                        }
+                        // We need to implement the check_type_id_details method for this holder.
+                        // This is a direct (simplified) copy of the main method.
+                        // A more robust solution would involve refactoring check_type_id_details
+                        // to be a standalone function or a method on ExpectedTypeDetails itself.
+                        impl RecursiveExpectedDetailsHolder {
                             #[allow(unused_variables, clippy::cognitive_complexity)]
                             fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &syn_parser::parser::graph::CodeGraph, log_target: &str) -> bool {
-                                // This is a simplified copy of the outer check_type_id_details.
-                                // In a real scenario, you'd refactor this to avoid duplication.
-                                // For this example, we'll assume it's available or re-implement parts.
                                 if self.expected_type_details.is_none() { return true; }
                                 let expected_details = self.expected_type_details.as_ref().unwrap();
-                                let actual_type_node = match graph.resolve_type(actual_type_id) { Some(tn) => tn, None => return false };
-                                let mut current_match = true;
-                                let actual_kind_name_rec = match actual_type_node.kind {
-                                    TypeKind::Named { .. } => "Named", TypeKind::Reference { .. } => "Reference", TypeKind::Unknown { .. } => "Unknown", TypeKind::Primitive { .. } => "Primitive", _ => "Other"
+                                let actual_type_node = match graph.resolve_type(actual_type_id) {
+                                    Some(tn) => tn,
+                                    None => { return false; /* error already logged by caller */ }
                                 };
-                                if actual_kind_name_rec != expected_details.expected_type_kind_name { current_match = false; }
-                                // ... (add more checks from the main function if needed for recursion depth) ...
-                                log::debug!(target: log_target, "         Recursive Check for '{}': {}", field_name_str.log_name(), current_match.log_bool());
+                                let mut current_match = true;
+                                let actual_kind_name_rec = match &actual_type_node.kind {
+                                    TypeKind::Named { .. } => "Named",
+                                    TypeKind::Reference { .. } => "Reference",
+                                    TypeKind::Tuple => "Tuple",
+                                    TypeKind::Slice => "Slice",
+                                    TypeKind::Array { .. } => "Array",
+                                    TypeKind::Function { .. } => "FunctionPointer",
+                                    TypeKind::Never => "Never",
+                                    TypeKind::Inferred => "Inferred",
+                                    TypeKind::RawPointer { .. } => "RawPointer",
+                                    TypeKind::TraitObject { .. } => "TraitObject",
+                                    TypeKind::ImplTrait { .. } => "ImplTrait",
+                                    TypeKind::Paren { .. } => "Paren",
+                                    TypeKind::Macro { .. } => "Macro",
+                                    TypeKind::Unknown { .. } => "Unknown",
+                                    TypeKind::Primitive(_) => "Primitive",
+                                    _ => "Other",
+                                };
+                                if actual_kind_name_rec != expected_details.expected_type_kind_name {
+                                    log::debug!(target: log_target, "         Recursive TypeKind Name Mismatch: Expected '{}', Actual '{}'", expected_details.expected_type_kind_name.log_name_debug(), actual_kind_name_rec.log_name_debug());
+                                    current_match = false;
+                                } else {
+                                    log::debug!(target: log_target, "         Recursive TypeKind Name Match: '{}'", actual_kind_name_rec.log_name_debug());
+                                }
+
+                                match (expected_details.expected_type_kind_name, &actual_type_node.kind) {
+                                    ("Named", TypeKind::Named { path: actual_path_rec, .. }) => {
+                                        if let Some(ExpectedPathOrStr::Path(expected_path_slice_rec)) = expected_details.expected_path_or_str {
+                                            let expected_path_vec_rec: Vec<String> = expected_path_slice_rec.iter().map(|s| s.to_string()).collect();
+                                            if actual_path_rec != expected_path_vec_rec {
+                                                log::debug!(target: log_target, "            Recursive Named Path Mismatch: Expected '{:?}', Actual '{:?}'", expected_path_vec_rec.log_path_debug(), actual_path_rec.log_path_debug());
+                                                current_match = false;
+                                            } else {
+                                                log::debug!(target: log_target, "            Recursive Named Path Match: '{:?}'", actual_path_rec.log_path_debug());
+                                            }
+                                        }
+                                    }
+                                    ("Primitive", TypeKind::Primitive(actual_primitive_name_rec)) => {
+                                        if let Some(ExpectedPathOrStr::Str(expected_primitive_name_rec)) = expected_details.expected_path_or_str {
+                                            if actual_primitive_name_rec != expected_primitive_name_rec {
+                                                 log::debug!(target: log_target, "            Recursive Primitive Name Mismatch: Expected '{}', Actual '{}'", expected_primitive_name_rec.log_name_debug(), actual_primitive_name_rec.log_name_debug());
+                                                current_match = false;
+                                            } else {
+                                                log::debug!(target: log_target, "            Recursive Primitive Name Match: '{}'", actual_primitive_name_rec.log_name_debug());
+                                            }
+                                        }
+                                    }
+                                     _ => { /* Add more detailed recursive checks if needed */ }
+                                }
+                                // Check recursive related_types_count
+                                if let Some(expected_rec_count) = expected_details.expected_related_types_count {
+                                    if actual_type_node.related_types.len() != expected_rec_count {
+                                        log::debug!(target: log_target, "            Recursive Related Types Count Mismatch: Expected '{}', Actual '{}'", expected_rec_count.log_name_debug(), actual_type_node.related_types.len().log_name_debug());
+                                        current_match = false;
+                                    } else {
+                                         log::debug!(target: log_target, "            Recursive Related Types Count Match: '{}'", expected_rec_count.log_name_debug());
+                                    }
+                                }
+
+
+                                // Deeper recursion for expected_first_related_type_details is omitted here for simplicity,
+                                // but would follow the same pattern if needed.
                                 current_match
                             }
                         }
-                        let checker = RecursiveChecker { expected_type_details: Some(expected_first_related_details_boxed.clone()) }; // Clone the details for the checker
 
-                        log::debug!(target: log_target, "      Recursively checking first related type...");
-                        if !checker.check_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
+                        let recursive_checker = RecursiveExpectedDetailsHolder {
+                            expected_type_details: Some(*expected_first_related_details_boxed.clone())
+                        };
+
+                        log::debug!(target: log_target, "      Recursively checking first related type (of field '{}')...", field_name_str.log_name_debug());
+                        if !recursive_checker.check_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
                             overall_match = false;
                         }
                     }
