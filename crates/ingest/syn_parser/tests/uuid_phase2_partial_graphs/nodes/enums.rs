@@ -18,15 +18,23 @@
 //!     *   `PrivateEnum`: Enum with default (private) visibility.
 //!     *   `CrateEnum`: Enum with `pub(crate)` visibility.
 //! *   **Generics:**
-//!     *   `GenericEnum<'a, T: Default + Clone, const N: usize> where T: Send`: Public enum with lifetime, type, and const generic parameters, plus a `where` clause. Includes a variant with a doc comment and another with a `#[cfg]` attribute.
+//!     *   `GenericEnum<'a, T: Default + Clone, const N: usize> where T: Send`: (Currently not tested due to cfg/feature complexity in test setup) Public enum with lifetime, type, and const generic parameters, plus a `where` clause. Includes a variant with a doc comment and another with a `#[cfg]` attribute.
 //! *   **Attributes & Discriminants:**
 //!     *   `EnumWithAttributesAndDiscriminants`: Public enum with `#[repr(u16)]` and explicit/implicit discriminants. Includes a variant with an attribute and another with a doc comment.
 //! *   **CFG Attributes:**
-//!     *   `CfgEnum`: Public enum conditionally compiled with `#[cfg(feature = "enum_main_feature")]`. Includes a variant also conditionally compiled. (Note: Test execution might not activate these features by default).
+//!     *   `CfgEnum`: (Currently not tested due to cfg/feature complexity in test setup) Public enum conditionally compiled with `#[cfg(feature = "enum_main_feature")]`. Includes a variant also conditionally compiled.
 //! *   **Mixed Variants:**
 //!     *   `EnumWithMixedVariants`: Public enum with simple, multi-field tuple, and multi-field struct variants. Includes a variant with a doc comment and a field with a `#[cfg]` attribute.
+//! *   **Isolated Generic Property Tests:**
+//!     *   `JustTypeGeneric<A, B>`: Tests type generics.
+//!     *   `JustLifetimeGeneric<'x, 'y>`: Tests lifetime generics.
+//!     *   `JustConstGeneric<const X: usize, const Y: usize>`: Tests const generics.
+//!     *   `JustWhereClause<T> where T: Copy`: Tests a simple `where` clause.
+//! *   **Isolated Complex Field Tests:**
+//!     *   `OnlyTupleVariants`: Tests multi-field tuple variants.
+//!     *   `OnlyStructVariants`: Tests multi-field struct variants.
 //!
-//! **Conclusion for Fixture Coverage:** Good. The expanded fixture and corresponding test data cover a diverse range of enum definitions.
+//! **Conclusion for Fixture Coverage:** Good. The expanded fixture and corresponding test data cover a diverse range of enum definitions, though tests for enums with complex `cfg` interactions are currently disabled.
 //!
 //! ### 2. Coverage of `EnumNode` Property Variations (via `ExpectedEnumNode`):
 //!
@@ -36,13 +44,15 @@
 //! *   `visibility: VisibilityKind`: Excellent coverage (`Public`, `Inherited` for private, `Crate`).
 //! *   `variants_count: usize`: Excellent coverage (various counts).
 //! *   `generic_params_count: usize`: Excellent coverage (0 and multiple, including mixed types).
+//!     *   Note: The `GenericEnum` and `CfgEnum` tests, which have more complex `cfg` interactions affecting these counts, are currently disabled.
 //! *   `attributes: Vec<Attribute>`: Good coverage (no attributes, `#[derive(...)]`, `#[repr(...)]`).
 //! *   `docstring: Option<&'static str>`: Excellent coverage (`Some` and `None`).
 //! *   `tracking_hash_check: bool`: Excellent coverage (all `true`).
 //! *   `cfgs: Vec<String>`: Fair coverage (enum-level `#[cfg(...)]`).
+//!     *   Note: The `CfgEnum` test, which specifically targets enum-level `cfg`, is currently disabled.
 //!
 //! **Conclusion for Property Variation Coverage (via `ExpectedEnumNode`):**
-//! Most high-level `EnumNode` fields checked by `ExpectedEnumNode` have good to excellent coverage.
+//! Most high-level `EnumNode` fields checked by `ExpectedEnumNode` have good to excellent coverage for the enabled tests. Tests for items with complex conditional compilation are currently disabled.
 //!
 //! ### 3. Limitations and Areas Not Fully Validated by `ExpectedEnumNode`:
 //!

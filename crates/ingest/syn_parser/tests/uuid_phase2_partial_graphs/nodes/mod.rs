@@ -47,11 +47,15 @@
 //!     *   `RelationKind::ModuleDeclarationResolvesToDefinition`: This relation is established in Phase 3.
 //!     *   `extern crate` items: Ensuring `extern crate` statements are correctly reflected in `items_count` and lead to `ImportNode` creation.
 //!     *   `#[cfg_attr(..., path = "...")]`: Modules declared with conditional path attributes.
+//! *   **`EnumNode`:**
+//!     *   Detailed variant/field checks: The `ExpectedEnumNode` primarily checks counts (`variants_count`, `generic_params_count`). Specifics of variant names, fields within variants (names, types, visibilities, attributes), discriminants, and attributes/docstrings/CFGs on individual variants are not deeply validated by the current macro.
+//!     *   Generic parameter details: Names, kinds (type, lifetime, const), bounds, and `where` clause predicates for enum generics are not checked beyond `generic_params_count`.
+//!     *   `cfg` interactions: Tests for enums or variants whose structure changes based on `#[cfg]` attributes (e.g., `CfgEnum`, `GenericEnum`'s conditional variant) are currently disabled due to the complexity of managing feature flags in the test environment for precise `variants_count` assertions.
 //!
 //! ## General Notes:
 //!
 //! This list focuses on gaps identified in the refactored tests using the macro framework.
-//! Other node types not yet refactored (e.g., `StructNode`, `EnumNode`, `TraitNode`) will
+//! Other node types not yet refactored (e.g., `StructNode`, `TraitNode`) will
 //! require similar analysis once updated.
 
 // -- Files that have been updated for the new typed id system are here:
