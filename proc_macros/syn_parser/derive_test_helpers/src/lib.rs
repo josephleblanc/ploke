@@ -1115,7 +1115,7 @@ check
                 let expected_details = self.expected_type_details.as_ref().unwrap();
                 log::debug!(target: log_target, "   Performing detailed check for TypeId field '{}'...", field_name_str.log_name_debug());
 
-                let actual_type_node = match graph.resolve_type(actual_type_id) {
+                let actual_type_node = match graph.resolve_type(*actual_type_id) { // Pass TypeId by value
                     Some(tn) => tn,
                     None => {
                         log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id_debug(), field_name_str.log_name_debug());
@@ -1126,24 +1126,22 @@ check
                 let mut overall_match = true;
 
                 // 1. Check TypeKind variant name
-                let actual_kind_name = match &actual_type_node.kind { // Match on reference
+                let actual_kind_name = match &actual_type_node.kind {
                     TypeKind::Named { .. } => "Named",
                     TypeKind::Reference { .. } => "Reference",
-                    TypeKind::Tuple => "Tuple",
-                    TypeKind::Slice => "Slice",
-                    TypeKind::Array { .. } => "Array", // Has fields like size
-                    TypeKind::Function { .. } => "FunctionPointer", // Renamed from FunctionPointer, has fields
-                    TypeKind::Never => "Never",
-                    TypeKind::Inferred => "Inferred",
+                    TypeKind::Slice => "Slice", // Unit variant
+                    TypeKind::Array { .. } => "Array",
+                    TypeKind::Tuple => "Tuple", // Unit variant
+                    TypeKind::Function { .. } => "FunctionPointer", // Struct variant (fn keyword)
+                    TypeKind::Never => "Never", // Unit variant
+                    TypeKind::Inferred => "Inferred", // Unit variant
                     TypeKind::RawPointer { .. } => "RawPointer",
-                    TypeKind::TraitObject { .. } => "TraitObject",
-                    TypeKind::ImplTrait { .. } => "ImplTrait",
-                    TypeKind::Paren { .. } => "Paren",
-                    TypeKind::Macro { .. } => "Macro",
+                    TypeKind::TraitObject { .. } => "TraitObject", // Struct variant (dyn keyword)
+                    TypeKind::ImplTrait { .. } => "ImplTrait", // Struct variant (impl keyword)
+                    TypeKind::Paren { .. } => "Paren", // Struct variant (parenthesized type)
+                    TypeKind::Macro { .. } => "Macro", // Struct variant (type macro)
                     TypeKind::Unknown { .. } => "Unknown",
-                    TypeKind::Primitive(_) => "Primitive", // Is TypeKind::Primitive(String)
-                    // Note: TypeKind::Path is not a variant in ploke_core::TypeKind
-                    // TypeKind::Group, TypeKind::Verbatim, TypeKind::Ellipsis are also not in ploke_core::TypeKind
+                    // TypeKind::Primitive does not exist. Primitives are TypeKind::Named.
                 };
 
                 if actual_kind_name != expected_details.expected_type_kind_name {
