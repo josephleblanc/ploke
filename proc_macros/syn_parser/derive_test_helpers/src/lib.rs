@@ -290,6 +290,33 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
             }
             // "generic_params" for EnumNode is handled by the general "generic_params" arm below.
 
+            // == StructNode Specific Handlers ==
+            "fields" // For StructNode
+                if node_struct_name == "StructNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Assuming Vec<FieldNode>
+            {
+                expected_fields_defs.push(quote! { pub fields_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.fields.len();
+                        let check = self.fields_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Fields Count Match?".to_string().log_step(), check.log_bool(),
+                            self.fields_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            // "generic_params" for StructNode is handled by the general "generic_params" arm below.
+
             // == General Handler for "generic_params" (applicable to EnumNode, FunctionNode, StructNode, etc.) ==
             "generic_params"
                 if (node_struct_name == "EnumNode" || node_struct_name == "FunctionNode" || node_struct_name == "StructNode" || node_struct_name == "TraitNode" || node_struct_name == "ImplNode" || node_struct_name == "TypeAliasNode" || node_struct_name == "UnionNode")
