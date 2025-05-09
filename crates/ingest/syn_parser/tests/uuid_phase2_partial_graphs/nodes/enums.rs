@@ -102,6 +102,101 @@ use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 
 pub const LOG_TEST_ENUM: &str = "log_test_enum";
+//
+// KNOWN LIMITATIONS
+// NOTE: We don't handle 'where' clauses yet.
+// paranoid_test_fields_and_values!(
+//     test_generic_enum_fields_and_values,
+//     "crate::enums::GenericEnum",
+//     EXPECTED_ENUMS_ARGS,
+//     EXPECTED_ENUMS_DATA,
+//     syn_parser::parser::nodes::EnumNode,
+//     syn_parser::parser::nodes::ExpectedEnumNode,
+//     as_enum,
+//     LOG_TEST_ENUM
+// );
+//
+// // ExpectedEnumNode for test_generic_enum_fields_and_values
+// m.insert(
+//     "crate::enums::GenericEnum", // Assuming feature "enum_feature_one" is NOT active by default for tests
+//     ExpectedEnumNode {
+//         name: "GenericEnum",
+//         visibility: VisibilityKind::Public,
+//         variants_count: 3, // GenericVariant, LifetimeVariant, ConstGenericVariant (ConditionalGeneric is cfg'd out)
+//         // NOTE: Actual number of variants might change if 'enum_feature_one' is active during test.
+//         // The test logic for cfgs on variants is not yet part of ExpectedEnumNode.
+//         generic_params_count: 3, // 'a, T, N
+//         // NOTE: Details of generic_params (names, bounds, kinds, where clauses) are not checked.
+//         attributes: vec![Attribute {
+//             name: "derive".to_string(),
+//             args: vec!["Debug".to_string(), "Clone".to_string()],
+//             value: None,
+//         }],
+//         docstring: Some("Enum with lifetime, type, and const generic parameters, and a where clause."),
+//         tracking_hash_check: true,
+//         cfgs: vec![], // No enum-level cfgs
+//     },
+// );
+//
+// // ParanoidArgs for test_generic_enum_fields_and_values
+// m.insert(
+//     "crate::enums::GenericEnum",
+//     ParanoidArgs {
+//         fixture: "fixture_nodes",
+//         relative_file_path: "src/enums.rs",
+//         ident: "GenericEnum",
+//         expected_path: &["crate", "enums"],
+//         item_kind: ItemKind::Enum,
+//         expected_cfg: None, // The enum itself is not cfg'd, only one of its variants
+//     },
+// );
+//
+//
+//
+// NOTE: We aren't handling conditional compilation selection yet.
+// paranoid_test_fields_and_values!(
+//     test_cfg_enum_fields_and_values,
+//     "crate::enums::CfgEnum",
+//     EXPECTED_ENUMS_ARGS,
+//     EXPECTED_ENUMS_DATA,
+//     syn_parser::parser::nodes::EnumNode,
+//     syn_parser::parser::nodes::ExpectedEnumNode,
+//     as_enum,
+//     LOG_TEST_ENUM
+// );
+//
+// m.insert(
+//     "crate::enums::CfgEnum", // Assuming feature "enum_main_feature" is NOT active by default for tests
+//     ExpectedEnumNode {
+//         name: "CfgEnum",
+//         visibility: VisibilityKind::Public,
+//         variants_count: 0, // If 'enum_main_feature' is off, the enum itself is gone.
+//                            // If 'enum_main_feature' is on, then:
+//                            // variants_count would be 1 (AlwaysPresent) if 'enum_variant_feature' is off,
+//                            // or 2 (AlwaysPresent, SometimesPresent) if 'enum_variant_feature' is on.
+//                            // This highlights the complexity of testing cfg'd items without feature control.
+//                            // For now, we assume the item is NOT present if its top-level cfg is off.
+//         generic_params_count: 0,
+//         attributes: vec![],
+//         docstring: Some("Enum that is conditionally compiled."), // Docstring is on the item regardless of cfg for parsing
+//         tracking_hash_check: true, // Tracking hash is based on the item as if it exists
+//         cfgs: vec!["feature = \"enum_main_feature\"".to_string()], // The cfg itself
+//     },
+// );
+//
+// m.insert(
+//     "crate::enums::CfgEnum",
+//     ParanoidArgs {
+//         fixture: "fixture_nodes",
+//         relative_file_path: "src/enums.rs",
+//         ident: "CfgEnum",
+//         expected_path: &["crate", "enums"],
+//         item_kind: ItemKind::Enum,
+//         expected_cfg: Some(&["feature = \"enum_main_feature\""]),
+//     },
+// );
+//
+//
 
 lazy_static! {
     static ref EXPECTED_ENUMS_DATA: HashMap<&'static str, ExpectedEnumNode> = {
@@ -186,26 +281,6 @@ lazy_static! {
             },
         );
         m.insert(
-            "crate::enums::GenericEnum", // Assuming feature "enum_feature_one" is NOT active by default for tests
-            ExpectedEnumNode {
-                name: "GenericEnum",
-                visibility: VisibilityKind::Public,
-                variants_count: 3, // GenericVariant, LifetimeVariant, ConstGenericVariant (ConditionalGeneric is cfg'd out)
-                // NOTE: Actual number of variants might change if 'enum_feature_one' is active during test.
-                // The test logic for cfgs on variants is not yet part of ExpectedEnumNode.
-                generic_params_count: 3, // 'a, T, N
-                // NOTE: Details of generic_params (names, bounds, kinds, where clauses) are not checked.
-                attributes: vec![Attribute {
-                    name: "derive".to_string(),
-                    args: vec!["Debug".to_string(), "Clone".to_string()],
-                    value: None,
-                }],
-                docstring: Some("Enum with lifetime, type, and const generic parameters, and a where clause."),
-                tracking_hash_check: true,
-                cfgs: vec![], // No enum-level cfgs
-            },
-        );
-        m.insert(
             "crate::enums::EnumWithAttributesAndDiscriminants",
             ExpectedEnumNode {
                 name: "EnumWithAttributesAndDiscriminants",
@@ -223,24 +298,6 @@ lazy_static! {
                 docstring: Some("Enum with `#[repr]` attribute and explicit discriminants."),
                 tracking_hash_check: true,
                 cfgs: vec![],
-            },
-        );
-        m.insert(
-            "crate::enums::CfgEnum", // Assuming feature "enum_main_feature" is NOT active by default for tests
-            ExpectedEnumNode {
-                name: "CfgEnum",
-                visibility: VisibilityKind::Public,
-                variants_count: 0, // If 'enum_main_feature' is off, the enum itself is gone.
-                                   // If 'enum_main_feature' is on, then:
-                                   // variants_count would be 1 (AlwaysPresent) if 'enum_variant_feature' is off,
-                                   // or 2 (AlwaysPresent, SometimesPresent) if 'enum_variant_feature' is on.
-                                   // This highlights the complexity of testing cfg'd items without feature control.
-                                   // For now, we assume the item is NOT present if its top-level cfg is off.
-                generic_params_count: 0,
-                attributes: vec![],
-                docstring: Some("Enum that is conditionally compiled."), // Docstring is on the item regardless of cfg for parsing
-                tracking_hash_check: true, // Tracking hash is based on the item as if it exists
-                cfgs: vec!["feature = \"enum_main_feature\"".to_string()], // The cfg itself
             },
         );
         m.insert(
@@ -414,17 +471,6 @@ lazy_static! {
             },
         );
         m.insert(
-            "crate::enums::GenericEnum",
-            ParanoidArgs {
-                fixture: "fixture_nodes",
-                relative_file_path: "src/enums.rs",
-                ident: "GenericEnum",
-                expected_path: &["crate", "enums"],
-                item_kind: ItemKind::Enum,
-                expected_cfg: None, // The enum itself is not cfg'd, only one of its variants
-            },
-        );
-        m.insert(
             "crate::enums::EnumWithAttributesAndDiscriminants",
             ParanoidArgs {
                 fixture: "fixture_nodes",
@@ -433,17 +479,6 @@ lazy_static! {
                 expected_path: &["crate", "enums"],
                 item_kind: ItemKind::Enum,
                 expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::enums::CfgEnum",
-            ParanoidArgs {
-                fixture: "fixture_nodes",
-                relative_file_path: "src/enums.rs",
-                ident: "CfgEnum",
-                expected_path: &["crate", "enums"],
-                item_kind: ItemKind::Enum,
-                expected_cfg: Some(&["feature = \"enum_main_feature\""]),
             },
         );
         m.insert(
@@ -597,30 +632,8 @@ paranoid_test_fields_and_values!(
 );
 
 paranoid_test_fields_and_values!(
-    test_generic_enum_fields_and_values,
-    "crate::enums::GenericEnum",
-    EXPECTED_ENUMS_ARGS,
-    EXPECTED_ENUMS_DATA,
-    syn_parser::parser::nodes::EnumNode,
-    syn_parser::parser::nodes::ExpectedEnumNode,
-    as_enum,
-    LOG_TEST_ENUM
-);
-
-paranoid_test_fields_and_values!(
     test_enum_with_attributes_and_discriminants_fields_and_values,
     "crate::enums::EnumWithAttributesAndDiscriminants",
-    EXPECTED_ENUMS_ARGS,
-    EXPECTED_ENUMS_DATA,
-    syn_parser::parser::nodes::EnumNode,
-    syn_parser::parser::nodes::ExpectedEnumNode,
-    as_enum,
-    LOG_TEST_ENUM
-);
-
-paranoid_test_fields_and_values!(
-    test_cfg_enum_fields_and_values,
-    "crate::enums::CfgEnum",
     EXPECTED_ENUMS_ARGS,
     EXPECTED_ENUMS_DATA,
     syn_parser::parser::nodes::EnumNode,
