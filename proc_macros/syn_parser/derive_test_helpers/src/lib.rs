@@ -1000,6 +1000,7 @@ check
         use ::ploke_core::{IdTrait, TypeKind}; // For TypeId::is_synthetic, etc. Add TypeKind
         // Import PrimaryNodeIdTrait if needed for to_pid() in log_target_id
         use crate::parser::nodes::PrimaryNodeIdTrait;
+        use crate::parser::graph::GraphAccess; // Ensure GraphAccess is in scope for resolve_type
 
         // Helper structs and enums for TypeId checking
         // These are defined here to be part of the macro's output,
