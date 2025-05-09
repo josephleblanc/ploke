@@ -1,13 +1,69 @@
 use crate::common::paranoid::find_enum_node_paranoid;
 use crate::common::uuid_ids_utils::*;
+use crate::common::ParanoidArgs;
+use lazy_static::lazy_static;
+use ploke_core::ItemKind;
 use ploke_core::NodeId;
 use ploke_core::{TypeId, TypeKind};
+use std::collections::HashMap;
 // Import TypeKind from ploke_core
-use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, GraphNode};
+use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, Attribute, ExpectedEnumNode, GraphNode};
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::TestIds;
 
-// --- Test Cases ---
+// macro-related imports
+use crate::paranoid_test_fields_and_values;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+
+pub const LOG_TEST_ENUM: &str = "log_test_enum";
+
+lazy_static! {
+    static ref EXPECTED_ENUMS_DATA: HashMap<&'static str, ExpectedEnumNode> = {
+        let mut m = HashMap::new();
+        m.insert("crate::enums::SampleEnum", ExpectedEnumNode {
+            name: "SampleEnum",
+            visibility: VisibilityKind::Public,
+            variants_count: 3,
+            generic_params_count: 0,
+            attributes: vec![],
+            docstring: None,
+            tracking_hash_check: true,
+            cfgs: vec![],
+        });
+        // Add more enums later
+        m
+    };
+}
+
+lazy_static! {
+    static ref EXPECTED_ENUMS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        m.insert("crate::enums::SampleEnum", ParanoidArgs {
+            fixture: "fixture_nodes",
+            relative_file_path: "src/enums.rs",
+            ident: "SampleEnum",
+            expected_path: &["crate", "enums"], // Assuming enums.rs is module 'enums'
+            item_kind: ItemKind::Enum,
+            expected_cfg: None,
+        });
+        // Add more enums later
+        m
+    };
+}
+
+paranoid_test_fields_and_values!(
+    test_sample_enum_fields_and_values,
+    "crate::enums::SampleEnum",
+    EXPECTED_ENUMS_ARGS,
+    EXPECTED_ENUMS_DATA,
+    syn_parser::parser::nodes::EnumNode,
+    syn_parser::parser::nodes::ExpectedEnumNode,
+    as_enum,
+    LOG_TEST_ENUM
+);
+
+// --- Old Test Cases (to be removed/refactored later) ---
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]

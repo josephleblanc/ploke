@@ -1,4 +1,5 @@
-use crate::parser::{graph::GraphNode, types::GenericParamNode}; // Removed define_node_info_struct import
+use crate::parser::{graph::GraphNode, types::GenericParamNode};
+use derive_test_helpers::ExpectedData; // Import ExpectedData
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for EnumNodeInfo
 
 // Represents an enum definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct EnumNode {
     pub id: EnumNodeId, // Use typed ID
     pub name: String,

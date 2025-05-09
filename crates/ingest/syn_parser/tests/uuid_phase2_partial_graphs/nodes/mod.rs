@@ -56,14 +56,13 @@
 
 // -- Files that have been updated for the new typed id system are here:
 mod consts;
+mod enums;
 mod functions;
 mod imports;
 mod modules;
 mod statics;
 
 // -- Files that have yet to be updated are gated behind the cfgs below:
-#[cfg(not(feature = "type_bearing_ids"))]
-mod enums;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod impls;
 #[cfg(not(feature = "type_bearing_ids"))]

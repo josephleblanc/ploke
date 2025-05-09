@@ -44,6 +44,7 @@ pub use union::UnionNode;
 // test structures generated with proc macros:
 // This might be kind of a dirty way to do it, but I just hope it works:
 pub use consts::ExpectedConstNode;
+pub use enums::ExpectedEnumNode; // Add ExpectedEnumNode
 pub use function::ExpectedFunctionNode;
 pub use import::ExpectedImportNode;
 pub use module::ExpectedModuleNode;
