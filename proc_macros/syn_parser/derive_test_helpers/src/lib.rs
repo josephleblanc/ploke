@@ -72,7 +72,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let expected_vec: Vec<String> = self.path.iter().map(|s| s.to_string()).collect();
-                        let check = expected_vec == node.path; // Compare Vec<String> == Vec<String>
+                        let check = &expected_vec == &node.path; // Compare &Vec<String> == &Vec<String>
                         log::debug!(target: #log_target,
                             "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
                             "Path Match?".to_string().log_step(), check.log_bool(),
@@ -509,7 +509,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         // Assuming node implements GraphNode trait which has visibility()
-                        let check = self.visibility == *node.visibility();
+                        let check = &self.visibility == node.visibility(); // Compare &VisibilityKind == &VisibilityKind
                         log::debug!(target: #log_target,
                             "   {: <23} {} | Expected '{}' == Actual '{}'",
                             "Visibility Match?".to_string().log_step(), check.log_bool(),
@@ -1185,7 +1185,7 @@ check
                     }
                     ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
                         if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
-                            if actual_is_mutable != expected_mut {
+                            if *actual_is_mutable != expected_mut { // Dereference actual_is_mutable
                                 log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
                                     expected_mut.log_bool(), actual_is_mutable.log_bool());
                                 overall_match = false;
@@ -1237,7 +1237,7 @@ check
                             fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
                                 if self.expected_type_details.is_none() { return true; }
                                 let expected_details = self.expected_type_details.as_ref().unwrap();
-                                let actual_type_node = match graph.resolve_type(actual_type_id) {
+                                let actual_type_node = match graph.resolve_type(*actual_type_id) { // Pass TypeId by value
                                     Some(tn) => tn,
                                     None => { return false; /* error already logged by caller */ }
                                 };
