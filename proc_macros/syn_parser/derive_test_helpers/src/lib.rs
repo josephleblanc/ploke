@@ -1185,7 +1185,7 @@ check
                     }
                     ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
                         if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
-                            if *actual_is_mutable != expected_mut { // Dereference actual_is_mutable
+                            if actual_is_mutable != &expected_mut { // Compare &bool with &bool
                                 log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
                                     expected_mut.log_bool(), actual_is_mutable.log_bool());
                                 overall_match = false;
@@ -1271,7 +1271,7 @@ check
                                     ("Named", TypeKind::Named { path: actual_path_rec, .. }) => {
                                         if let Some(ExpectedPathOrStr::Path(expected_path_slice_rec)) = expected_details.expected_path_or_str {
                                             let expected_path_vec_rec: Vec<String> = expected_path_slice_rec.iter().map(|s| s.to_string()).collect();
-                                            if actual_path_rec != expected_path_vec_rec {
+                                            if actual_path_rec != &expected_path_vec_rec { // Compare &Vec<String> with &Vec<String>
                                                 log::debug!(target: log_target, "            Recursive Named Path Mismatch: Expected '{:?}', Actual '{:?}'", expected_path_vec_rec.log_path_debug(), actual_path_rec.log_path_debug());
                                                 current_match = false;
                                             } else {
