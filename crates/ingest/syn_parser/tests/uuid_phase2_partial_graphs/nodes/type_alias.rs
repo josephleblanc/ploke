@@ -105,6 +105,116 @@ paranoid_test_fields_and_values!(
     LOG_TEST_TYPE_ALIAS
 );
 
+// --- New Manual Detailed Test ---
+
+#[test]
+fn test_type_alias_displayable_container_detailed_type_check() -> Result<(), SynParserError> {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let fixture_name = "fixture_nodes";
+    let successful_graphs = run_phases_and_collect(fixture_name);
+
+    let alias_name = "DisplayableContainer";
+    let relative_file_path = "src/type_alias.rs";
+    let module_path_vec = vec!["crate".to_string(), "type_alias".to_string()];
+
+    // Find the TypeAliasNode using ParanoidArgs and generated PID
+    let args = ParanoidArgs {
+        fixture: fixture_name,
+        relative_file_path,
+        ident: alias_name,
+        expected_path: &["crate", "type_alias"],
+        item_kind: ItemKind::TypeAlias,
+        expected_cfg: None,
+    };
+    let test_info = args.generate_pid(&successful_graphs)?;
+    let graph_data = test_info.target_data();
+    let type_alias_node = graph_data
+        .find_node_unique(test_info.test_pid().into())?
+        .as_type_alias()
+        .unwrap_or_else(|| {
+            panic!(
+                "Node found by ID for '{}' was not a TypeAliasNode.",
+                alias_name
+            )
+        });
+
+    // --- Assertions ---
+    assert_eq!(type_alias_node.name(), alias_name);
+    assert_eq!(type_alias_node.visibility(), &VisibilityKind::Public);
+
+    // 1. Check Generic Parameters of the TypeAliasNode: <T: std::fmt::Display>
+    assert_eq!(type_alias_node.generic_params.len(), 1);
+    let generic_param_t = &type_alias_node.generic_params[0];
+    match &generic_param_t.kind {
+        GenericParamKind::Type {
+            name,
+            bounds,
+            default,
+        } => {
+            assert_eq!(name, "T");
+            assert_eq!(bounds.len(), 1, "Expected one trait bound (Display)");
+            assert!(default.is_none());
+
+            // Check the bound TypeId corresponds to Display
+            let bound_type_id = bounds[0];
+            let bound_type_node = find_type_node(&graph_data.graph, bound_type_id);
+            // Path might be fully qualified or just "Display" depending on resolution context
+            // For Phase 2, it's often the simple name or a partially resolved path.
+            // A more robust check might involve checking ends_with or specific segments.
+            assert!(
+                matches!(&bound_type_node.kind, TypeKind::Named { path, .. } if path.iter().any(|seg| seg == "Display")),
+                "Expected bound type 'Display', found {:?}",
+                bound_type_node.kind
+            );
+        }
+        _ => panic!(
+            "Expected GenericParamKind::Type for T, found {:?}",
+            generic_param_t.kind
+        ),
+    }
+
+    // 2. Check the aliased TypeId: resolves to Vec<T>
+    let aliased_type_id = type_alias_node.type_id;
+    assert!(
+        matches!(aliased_type_id, TypeId::Synthetic(_)),
+        "Aliased TypeId should be Synthetic"
+    );
+    let aliased_type_node = find_type_node(&graph_data.graph, aliased_type_id);
+
+    // Check the Vec part
+    assert!(
+        matches!(&aliased_type_node.kind, TypeKind::Named { path, .. } if path == &["Vec".to_string()]),
+        "Expected aliased type 'Vec<T>', found outer type {:?}",
+        aliased_type_node.kind
+    );
+
+    // Check the related type (T) for Vec<T>
+    assert_eq!(
+        aliased_type_node.related_types.len(),
+        1,
+        "Vec<T> should have one related type (T)"
+    );
+    let related_type_id_for_vec_t = aliased_type_node.related_types[0];
+    let related_type_node_for_vec_t = find_type_node(&graph_data.graph, related_type_id_for_vec_t);
+    assert!(
+        matches!(&related_type_node_for_vec_t.kind, TypeKind::Named { path, .. } if path == &["T".to_string()]),
+        "Expected related type 'T' for Vec, found {:?}",
+        related_type_node_for_vec_t.kind
+    );
+
+    // Ensure the 'T' from Vec<T> is the same TypeId as the 'T' from the generic_params
+    // This requires TypeId to be comparable and correctly generated.
+    // The TypeId for the generic parameter `T` itself is not directly stored on GenericParamNode.
+    // Instead, the `TypeId` for `T` as used in `Vec<T>` (related_type_id_for_vec_t)
+    // should correspond to a `TypeNode` whose name is "T".
+    // The `GenericParamNode` for `T` also has `name: "T"`.
+    // A deeper check would involve ensuring that within the scope of this type alias,
+    // these two "T"s refer to the same conceptual type parameter.
+    // For now, matching by name is a good indicator.
+
+    Ok(())
+}
+
 // --- Old Test Cases (Kept as per instruction) ---
 
 #[test]
