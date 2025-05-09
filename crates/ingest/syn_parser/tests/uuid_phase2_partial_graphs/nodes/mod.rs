@@ -3,7 +3,7 @@
 //! This document summarizes areas where the node-specific tests within this module
 //! (using the `paranoid_test_fields_and_values!` macro) have known coverage gaps
 //! or areas for future improvement, based on the analysis in individual test files
-//! (`consts.rs`, `statics.rs`, `functions.rs`, `imports.rs`).
+//! (`consts.rs`, `statics.rs`, `functions.rs`, `imports.rs`, `modules.rs`).
 //!
 //! ## Common Gaps Across Node Types:
 //!
@@ -40,6 +40,13 @@
 //!     *   Missing detailed tests: Several `static` items from the fixture lack detailed field checks.
 //!     *   Visibility: `VisibilityKind::Crate` is not covered by detailed tests.
 //!     *   Associated statics: Not currently tested (and may not be applicable).
+//! *   **`ModuleNode`:**
+//!     *   Visibility: `VisibilityKind::Restricted` (e.g., `pub(in path)`) is not explicitly tested.
+//!     *   `exports` field: Population of re-exported items is a Phase 3 concern and not tested in Phase 2.
+//!     *   `ModuleKind::Declaration.resolved_definition`: This link to a definition is established in Phase 3 and not tested in Phase 2.
+//!     *   `RelationKind::ModuleDeclarationResolvesToDefinition`: This relation is established in Phase 3.
+//!     *   `extern crate` items: Ensuring `extern crate` statements are correctly reflected in `items_count` and lead to `ImportNode` creation.
+//!     *   `#[cfg_attr(..., path = "...")]`: Modules declared with conditional path attributes.
 //!
 //! ## General Notes:
 //!
