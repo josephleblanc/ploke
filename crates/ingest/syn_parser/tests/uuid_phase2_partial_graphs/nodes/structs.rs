@@ -33,6 +33,75 @@ lazy_static! {
                 // Note: `type_id_check` from ConstNode/StaticNode is not applicable here.
             },
         );
+        m.insert(
+            "crate::structs::TupleStruct",
+            ExpectedStructNode {
+                name: "TupleStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 2,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::UnitStruct",
+            ExpectedStructNode {
+                name: "UnitStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 0,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::GenericStruct",
+            ExpectedStructNode {
+                name: "GenericStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 1,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::AttributedStruct",
+            ExpectedStructNode {
+                name: "AttributedStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 0,
+                attributes: vec![Attribute {
+                    name: "derive".to_string(),
+                    args: vec!["Debug".to_string()],
+                    value: None,
+                }],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::DocumentedStruct",
+            ExpectedStructNode {
+                name: "DocumentedStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: Some("This is a documented struct"),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
         m
     };
 }
@@ -46,6 +115,61 @@ lazy_static! {
                 fixture: "fixture_nodes",
                 relative_file_path: "src/structs.rs",
                 ident: "SampleStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::TupleStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "TupleStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::UnitStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "UnitStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::GenericStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "GenericStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::AttributedStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "AttributedStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::DocumentedStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "DocumentedStruct",
                 expected_path: &["crate", "structs"],
                 item_kind: ItemKind::Struct,
                 expected_cfg: None,
