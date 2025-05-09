@@ -45,35 +45,68 @@ lazy_static! {
     static ref EXPECTED_TYPE_ALIASES_DATA: HashMap<&'static str, ExpectedTypeAliasNode> = {
         let mut m = HashMap::new();
 
+        // For use in ExpectedTypeAliasNode below
+        use syn_parser::parser::nodes::{ExpectedPathOrStr, ExpectedTypeDetails};
+
         m.insert("crate::type_alias::SimpleId", ExpectedTypeAliasNode {
             name: "SimpleId",
             visibility: VisibilityKind::Public,
-            type_id_check: true, // Expecting the TypeId to be synthetic
             generic_params_count: 0,
             attributes: vec![],
             docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
+            expected_type_details: Some(ExpectedTypeDetails {
+                expected_type_kind_name: "Named", // TypeKind::Named
+                expected_path_or_str: Some(ExpectedPathOrStr::Path(&["u64"])),
+                expected_ref_is_mutable: None,
+                expected_related_types_count: Some(0),
+                expected_first_related_type_details: None,
+            }),
         });
         m.insert("crate::type_alias::GenericContainer", ExpectedTypeAliasNode {
             name: "GenericContainer",
             visibility: VisibilityKind::Public,
-            type_id_check: true,
-            generic_params_count: 1,
+            generic_params_count: 1, // <T>
             attributes: vec![],
             docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
+            expected_type_details: Some(ExpectedTypeDetails {
+                expected_type_kind_name: "Named", // TypeKind::Named for Vec
+                expected_path_or_str: Some(ExpectedPathOrStr::Path(&["Vec"])),
+                expected_ref_is_mutable: None,
+                expected_related_types_count: Some(1), // For T in Vec<T>
+                expected_first_related_type_details: Some(Box::new(ExpectedTypeDetails {
+                    expected_type_kind_name: "Named", // T itself is TypeKind::Named
+                    expected_path_or_str: Some(ExpectedPathOrStr::Path(&["T"])),
+                    expected_ref_is_mutable: None,
+                    expected_related_types_count: Some(0),
+                    expected_first_related_type_details: None,
+                })),
+            }),
         });
         m.insert("crate::type_alias::DisplayableContainer", ExpectedTypeAliasNode {
             name: "DisplayableContainer",
             visibility: VisibilityKind::Public,
-            type_id_check: true,
             generic_params_count: 1, // <T: std::fmt::Display>
             attributes: vec![],
             docstring: None,
             tracking_hash_check: true,
             cfgs: vec![],
+            expected_type_details: Some(ExpectedTypeDetails {
+                expected_type_kind_name: "Named", // TypeKind::Named for Vec
+                expected_path_or_str: Some(ExpectedPathOrStr::Path(&["Vec"])),
+                expected_ref_is_mutable: None,
+                expected_related_types_count: Some(1), // For T in Vec<T>
+                expected_first_related_type_details: Some(Box::new(ExpectedTypeDetails {
+                    expected_type_kind_name: "Named", // T itself is TypeKind::Named
+                    expected_path_or_str: Some(ExpectedPathOrStr::Path(&["T"])), // Bound T is still named T
+                    expected_ref_is_mutable: None,
+                    expected_related_types_count: Some(0), // T as a type param has no further related types here
+                    expected_first_related_type_details: None,
+                })),
+            }),
         });
         m
     };
