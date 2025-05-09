@@ -111,3 +111,45 @@ fn ensure_features() {
     #[cfg(feature = "enum_field_feature")]
     let _ = "enum_field_feature_active";
 }
+
+// --- New Enums for Isolated Generic Property Testing ---
+
+/// Enum solely for testing type generics.
+pub enum JustTypeGeneric<A, B> {
+    VariantA(A),
+    VariantB(B),
+}
+
+/// Enum solely for testing lifetime generics.
+pub enum JustLifetimeGeneric<'x, 'y> {
+    VariantX(&'x i32),
+    VariantY(&'y str),
+}
+
+/// Enum solely for testing const generics.
+pub enum JustConstGeneric<const X: usize, const Y: usize> {
+    VariantX([u8; X]),
+    VariantY([u16; Y]),
+}
+
+/// Enum solely for testing a simple where clause.
+pub enum JustWhereClause<T>
+where
+    T: Copy,
+{
+    Data(T),
+}
+
+// --- New Enums for Isolated Complex Field Testing ---
+
+/// Enum solely for testing multi-field tuple variants.
+pub enum OnlyTupleVariants {
+    Point(i32, i32, i32),
+    Color(u8, u8, u8, u8),
+}
+
+/// Enum solely for testing multi-field struct variants.
+pub enum OnlyStructVariants {
+    User { id: u64, username: String },
+    Product { sku: String, price: f32, in_stock: bool },
+}
