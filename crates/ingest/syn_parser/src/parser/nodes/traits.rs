@@ -10,7 +10,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for TraitNodeInfo
 
 // Represents a trait definition
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct TraitNode {
     pub id: TraitNodeId, // Use typed ID
     pub name: String,

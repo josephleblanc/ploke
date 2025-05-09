@@ -1,3 +1,336 @@
+use crate::common::run_phases_and_collect;
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values;
+use lazy_static::lazy_static;
+use ploke_core::ItemKind;
+use std::collections::HashMap;
+use syn_parser::error::SynParserError;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::{Attribute, ExpectedTraitNode, PrimaryNodeIdTrait};
+use syn_parser::parser::types::VisibilityKind;
+
+pub const LOG_TEST_TRAIT: &str = "log_test_trait";
+
+lazy_static! {
+    static ref EXPECTED_TRAITS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        let fixture_name = "fixture_nodes";
+        let rel_path = "src/traits.rs";
+
+        m.insert("crate::traits::SimpleTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SimpleTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::InternalTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "InternalTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::CrateTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "CrateTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::DocumentedTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "DocumentedTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::GenericTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "GenericTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::LifetimeTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "LifetimeTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::ComplexGenericTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "ComplexGenericTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::AssocTypeTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "AssocTypeTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::AssocTypeWithBounds", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "AssocTypeWithBounds",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::AssocConstTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "AssocConstTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::SuperTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SuperTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::MultiSuperTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "MultiSuperTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::GenericSuperTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "GenericSuperTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::AttributedTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "AttributedTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::UnsafeTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "UnsafeTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::inner::InnerSecretTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "InnerSecretTrait",
+            expected_path: &["crate", "traits", "inner"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::inner::InnerPublicTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "InnerPublicTrait",
+            expected_path: &["crate", "traits", "inner"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::inner::SuperGraphNodeTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SuperGraphNodeTrait",
+            expected_path: &["crate", "traits", "inner"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::SelfUsageTrait", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SelfUsageTrait",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m.insert("crate::traits::SelfInAssocBound", ParanoidArgs {
+            fixture: fixture_name, relative_file_path: rel_path, ident: "SelfInAssocBound",
+            expected_path: &["crate", "traits"], item_kind: ItemKind::Trait, expected_cfg: None,
+        });
+        m
+    };
+
+    static ref EXPECTED_TRAITS_DATA: HashMap<&'static str, ExpectedTraitNode> = {
+        let mut m = HashMap::new();
+
+        m.insert("crate::traits::SimpleTrait", ExpectedTraitNode {
+            name: "SimpleTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::InternalTrait", ExpectedTraitNode {
+            name: "InternalTrait", visibility: VisibilityKind::Inherited, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::CrateTrait", ExpectedTraitNode {
+            name: "CrateTrait", visibility: VisibilityKind::Crate, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::DocumentedTrait", ExpectedTraitNode {
+            name: "DocumentedTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: Some("Documented public trait"), tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::GenericTrait", ExpectedTraitNode {
+            name: "GenericTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 1, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::LifetimeTrait", ExpectedTraitNode {
+            name: "LifetimeTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 1, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::ComplexGenericTrait", ExpectedTraitNode {
+            name: "ComplexGenericTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 3, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::AssocTypeTrait", ExpectedTraitNode {
+            name: "AssocTypeTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::AssocTypeWithBounds", ExpectedTraitNode {
+            name: "AssocTypeWithBounds", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::AssocConstTrait", ExpectedTraitNode {
+            name: "AssocConstTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::SuperTrait", ExpectedTraitNode {
+            name: "SuperTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 1, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::MultiSuperTrait", ExpectedTraitNode {
+            name: "MultiSuperTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 3, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::GenericSuperTrait", ExpectedTraitNode {
+            name: "GenericSuperTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 1, super_traits_count: 1, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::AttributedTrait", ExpectedTraitNode {
+            name: "AttributedTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0,
+            attributes: vec![Attribute { name: "must_use".to_string(), args: vec![], value: Some("Trait results should be used".to_string()) }],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::UnsafeTrait", ExpectedTraitNode {
+            name: "UnsafeTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::inner::InnerSecretTrait", ExpectedTraitNode {
+            name: "InnerSecretTrait", visibility: VisibilityKind::Inherited, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::inner::InnerPublicTrait", ExpectedTraitNode {
+            name: "InnerPublicTrait", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::inner::SuperGraphNodeTrait", ExpectedTraitNode {
+            name: "SuperGraphNodeTrait", visibility: VisibilityKind::Restricted(vec!["super".to_string()]), methods_count: 1,
+            generic_params_count: 0, super_traits_count: 1, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::SelfUsageTrait", ExpectedTraitNode {
+            name: "SelfUsageTrait", visibility: VisibilityKind::Public, methods_count: 2,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m.insert("crate::traits::SelfInAssocBound", ExpectedTraitNode {
+            name: "SelfInAssocBound", visibility: VisibilityKind::Public, methods_count: 1,
+            generic_params_count: 0, super_traits_count: 0, attributes: vec![],
+            docstring: None, tracking_hash_check: true, cfgs: vec![],
+        });
+        m
+    };
+}
+
+paranoid_test_fields_and_values!(
+    trait_node_simple_trait, "crate::traits::SimpleTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_internal_trait, "crate::traits::InternalTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_crate_trait, "crate::traits::CrateTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_documented_trait, "crate::traits::DocumentedTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_generic_trait, "crate::traits::GenericTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_lifetime_trait, "crate::traits::LifetimeTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_complex_generic_trait, "crate::traits::ComplexGenericTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_assoc_type_trait, "crate::traits::AssocTypeTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_assoc_type_with_bounds, "crate::traits::AssocTypeWithBounds",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_assoc_const_trait, "crate::traits::AssocConstTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_super_trait, "crate::traits::SuperTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_multi_super_trait, "crate::traits::MultiSuperTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_generic_super_trait, "crate::traits::GenericSuperTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_attributed_trait, "crate::traits::AttributedTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_unsafe_trait, "crate::traits::UnsafeTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_inner_secret_trait, "crate::traits::inner::InnerSecretTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_inner_public_trait, "crate::traits::inner::InnerPublicTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_super_graph_node_trait, "crate::traits::inner::SuperGraphNodeTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_self_usage_trait, "crate::traits::SelfUsageTrait",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+paranoid_test_fields_and_values!(
+    trait_node_self_in_assoc_bound, "crate::traits::SelfInAssocBound",
+    EXPECTED_TRAITS_ARGS, EXPECTED_TRAITS_DATA,
+    syn_parser::parser::nodes::TraitNode, syn_parser::parser::nodes::ExpectedTraitNode,
+    as_trait, LOG_TEST_TRAIT
+);
+
+
+// --- Old Test Cases (Kept as per instruction) ---
 use crate::common::paranoid::find_trait_node_paranoid;
 // Gate the whole module
 use crate::common::uuid_ids_utils::*;
@@ -5,10 +338,9 @@ use ploke_core::{TypeKind};
 use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 // Import UnionNode specifically
-use syn_parser::parser::types::VisibilityKind;
+// use syn_parser::parser::types::VisibilityKind; // Already imported above
 use syn_parser::parser::{nodes::GraphNode, relations::RelationKind};
 
-// --- Test Cases ---
 
 #[test]
 #[cfg(not(feature = "type_bearing_ids"))]

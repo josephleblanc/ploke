@@ -50,6 +50,7 @@ pub use import::ExpectedImportNode;
 pub use module::ExpectedModuleNode;
 pub use statics::ExpectedStaticNode;
 pub use structs::ExpectedStructNode;
+pub use traits::ExpectedTraitNode;
     
 // Re-export the generated *NodeInfo structs for internal use within the crate
 // NOTE: 2025-05-02:

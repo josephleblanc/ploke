@@ -344,6 +344,57 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                     .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
             }
 
+            // == TraitNode Specific Handlers ==
+            "methods" // For TraitNode
+                if node_struct_name == "TraitNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Assuming Vec<MethodNode>
+            {
+                expected_fields_defs.push(quote! { pub methods_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.methods.len();
+                        let check = self.methods_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Methods Count Match?".to_string().log_step(), check.log_bool(),
+                            self.methods_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            "super_traits" // For TraitNode
+                if node_struct_name == "TraitNode"
+                   && matches!(field_type, Type::Path(p) if p.path.segments.last().is_some_and(|seg| seg.ident == "Vec")) => // Assuming Vec<TypeId>
+            {
+                expected_fields_defs.push(quote! { pub super_traits_count: usize });
+                inherent_check_method_impls.push(quote! {
+                    pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
+                        let actual_count = node.super_traits.len();
+                        let check = self.super_traits_count == actual_count;
+                        log::debug!(target: #log_target,
+                            "   {: <23} {} | Expected count '{}' == Actual count '{}'",
+                            "Super Traits Count Match?".to_string().log_step(), check.log_bool(),
+                            self.super_traits_count.to_string().log_name(),
+                            actual_count.to_string().log_name()
+                        );
+                        check
+                    }
+                });
+                check_all_fields_logics.push(quote! {
+                    if !self.#check_method_name_ident(node) { all_passed = false; }
+                });
+                find_node_by_values_filters
+                    .push(quote! { .filter(|n| self.#check_method_name_ident(n)) });
+            }
+            // "generic_params" for TraitNode is handled by the general "generic_params" arm above.
+
             // == FunctionNode Specific Handlers (Placed BEFORE the general skip arm) ==
             "parameters" // For FunctionNode
                 if node_struct_name == "FunctionNode"
