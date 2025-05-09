@@ -1,21 +1,16 @@
-use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values;
 use lazy_static::lazy_static;
-use ploke_core::{ItemKind, TypeId, TypeKind};
+use ploke_core::ItemKind;
 use std::collections::HashMap;
-use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::{Attribute, ExpectedTypeAliasNode, PrimaryNodeIdTrait};
+use syn_parser::parser::nodes::ExpectedTypeAliasNode;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 
 // Keep old imports for existing tests
-use crate::common::{paranoid::find_type_alias_node_paranoid, uuid_ids_utils::*};
-use syn_parser::parser::nodes::GraphId;
 // Import TypeKind from ploke_core
 // Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::GenericParamKind};
-
 
 pub const LOG_TEST_TYPE_ALIAS: &str = "log_test_type_alias";
 
