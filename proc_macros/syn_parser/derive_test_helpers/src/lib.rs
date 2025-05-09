@@ -43,6 +43,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
 
     // --- Generate Fields for Expected*Data Struct ---
     let mut expected_fields_defs = Vec::new();
+    let mut has_type_id_field = false; // Flag to track if a 'type_id' field exists
     // --- Generate Implementations for Inherent Check Methods ---
     let mut inherent_check_method_impls = Vec::new();
     // --- Generate Logic for check_all_fields ---
@@ -72,7 +73,7 @@ pub fn derive_expected_data(input: TokenStream) -> TokenStream {
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let expected_vec: Vec<String> = self.path.iter().map(|s| s.to_string()).collect();
-                        let check = expected_vec == node.path; // Compare Vec<String> == Vec<String> by deref coercion
+                        let check = &expected_vec == &node.path; // Compare &Vec<String> with &Vec<String>
                         log::debug!(target: #log_target,
                             "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
                             "Path Match?".to_string().log_step(), check.log_bool(),
@@ -632,6 +633,7 @@ check
                         all_passed = false;
                     }
                 });
+                has_type_id_field = true; // Set the flag
             }
             // Handle `value: Option<String>` for ConstNode
             "value"
@@ -669,7 +671,7 @@ check
                 inherent_check_method_impls.push(quote! {
                     pub fn #check_method_name_ident(&self, node: &crate::parser::nodes::#node_struct_name) -> bool {
                         let expected_vec: Vec<String> = self.source_path.iter().map(|s| s.to_string()).collect();
-                        let check = expected_vec == node.source_path; // Compare Vec<String> == Vec<String> by deref coercion
+                        let check = &expected_vec == &node.source_path; // Compare &Vec<String> with &Vec<String>
                         log::debug!(target: #log_target,
                             "   {: <23} {} | \n{: >35} {}\n{: >35} {}",
                             "Source Path Match?".to_string().log_step(), check.log_bool(),
@@ -1051,12 +1053,248 @@ check
             pub expected_related_types_count: Option<usize>,
             pub expected_first_related_type_details: Option<Box<ExpectedTypeDetails>>,
         }
+    }; // End of helper_struct_defs quote
+
+    let type_id_details_field_def = if has_type_id_field {
+        quote! { pub expected_type_details: Option<ExpectedTypeDetails>, }
+    } else {
+        quote! {}
+    };
+
+    let check_type_id_details_method_def = if has_type_id_field {
+        quote! {
+            // Helper method to check TypeId details
+            #[allow(unused_variables, clippy::cognitive_complexity)] // actual_type_id might be unused if details are None
+            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
+                if self.expected_type_details.is_none() {
+                    log::debug!(target: log_target, "   Skipping detailed check for TypeId field '{}' as no expected_type_details were provided.", field_name_str.log_name_debug());
+                    return true; // Detailed check is optional
+                }
+
+                let expected_details = self.expected_type_details.as_ref().unwrap();
+                log::debug!(target: log_target, "   Performing detailed check for TypeId field '{}'...", field_name_str.log_name_debug());
+
+                let actual_type_node = match graph.resolve_type(*actual_type_id) { // Pass TypeId by value
+                    Some(tn) => tn,
+                    None => {
+                        log::error!(target: log_target, "      ERROR: Actual TypeId '{}' for field '{}' not found in graph.", actual_type_id.log_id_debug(), field_name_str.log_name_debug());
+                        return false;
+                    }
+                };
+
+                let mut overall_match = true;
+
+                // 1. Check TypeKind variant name
+                let actual_kind_name = match &actual_type_node.kind {
+                    TypeKind::Named { .. } => "Named",
+                    TypeKind::Reference { .. } => "Reference",
+                    TypeKind::Slice => "Slice", // Unit variant
+                    TypeKind::Array { .. } => "Array",
+                    TypeKind::Tuple => "Tuple", // Unit variant
+                    TypeKind::Function { .. } => "FunctionPointer", // Struct variant (fn keyword)
+                    TypeKind::Never => "Never", // Unit variant
+                    TypeKind::Inferred => "Inferred", // Unit variant
+                    TypeKind::RawPointer { .. } => "RawPointer",
+                    TypeKind::TraitObject { .. } => "TraitObject", // Struct variant (dyn keyword)
+                    TypeKind::ImplTrait { .. } => "ImplTrait", // Struct variant (impl keyword)
+                    TypeKind::Paren { .. } => "Paren", // Struct variant (parenthesized type)
+                    TypeKind::Macro { .. } => "Macro", // Struct variant (type macro)
+                    TypeKind::Unknown { .. } => "Unknown",
+                    // TypeKind::Primitive does not exist. Primitives are TypeKind::Named.
+                };
+
+                if actual_kind_name != expected_details.expected_type_kind_name {
+                    log::debug!(target: log_target, "      TypeKind Name Mismatch: Expected '{}', Actual '{}'",
+                        expected_details.expected_type_kind_name.log_name_debug(), actual_kind_name.log_name_debug());
+                    overall_match = false;
+                } else {
+                    log::debug!(target: log_target, "      TypeKind Name Match: '{}'", actual_kind_name.log_name_debug());
+                }
+
+                // 2. Check specific details based on expected_type_kind_name
+                match (expected_details.expected_type_kind_name, &actual_type_node.kind) {
+                    ("Named", TypeKind::Named { path: actual_path, .. }) => {
+                        if let Some(ExpectedPathOrStr::Path(expected_path_slice)) = expected_details.expected_path_or_str {
+                            let expected_path_vec: Vec<String> = expected_path_slice.iter().map(|s| s.to_string()).collect();
+                            if actual_path != &expected_path_vec { // Compare &Vec<String> with &Vec<String>
+                                log::debug!(target: log_target, "         Named Path Mismatch: Expected '{:?}', Actual '{:?}'",
+                                    expected_path_vec.log_path_debug(), actual_path.log_path_debug());
+                                overall_match = false;
+                            } else {
+                                 log::debug!(target: log_target, "         Named Path Match: '{:?}'", actual_path.log_path_debug());
+                            }
+                        } else if expected_details.expected_path_or_str.is_some() {
+                            log::warn!(target: log_target, "         WARN: Expected path for Named TypeKind, but expected_path_or_str was not Path variant.");
+                            overall_match = false;
+                        }
+                    }
+                    ("Unknown", TypeKind::Unknown { type_str: actual_type_str, .. }) => {
+                        if let Some(ExpectedPathOrStr::Str(expected_str)) = expected_details.expected_path_or_str {
+                            if actual_type_str != expected_str {
+                                log::debug!(target: log_target, "         Unknown type_str Mismatch: Expected '{}', Actual '{}'",
+                                    expected_str.log_name_debug(), actual_type_str.log_name_debug());
+                                overall_match = false;
+                            } else {
+                                log::debug!(target: log_target, "         Unknown type_str Match: '{}'", actual_type_str.log_name_debug());
+                            }
+                        } else if expected_details.expected_path_or_str.is_some() {
+                             log::warn!(target: log_target, "         WARN: Expected str for Unknown TypeKind, but expected_path_or_str was not Str variant.");
+                            overall_match = false;
+                        }
+                    }
+                    ("Reference", TypeKind::Reference { is_mutable: actual_is_mutable, .. }) => {
+                        if let Some(expected_mut) = expected_details.expected_ref_is_mutable {
+                            if actual_is_mutable != expected_mut { // Compare bool with bool
+                                log::debug!(target: log_target, "         Reference Mutability Mismatch: Expected '{}', Actual '{}'",
+                                    expected_mut.log_bool(), actual_is_mutable.log_bool());
+                                overall_match = false;
+                            } else {
+                                log::debug!(target: log_target, "         Reference Mutability Match: '{}'", actual_is_mutable.log_bool());
+                            }
+                        }
+                    }
+                    // ("Primitive", TypeKind::Primitive(actual_primitive_name)) => { // Removed: TypeKind::Primitive does not exist
+                    // }
+                    // If kind names matched but actual TypeKind variant is different, it's a mismatch.
+                    (expected_name, actual_kind) if expected_name != actual_kind_name => {
+                        // This case should ideally be caught by the first check, but as a safeguard:
+                        log::debug!(target: log_target, "      Mismatched TypeKind variant: Expected based on name '{}', but actual was '{:?}'",
+                            expected_details.expected_type_kind_name.log_name_debug(), actual_kind.log_name_debug());
+                        overall_match = false;
+                    }
+                    _ => { /* Other TypeKinds not yet checked in detail, or kind name mismatch already handled */ }
+                }
+
+                // 3. Check related_types_count
+                if let Some(expected_count) = expected_details.expected_related_types_count {
+                    if actual_type_node.related_types.len() != expected_count {
+                        log::debug!(target: log_target, "      Related Types Count Mismatch: Expected '{}', Actual '{}'",
+                            expected_count.log_name_debug(), actual_type_node.related_types.len().log_name_debug());
+                        overall_match = false;
+                    } else {
+                        log::debug!(target: log_target, "      Related Types Count Match: '{}'", expected_count.log_name_debug());
+                    }
+                }
+
+                // 4. Recursively check the first related type if specified
+                if let Some(expected_first_related_details_boxed) = &expected_details.expected_first_related_type_details {
+                    if actual_type_node.related_types.is_empty() {
+                        log::debug!(target: log_target, "      First Related Type Check: Expected details for first related type, but actual_type_node.related_types is empty.");
+                        overall_match = false;
+                    } else {
+                        // For recursive calls, we create a temporary 'self-like' structure
+                        // that only contains the expected_type_details for the next level.
+                        struct RecursiveExpectedDetailsHolder {
+                            expected_type_details: Option<ExpectedTypeDetails>,
+                        }
+                        // We need to implement the check_type_id_details method for this holder.
+                        // This is a direct (simplified) copy of the main method.
+                        // A more robust solution would involve refactoring check_type_id_details
+                        // to be a standalone function or a method on ExpectedTypeDetails itself.
+                        impl RecursiveExpectedDetailsHolder {
+                            #[allow(unused_variables, clippy::cognitive_complexity)]
+                            fn check_type_id_details(&self, field_name_str: &str, actual_type_id: &ploke_core::TypeId, graph: &crate::parser::graph::CodeGraph, log_target: &str) -> bool {
+                                if self.expected_type_details.is_none() { return true; }
+                                let expected_details = self.expected_type_details.as_ref().unwrap();
+                                let actual_type_node = match graph.resolve_type(*actual_type_id) { // Pass TypeId by value
+                                    Some(tn) => tn,
+                                    None => { return false; /* error already logged by caller */ }
+                                };
+                                let mut current_match = true;
+                                let actual_kind_name_rec = match &actual_type_node.kind {
+                                    TypeKind::Named { .. } => "Named",
+                                    TypeKind::Reference { .. } => "Reference",
+                                    TypeKind::Slice => "Slice",
+                                    TypeKind::Array { .. } => "Array",
+                                    TypeKind::Tuple => "Tuple",
+                                    TypeKind::Function { .. } => "FunctionPointer",
+                                    TypeKind::Never => "Never",
+                                    TypeKind::Inferred => "Inferred",
+                                    TypeKind::RawPointer { .. } => "RawPointer",
+                                    TypeKind::TraitObject { .. } => "TraitObject",
+                                    TypeKind::ImplTrait { .. } => "ImplTrait",
+                                    TypeKind::Paren { .. } => "Paren",
+                                    TypeKind::Macro { .. } => "Macro",
+                                    TypeKind::Unknown { .. } => "Unknown",
+                                    // TypeKind::Primitive does not exist
+                                    _ => "Other",
+                                };
+                                if actual_kind_name_rec != expected_details.expected_type_kind_name {
+                                    log::debug!(target: log_target, "         Recursive TypeKind Name Mismatch: Expected '{}', Actual '{}'", expected_details.expected_type_kind_name.log_name_debug(), actual_kind_name_rec.log_name_debug());
+                                    current_match = false;
+                                } else {
+                                    log::debug!(target: log_target, "         Recursive TypeKind Name Match: '{}'", actual_kind_name_rec.log_name_debug());
+                                }
+
+                                match (expected_details.expected_type_kind_name, &actual_type_node.kind) {
+                                    ("Named", TypeKind::Named { path: actual_path_rec, .. }) => {
+                                        if let Some(ExpectedPathOrStr::Path(expected_path_slice_rec)) = expected_details.expected_path_or_str {
+                                            let expected_path_vec_rec: Vec<String> = expected_path_slice_rec.iter().map(|s| s.to_string()).collect();
+                                            if actual_path_rec != &expected_path_vec_rec { // Compare &Vec<String> with &Vec<String>
+                                                log::debug!(target: log_target, "            Recursive Named Path Mismatch: Expected '{:?}', Actual '{:?}'", expected_path_vec_rec.log_path_debug(), actual_path_rec.log_path_debug());
+                                                current_match = false;
+                                            } else {
+                                                log::debug!(target: log_target, "            Recursive Named Path Match: '{:?}'", actual_path_rec.log_path_debug());
+                                            }
+                                        }
+                                    }
+                                    // ("Primitive", TypeKind::Primitive(actual_primitive_name_rec)) => { // Removed
+                                    // }
+                                     _ => { /* Add more detailed recursive checks if needed */ }
+                                }
+                                // Check recursive related_types_count
+                                if let Some(expected_rec_count) = expected_details.expected_related_types_count {
+                                    if actual_type_node.related_types.len() != expected_rec_count {
+                                        log::debug!(target: log_target, "            Recursive Related Types Count Mismatch: Expected '{}', Actual '{}'", expected_rec_count.log_name_debug(), actual_type_node.related_types.len().log_name_debug());
+                                        current_match = false;
+                                    } else {
+                                         log::debug!(target: log_target, "            Recursive Related Types Count Match: '{}'", expected_rec_count.log_name_debug());
+                                    }
+                                }
+
+
+                                // Deeper recursion for expected_first_related_type_details is omitted here for simplicity,
+                                // but would follow the same pattern if needed.
+                                current_match
+                            }
+                        }
+
+                        let recursive_checker = RecursiveExpectedDetailsHolder {
+                            expected_type_details: Some(*expected_first_related_details_boxed.clone())
+                        };
+
+                        log::debug!(target: log_target, "      Recursively checking first related type (of field '{}')...", field_name_str.log_name_debug());
+                        if !recursive_checker.check_type_id_details("first_related_type", &actual_type_node.related_types[0], graph, log_target) {
+                            overall_match = false;
+                        }
+                    }
+                }
+                overall_match
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let expected_data_struct_def = quote! {
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct #expected_data_struct_name {
+            #(#expected_fields_defs,)*
+            #type_id_details_field_def // Conditionally add the field
+        }
+    };
+
+
+    let expected_data_inherent_impl = quote! {
+        #helper_struct_defs // Define helper structs like ExpectedTypeDetails here
 
          impl #expected_data_struct_name {
              // These use statements are for the *body* of ALL generated inherent methods
 
              // Define the inherent check methods
              #(#inherent_check_method_impls)*
+            
+             #check_type_id_details_method_def // Conditionally add the method
 
              // --- Helper logging methods ---
              fn log_target_id(&self, node: &crate::parser::nodes::#node_struct_name) {
