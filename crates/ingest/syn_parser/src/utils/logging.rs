@@ -631,11 +631,7 @@ pub trait LogDataStructure {
 
     // --- Logging Helpers for process_path_attributes ---
 
-    fn log_path_attr_external_not_found(
-        &self,
-        decl_module_id: ModuleNodeId,
-        resolved_path: &PathBuf,
-    ) {
+    fn log_path_attr_external_not_found(&self, decl_module_id: ModuleNodeId, resolved_path: &Path) {
         log::warn!(
             target: LOG_TARGET_PATH_ATTR,
             "{} {} | {}",

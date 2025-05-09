@@ -63,6 +63,7 @@
 
 #![cfg(test)]
 #![allow(unused_imports, non_snake_case)]
+//!
 //! To run tests with debug logging:
 //!     RUST_LOG=log_test_node,log_test_import,test_id_regen=debug cargo test -p syn_parser -- --test-threads=1
 //!

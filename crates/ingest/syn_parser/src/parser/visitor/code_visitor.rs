@@ -2422,7 +2422,7 @@ fn format_generics_for_name(generics: &syn::Generics) -> String {
             .params
             .iter()
             .map(|p| {
-                let mut s = p.to_token_stream().to_string();
+                let s = p.to_token_stream().to_string();
                 s.split_whitespace().collect::<Vec<&str>>().join(" ")
             })
             .collect::<Vec<_>>()
@@ -2431,7 +2431,7 @@ fn format_generics_for_name(generics: &syn::Generics) -> String {
     }
 
     if let Some(where_clause) = &generics.where_clause {
-        let mut s = where_clause.to_token_stream().to_string();
+        let s = where_clause.to_token_stream().to_string();
         let where_str = s.split_whitespace().collect::<Vec<&str>>().join(" ");
         parts.push(where_str);
     }
@@ -2443,6 +2443,6 @@ fn format_generics_for_name(generics: &syn::Generics) -> String {
 // For now, we'll rely on what syn gives us for self_ty.
 fn type_to_string(ty: &Type) -> String {
     // Normalize whitespace and remove extra spaces from token stream
-    let mut s = ty.to_token_stream().to_string();
+    let s = ty.to_token_stream().to_string();
     s.split_whitespace().collect::<Vec<&str>>().join(" ")
 }

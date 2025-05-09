@@ -9,7 +9,7 @@ use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
-use crate::utils::{LogStyle, LogStyleDebug, LOG_TARGET_NODE_ID};
+use crate::utils::{LogStyle, LogStyleDebug};
 use log::debug;
 use ploke_core::{NodeId, TypeKind};
 use uuid::Uuid;
