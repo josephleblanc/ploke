@@ -1285,9 +1285,59 @@ check
     };
 
 
-    let expected_data_inherent_impl = quote! {
-        #helper_struct_defs // Define helper structs like ExpectedTypeDetails here
+    let helper_struct_defs = quote! {
+        // Helper structs and enums for TypeId checking
+        // These are defined here to be part of the macro's output,
+        // making them available to the generated check_type_id_details method.
 
+        #[derive(Debug, Clone, PartialEq)]
+        pub enum ExpectedPathOrStr {
+            Path(&'static [&'static str]),
+            Str(&'static str),
+        }
+
+        #[derive(Debug, Clone, PartialEq)]
+        pub enum ExpectedTypeVariant {
+            Named,
+            Reference,
+            Tuple,
+            Slice,
+            Array,
+            FunctionPointer,
+            TraitObject,
+            Unknown,
+            // Primitive, // Removed Primitive
+            // Add other TypeKind variants as needed for checking
+        }
+
+        impl ExpectedTypeVariant {
+            fn as_str(&self) -> &'static str {
+                match self {
+                    ExpectedTypeVariant::Named => "Named",
+                    ExpectedTypeVariant::Reference => "Reference",
+                    ExpectedTypeVariant::Tuple => "Tuple",
+                    ExpectedTypeVariant::Slice => "Slice",
+                    ExpectedTypeVariant::Array => "Array",
+                    ExpectedTypeVariant::FunctionPointer => "FunctionPointer",
+                    ExpectedTypeVariant::TraitObject => "TraitObject",
+                    ExpectedTypeVariant::Unknown => "Unknown",
+                    // ExpectedTypeVariant::Primitive => "Primitive", // Removed Primitive
+                }
+            }
+        }
+
+
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct ExpectedTypeDetails {
+            pub expected_type_kind_name: &'static str, // e.g., "Named", "Reference"
+            pub expected_path_or_str: Option<ExpectedPathOrStr>,
+            pub expected_ref_is_mutable: Option<bool>,
+            pub expected_related_types_count: Option<usize>,
+            pub expected_first_related_type_details: Option<Box<ExpectedTypeDetails>>,
+        }
+    };
+
+    let expected_data_inherent_impl = quote! {
          impl #expected_data_struct_name {
              // These use statements are for the *body* of ALL generated inherent methods
 
@@ -1555,6 +1605,7 @@ check
 
     // --- Combine Generated Code ---
     let output = quote! {
+        #helper_struct_defs
         #expected_struct_def
         #expected_data_inherent_impl // Inherent methods for Expected*Data, including find/check
         // No trait implementation block needed anymore
