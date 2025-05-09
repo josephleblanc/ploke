@@ -72,7 +72,6 @@ mod impls;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod macros;
 mod structs;
-#[cfg(not(feature = "type_bearing_ids"))]
 mod traits;
 #[cfg(not(feature = "type_bearing_ids"))]
 mod type_alias;
