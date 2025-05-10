@@ -195,3 +195,30 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::utils::test_setup::{build_tree_for_tests, run_phases_and_collect};
+    #[test]
+    fn resolve_all_no_errors() {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
+        let fixture_name = "file_dir_detection";
+        let (graph, tree) = build_tree_for_tests(fixture_name);
+        let resolver = CanonIdResolver::new(graph.crate_namespace, &tree, &graph);
+
+        let results: Vec<_> = resolver.resolve_all().collect();
+
+        for result in results {
+            assert!(
+                result.is_ok(),
+                "resolve_all returned an error: {:?}",
+                result.err()
+            );
+        }
+    }
+}

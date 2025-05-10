@@ -1,6 +1,6 @@
 use crate::{
     discovery::DependencyMap as _,
-    resolve::{ModuleTreeError, TreeRelation},
+    resolve::{ModuleTreeError, TreeRelation, UnlinkedModuleInfo},
 };
 use anyhow::Result;
 use std::{
@@ -238,7 +238,7 @@ impl ParsedCodeGraph {
     }
 
     #[allow(clippy::boxed_local, clippy::box_collection)]
-    fn handle_unlinked_modules(&self, unlinked_infos: Box<Vec<module_tree::UnlinkedModuleInfo>>) {
+    fn handle_unlinked_modules(&self, unlinked_infos: Box<Vec<UnlinkedModuleInfo>>) {
         if !unlinked_infos.is_empty() {
             debug!(
                 "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",

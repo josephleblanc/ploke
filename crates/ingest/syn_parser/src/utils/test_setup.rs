@@ -3,6 +3,7 @@ use ploke_common::{fixtures_crates_dir, workspace_root};
 use crate::{
     discovery::run_discovery_phase,
     parser::{analyze_files_parallel, ParsedCodeGraph},
+    resolve::module_tree::ModuleTree,
 };
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
@@ -25,4 +26,13 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
             })
         })
         .collect()
+}
+
+pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree) {
+    let results = run_phases_and_collect(fixture_name);
+    let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
+    let tree = merged_graph
+        .build_module_tree() // dirty, placeholder
+        .expect("Failed to build module tree for fixture");
+    (merged_graph, tree)
 }
