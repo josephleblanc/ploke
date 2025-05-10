@@ -12,8 +12,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 
 // #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 /// Represents a `const` item.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Common derives applied unconditionally
-                                                                         // #[cfg_attr(test, derive(ExpectedData))]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)]
 pub struct ConstNode {
     pub id: ConstNodeId, // Use typed ID
     pub name: String,

@@ -74,14 +74,22 @@ use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values; // For EXPECTED_FUNCTIONS_ARGS
 use lazy_static::lazy_static;
+use ploke_core::IdTrait;
 use ploke_core::ItemKind;
 use std::collections::HashMap;
 use syn_parser::error::SynParserError; // Import ItemKind and TypeKind from ploke_core
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::ExpectedFunctionNode; // For ExpectedFunctionNode and Attribute
+use syn_parser::parser::nodes::FunctionNode;
+use syn_parser::parser::nodes::FunctionNodeId;
+use syn_parser::parser::nodes::GraphNode;
+use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
-use syn_parser::parser::types::VisibilityKind; // Import VisibilityKind from its correct location
-                                               // Remove TypeKind from here, already imported from ploke_core
+use syn_parser::parser::types::GenericParamKind;
+use syn_parser::parser::types::VisibilityKind;
+use syn_parser::utils::LogStyle;
+use syn_parser::TestIds; // Import VisibilityKind from its correct location
+                         // Remove TypeKind from here, already imported from ploke_core
 
 pub const LOG_TEST_FUNCTION: &str = "log_test_function";
 
@@ -626,6 +634,284 @@ fn test_function_node_standard() -> Result<(), SynParserError> {
     }
     // assert!(expected_const_node.check_all_fields(node));
     Ok(())
+}
+
+#[test]
+fn test_function_node_all() -> Result<(), SynParserError> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .try_init();
+    // NOTE: Our current macro doesn't do a very good job of distinguishing between two identical
+    // Original was Result<()> which is FixtureError
+    // Collect successful graphs
+    let successful_graphs = run_phases_and_collect("fixture_types");
+
+    // Use ParanoidArgs to find the node
+    for (data_key, args) in EXPECTED_FUNCTIONS_ARGS.iter() {
+        if let Some(exp_func) = EXPECTED_FUNCTIONS_DATA.get(data_key) {
+            // Generate the expected PrimaryNodeId using the method on ParanoidArgs
+            let test_info = args.generate_pid(&successful_graphs).inspect_err(|e| {
+                log::warn!(target: LOG_TEST_FUNCTION, "PID generation failed for '{}' (Error: {:?}). Running direct value checks:", args.ident, e);
+                let target_graph = successful_graphs
+                    .iter()
+                    .find(|pg| pg.file_path.ends_with(args.relative_file_path))
+                    .unwrap_or_else(|| panic!("Target graph '{}' not found for value checks after PID generation failure for '{}'.", args.relative_file_path, args.ident));
+
+                let _found = exp_func.find_node_by_values(target_graph).count();
+                let _ = args.check_graph(target_graph);
+            })?;
+
+            // Find the node using the generated ID within the correct graph
+            let node = test_info
+                .target_data() // This is &ParsedCodeGraph
+                .find_node_unique(test_info.test_pid().into()) // Uses the generated PID
+                .inspect_err(|e| {
+                    let target_graph = test_info.target_data();
+                    let _ = args.check_graph(target_graph);
+                    let count = exp_func.find_node_by_values(target_graph).count();
+                    log::warn!(target: LOG_TEST_FUNCTION, "Node lookup by PID '{}' failed for '{}', found {} matching values with find_node_by_values (Error: {:?}). Running direct value checks:", test_info.test_pid(), args.ident, count, e);
+            })?;
+
+            assert_eq!(
+                node.name(), // Use the GraphNode trait method
+                args.ident,
+                "Mismatch for name field. Expected: '{}', Actual: '{}'",
+                args.ident,
+                node.name()
+            );
+
+            let node = node.as_function().unwrap_or_else(|| {
+                node.log_node_error();
+                panic!()
+            });
+            assert!({
+                ![
+                    exp_func.is_name_match_debug(node),
+                    exp_func.is_visibility_match_debug(node),
+                    exp_func.is_attributes_match_debug(node),
+                    exp_func.is_body_match_debug(node),
+                    exp_func.is_docstring_match_debug(node),
+                    exp_func.is_tracking_hash_match_debug(node),
+                    exp_func.is_cfgs_match_debug(node),
+                ]
+                .contains(&false)
+            });
+            let expected_func_node = EXPECTED_FUNCTIONS_DATA
+                .get(data_key)
+                .expect("The specified node was not found in they map of expected function nodes.");
+
+            let mut value_matches_iter: HashMap<_, _> = expected_func_node
+                .find_node_by_values(test_info.target_data())
+                .map(|n| (n.id, n))
+                .collect();
+            let macro_found_node = value_matches_iter.remove(&node.id).unwrap_or_else(|| {
+                node.log_node_error();
+                log::error!(target: LOG_TEST_FUNCTION,
+                    "{}: {} Node info dump: {:#?}",
+                    "Error".log_error(),
+                    "Value-matched FunctionNode not found in iter.",
+                    node
+                );
+                panic!()
+            });
+            assert!(macro_found_node.id.to_pid() == node.id.to_pid());
+            for (dup_id, dup_node) in value_matches_iter {
+                assert!(
+                    node.id.to_pid() != dup_id.to_pid(),
+                    "{}, Expected ({}), Actual ({})\nData dump:\n {:#?}",
+                    "Duplicate FunctionNodeId found.",
+                    node.id.to_pid(),
+                    dup_id.to_pid(),
+                    dup_node
+                );
+                log::warn!(target: LOG_TEST_FUNCTION,
+                    "{}: {}\n{}\n\t{}\n\t{} {}\n\t{}",
+                    "Duplicate values on different path: ",
+                    "",
+                    "Two targets were found with matching values.",
+                    "This indicates that there were duplicate functions at different path locations.",
+                    "That is fine, so long as you expected to find a duplicate function with the same",
+                    "name, vis, attrs, docstring, trackinghash, and cfgs in two different files.",
+                    "If you are seeing this check it means their Ids were correctly not duplicates."
+                );
+            }
+            let module_id = test_info
+                .target_data()
+                .find_containing_mod_id(node.id.to_pid())
+                .unwrap();
+            println!("{}", print_cozo_batch_insert(&[node.to_owned()], module_id));
+        }
+    }
+    // assert!(expected_const_node.check_all_fields(node));
+    Ok(())
+}
+
+use std::fmt::Write;
+
+pub fn print_for_cozo(node: &FunctionNode) -> String {
+    let mut output = String::new();
+
+    // Generate function insertion
+    writeln!(output, ":put function {{").unwrap();
+    writeln!(output, "  id: '{:?}',", node.id.base_tid().uuid()).unwrap();
+    writeln!(output, "  name: '{}',", escape_str(&node.name)).unwrap();
+    writeln!(output, "  span: [{}, {}],", node.span.0, node.span.1).unwrap();
+    writeln!(output, "  visibility: '{}',", node.visibility).unwrap();
+    if let Some(rt) = &node.return_type {
+        writeln!(output, "  return_type: '{}',", rt).unwrap();
+    }
+    if !node.attributes.is_empty() {
+        writeln!(
+            output,
+            "  attributes: [{}],",
+            node.attributes
+                .iter()
+                .map(|a| format!("'{}'", escape_str(format!("{:?}", a).as_str())))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+    }
+    if let Some(doc) = &node.docstring {
+        writeln!(output, "  docstring: '{}',", escape_str(doc)).unwrap();
+    }
+    if let Some(body) = &node.body {
+        writeln!(output, "  body: '{}',", escape_str(body)).unwrap();
+    }
+    if let Some(hash) = &node.tracking_hash {
+        writeln!(output, "  tracking_hash: '{:?}',", hash.0).unwrap();
+    }
+    if !node.cfgs.is_empty() {
+        writeln!(
+            output,
+            "  cfgs: [{}]",
+            node.cfgs
+                .iter()
+                .map(|c| format!("'{}'", escape_str(c)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .unwrap();
+    }
+    writeln!(output, "}}\n").unwrap();
+
+    // Generate parameters
+    for (i, param) in node.parameters.iter().enumerate() {
+        writeln!(output, ":put function_param {{").unwrap();
+        writeln!(output, "  id: '{:?}',", &param.type_id.uuid()).unwrap();
+        writeln!(output, "  function_id: '{}',", node.id).unwrap();
+        if let Some(name) = &param.name {
+            writeln!(output, "  name: '{}',", escape_str(name)).unwrap();
+        }
+        writeln!(output, "  type_id: '{:?}',", param.type_id).unwrap();
+        writeln!(output, "  position: {},", i).unwrap();
+        writeln!(output, "  is_mutable: {}", param.is_mutable).unwrap();
+        writeln!(output, "  is_self: {}", param.is_self).unwrap();
+        writeln!(output, "}}\n").unwrap();
+    }
+
+    // Generate generic parameters
+    for (i, gp) in node.generic_params.iter().enumerate() {
+        if let GenericParamKind::Type { name, bounds, .. } = &gp.kind {
+            writeln!(output, ":put generic_param {{").unwrap();
+            writeln!(output, "  id: '{:?}',", gp.id.base_tid().uuid()).unwrap();
+            writeln!(output, "  function_id: '{}',", node.id.base_tid().uuid()).unwrap();
+            writeln!(output, "  name: '{}',", name).unwrap();
+            writeln!(output, "  position: {},", i).unwrap();
+            if !bounds.is_empty() {
+                writeln!(
+                    output,
+                    "  bounds: [{}]",
+                    bounds
+                        .iter()
+                        .map(|b| format!("'{}'", b))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+                .unwrap();
+            }
+            writeln!(output, "}}\n").unwrap();
+        }
+    }
+
+    output
+}
+
+pub fn print_cozo_batch_insert(functions: &[FunctionNode], module_id: ModuleNodeId) -> String {
+    let mut output = String::new();
+
+    // Start the relation
+    output.push_str(
+        "?[id, name, module_id, visibility, return_type, generic_params,
+attributes, docstring, span, body, tracking_hash, cfgs] <- [\n",
+    );
+
+    // Add each function
+    for (i, func) in functions.iter().enumerate() {
+        if i > 0 {
+            output.push_str(",\n");
+        }
+
+        let generic_params = serde_json::to_string(&func.generic_params).unwrap();
+        let attributes = func
+            .attributes
+            .iter()
+            .map(|a| format!("'{}'", escape_str(format!("{:?}", a).as_str())))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        write!(
+            output,
+            "  [\n    '{}',\n    '{}',\n    '{}',\n    '{}',\n    {},",
+            func.id.base_tid().uuid(),
+            escape_str(&func.name),
+            module_id.base_tid().uuid(), // Assuming this exists
+            func.visibility,
+            func.return_type
+                .as_ref()
+                .map_or("null".into(), |rt| format!("'{}'", rt.uuid()))
+        )
+        .unwrap();
+
+        write!(
+            output,
+            "\n    '{}',\n    [{}],\n    {},",
+            generic_params,
+            attributes,
+            func.docstring
+                .as_ref()
+                .map_or("null".into(), |d| format!("'{}'", escape_str(d)))
+        )
+        .unwrap();
+
+        write!(
+            output,
+            "\n    [{}, {}],\n    {},\n    {},\n    []\n  ]",
+            func.span.0,
+            func.span.1,
+            func.body
+                .as_ref()
+                .map_or("null".into(), |b| format!("'{}'", escape_str(b))),
+            func.tracking_hash
+                .as_ref()
+                .map_or("null".into(), |h| format!("'{}'", h.0))
+        )
+        .unwrap();
+    }
+
+    // Close and add put command
+    output.push_str("\n];\n");
+    output.push_str(
+        ":put function {id, name, module_id, visibility, return_type,
+generic_params, attributes, docstring, span, body, tracking_hash, cfgs}\n",
+    );
+
+    output
+}
+
+fn escape_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('\'', "\\'")
 }
 
 paranoid_test_fields_and_values!(
