@@ -6,7 +6,7 @@ use crate::{
         self, AnyNodeId, AnyNodeIdConversionError, GraphNode, ModuleNode, ModuleNodeId, NodePath,
         ReexportNodeId, TryFromPrimaryError,
     },
-    utils::{LogDataStructure, LogStyle, LogStyleDebug},
+    utils::{LogStyle, LogStyleDebug},
 };
 
 use super::{TreeRelation, UnlinkedModuleInfo};
@@ -118,6 +118,10 @@ pub enum ModuleTreeError {
 }
 
 impl ModuleTreeError {
+    #[allow(
+        dead_code,
+        reason = "clippy is wrong, this is actually used in the test directory"
+    )]
     pub(super) fn no_relations_found(g_node: &dyn GraphNode) -> Self {
         Self::NoRelationsFound(
             g_node.any_id(),

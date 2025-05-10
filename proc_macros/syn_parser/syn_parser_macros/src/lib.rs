@@ -1,7 +1,7 @@
 extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Ident, Type, Visibility};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
 /// Derives a `pub(crate) struct *NodeInfo` based on the fields of the struct this is applied to.
 ///

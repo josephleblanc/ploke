@@ -1,5 +1,7 @@
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
+
 use derive_test_helpers::ExpectedData;
-use ploke_core::TypeKind;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo

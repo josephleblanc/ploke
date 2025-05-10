@@ -15,7 +15,6 @@ pub use parsed_graph::ParsedGraphError;
 use crate::discovery::CrateContext;
 use crate::error::SynParserError;
 use crate::parser::nodes::*;
-use crate::resolve::module_tree;
 use crate::resolve::module_tree::ModuleTree;
 use crate::utils::{LogStyle, LogStyleDebug};
 use ploke_core::{ItemKind, TypeId, TypeKind};
@@ -96,8 +95,16 @@ pub trait GraphAccess {
         });
         for dup in &dups {
             debug!("{:#?}", dup);
-            let target = self.find_node_unique(dup.target()).unwrap();
-            let source = self.find_node_unique(dup.source()).unwrap();
+            let target = self.find_node_unique(dup.target())
+                .unwrap_or_else(|e| {
+                self.debug_relationships();
+                panic!("Expected unique relations, found duplicate with error: {}", e);
+            });
+            let source = self.find_node_unique(dup.source())
+                .unwrap_or_else(|e| {
+                self.debug_relationships();
+                panic!("Expected unique relations, found duplicate with error: {}", e);
+            });
             target.log_node_debug();
             source.log_node_debug();
             if let Some(m_target) = target.as_module() {

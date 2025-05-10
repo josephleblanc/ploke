@@ -23,6 +23,7 @@ pub(super) trait RelationIndexer {
     /// # Complexity
     /// O(1) average lookup for the source ID + O(k) filter application, where k is the
     /// number of relations originating from `source_id`.
+    #[allow(dead_code, reason = "useful later, probably.")]
     fn get_relations_from<F>(
         &self,
         source_id: &AnyNodeId, // Changed: Parameter is AnyNodeId
@@ -73,6 +74,7 @@ pub(super) trait RelationIndexer {
     /// Finds relations pointing to `target_id` that satisfy the `relation_filter` closure.
     ///
     /// (Doc comments similar to get_relations_from)
+    #[allow(dead_code, reason = "useful later, probably.")]
     fn get_relations_to<F>(
         &self,
         target_id: &AnyNodeId, // Changed: Parameter is AnyNodeId

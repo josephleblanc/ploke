@@ -14,4 +14,5 @@ thiserror = { workspace = true }
 
 [features]
 default = []
+ghost_data_graphs = []
 # Feature flag for the UUID refactor

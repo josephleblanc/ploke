@@ -46,11 +46,11 @@ macro_rules! paranoid_test_name_check {
         fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
             // 1. Run phases
             // Assuming run_phases_and_collect is in scope, typically via crate::common::...
-            let successful_graphs = crate::common::run_phases_and_collect($fixture_name);
+            let successful_graphs = $crate::common::run_phases_and_collect($fixture_name);
 
             // 2. Define ParanoidArgs
             // Assuming ParanoidArgs is in scope, typically via crate::common::...
-            let args = crate::common::ParanoidArgs {
+            let args = $crate::common::ParanoidArgs {
                 fixture: $fixture_name,
                 relative_file_path: $rel_path,
                 ident: $item_ident,
@@ -168,9 +168,9 @@ macro_rules! paranoid_test_fields_and_values {
 
             // 2. Use the lazy_static parsed fixture based on args.fixture
             let successful_graphs = match args.fixture {
-                "fixture_nodes" => &*crate::common::PARSED_FIXTURE_CRATE_NODES,
-                "file_dir_detection" => &*crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
-                "fixture_types" => &*crate::common::PARSED_FIXTURE_CRATE_TYPES,
+                "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
+                "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
 
@@ -352,9 +352,9 @@ macro_rules! paranoid_test_setup {
 
             // 2. Use the lazy_static parsed fixture based on args.fixture
             let successful_graphs = match args.fixture {
-                "fixture_nodes" => &*crate::common::PARSED_FIXTURE_CRATE_NODES,
-                "file_dir_detection" => &*crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
-                "fixture_types" => &*crate::common::PARSED_FIXTURE_CRATE_TYPES,
+                "fixture_nodes" => &*$crate::common::PARSED_FIXTURE_CRATE_NODES,
+                "file_dir_detection" => &*$crate::common::PARSED_FIXTURE_CRATE_DIR_DETECTION,
+                "fixture_types" => &*$crate::common::PARSED_FIXTURE_CRATE_TYPES,
                 _ => panic!("Unknown fixture name for lazy_static lookup: {}. Ensure it's defined in tests/common/parsed_fixtures.rs and matched here.", args.fixture),
             };
 

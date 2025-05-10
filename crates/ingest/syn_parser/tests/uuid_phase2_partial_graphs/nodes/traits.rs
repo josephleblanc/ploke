@@ -78,13 +78,11 @@
 //! *   **`unsafe` flag:** If an `is_unsafe` field is added to `TraitNode` in the future, tests should cover it.
 //! *   **Relation Checks:** The `paranoid_test_fields_and_values!` macro checks `Module Contains Trait`. If `Trait Contains Method` relations (or others) become important for Phase 2, they would need separate assertion.
 
-use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
 use std::collections::HashMap;
-use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{Attribute, ExpectedTraitNode, PrimaryNodeIdTrait};
 use syn_parser::parser::types::VisibilityKind;

@@ -206,13 +206,12 @@ impl VisitorState {
                     );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e: AnyNodeIdConversionError| {
+                        .inspect_err(|e: &AnyNodeIdConversionError| {
                             self.log_generic_param_id_conversion_error(
                                 &ident.to_string(),
                                 ItemKind::GenericParam, // Explicitly pass the kind
-                                e,
-                            );
-                            e // Return the error for the unwrap
+                                *e,
+                            ); // Return the error for the unwrap
                         })
                         .unwrap(); // Keep the unwrap as requested
 
@@ -243,15 +242,14 @@ impl VisitorState {
                     );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e: AnyNodeIdConversionError| {
+                        .inspect_err(|e: &AnyNodeIdConversionError| {
                             self.log_generic_param_id_conversion_error(
                                 &lifetime_def.lifetime.ident.to_string(),
-                                ItemKind::GenericParam, // Explicitly pass the kind
-                                e,
+                                ItemKind::GenericParam,
+                                *e,
                             );
-                            e // Return the error for the unwrap
                         })
-                        .unwrap(); // Keep the unwrap as requested
+                        .unwrap();
 
                     params.push(GenericParamNode {
                         id: param_node_id, // Now correctly typed
@@ -275,13 +273,12 @@ impl VisitorState {
                     );
                     let param_node_id: GenericParamNodeId = generated_any_id
                         .try_into()
-                        .map_err(|e: AnyNodeIdConversionError| {
+                        .inspect_err(|e: &AnyNodeIdConversionError| {
                             self.log_generic_param_id_conversion_error(
                                 &const_param.ident.to_string(),
-                                ItemKind::GenericParam, // Explicitly pass the kind
-                                e,
+                                ItemKind::GenericParam,
+                                *e,
                             );
-                            e // Return the error for the unwrap
                         })
                         .unwrap(); // Keep the unwrap as requested
 

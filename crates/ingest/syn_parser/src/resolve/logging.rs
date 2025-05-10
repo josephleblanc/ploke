@@ -193,7 +193,7 @@ where
         if is_in_pending_import {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
         }
-        if let Some(exports) = self.pending_exports().as_deref() {
+        if let Some(exports) = self.pending_exports() {
             let is_in_pending_export = exports
                 .iter()
                 .any(|p| p.export_node().id.as_any() == node_id); // Compare AnyNodeId
@@ -257,7 +257,7 @@ where
         if is_in_pending_import {
             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "    Status: {} in pending_imports", "Found".log_yellow());
         }
-        if let Some(exports) = self.pending_exports().as_deref() {
+        if let Some(exports) = self.pending_exports() {
             let is_in_pending_export = exports
                 .iter()
                 .any(|p| p.export_node().id.as_any() == node_id); // Compare AnyNodeId
@@ -312,30 +312,30 @@ where
     }
 }
 // Extension trait for Path normalization
-trait PathNormalize {
-    fn normalize(&self) -> PathBuf;
-}
+// trait PathNormalize {
+//     fn normalize(&self) -> PathBuf;
+// }
 
-impl PathNormalize for std::path::Path {
-    fn normalize(&self) -> PathBuf {
-        let mut components = Vec::new();
-
-        for component in self.components() {
-            match component {
-                std::path::Component::ParentDir => {
-                    if components
-                        .last()
-                        .map(|c| c != &std::path::Component::RootDir)
-                        .unwrap_or(false)
-                    {
-                        components.pop();
-                    }
-                }
-                std::path::Component::CurDir => continue,
-                _ => components.push(component),
-            }
-        }
-
-        components.iter().collect()
-    }
-}
+// impl PathNormalize for std::path::Path {
+//     fn normalize(&self) -> PathBuf {
+//         let mut components = Vec::new();
+//
+//         for component in self.components() {
+//             match component {
+//                 std::path::Component::ParentDir => {
+//                     if components
+//                         .last()
+//                         .map(|c| c != &std::path::Component::RootDir)
+//                         .unwrap_or(false)
+//                     {
+//                         components.pop();
+//                     }
+//                 }
+//                 std::path::Component::CurDir => continue,
+//                 _ => components.push(component),
+//             }
+//         }
+//
+//         components.iter().collect()
+//     }
+// }

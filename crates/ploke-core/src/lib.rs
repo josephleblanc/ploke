@@ -90,6 +90,7 @@ mod ids {
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
                                                    // Removed unused std::io import
 
+    #[allow(dead_code, reason = "useful later")]
     pub struct ResolvedIds {
         canon: CanonId,
         short_pub: Option<PubPathId>,

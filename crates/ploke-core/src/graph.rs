@@ -1,3 +1,5 @@
+#![cfg(feature = "ghost_data_graphs")]
+
 use std::marker::PhantomData;
 
 trait GraphState {}

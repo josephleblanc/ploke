@@ -24,7 +24,7 @@ pub use super::graph::GraphNode;
 use crate::error::SynParserError;
 
 use super::types::VisibilityKind;
-use ploke_core::{ItemKind, TypeId};
+use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
@@ -62,9 +62,6 @@ pub use union::ExpectedUnionNode;
 // want to refactor the way the root module is created in `visitor/mod.rs`. Leaving it here for
 // now.
 pub(crate) use module::ModuleNodeInfo;
-
-// local re-exports for convenience:
-pub(crate) use crate::parser::graph::GraphAccess;
 
 // Shared error types
 #[derive(Debug, thiserror::Error, Clone, PartialEq)] // Removed Eq because TypeId might not be Eq
@@ -123,8 +120,7 @@ impl NodePath {
     pub fn with_name<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a u8> {
         self.0
             .iter()
-            .map(|string| string.as_bytes())
-            .flatten()
+            .flat_map(|string| string.as_bytes())
             .chain(name.as_bytes())
     }
 
@@ -147,7 +143,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_mod_paths() {
         let path = NodePath::new(vec!["crate".into(), "mod_a".into()]).unwrap();
         assert!(path.matches(["crate", "mod_a"].into_iter()));
@@ -276,8 +271,4 @@ impl GraphNode for TypeDefNode {
             _ => None,
         }
     }
-}
-
-pub(crate) trait HasKind {
-    fn has_kind(&self) -> ItemKind;
 }

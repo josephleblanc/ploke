@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables)]
 // NOTE: All the following commneted out lines result in errors, verified by rust-analyzer.
 // All lines left in are correct.
 
@@ -219,7 +220,6 @@ mod private_module {
 
 // Public module with nested types
 pub mod public_module {
-    
 
     /// Struct inside a public module
     pub struct ModuleStruct {
@@ -253,8 +253,7 @@ mod outer {
 
 // Module with re-exports
 mod intermediate {
-    
-    
+
     pub use super::DefaultTrait;
 
     pub struct ModuleStruct {

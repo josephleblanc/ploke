@@ -1,5 +1,6 @@
-use crate::parser::graph;
-use crate::parser::graph::GraphAccess;
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
+
 use crate::parser::types::GenericParamNode;
 use derive_test_helpers::ExpectedData;
 // Removed define_node_info_struct import

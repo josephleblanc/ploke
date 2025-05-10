@@ -100,11 +100,11 @@
 use crate::common::ParanoidArgs;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
-use ploke_core::{TypeId, TypeKind}; // TypeKind currently unused but kept for consistency
+// TypeKind currently unused but kept for consistency
 use std::collections::HashMap;
-use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, Attribute, ExpectedEnumNode, GraphNode};
+use syn_parser::parser::nodes::{Attribute, ExpectedEnumNode};
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::TestIds; // For new_test on ID types
+// For new_test on ID types
 
 // macro-related imports
 use crate::paranoid_test_fields_and_values;

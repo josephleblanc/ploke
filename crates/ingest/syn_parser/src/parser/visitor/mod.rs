@@ -261,6 +261,7 @@ fn debug_file_module_id_gen(
     }
 }
 
+#[allow(dead_code, reason = "Useful for debugging")]
 fn debug_relationships(visitor: &CodeVisitor<'_>) {
     let unique_rels = visitor.relations().iter().fold(Vec::new(), |mut acc, r| {
         if !acc.contains(r) {

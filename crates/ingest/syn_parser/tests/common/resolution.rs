@@ -2,7 +2,7 @@
 //! Helper functions specifically for testing resolution logic (Phase 3).
 
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId};
+use ploke_core::ItemKind;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, PrimaryNodeId};
 use syn_parser::parser::ParsedCodeGraph;
@@ -117,11 +117,11 @@ pub fn find_item_id_in_module_by_name(
         .into_iter()
         .filter_map(|n| {
             PrimaryNodeId::try_from(n.any_id())
-                .and_then(|n_id| Ok((n, n_id)))
+                .map(|n_id| (n, n_id))
                 .ok()
         })
-        .filter(|(n, node_id)| graph.module_contains_node(module_id, *node_id))
-        .map(|(n, node_id)| n)
+        .filter(|(_n, node_id)| graph.module_contains_node(module_id, *node_id))
+        .map(|(n, _node_id)| n)
         .collect();
 
     // 4. Check for uniqueness

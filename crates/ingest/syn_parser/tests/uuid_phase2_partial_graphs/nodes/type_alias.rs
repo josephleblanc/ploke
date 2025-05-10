@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use crate::common::find_type_node;
-use crate::common::run_phases_and_collect;
 use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values;
 use crate::paranoid_test_setup;
@@ -14,7 +13,6 @@ use std::collections::HashMap;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::ExpectedTypeAliasNode;
-use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::TypeAliasNode;
 use syn_parser::parser::types::GenericParamKind;

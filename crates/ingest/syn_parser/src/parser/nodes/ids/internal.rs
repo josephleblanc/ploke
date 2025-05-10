@@ -1,10 +1,11 @@
+#![allow(dead_code, reason = "macros make dead_code warnings the worst")]
+
 //! Private implementation module for strictly encapsulated typed node identifiers.
 //!
 //! Defines the ID newtype structs with private fields, implements necessary traits
 //! internally, provides restricted constructors, and defines helper types like
 //! `AnyNodeId`. Access to the base `NodeId` is confined to this module.
 
-use crate::parser::graph::GraphAccess;
 use crate::parser::visitor::VisitorState;
 
 // We will move ID definitions, trait implementations, etc., here later.
@@ -66,18 +67,6 @@ make_id_testable!(GenericParamNodeId);
 make_id_testable!(ReexportNodeId);
 }
 
-// ----- Traits -----
-
-/// Allows retrieving the corresponding `GraphNode` trait object from a graph
-/// using a specific typed ID.
-///
-/// This trait is implemented internally for each specific ID type that represents
-/// a node directly stored and retrievable in the `GraphAccess` implementor.
-pub(crate) trait TypedNodeIdGet: Copy + private_traits::Sealed {
-    // Added Copy bound as IDs are Copy
-    // Added Sealed bound to prevent external implementations
-    fn get<'g, T: GraphNode>(&self, graph: &'g impl GraphAccess) -> Option<&'g T>;
-}
 
 /// Convenience trait to help be more explicit about converting into AnyNodeId.
 /// Relies on `Into<AnyNodeId>` being implemented on the base type on a case by case basis.

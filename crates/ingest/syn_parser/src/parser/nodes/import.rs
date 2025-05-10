@@ -1,4 +1,6 @@
-use crate::parser::graph::GraphAccess;
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
+
 use derive_test_helpers::ExpectedData;
 use serde::{Deserialize, Serialize};
 // removed GenerateNodeInfo
@@ -217,7 +219,7 @@ impl GraphNode for ImportNode {
         // The visibility of the *use statement itself* determines its effect.
         // `extern crate` is effectively private to the module.
         match &self.kind {
-            ImportKind::UseStatement(vis) => &vis,
+            ImportKind::UseStatement(vis) => vis,
             ImportKind::ExternCrate => &VisibilityKind::Inherited,
             // ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
         }

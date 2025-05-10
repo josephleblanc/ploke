@@ -160,7 +160,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
                 match find_result {
                     Ok((np, node, fp)) => {
                         // If find succeeded, try to resolve the node.
-                        let resolve_result = self.resolve_single_node(&np, node, fp);
+                        let resolve_result = self.resolve_single_node(np, node, fp);
                         match resolve_result {
                             Ok(canon_id) => {
                                 trace!(target: LOG_TARGET, "    {} Resolved {} -> {}",
@@ -200,7 +200,7 @@ impl<'a, 'b> CanonIdResolver<'a, 'b> {
 mod tests {
 
     use super::*;
-    use crate::utils::test_setup::{build_tree_for_tests, run_phases_and_collect};
+    use crate::utils::test_setup::build_tree_for_tests;
     #[test]
     fn resolve_all_no_errors() {
         let _ = env_logger::builder()

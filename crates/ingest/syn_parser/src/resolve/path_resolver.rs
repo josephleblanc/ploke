@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use log::debug;
 
@@ -6,7 +6,7 @@ use crate::{
     error::SynParserError,
     parser::{
         graph::{GraphAccess, GraphNode},
-        nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ModuleNodeId, NodePath, PrimaryNodeId},
+        nodes::{AnyNodeId, AsAnyNodeId, ImportNodeId, ModuleNodeId, NodePath},
         relations::SyntacticRelation,
         types::VisibilityKind,
         ParsedCodeGraph,
@@ -37,11 +37,13 @@ use super::*;
 // separate function that can use this as a helper after we have found the containing primary
 // node, and use that. If necessary we can compose the two into a third function that will work
 // for all node types.
+#[cfg(feature = "public_path")]
 pub(super) fn shortest_public_path(
     tree: ModuleTree,
     item_pid: PrimaryNodeId, // Changed: Input is AnyNodeId
     graph: &ParsedCodeGraph,
 ) -> Result<ResolvedItemInfo, ModuleTreeError> {
+    use crate::parser::nodes::PrimaryNodeId;
     // --- 1. Initial Setup ---
 
     let item_any_id = item_pid.as_any();
@@ -226,6 +228,7 @@ pub(super) fn shortest_public_path(
 }
 
 // Helper function for exploring via parent modules
+#[cfg(feature = "public_path")]
 pub(super) fn explore_up_via_containment(
     tree: &ModuleTree,
     current_mod_id: ModuleNodeId,
@@ -323,6 +326,9 @@ pub(super) fn explore_up_via_containment(
 }
 
 // Helper function for exploring via re-exports
+#[cfg(feature = "public_path")]
+use std::collections::VecDeque;
+#[cfg(feature = "public_path")]
 pub(super) fn explore_up_via_reexports(
     tree: &ModuleTree,
     // The ID of the item/module *potentially* being re-exported

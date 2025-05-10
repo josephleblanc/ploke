@@ -1,9 +1,5 @@
 // Removed unused imports: FixtureError, HashMap, File, Write, PathBuf,
 // CrateContext, DiscoveryOutput, PROJECT_NAMESPACE_UUID, Uuid
-use ploke_common::workspace_root;
-use std::fs;
-use syn_parser::discovery::{derive_crate_namespace, run_discovery_phase, DiscoveryError};
-use tempfile::tempdir;
 
 // --- Unit Tests ---
 

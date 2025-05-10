@@ -1,17 +1,17 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::{run_phase1_phase2, run_phases_and_collect, ParanoidArgs};
+use crate::common::ParanoidArgs;
 use crate::paranoid_test_fields_and_values;
 use anyhow::Result;
 use lazy_static::lazy_static;
-use ploke_core::{ItemKind, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::ItemKind; // Import TypeKind from ploke_core
 use std::collections::HashMap;
 use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::{AsAnyNodeId, PrimaryNodeIdTrait};
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::{
-    nodes::{Attribute, ExpectedStructNode, GraphNode}, // Added ExpectedStructNode, Attribute
-    types::{GenericParamKind, VisibilityKind},         // Remove TypeKind from here
+    nodes::{Attribute, ExpectedStructNode}, // Added ExpectedStructNode, Attribute
+    types::VisibilityKind,                  // Remove TypeKind from here
 }; // Import the test macro
 
 pub const LOG_TEST_STRUCT: &str = "log_test_struct";

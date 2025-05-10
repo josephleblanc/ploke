@@ -1,5 +1,5 @@
-use crate::parser::graph;
-use crate::parser::graph::GraphAccess;
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
 use derive_test_helpers::ExpectedData;
 use ploke_core::TrackingHash;
 use serde::{Deserialize, Serialize};

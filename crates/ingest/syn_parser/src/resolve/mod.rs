@@ -15,7 +15,6 @@ pub use error::ModuleTreeError;
 // -- local re-exports for children
 use logging::LogTree;
 use module_tree::*;
-use path_resolver::shortest_public_path;
 use path_resolver::*;
 use relation_indexer::*;
 use serde::{Deserialize, Serialize};
@@ -33,7 +32,6 @@ pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use std::{collections::HashMap, path::Path};
 
-use super::*;
 
 #[allow(unused_imports)]
 use std::collections::VecDeque;
@@ -47,7 +45,7 @@ use crate::{
     },
     utils::{
         logging::{LogDataStructure, PathProcessingContext},
-        LogStyle, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS,
+        LogStyle, LOG_TARGET_MOD_TREE_BUILD, LOG_TARGET_VIS,
     },
 };
 

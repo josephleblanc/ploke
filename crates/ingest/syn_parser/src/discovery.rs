@@ -73,23 +73,6 @@ struct PackageInfo {
     // edition: Option<String>, // Could be useful later
 }
 
-impl PackageInfo {
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn new(name: String, version: String) -> Self {
-        Self { name, version }
-    }
-
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn version(&self) -> &str {
-        &self.version
-    }
-}
-
 impl fmt::Display for PackageInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.name, self.version)
@@ -436,24 +419,6 @@ struct CargoManifest {
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
 
-impl CargoManifest {
-    fn package(&self) -> &PackageInfo {
-        &self.package
-    }
-
-    pub fn features(&self, feature_name: &str) -> Option<&Vec<String>> {
-        self.features.get(feature_name)
-    }
-
-    fn dependencies(&self) -> &Dependencies {
-        &self.dependencies
-    }
-
-    fn dev_dependencies(&self) -> &DevDependencies {
-        &self.dev_dependencies
-    }
-}
-
 /// Context information gathered for a single crate during discovery.
 ///
 /// This struct automatically implements `Send + Sync` because all its members
@@ -732,7 +697,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_derive_crate_namespace_consistency() {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.0");
@@ -743,7 +707,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(feature = "type_bearing_ids"))]
     fn test_derive_crate_namespace_uniqueness() {
         let ns1 = derive_crate_namespace("my-crate", "1.0.0");
         let ns2 = derive_crate_namespace("my-crate", "1.0.1");
@@ -757,11 +720,4 @@ mod tests {
             "Different crate names should produce different namespaces"
         );
     }
-
-    // Removed tests for scan_for_mods:
-    // - test_scan_for_mods_simple_file
-    // - test_scan_for_mods_simple_dir
-    // - test_scan_for_mods_no_mods
-    // - test_scan_for_mods_target_missing
-    // - test_scan_for_mods_file_not_found
 }

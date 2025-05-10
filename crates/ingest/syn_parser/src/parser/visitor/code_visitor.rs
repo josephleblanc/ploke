@@ -321,6 +321,8 @@ impl<'a> CodeVisitor<'a> {
             trace!(target: LOG_TARGET_TRACE, "{}", "--------------------------".dimmed());
         }
     }
+
+    #[allow(dead_code, reason = "Useful for debugging")]
     fn debug_mod_stack_push(&mut self, name: String, pr_id: PrimaryNodeId) {
         if let Some(current_mod) = self
             .state

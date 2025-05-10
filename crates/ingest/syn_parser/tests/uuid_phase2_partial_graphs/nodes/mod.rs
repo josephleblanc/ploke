@@ -85,4 +85,3 @@ mod macros;
 // Add other node types here later:
 //   const_alias
 
-use crate::common::{PARSED_FIXTURE_CRATE_DIR_DETECTION, PARSED_FIXTURE_CRATE_NODES};
