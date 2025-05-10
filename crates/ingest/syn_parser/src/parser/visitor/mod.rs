@@ -97,15 +97,14 @@ pub fn analyze_file_phase2(
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
 
+    use super::nodes::ModuleKind;
     use attribute_processing::{
         extract_cfg_strings, // NEW: Import raw string extractor
         extract_file_level_attributes,
         extract_file_level_docstring,
         // Removed parse_and_combine_cfgs_from_attrs import
     };
-    // Removed code_visitor helper imports (combine_cfgs, hash_expression)
 
-    use super::nodes::ModuleKind;
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -192,8 +191,8 @@ pub fn analyze_file_phase2(
         .push(ModuleNode::new(root_module_info));
 
     let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
-    // *** NEW STEP: Push root module ID onto the scope stack ***
-    // This makes it the default parent scope for top-level items visited next.
+
+    // Default parent scope for top-level items visited next.
     state.current_primary_defn_scope.push(root_module_pid);
 
     // 4. Create and run the visitor
@@ -315,21 +314,6 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
             );
         }
     }
-
-    // This loop seems incorrect - it logs relations *not* in the unique list,
-    // which shouldn't happen if unique_rels was derived correctly.
-    // Commenting out for now, can be revisited if needed.
-    // for rel in visitor.relations() {
-    //     if !unique_rels.contains(rel) {
-    //         log::debug!(target: "temp",
-    //             "{} | {}: {} -> {} | {:?}",
-    //             "Unique!".log_header(), // This log message seems misleading
-    //             rel.source_node_id().to_string().log_id(),
-    //             rel.target_node_id().to_string().log_id(),
-    //             rel,
-    //         );
-    //     }
-    // }
 }
 
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
@@ -340,13 +324,13 @@ pub fn analyze_files_parallel(
 ) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
     // Adjust error type if needed
 
-    log::debug!(
+    log::debug!(target: "crate_context",
         // Temporary debug print
         "Starting Phase 2 Parallel Parse for {} crates...",
         discovery_output.crate_contexts.len()
     );
 
-    discovery_output
+    let parsed_results: Vec<Result<ParsedCodeGraph, syn::Error>> = discovery_output
         .crate_contexts
         .values() // Iterate over CrateContext values
         .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
@@ -367,10 +351,39 @@ pub fn analyze_files_parallel(
                     file_path.to_owned(),
                     crate_context.namespace,
                     logical_path, // Pass the derived path
-                )
+                ) 
+                .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) })
             })
         })
-        .collect() // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
+        .collect(); // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
+
+    let root_graph = parsed_results.iter().filter_map(|pr| pr.as_ref().ok()).find(|pr| pr.crate_context.is_some()).unwrap();
+    log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
+
+    parsed_results
+}
+
+fn set_root_context(crate_context: &crate::discovery::CrateContext, mut pg: ParsedCodeGraph) -> ParsedCodeGraph {
+    if pg
+        .file_path
+        .file_name()
+        .is_some_and(|f| f == "lib.rs" || f == "main.rs")
+    {
+        pg.crate_context = Some(crate_context.clone());
+    }
+    pg
+}
+
+fn info_crate_context(src_dir: &PathBuf, pg: &ParsedCodeGraph) -> String {
+    format!(
+        "parsed_graph file_path: {}, crate_context: {:#?}",
+        pg.file_path
+            .strip_prefix(src_dir)
+            .as_ref()
+            .log_path_debug(),
+        pg.crate_context
+    )
 }
 
 /// Calculates a hash for a list of raw CFG strings.

@@ -91,7 +91,7 @@ const COLOR_SPRING_GREEN: Color = Color::TrueColor {
 
 use crate::{
     parser::nodes::{AnyNodeId, ImportNode, ImportNodeId, NodePath},
-    resolve::module_tree::{ModuleTree, ModuleTreeError},
+    resolve::{module_tree::ModuleTree, ModuleTreeError},
 };
 pub use colored::Colorize;
 
@@ -623,7 +623,7 @@ pub trait LogDataStructure {
         log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id.to_string().log_id(), target_defn_id.to_string().log_id());
     }
 
-    // --- Logging Helpers for find_declaring_file_dir ---
+    // --- Logging Helpers for get_file_declaring_dir ---
 
     fn log_find_decl_dir_missing_parent(&self, current_id: ModuleNodeId) {
         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id.to_string().log_id());

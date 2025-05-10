@@ -297,7 +297,6 @@ use {
 };
 
 use ploke_common::{fixtures_crates_dir, workspace_root};
-#[cfg(not(feature = "type_bearing_ids"))]
 pub use resolution::build_tree_for_tests;
 
 pub mod uuid_ids_utils;

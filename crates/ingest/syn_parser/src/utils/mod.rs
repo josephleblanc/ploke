@@ -8,3 +8,6 @@ pub use logging::{
     AccLogCtx, LogDataStructure, LogStyle, LogStyleBool, LogStyleDebug, LOG_TARGET_MOD_TREE_BUILD,
     LOG_TARGET_NODE_ID, LOG_TARGET_RELS, LOG_TARGET_VIS,
 };
+
+#[cfg(test)]
+pub(crate) mod test_setup;

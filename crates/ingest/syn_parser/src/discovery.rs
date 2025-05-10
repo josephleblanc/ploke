@@ -497,6 +497,19 @@ impl CrateContext {
     pub fn dev_dependencies(&self) -> &DevDependencies {
         &self.dev_dependencies
     }
+    pub fn is_bin(&self) -> bool {
+        self.files.iter().any(|fp| fp.ends_with("main.rs"))
+    }
+    pub fn is_lib(&self) -> bool {
+        self.files.iter().any(|fp| fp.ends_with("lib.rs"))
+    }
+    pub fn root_file(&self) -> Option<&Path> {
+        self.files
+            .iter()
+            .filter(|fp| fp.ends_with("main.rs") || fp.ends_with("lib.rs"))
+            .map(|fp| fp.as_path())
+            .next()
+    }
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -512,7 +525,8 @@ impl CrateContext {
 /// necessary.
 #[derive(Debug, Clone)]
 pub struct DiscoveryOutput {
-    /// Context information for each successfully discovered crate, keyed by the absolute crate root path.
+    /// Context information for each successfully discovered crate, keyed by the absolute crate
+    /// root path.
     pub crate_contexts: HashMap<PathBuf, CrateContext>,
     // Removed initial_module_map: HashMap<PathBuf, Vec<String>>
     /// A list of non-fatal errors (warnings) encountered during discovery.

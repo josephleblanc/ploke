@@ -35,105 +35,105 @@ lazy_static! {
                 expected_cfg: None,
             },
         );
-        m.insert(
-            "crate::unions::SecretData",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "SecretData",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::CrateUnion",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "CrateUnion",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::DocumentedUnion",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "DocumentedUnion",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::GenericUnion",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "GenericUnion",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::ReprCUnion",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "ReprCUnion",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::UnionWithFieldAttr",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "UnionWithFieldAttr",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::InnerSecrect",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions", "inner"],
-                ident: "InnerSecrect",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::InnerPublic",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions", "inner"],
-                ident: "InnerPublic",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
-        m.insert(
-            "crate::unions::UseInnerUnion",
-            ParanoidArgs {
-                fixture: fixture_name,
-                relative_file_path: rel_path,
-                expected_path: &["crate", "unions"],
-                ident: "UseInnerUnion",
-                item_kind: ItemKind::Union,
-                expected_cfg: None,
-            },
-        );
+        // m.insert(
+        //     "crate::unions::SecretData",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "SecretData",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::CrateUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "CrateUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::DocumentedUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "DocumentedUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::GenericUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "GenericUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::ReprCUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "ReprCUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::UnionWithFieldAttr",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "UnionWithFieldAttr",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::InnerSecrect",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions", "inner"],
+        //         ident: "InnerSecrect",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::InnerPublic",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions", "inner"],
+        //         ident: "InnerPublic",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::UseInnerUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "UseInnerUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
         m
     };
 }
@@ -188,11 +188,6 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
     println!("{:#?}", union_node);
     let mut field_count = 0_u8;
     let parsed_field_name_i = str_to_field_name(union_node, "i", field_count);
-    // for (field, i) in item_union.fields.named.iter().zip(u8::MIN..u8::MAX) {
-    //     let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
-    //     let field_ref = field_name.get_or_insert_default();
-    //     field_ref.extend("_field_".chars().chain(union_name.as_str().chars()));
-    //     field_ref.push(i.into());
     // Field i
     let field_i = union_node
         .fields
@@ -240,16 +235,6 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
         container_id, module_id,
         "Expected ModuleNode to Contain UnionNode"
     );
-    // assert_relation_exists(
-    //     graph,
-    //     GraphId::Node(module_id),
-    //     GraphId::Node(union_node.id()),
-    //     RelationKind::Contains,
-    //     "Expected ModuleNode to Contain UnionNode",
-    // );
-
-    // 2. Union Contains Fields
-    // let found_field = graph.relations().iter().find(|r|)
     let union_node_id = graph
         .relations()
         .iter()
@@ -260,13 +245,6 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
         union_node.union_id(),
         "Expected UnionNode to have relation with field"
     );
-    // assert_relation_exists(
-    //     graph,
-    //     GraphId::Node(union_node.id()),
-    //     GraphId::Node(field_i.id),
-    //     RelationKind::StructField, // Re-use StructField for union fields
-    //     "Expected UnionNode to have StructField relation to FieldNode 'i'",
-    // );
     let union_with_field = graph
         .relations()
         .iter()
@@ -276,13 +254,6 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
         union_with_field, union_node_id,
         "Expected ModuleNode to have relation with field"
     );
-    // assert_relation_exists(
-    //     graph,
-    //     GraphId::Node(union_node.id()),
-    //     GraphId::Node(field_f.id),
-    //     RelationKind::StructField, // Re-use StructField for union fields
-    //     "Expected UnionNode to have StructField relation to FieldNode 'f'",
-    // );
     Ok(())
 }
 

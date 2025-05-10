@@ -1,4 +1,7 @@
-use crate::{parser::nodes::AnyNodeId, resolve::module_tree::ModuleTreeError};
+use crate::{
+    parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
+    resolve::ModuleTreeError,
+};
 use ploke_core::{IdConversionError, TypeId};
 use thiserror::Error;
 
@@ -28,20 +31,7 @@ pub enum CodeVisitorError {
 }
 
 /// Custom error type for the syn_parser crate.
-use crate::parser::graph::ParsedGraphError; // Import the new error type
-// Import the new test helper error type (adjust path if necessary based on your project structure)
-// This might require making TestHelperError public or adjusting visibility.
-// Assuming it's accessible via crate::common::TestHelperError for now.
-// If tests are a separate crate, this direct import won't work easily.
-// A common pattern is to define test-specific errors within the main crate
-// under a `#[cfg(test)]` module or feature-gate them.
-// For now, let's assume it's defined in a way that's visible here.
-// If not, we'll need to rethink where TestHelperError is defined or how it's wrapped.
-
-// Placeholder: If TestHelperError is in tests/common/mod.rs, direct import isn't possible.
-// Let's add a variant that takes a String instead, and the conversion will happen in the test code.
-// #[cfg(test)] // Or define it conditionally if needed
-// use crate::common::TestHelperError; // Hypothetical import
+use crate::parser::graph::ParsedGraphError;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
@@ -60,6 +50,18 @@ pub enum SynParserError {
     #[error("Node with ID {0} not found in the graph.")]
     NotFound(AnyNodeId),
 
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Reexport Node with path {1:?} name {0} not found in the graph, id: {2}.")]
+    ReexportNotFound(String, Vec<String>, ImportNodeId),
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Node with path {1:?} name {0} not found in the graph.")]
+    NotFoundInModuleByName(String, Vec<String>),
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Node with path {1} name {0}, kind {2:?} not found in the graph.")]
+    NotFoundInModuleByNameKind(String, String, ploke_core::ItemKind),
     /// Indicates that multiple nodes were found when exactly one was expected.
     #[error("Duplicate node found for ID {0} when only one was expected.")]
     DuplicateNode(AnyNodeId),
@@ -146,6 +148,9 @@ pub enum SynParserError {
 
     #[error(transparent)]
     AnyNodeIdConversion(#[from] crate::parser::nodes::AnyNodeIdConversionError),
+
+    #[error(transparent)]
+    TryFromPrimaryError(#[from] TryFromPrimaryError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
