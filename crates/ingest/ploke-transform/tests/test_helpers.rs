@@ -1,4 +1,5 @@
 //! Common test helpers for graph tests
+#![allow(unused_imports, dead_code)]
 
 use cozo::NamedRows;
 use cozo::{DataValue, Db, MemStorage};

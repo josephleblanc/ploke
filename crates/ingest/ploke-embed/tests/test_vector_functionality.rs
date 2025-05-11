@@ -416,39 +416,6 @@ fn test_code_embeddings_hnsw_graph() {
     // Insert sample embeddings
     insert_sample_embeddings(&db).expect("Failed to insert sample embeddings");
 
-    //         db.run_script(
-    //             "::hnsw create code_embeddings:vector {
-    //     dim: 384,
-    //     m: 16,
-    //     dtype: F32,
-    //     fields: [embedding],
-    //     distance: Cosine,
-    //     ef_construction: 50
-    // }",
-    //             BTreeMap::new(),
-    //             ScriptMutability::Mutable,
-    //         )?;
-
-    //         db.run_script(
-    // ":create code_embeddings {
-    //     id: Int,
-    //     node_id: Int,
-    //     node_type: String,
-    //     embedding: <F32; 384>,
-    //     text_snippet: String}",
-    //             BTreeMap::new(),
-    //             ScriptMutability::Mutable,
-    //         )?;
-
-    // Query to walk the HNSW graph at layer 0
-    // created with script:
-    //  ":create code_embeddings {
-    //      id: Int,
-    //      node_id: Int,
-    //      node_type: String,
-    //      embedding: <F32; 384>,
-    //      text_snippet: String
-    //  }",
     let query = r#"
         ?[fr_embedding, to_k, dist] := *code_embeddings:vector{ 
             layer: 0, 
@@ -458,19 +425,6 @@ fn test_code_embeddings_hnsw_graph() {
         }
 
     "#;
-    // The following doesn't work. I think this quote from the cozo explains why.
-    // citation: https://docs.cozodb.org/en/latest/vector.html
-    // local doc citation: ~/clones/cozo-docs/source/vector.rst
-    // The fr_* and to_* fields mirror the indices of the indexed relation, and the fr__* and to__*
-    // fields indicate which vectors inside the original rows this edge connects.
-    // let query = r#"
-    //     ?[fr_id, to_k, dist] := *code_embeddings:vector{
-    //         layer: 0,
-    //         fr_k,
-    //         to_k,
-    //         dist
-    //     }
-    // "#;
 
     #[allow(unused_variables)]
     let result = db

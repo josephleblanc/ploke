@@ -76,7 +76,7 @@ impl<'a> ParanoidArgs<'a> {
     pub fn generate_pid(
         &'a self,
         parsed_graphs: &'a [ParsedCodeGraph],
-    ) -> Result<TestInfo<'a>, SynParserError> {
+    ) -> Result<TestInfo<'a>, ploke_error::Error> {
         // 1. Construct the absolute expected file path
         let fixture_root = fixtures_crates_dir().join(self.fixture);
         let target_file_path = fixture_root.join(self.relative_file_path);

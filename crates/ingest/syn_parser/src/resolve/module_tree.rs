@@ -684,9 +684,7 @@ impl ModuleTree {
             Ok(()) // Complete success
         } else {
             // Only non-fatal "unlinked" issues occurred. Return the specific error variant.
-            Err(ModuleTreeError::FoundUnlinkedModules(Box::new(
-                collected_unlinked,
-            )))
+            Err(ModuleTreeError::FoundUnlinkedModules(collected_unlinked))
         }
     }
 

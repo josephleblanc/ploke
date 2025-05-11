@@ -3,6 +3,7 @@ use crate::{
     resolve::ModuleTreeError,
 };
 use ploke_core::{IdConversionError, TypeId};
+// use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
@@ -176,25 +177,42 @@ impl From<std::io::Error> for SynParserError {
 impl From<ModuleTreeError> for ploke_error::Error {
     fn from(err: ModuleTreeError) -> Self {
         match err {
-            ModuleTreeError::DuplicatePath { path, existing_id, conflicting_id } => 
-                ploke_error::FatalError::DuplicateModulePath {
-                    path: path.into_vec(),
-                    existing_id: existing_id.to_string(),
-                    conflicting_id: conflicting_id.to_string(),
-                }.into(),
-            ModuleTreeError::FoundUnlinkedModules(unlinked_infos) =>
+            ModuleTreeError::DuplicatePath {
+                path,
+                existing_id,
+                conflicting_id,
+            } => ploke_error::FatalError::DuplicateModulePath {
+                path: path.into_vec(),
+                existing_id: existing_id.to_string(),
+                conflicting_id: conflicting_id.to_string(),
+            }
+            .into(),
+            ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
                 ploke_error::WarningError::UnlinkedModules {
-                    modules: unlinked_infos.into_iter()
+                    modules: unlinked_infos
+                        .into_iter()
                         .map(|info| info.to_string())
                         .collect(),
-                    backtrace: Backtrace::capture(),
-                }.into(),
-            _ => ploke_error::Error::Internal(
-                ploke_error::internal::InternalError::CompilerError(
-                    format!("Unhandled ModuleTreeError: {}", err),
-                    Backtrace::capture()
-                )
-            ),
+                    // backtrace: Backtrace::capture(), // requires nightly
+                }
+                .into()
+            }
+            _ => ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
+                format!("Unhandled ModuleTreeError: {}", err),
+                // Backtrace::capture(), // requires nightly
+            )),
+        }
+    }
+}
+
+// NOTE: This should be expanded when I'm ready to refactor error handling more broadly.
+impl From<SynParserError> for ploke_error::Error {
+    fn from(err: SynParserError) -> Self {
+        #[allow(clippy::match_single_binding)]
+        match err {
+            _ => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(
+                err.to_string(),
+            )),
         }
     }
 }

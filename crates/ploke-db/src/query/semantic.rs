@@ -6,6 +6,7 @@
 //! - Result ranking/scoring
 
 /// Semantic search query
+#[allow(dead_code)]
 pub struct SemanticQuery {
     // Will contain:
     // - Embedding vector

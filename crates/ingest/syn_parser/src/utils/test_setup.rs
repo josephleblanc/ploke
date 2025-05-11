@@ -3,7 +3,7 @@ use ploke_common::{fixtures_crates_dir, workspace_root};
 use crate::{
     discovery::run_discovery_phase,
     error::SynParserError,
-    parser::{analyze_files_parallel, graph::ParsedGraphError, ParsedCodeGraph},
+    parser::{analyze_files_parallel, ParsedCodeGraph},
     resolve::module_tree::ModuleTree,
 };
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {

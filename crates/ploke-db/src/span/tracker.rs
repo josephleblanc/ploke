@@ -1,7 +1,8 @@
 //! Tracks changes to code spans over time
+#![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Tracks source code spans and their changes
 pub struct SpanTracker {
@@ -41,11 +42,17 @@ impl SpanTracker {
     /// Get changed spans between versions
     pub fn get_changed_spans(
         &self,
-        _file: &PathBuf,
+        _file: &Path,
         _old_hash: &str,
         _new_hash: &str,
     ) -> Option<Vec<(usize, usize)>> {
         // TODO: Implement actual diff logic
         None
+    }
+}
+
+impl Default for SpanTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }

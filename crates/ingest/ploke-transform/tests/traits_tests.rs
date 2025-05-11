@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use cozo::DataValue;
 use ploke_transform::traits::{BatchIntoCozo, IntoCozo};
 use syn_parser::parser::nodes::FunctionNode;

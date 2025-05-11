@@ -19,6 +19,7 @@ exclude = [
     "tests/fixture_crates/fixture_path_resolution",
     "tests/fixture_crates/fixture_spp_edge_cases",
     "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
+    "fixture_test_crate",
 ]
 resolver = "2"
 members = [
@@ -28,11 +29,11 @@ members = [
     "crates/ploke-db",
     "crates/common",
     "crates/test-utils",
-    "fixture_test_crate",
     "crates/ploke-core",
     "proc_macros/syn_parser/syn_parser_macros",
     "proc_macros/syn_parser/ploke-test-macros",
-    "proc_macros/syn_parser/derive_test_helpers", "crates/ploke-error",
+    "proc_macros/syn_parser/derive_test_helpers",
+    "crates/ploke-error",
     # Add more modules as needed
 ]
 
@@ -63,6 +64,7 @@ thiserror = "2"
 
 # Debugging
 log = "0.4"
+colored = "3.0"
 
 # Convenience
 itertools = "0.14"

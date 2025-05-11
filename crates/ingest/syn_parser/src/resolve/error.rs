@@ -44,7 +44,7 @@ pub enum ModuleTreeError {
     // NEW: Variant holding a collection of UnlinkedModuleInfo
     // Corrected format string - the caller logs the count/details
     #[error("Found unlinked module file(s) (no corresponding 'mod' declaration).")]
-    FoundUnlinkedModules(Box<Vec<UnlinkedModuleInfo>>), // Use Box as requested
+    FoundUnlinkedModules(Vec<UnlinkedModuleInfo>),
 
     #[error("Item with ID {0} is not publicly accessible from the crate root.")]
     ItemNotPubliclyAccessible(AnyNodeId), // New error variant for SPP

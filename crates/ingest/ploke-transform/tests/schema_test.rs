@@ -1,3 +1,4 @@
+#![allow(unused_imports, dead_code)]
 use crate::test_helpers::insert_visibility;
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_transform::schema::{create_schema, insert_sample_data, verify_schema};

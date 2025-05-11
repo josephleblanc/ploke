@@ -6,10 +6,10 @@ mod warning;
 // public exports
 pub use context::{ContextualError, ErrorContext};
 pub use fatal::FatalError;
+pub use internal::InternalError;
 pub use warning::WarningError;
 
 // common imports for submodules
-use std::backtrace::Backtrace;
 use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
@@ -19,7 +19,7 @@ pub enum Error {
     #[error(transparent)]
     Warning(#[from] WarningError),
     #[error(transparent)]
-    Internal(#[from] internal::InternalError),
+    Internal(#[from] InternalError),
 }
 
 // Remove test function

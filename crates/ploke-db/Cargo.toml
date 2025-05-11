@@ -14,3 +14,7 @@ thiserror = "1.0"
 [dev-dependencies]
 tokio = { workspace = true }
 ploke-transform = { path = "../ingest/ploke-transform" }
+
+[features]
+defaults = []
+type_bearing_ids = []

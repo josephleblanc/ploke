@@ -81,7 +81,6 @@ use syn_parser::error::SynParserError; // Import ItemKind and TypeKind from plok
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::ExpectedFunctionNode; // For ExpectedFunctionNode and Attribute
 use syn_parser::parser::nodes::FunctionNode;
-use syn_parser::parser::nodes::FunctionNodeId;
 use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
@@ -750,6 +749,7 @@ fn test_function_node_all() -> Result<(), SynParserError> {
 
 use std::fmt::Write;
 
+#[allow(dead_code)]
 pub fn print_for_cozo(node: &FunctionNode) -> String {
     let mut output = String::new();
 

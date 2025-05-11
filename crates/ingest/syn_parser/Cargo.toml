@@ -44,7 +44,7 @@ parse_cfg = "4.1.1"
 
 # debugging
 log = { workspace = true }
-colored = "3.0"
+colored = { workspace = true }
 
 # Convenience
 itertools = { workspace = true }

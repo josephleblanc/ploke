@@ -1,5 +1,6 @@
 //! Tests for graph queries and traversals
 
+#![allow(unused_imports, dead_code)]
 use crate::test_helpers::setup_test_db;
 use cozo::{DataValue, ScriptMutability};
 use ploke_transform::schema::insert_sample_data;

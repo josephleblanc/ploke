@@ -32,7 +32,6 @@ pub use colored::Colorize;
 use log::debug; // Import the debug macro
 use std::{collections::HashMap, path::Path};
 
-
 #[allow(unused_imports)]
 use std::collections::VecDeque;
 
@@ -82,6 +81,16 @@ impl From<SyntacticRelation> for TreeRelation {
 pub struct UnlinkedModuleInfo {
     pub module_id: ModuleNodeId,
     pub definition_path: NodePath, // Store the path that couldn't be linked
+}
+
+impl std::fmt::Display for UnlinkedModuleInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Unlinked module with path {} ({})",
+            self.definition_path, self.module_id
+        )
+    }
 }
 
 /// Holds the IDs and relations pruned from the ModuleTree.

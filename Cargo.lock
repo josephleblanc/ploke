@@ -659,10 +659,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
-name = "fixture_test_crate"
-version = "0.1.0"
-
-[[package]]
 name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1476,7 +1472,6 @@ dependencies = [
 name = "ploke-error"
 version = "0.1.0"
 dependencies = [
- "backtrace",
  "proc-macro2",
  "thiserror 2.0.12",
 ]
@@ -1507,6 +1502,7 @@ dependencies = [
  "log",
  "ploke-common",
  "ploke-core",
+ "ploke-error",
  "proc-macro2",
  "serde",
  "syn_parser",
@@ -1518,7 +1514,9 @@ name = "ploke-transform"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "env_logger 0.11.8",
  "itertools 0.14.0",
+ "log",
  "ploke-core",
  "ploke-test-utils",
  "serde",

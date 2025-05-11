@@ -238,7 +238,7 @@ impl ParsedCodeGraph {
     }
 
     #[allow(clippy::boxed_local, clippy::box_collection)]
-    fn handle_unlinked_modules(&self, unlinked_infos: Box<Vec<UnlinkedModuleInfo>>) {
+    fn handle_unlinked_modules(&self, unlinked_infos: Vec<UnlinkedModuleInfo>) {
         if !unlinked_infos.is_empty() {
             debug!(
                 "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",

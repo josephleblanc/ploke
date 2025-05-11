@@ -67,7 +67,6 @@ pub fn find_module_by_(graph: &CodeGraph, path: &[String]) -> Option<NodeId> {
 }
 
 // Helper to create module path for testing
-#[cfg(not(feature = "type_bearing_ids"))]
 pub fn test_module_path(segments: &[&str]) /* return type tbd */
 {
     todo!()

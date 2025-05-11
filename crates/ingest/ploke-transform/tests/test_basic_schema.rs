@@ -1,5 +1,6 @@
 //! Tests for basic schema functionality
 
+#![allow(unused_imports, dead_code)]
 use cozo::{DataValue, ScriptMutability};
 use ploke_transform::schema::{insert_sample_data, verify_schema};
 use std::collections::BTreeMap;

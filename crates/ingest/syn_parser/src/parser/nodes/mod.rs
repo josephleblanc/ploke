@@ -113,6 +113,10 @@ impl NodePath {
         Self(segments)
     }
 
+    pub fn into_vec(self) -> Vec<String> {
+        self.0
+    }
+
     pub fn as_segments(&self) -> &[String] {
         &self.0
     }
