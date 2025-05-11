@@ -23,11 +23,10 @@ Error types across crates are disorganized, and do not share a common organizati
     *   All crates now must use the `ploke-error` dependency. This should remain minimal but still represents and additional dependency.
     *   May constrain the options available to error handling, though this should be limited as far as possible.
 - **Neutral:**
-    *   Final module path/ID resolution remains a Phase 3 responsibility.
-    *   Respects Phase 2 parallel constraints (no cross-worker communication).
+    *   Moves code out of `syn_parser` and `test-utils` and into `ploke-error`.
 
 ## Compliance
 - Aligns with planned structure for error handling ([`PROPOSED_ARCH_V3.md`](PROPOSED_ARCH_V3.md)).
 - Improves error handling (C-GOOD-ERR) ([`IDIOMATIC_RUST.md`](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md)).
 
-Accepted git tag: 
+Accepted git tag: `125de731cc5f5f2284fe5c8fa192bf4d9516ec80`
