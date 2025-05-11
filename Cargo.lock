@@ -1476,6 +1476,8 @@ dependencies = [
 name = "ploke-error"
 version = "0.1.0"
 dependencies = [
+ "backtrace",
+ "proc-macro2",
  "thiserror 2.0.12",
 ]
 
@@ -1502,6 +1504,7 @@ dependencies = [
 name = "ploke-test-utils"
 version = "0.1.0"
 dependencies = [
+ "log",
  "ploke-common",
  "ploke-core",
  "proc-macro2",
@@ -2101,6 +2104,7 @@ dependencies = [
  "parse_cfg",
  "ploke-common",
  "ploke-core",
+ "ploke-error",
  "ploke-test-macros",
  "proc-macro2",
  "quote",

@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 thiserror = { workspace = true }
 backtrace = "0.3"
+proc-macro2 = { workspace = true, features = ["span-locations"] }

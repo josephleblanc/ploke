@@ -8,12 +8,11 @@ ploke-common = { path = "../common" }
 # syn_parser is now a required dependency
 syn_parser = { path = "../ingest/syn_parser" }
 # Core types are now always needed
-ploke-core = { path = "../ploke-core" } # Needed for Uuid types if test-utils uses them directly
+ploke-core = { path = "../ploke-core" }                           # Needed for Uuid types if test-utils uses them directly
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
-proc-macro2 = { workspace = true, features = [
-    "span-locations",
-] }
+proc-macro2 = { workspace = true, features = ["span-locations"] }
+log = { workspace = true }
 
 [features]
 default = []

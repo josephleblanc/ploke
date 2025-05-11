@@ -1,5 +1,6 @@
+use proc_macro2::Span;
+
 use super::*;
-use std::fmt;
 
 #[derive(Debug)]
 pub struct ErrorContext {

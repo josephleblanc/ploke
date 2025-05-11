@@ -172,6 +172,33 @@ impl From<std::io::Error> for SynParserError {
     }
 }
 
+// Convert ModuleTreeError to ploke_error::Error
+impl From<ModuleTreeError> for ploke_error::Error {
+    fn from(err: ModuleTreeError) -> Self {
+        match err {
+            ModuleTreeError::DuplicatePath { path, existing_id, conflicting_id } => 
+                ploke_error::FatalError::DuplicateModulePath {
+                    path: path.into_vec(),
+                    existing_id: existing_id.to_string(),
+                    conflicting_id: conflicting_id.to_string(),
+                }.into(),
+            ModuleTreeError::FoundUnlinkedModules(unlinked_infos) =>
+                ploke_error::WarningError::UnlinkedModules {
+                    modules: unlinked_infos.into_iter()
+                        .map(|info| info.to_string())
+                        .collect(),
+                    backtrace: Backtrace::capture(),
+                }.into(),
+            _ => ploke_error::Error::Internal(
+                ploke_error::internal::InternalError::CompilerError(
+                    format!("Unhandled ModuleTreeError: {}", err),
+                    Backtrace::capture()
+                )
+            ),
+        }
+    }
+}
+
 // Implement From<ModuleTreeError> for SynParserError
 impl From<ModuleTreeError> for SynParserError {
     fn from(err: ModuleTreeError) -> Self {

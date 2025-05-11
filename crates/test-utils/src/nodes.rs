@@ -1,5 +1,12 @@
-use ploke_core::ItemKind;
-use syn_parser::parser::{nodes::PrimaryNodeId, ParsedCodeGraph};
+use std::path;
+
+use ploke_common::fixtures_crates_dir;
+use ploke_core::{ItemKind, NodeId};
+use syn_parser::{
+    parser::{graph::GraphAccess, nodes::*, visitor::calculate_cfg_hash_bytes, ParsedCodeGraph},
+    utils::logging::LOG_TEST_ID_REGEN,
+    TestIds,
+};
 
 #[derive(Debug, Clone)]
 pub struct TestInfo<'a> {
@@ -85,12 +92,12 @@ impl<'a> ParanoidArgs<'a> {
                 )
             });
         let graph = &target_data.graph;
-        let exp_path_string = self
+        let exp_path_string: Vec<String> = self
             .expected_path
             .iter()
             .copied()
             .map(|s| s.to_string())
-            .collect_vec();
+            .collect();
 
         let cfgs_bytes_option: Option<Vec<u8>> = self
             .expected_cfg
@@ -167,4 +174,8 @@ impl<'a> ParanoidArgs<'a> {
         };
         Ok(test_info)
     }
+}
+
+fn strs_to_strings(strs: &[&str]) -> Vec<String> {
+    strs.iter().copied().map(String::from).collect()
 }
