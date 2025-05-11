@@ -1473,6 +1473,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-error"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "ploke-test-macros"
 version = "0.1.0"
 dependencies = [
