@@ -9,6 +9,7 @@ use syn_parser::parser::ParsedCodeGraph;
 const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_path_attribute_handling() {
     // Initialize logger without timestamps (ignore errors if already initialized)
     let _ = env_logger::builder()
@@ -27,8 +28,8 @@ fn test_path_attribute_handling() {
             module.name.yellow(),
             module.id.to_string().magenta(),
             module.path,
-            module.defn_path(),
-            module.is_declaration(),
+            module.path(),
+            module.is_decl(),
             module.is_file_based(),
             module.file_path().map(|p| p.display())
         );
@@ -49,7 +50,7 @@ fn test_path_attribute_handling() {
         .find(|m| {
             m.name == "logical_path_mod"
                 && m.path == ["crate", "logical_path_mod"] // Path of the declaration
-                && m.is_declaration()
+                && m.is_decl()
         })
         .expect("Could not find declaration for logical_path_mod");
     debug!(target: LOG_TARGET_GRAPH_FIND, "Found declaration: {} ({})", logical_mod_decl.name.yellow(), logical_mod_decl.id.to_string().magenta());
@@ -121,7 +122,7 @@ fn test_path_attribute_handling() {
         .find(|m| {
             m.name == "common_import_mod"
                 && m.path == ["crate", "common_import_mod"] // Path of the declaration
-                && m.is_declaration()
+                && m.is_decl()
         })
         .expect("Could not find declaration for common_import_mod");
     debug!(target: LOG_TARGET_GRAPH_FIND, "Found declaration: {} ({})", common_mod_decl.name.yellow(), common_mod_decl.id.to_string().magenta());

@@ -1,0 +1,18 @@
+[package]
+name = "syn_parser_macros"
+version = "0.1.0"
+edition = "2021"
+description = "Procedural macros for syn_parser crate"
+authors = ["Your Name <your.email@example.com>"] # Update with actual author info
+
+[lib]
+proc-macro = true # Important: Marks this as a proc macro crate
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] } # Need full for parsing, extra-traits for derives
+quote = {workspace = true}
+proc-macro2 = {workspace = true}
+proc-macro-error = {workspace = true} # For better error reporting in derive
+
+
+ploke-core = { path = "../../../crates/ploke-core", version = "0.1.0" }

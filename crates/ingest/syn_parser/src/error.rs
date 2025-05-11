@@ -1,23 +1,71 @@
-use crate::resolve::module_tree::ModuleTreeError;
-use ploke_core::{IdConversionError, NodeId, TypeId};
+use crate::{
+    parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
+    resolve::ModuleTreeError,
+};
+use ploke_core::{IdConversionError, TypeId};
+// use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
+use ploke_core::ItemKind; // Import ItemKind
+
+/// Errors specific to the CodeVisitor processing.
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum CodeVisitorError {
+    /// Failed to register a node ID, likely because the parent module couldn't be found.
+    #[error("Failed to register node ID for item '{item_name}' ({item_kind:?})")]
+    RegistrationFailed {
+        item_name: String,
+        item_kind: ItemKind,
+    },
+    /// Failed to convert AnyNodeId to a specific typed ID during visitation.
+    #[error(
+        "Failed to convert AnyNodeId to {expected_type} for item '{item_name}' ({item_kind:?})"
+    )]
+    IdConversionFailed {
+        item_name: String,
+        item_kind: ItemKind,
+        expected_type: &'static str, // e.g., "ImportNodeId"
+        source_error: crate::parser::nodes::AnyNodeIdConversionError, // Keep original error info
+    },
+    // Add other visitor-specific errors here if needed
+}
 
 /// Custom error type for the syn_parser crate.
-#[derive(Error, Debug, Clone, PartialEq)] // Removed Eq
+use crate::parser::graph::ParsedGraphError;
+
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
+    /// Error originating from test helper logic (wrapped as string).
+    #[error("Test helper error: {0}")]
+    TestHelperError(String), // Wrap the error message
+
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),
 
+    #[error(transparent)]
+    ParsedGraphError(#[from] ParsedGraphError), // Add the new error variant
+
     /// Indicates that a requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
-    NotFound(NodeId),
+    NotFound(AnyNodeId),
 
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Reexport Node with path {1:?} name {0} not found in the graph, id: {2}.")]
+    ReexportNotFound(String, Vec<String>, ImportNodeId),
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Node with path {1:?} name {0} not found in the graph.")]
+    NotFoundInModuleByName(String, Vec<String>),
+    /// Indicates that a requested node was not found in the graph.
+    /// node name, node path
+    #[error("Node with path {1} name {0}, kind {2:?} not found in the graph.")]
+    NotFoundInModuleByNameKind(String, String, ploke_core::ItemKind),
     /// Indicates that multiple nodes were found when exactly one was expected.
     #[error("Duplicate node found for ID {0} when only one was expected.")]
-    DuplicateNode(NodeId),
+    DuplicateNode(AnyNodeId),
 
     #[error("Duplicate node found for ModuleNode in ModuleTree construction: {0:?} ")]
     DuplicateInModuleTree(Box<ModuleNode>), // Box the large ModuleNode
@@ -49,6 +97,9 @@ pub enum SynParserError {
     /// Indicates that a module with the specified path was not found.
     #[error("Module with path {0:?} not found.")]
     ModulePathNotFound(Vec<String>),
+    /// Indicates that a module with the specified path was not found.
+    #[error("Item with path {0:?} not found.")]
+    ItemPathNotFound(Vec<String>),
 
     /// Indicates that multiple modules were found for the specified path.
     #[error("Duplicate modules found for path {0:?}.")]
@@ -66,8 +117,8 @@ pub enum SynParserError {
     ModuleTreeDuplicateDefnPath {
         // New variant
         path: String, // Store path as String for simplicity in SynParserError
-        existing_id: NodeId,
-        conflicting_id: NodeId,
+        existing_id: AnyNodeId,
+        conflicting_id: AnyNodeId,
     },
 
     /// Indicates a duplicate module ID was encountered when building the ModuleTree.
@@ -75,7 +126,7 @@ pub enum SynParserError {
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
     #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
-    ModuletreeRelationNotFound(NodeId, String),
+    ModuletreeRelationNotFound(AnyNodeId, String),
     // Removed ModuleKindinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
     // ModuleKindinitionNotFound(String), // Store path string representation
@@ -88,12 +139,19 @@ pub enum SynParserError {
 
     #[error("Relation conversion error: {0}")]
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
-    #[error("Graph ID conversion error: {0}")]
-    GraphIdConversionError(String), // Store string representation
 
     /// Indicates that shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
-    ExternalItemNotResolved(NodeId),
+    ExternalItemNotResolved(AnyNodeId),
+
+    #[error(transparent)]
+    VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
+
+    #[error(transparent)]
+    AnyNodeIdConversion(#[from] crate::parser::nodes::AnyNodeIdConversionError),
+
+    #[error(transparent)]
+    TryFromPrimaryError(#[from] TryFromPrimaryError),
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -112,6 +170,50 @@ pub enum ResolutionError {
 impl From<std::io::Error> for SynParserError {
     fn from(err: std::io::Error) -> Self {
         SynParserError::Io(err.to_string())
+    }
+}
+
+// Convert ModuleTreeError to ploke_error::Error
+impl From<ModuleTreeError> for ploke_error::Error {
+    fn from(err: ModuleTreeError) -> Self {
+        match err {
+            ModuleTreeError::DuplicatePath {
+                path,
+                existing_id,
+                conflicting_id,
+            } => ploke_error::FatalError::DuplicateModulePath {
+                path: path.into_vec(),
+                existing_id: existing_id.to_string(),
+                conflicting_id: conflicting_id.to_string(),
+            }
+            .into(),
+            ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
+                ploke_error::WarningError::UnlinkedModules {
+                    modules: unlinked_infos
+                        .into_iter()
+                        .map(|info| info.to_string())
+                        .collect(),
+                    // backtrace: Backtrace::capture(), // requires nightly
+                }
+                .into()
+            }
+            _ => ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(
+                format!("Unhandled ModuleTreeError: {}", err),
+                // Backtrace::capture(), // requires nightly
+            )),
+        }
+    }
+}
+
+// NOTE: This should be expanded when I'm ready to refactor error handling more broadly.
+impl From<SynParserError> for ploke_error::Error {
+    fn from(err: SynParserError) -> Self {
+        #[allow(clippy::match_single_binding)]
+        match err {
+            _ => ploke_error::Error::Internal(ploke_error::InternalError::NotImplemented(
+                err.to_string(),
+            )),
+        }
     }
 }
 
@@ -158,9 +260,6 @@ impl From<ModuleTreeError> for SynParserError {
                     node_id
                 ))
                 // Or define a new SynParserError variant if more specific handling is needed
-            }
-            ModuleTreeError::GraphIdConversion(graph_id_err) => {
-                SynParserError::from(NodeError::GraphIdConversion(graph_id_err))
             }
             ModuleTreeError::NodeError(node_err) => {
                 // Convert the inner NodeError into SynParserError using its existing From impl
@@ -259,8 +358,33 @@ impl From<ModuleTreeError> for SynParserError {
             ModuleTreeError::Warning(msg) => {
                 SynParserError::InternalState(format!("ModuleTree Warning: {}", msg))
             }
-            ModuleTreeError::DuplicateContains(tree_relation) => todo!(),
-            ModuleTreeError::NoRelationsFoundForId(node_id) => todo!(),
+            ModuleTreeError::DuplicateContains(tree_relation) => {
+                // Indicates an internal inconsistency in the graph structure.
+                SynParserError::InternalState(format!(
+                    "Duplicate Contains relation found: {:?}",
+                    tree_relation
+                ))
+            }
+            ModuleTreeError::NoRelationsFoundForId(node_id) => {
+                // Indicates an item expected to have relations (like containment) was found without any.
+                SynParserError::InternalState(format!(
+                    "No relations found for AnyNodeId {} during ModuleTree processing.",
+                    node_id
+                ))
+            }
+            ModuleTreeError::RecursionLimitExceeded {
+                start_node_id,
+                limit,
+            } => {
+                // Indicates a safety limit was hit, likely due to cycles or extreme depth.
+                SynParserError::InternalState(format!(
+                    "Recursion limit ({}) exceeded starting from node {}",
+                    limit, start_node_id
+                ))
+            }
+            ModuleTreeError::RootModuleNotFound(_module_node_id) => todo!(),
+            ModuleTreeError::TypedIdConversionError(_try_from_primary_error) => todo!(),
+            ModuleTreeError::AnyNodeIdConversionError(_any_node_id_conversion_error) => todo!(),
         }
     }
 }
@@ -271,10 +395,6 @@ impl From<NodeError> for SynParserError {
         match err {
             NodeError::Validation(msg) => SynParserError::NodeValidation(msg),
             NodeError::Conversion(type_id) => SynParserError::TypeIdConversionError(type_id), // Keep existing
-            NodeError::GraphIdConversion(graph_id_err) => {
-                // Convert the GraphIdConversionError into a String for SynParserError
-                SynParserError::GraphIdConversionError(graph_id_err.to_string())
-            }
         }
     }
 }

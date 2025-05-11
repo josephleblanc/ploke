@@ -1,6 +1,7 @@
+use colored::Colorize;
 use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
-use std::hash::Hasher;
+use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 mod attribute_processing;
 mod code_visitor;
@@ -10,7 +11,14 @@ mod type_processing;
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
-use crate::parser::nodes::GraphId;
+use crate::{
+    error::SynParserError,
+    parser::{
+        nodes::{ModuleNodeInfo, PrimaryNodeId},
+        relations::SyntacticRelation,
+    },
+    utils::{LogStyle, LogStyleDebug, LOG_TARGET_RELS},
+};
 
 use std::path::{Component, Path, PathBuf}; // Add Path and Component
 
@@ -74,9 +82,8 @@ fn derive_logical_path(crate_src_dir: &Path, file_path: &Path) -> Vec<String> {
 use super::ParsedCodeGraph;
 
 use {
-    super::nodes::ModuleNode,           // Moved ModuleNode import here
-    crate::discovery::DiscoveryOutput,  // Import DiscoveryOutput
-    crate::parser::relations::Relation, // Assuming Relation is in parser::relations
+    super::nodes::ModuleNode,          // Moved ModuleNode import here
+    crate::discovery::DiscoveryOutput, // Import DiscoveryOutput
     ploke_core::NodeId,
     rayon::prelude::*, // Import rayon traits
     uuid::Uuid,
@@ -91,15 +98,14 @@ pub fn analyze_file_phase2(
 ) -> Result<ParsedCodeGraph, syn::Error> {
     // Consider a more specific Phase2Error later
 
+    use super::nodes::ModuleKind;
     use attribute_processing::{
         extract_cfg_strings, // NEW: Import raw string extractor
         extract_file_level_attributes,
         extract_file_level_docstring,
         // Removed parse_and_combine_cfgs_from_attrs import
     };
-    // Removed code_visitor helper imports (combine_cfgs, hash_expression)
 
-    use super::nodes::ModuleKind;
     let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
         syn::Error::new(
             proc_macro2::Span::call_site(),
@@ -131,7 +137,7 @@ pub fn analyze_file_phase2(
         .cloned()
         .collect();
 
-    let root_module_id = NodeId::generate_synthetic(
+    let root_module_node_id = NodeId::generate_synthetic(
         crate_namespace,
         &file_path,
         &root_module_parent_path, // Use parent path for ID generation context
@@ -140,21 +146,16 @@ pub fn analyze_file_phase2(
         None,                      // Root module has no parent scope ID within the file context
         root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
     );
-
-    #[cfg(feature = "verbose_debug")]
-    eprintln!(
-        "root_module_id: {}\ncreated by:\n\tcrate_namespace: {}
-    \tfile_path: {:?}\n\troot_module_parent_path: {:?}\n\troot_module_name: {}\n",
-        root_module_id,
+    // #[cfg(test)]
+    debug_file_module_id_gen(
         crate_namespace,
-        file_path.as_os_str(),
-        root_module_parent_path,
-        root_module_name
+        &file_path,
+        &root_module_parent_path,
+        &root_module_name,
+        ItemKind::Module,
+        None,
+        root_cfg_bytes.as_deref(),
     );
-
-    // *** NEW STEP: Push root module ID onto the scope stack ***
-    // This makes it the default parent scope for top-level items visited next.
-    state.current_definition_scope.push(root_module_id);
 
     // 3. Create the root module node using the derived path and name
     // Determine visibility: Public only for crate root (main.rs/lib.rs), Inherited otherwise
@@ -164,8 +165,8 @@ pub fn analyze_file_phase2(
         crate::parser::types::VisibilityKind::Inherited
     };
 
-    state.code_graph.modules.push(ModuleNode {
-        id: root_module_id,
+    let root_module_info = ModuleNodeInfo {
+        id: root_module_node_id,
         name: root_module_name,      // Use derived name
         visibility: root_visibility, // Use determined visibility
         attributes: Vec::new(),
@@ -183,23 +184,38 @@ pub fn analyze_file_phase2(
             // cfgs removed from here, belongs on ModuleNode
         },
         cfgs: file_cfgs, // Store raw file-level CFGs on the ModuleNode
-    });
+    };
+
+    state
+        .code_graph
+        .modules
+        .push(ModuleNode::new(root_module_info));
+
+    let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
+
+    // Default parent scope for top-level items visited next.
+    state.current_primary_defn_scope.push(root_module_pid);
 
     // 4. Create and run the visitor
     let mut visitor = code_visitor::CodeVisitor::new(&mut state);
     visitor.visit_file(&file);
 
-    // 5. Add relations using GraphId wrappers
-    let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
-    for module_id in module_ids {
-        if module_id != root_module_id {
-            state.code_graph.relations.push(Relation {
-                source: GraphId::Node(root_module_id),
-                target: GraphId::Node(module_id),
-                kind: crate::parser::relations::RelationKind::Contains,
-            });
-        }
-    }
+    #[cfg(feature = "temp_target")]
+    debug_relationships(&visitor);
+
+    #[cfg(feature = "validate")]
+    assert!(&visitor.validate_unique_rels());
+
+    // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
+    // for module_id in module_ids {
+    //     if module_id != root_module_id {
+    //         state.code_graph.relations.push(Relation {
+    //             source: root_module_id,
+    //             target: module_id,
+    //             kind: crate::parser::relations::RelationKind::Contains,
+    //         });
+    //     }
+    // }
 
     Ok(ParsedCodeGraph::new(
         file_path,
@@ -208,21 +224,115 @@ pub fn analyze_file_phase2(
     ))
 }
 
+// TODO: Figure out how to get the test cfg working correctly
+// #[cfg(test)]
+fn debug_file_module_id_gen(
+    crate_namespace: uuid::Uuid,
+    file_path: &std::path::Path,
+    relative_path: &[String],
+    item_name: &str,
+    item_kind: ItemKind, // Use ItemKind from this crate
+    parent_scope_id: Option<NodeId>,
+    cfg_bytes: Option<&[u8]>,
+) {
+    use log::debug;
+
+    use crate::utils::logging::LOG_TEST_ID_REGEN;
+
+    if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
+        if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
+            && debug_target_item == item_name
+        // allow for filtering by command env variable
+        {
+            // Check if specific log is enabled
+            debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " FileBased Id Generation ".log_header());
+            debug!(target: LOG_TEST_ID_REGEN,
+                "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
+                item_name.log_name(), // item name being processed by visitor
+                item_kind.log_comment_debug(),
+                crate_namespace,
+                file_path.as_os_str().log_comment_debug(),
+                relative_path.log_path_debug(), // This is the 'relative_path' for the item's ID context
+                item_name.log_name(),
+                item_kind.log_comment_debug(),
+                parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+                cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
+            );
+        }
+    }
+}
+
+#[allow(dead_code, reason = "Useful for debugging")]
+fn debug_relationships(visitor: &CodeVisitor<'_>) {
+    let unique_rels = visitor.relations().iter().fold(Vec::new(), |mut acc, r| {
+        if !acc.contains(r) {
+            acc.push(*r)
+        }
+        acc
+    });
+    let has_duplicate = unique_rels.len() == visitor.relations().len();
+    log::debug!(target: "temp",
+        "{} {} {}: {} | {}: {} | {}: {}",
+        "Relations are unique?".log_header(),
+        if has_duplicate {
+            "Yes!".log_spring_green().bold()
+        } else {
+            "NOOOO".log_error()
+        },
+        "Unique".log_step(),
+        unique_rels.len().to_string().log_magenta_debug(),
+        "Total".log_step(),
+        visitor.relations().len().to_string().log_magenta_debug(),
+        "Difference".log_step(),
+        (visitor.relations().len() - unique_rels.len() ).to_string().log_magenta_debug(),
+    );
+    // Update HashMap key type to SyntacticRelation
+    let rel_map: HashMap<SyntacticRelation, usize> =
+        visitor
+            .relations()
+            .iter()
+            .copied()
+            .fold(HashMap::new(), |mut hmap, r| {
+                match hmap.entry(r) {
+                    std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                        let existing_count = occupied_entry.get();
+                        occupied_entry.insert(existing_count + 1);
+                    }
+                    std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                        vacant_entry.insert(1);
+                    }
+                };
+                hmap
+            });
+    for (rel, count) in rel_map {
+        if count > 1 {
+            // Use the helper methods to get base NodeIds for logging
+            log::debug!(target: LOG_TARGET_RELS,
+                "{} | {}: {} | {}", // Log the full relation variant for kind info
+                "Duplicate!".log_header(),
+                "Count".log_step(),
+                count.to_string().log_error(),
+                rel, // Log the whole enum variant
+            );
+        }
+    }
+}
+
 /// Process multiple files in parallel using rayon (UUID Path) - The Orchestrator
 /// Takes DiscoveryOutput and distributes work to analyze_file_phase2.
 pub fn analyze_files_parallel(
     discovery_output: &DiscoveryOutput, // Takes output from Phase 1
     _num_workers: usize, // May not be directly used if relying on rayon's default pool size
-) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
+) -> Vec<Result<ParsedCodeGraph, SynParserError>> {
     // Adjust error type if needed
 
-    log::debug!(
+    log::debug!(target: "crate_context",
         // Temporary debug print
         "Starting Phase 2 Parallel Parse for {} crates...",
         discovery_output.crate_contexts.len()
     );
 
-    discovery_output
+    let parsed_results: Vec<Result<ParsedCodeGraph, SynParserError>> = discovery_output
         .crate_contexts
         .values() // Iterate over CrateContext values
         .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
@@ -243,10 +353,44 @@ pub fn analyze_files_parallel(
                     file_path.to_owned(),
                     crate_context.namespace,
                     logical_path, // Pass the derived path
-                )
+                ) 
+                .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
+                .map_err(|e| e.into())
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) })
             })
         })
-        .collect() // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
+        .collect(); // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
+
+    let root_graph = parsed_results
+        .iter()
+        .filter_map(|pr| pr.as_ref().ok())
+        .find(|pr| pr.crate_context.is_some())
+        .unwrap();
+    log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
+
+    parsed_results
+}
+
+fn set_root_context(
+    crate_context: &crate::discovery::CrateContext,
+    mut pg: ParsedCodeGraph,
+) -> ParsedCodeGraph {
+    if pg
+        .file_path
+        .file_name()
+        .is_some_and(|f| f == "lib.rs" || f == "main.rs")
+    {
+        pg.crate_context = Some(crate_context.clone());
+    }
+    pg
+}
+
+fn info_crate_context(src_dir: &PathBuf, pg: &ParsedCodeGraph) -> String {
+    format!(
+        "parsed_graph file_path: {}, crate_context: {:#?}",
+        pg.file_path.strip_prefix(src_dir).as_ref().log_path_debug(),
+        pg.crate_context
+    )
 }
 
 /// Calculates a hash for a list of raw CFG strings.

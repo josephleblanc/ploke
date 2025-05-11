@@ -1,5 +1,11 @@
 #![allow(dead_code)]
 // #![warn(unused_attributes)] // Example crate-level attribute
+// NOTE: This crate contains attributes that cause the build of the workspace to fail.
+// This means that we cannot keep this library within the test fixtures that are included in the
+// cargo workspace for linting.
+//
+// WARNING: If there are issues with tests targeting this fixture, add the this crate to the cargo
+// workspace to enable linting.
 
 // Standard attributes
 #[derive(Debug, Clone, Copy)] // derive attribute

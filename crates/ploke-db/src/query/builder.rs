@@ -1,4 +1,5 @@
 //! Query builder implementation
+#![allow(dead_code)]
 
 use crate::error::Error;
 use crate::QueryResult;

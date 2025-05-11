@@ -1,0 +1,8 @@
+[package]
+name = "ploke-error"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = { workspace = true }
+proc-macro2 = { workspace = true, features = ["span-locations"] }

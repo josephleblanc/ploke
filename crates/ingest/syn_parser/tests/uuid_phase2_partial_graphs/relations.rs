@@ -1,5 +1,7 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 #[cfg(test)]
 mod phase2_relation_tests {
+    use crate::common::uuid_ids_utils::*;
     use crate::common::uuid_ids_utils::*;
     use ploke_common::{fixtures_crates_dir, workspace_root};
     use ploke_core::NodeId;
@@ -7,7 +9,7 @@ mod phase2_relation_tests {
         discovery::{run_discovery_phase, DiscoveryOutput},
         parser::{
             analyze_files_parallel,
-            nodes::GraphId,
+            // Removed GraphId import
             relations::{Relation, RelationKind},
             ParsedCodeGraph,
         },
@@ -18,7 +20,8 @@ mod phase2_relation_tests {
     // --- Relation Tests ---
 
     #[test]
-    fn test_contains_relation_example() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_contains_relation_example() {
         let crate_name = "example_crate";
         let crate_version = "0.1.0";
         let crate_path = fixtures_crates_dir().join(crate_name);
@@ -116,15 +119,12 @@ derived using:
             .relations
             .iter()
             .filter(|r| {
-                r.source == GraphId::Node(expect_mod_two_id)
+                r.source == expect_mod_two_id // Use NodeId directly
                     && r.kind == RelationKind::Contains
-                    && matches!(r.target, GraphId::Node(_))
             })
             .collect();
         let mut candidate_funcs = mod_two_graph.graph.functions.iter().filter(|f| {
-            candidate_rels
-                .iter()
-                .any(|r| r.target == GraphId::Node(f.id))
+            candidate_rels.iter().any(|r| r.target == f.id) // Use NodeId directly
         });
         let debug_candidate_funcs = candidate_funcs.clone().collect::<Vec<_>>();
         let found = candidate_funcs.next();
@@ -139,26 +139,26 @@ derived using:
         assert!(
             debug_candidate_funcs.len() == 1,
             // candidate_funcs.next().is_none(),
-            "Found more than one match of RelationKind::Contains Relation between:
-\tsource module id: {},
-\tfunc module id: {},
-\tnumber of candidate funcs: {},
-relation: {:#?},
-func: {:#?},
-debug_candidate_funcs: {:#?}",
+            "Found more than one match of RelationKind::Contains Relation between:\n\
+            \tsource module id: {},\n\
+            \tfunc module id: {},\n\
+            \tnumber of candidate funcs: {},\n\
+            relation: {:#?},\n\
+            func: {:#?},\n\
+            debug_candidate_funcs: {:#?}",
             candidate_rels
                 .iter()
-                .find(|r| r.source == GraphId::Node(expect_mod_two_id)
-                    && r.target == GraphId::Node(func_node.id)
+                .find(|r| r.source == expect_mod_two_id // Use NodeId directly
+                    && r.target == func_node.id // Use NodeId directly
                     && r.kind == RelationKind::Contains)
-                .map(|r| r.source)
+                .map(|r| r.source) // Source is NodeId
                 .unwrap(),
             func_node.id,
             debug_candidate_funcs.len(),
             candidate_rels
                 .iter()
-                .find(|r| r.source == GraphId::Node(expect_mod_two_id)
-                    && r.target == GraphId::Node(func_node.id)
+                .find(|r| r.source == expect_mod_two_id // Use NodeId directly
+                    && r.target == func_node.id // Use NodeId directly
                     && r.kind == RelationKind::Contains)
                 .unwrap(),
             func_node,

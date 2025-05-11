@@ -1,0 +1,24 @@
+[package]
+name = "ploke-test-macros"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+quote = {workspace = true}
+proc-macro2 = {workspace = true}
+proc-macro-error = {workspace = true} # For better error reporting in derive
+log = "0.4" # For logging within the macro if needed
+
+# Need access to types defined in these crates
+syn_parser = { path = "../../../crates/ingest/syn_parser" }
+ploke-core = { path = "../../../crates/ploke-core" }
+ploke-common = { path = "../../../crates/common" } # For fixtures_crates_dir, etc.
+lazy_static = "1.4.0" # Needed for accessing EXPECTED_*_DATA maps
+env_logger = "0.11" # For initializing logger in generated test
+itertools = "0.14.0" # May be needed by generated code
+colored = "3.0" # For logging styles used in ExpectedNodeData trait
+heck = "0.5" # For case conversion (e.g., snake_case to PascalCase)

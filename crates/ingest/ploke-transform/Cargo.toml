@@ -1,0 +1,23 @@
+[package]
+name = "ploke-transform"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cozo = { workspace = true }
+syn_parser = { path = "../syn_parser" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+itertools = { workspace = true }
+ploke-test-utils = { path = "../../test-utils" }
+ploke-core = { path = "../../ploke-core" }
+# debugging
+log = { workspace = true }
+
+[dev-dependencies]
+env_logger = "0.11" # Add env_logger for test logging
+
+[features]
+default = ["type_bearing_ids"]
+debug = []
+type_bearing_ids = []

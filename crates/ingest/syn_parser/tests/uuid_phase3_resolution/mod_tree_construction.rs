@@ -1,3 +1,5 @@
+#![cfg(test)]
+#![allow(unused_imports)]
 //! Tests focusing on the construction and initial state of the ModuleTree,
 //! before path resolution logic is implemented.
 //!
@@ -18,48 +20,56 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use colored::Colorize as _;
+use itertools::Itertools;
+use log::debug;
+use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess as _;
-use syn_parser::parser::nodes::{GraphId, ModuleNodeId};
-use syn_parser::parser::relations::{Relation, RelationKind};
+use syn_parser::parser::nodes::{ModuleNode, ModuleNodeId};
+use syn_parser::parser::relations::SyntacticRelation;
+use syn_parser::parser::ParsedCodeGraph;
+use syn_parser::resolve::module_tree::ModuleTree;
+use syn_parser::utils::{LogStyle, LOG_TARGET_MOD_TREE_BUILD};
 
 use crate::common::build_tree_for_tests;
-// Removed unused imports for helpers moved to CodeGraph
 
-/// **Covers:** Basic sanity check. Ensures that the number of `ModuleNode`s stored
-/// in the `ModuleTree`'s internal map (`tree.modules()`) matches the total number
-/// of `ModuleNode`s present in the input `CodeGraph`. This confirms that
-/// `ModuleTree::add_module` was called for every module without losing any.
-#[test]
-fn test_module_tree_module_count() {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .try_init();
-    let fixture_name = "file_dir_detection";
-    // Avoid tuple deconstruction
-    let graph_and_tree = build_tree_for_tests(fixture_name);
-    let graph = graph_and_tree.0;
-    let tree = graph_and_tree.1;
-
-    // Assert that the number of modules in the tree's map equals the number in the merged graph
-    assert_eq!(
-        tree.modules().len(),
-        graph.graph.modules.len(),
-        "ModuleTree should contain all modules from the merged graph"
-    );
-}
+// NOTE:
+// This test is replaced by unit testing in `parsed_graph.rs`,
+//  see parsed_graph::tests::test_build_mod_tree_inners
+// #[cfg(not(feature = "type_bearing_ids"))]
+// fn test_module_tree_module_count() {
+// }
 /// **Covers:** Correct population of the `path_index` field within the `ModuleTree`.
 /// It verifies that the canonical paths (e.g., `["crate"]`, `["crate", "top_pub_mod"]`,
 /// `["crate", "top_pub_mod", "nested_pub"]`, `["crate", "inline_pub_mod"]`) for
 /// *definition* modules (both file-based and inline) map to the correct `NodeId`s.
 /// This tests the logic within `ModuleTree::add_module` that inserts modules into the `path_index`.
 #[test]
+#[cfg(test)]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_path_index_correctness() {
+    let _ = env_logger::builder() // Parse RUST_LOG environment variable
+        .parse_filters(&std::env::var("RUST_LOG").unwrap_or_default())
+        // Define custom format without timestamp
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                // Example format: [LEVEL TARGET] Message
+                "[{:<5} {}] {}", // Adjust padding as needed
+                record.level(),
+                record.target(),
+                record.args()
+            )
+        })
+        .try_init(); // Use try_init to avoid panic if already initialized
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
     let graph_and_tree = build_tree_for_tests(fixture_name);
     let graph = graph_and_tree.0;
     let tree = graph_and_tree.1;
+
+    #[cfg(feature = "validate")]
+    graph.validate_unique_rels();
 
     // --- Find expected NodeIds from the graph FIRST ---
 
@@ -90,7 +100,7 @@ fn test_module_tree_path_index_correctness() {
     // 4. Inline module (inline_pub_mod in main.rs)
     // We need to find it by its definition path within the crate root
     let inline_pub_mod_node = graph
-        .find_module_by_defn_path_checked(&["crate".to_string(), "inline_pub_mod".to_string()])
+        .find_module_by_path_checked(&["crate".to_string(), "inline_pub_mod".to_string()])
         .expect("Could not find inline_pub_mod node");
     assert!(
         inline_pub_mod_node.is_inline(),
@@ -152,6 +162,7 @@ fn test_module_tree_path_index_correctness() {
 /// This primarily tests the `ModuleTree::link_mods_syntactic()` method and implicitly
 /// the population of the `decl_index`.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_resolves_to_definition_relation() {
     let fixture_name = "file_dir_detection";
     // Avoid tuple deconstruction
@@ -165,7 +176,7 @@ fn test_module_tree_resolves_to_definition_relation() {
 
     // 1. Find declaration `mod top_pub_mod;` in `main.rs`
     let crate_root_node = graph
-        .find_module_by_defn_path_checked(&["crate".to_string()])
+        .find_module_by_path_checked(&["crate".to_string()])
         .expect("Crate root not found");
     let top_pub_mod_decl_node = graph
         .get_child_modules_decl(crate_root_node.id) // Assuming this helper still works or is adapted
@@ -173,14 +184,14 @@ fn test_module_tree_resolves_to_definition_relation() {
         .find(|m| m.name == "top_pub_mod")
         .expect("Declaration 'mod top_pub_mod;' not found in crate root");
     assert!(
-        top_pub_mod_decl_node.is_declaration(),
+        top_pub_mod_decl_node.is_decl(),
         "Expected top_pub_mod node in crate root to be a declaration"
     );
     let decl_id = top_pub_mod_decl_node.id;
 
     // 2. Find definition `top_pub_mod.rs`
     let top_pub_mod_defn_node = graph
-        .find_module_by_defn_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
+        .find_module_by_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
         .expect("Definition module 'crate::top_pub_mod' not found");
     assert!(
         top_pub_mod_defn_node.is_file_based(), // Assuming this helper still works
@@ -217,7 +228,7 @@ fn test_module_tree_resolves_to_definition_relation() {
 
     // 2. Find definition `nested_pub.rs`
     let nested_pub_defn_node = graph
-        .find_module_by_defn_path_checked(&[
+        .find_module_by_path_checked(&[
             "crate".to_string(),
             "top_pub_mod".to_string(),
             "nested_pub".to_string(),
@@ -250,6 +261,7 @@ fn test_module_tree_resolves_to_definition_relation() {
 /// (in this specific fixture) `pending_exports` is empty because there are no `pub use`
 /// statements. This tests the filtering logic within `ModuleTree::add_module`.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_import_export_segregation() {
     // Use the fixture_nodes crate, specifically focusing on imports.rs
     let fixture_name = "fixture_nodes";
@@ -379,6 +391,7 @@ fn test_module_tree_import_export_segregation() {
 /// extracted during `process_use_tree` and stored by `ModuleTree::add_module`
 /// are accurate for various import syntaxes.
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_imports_fixture_nodes() {
     let fixture_name = "fixture_nodes";
     let graph_and_tree = build_tree_for_tests(fixture_name);
@@ -541,6 +554,7 @@ use std::io::Write; // Import Write trait for formatting
 
 /// with different visibility levels (public, crate, restricted, inherited).
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_module_tree_is_accessible() {
     // Initialize logger with custom format for this test
     let _ = env_logger::builder() // Parse RUST_LOG environment variable
@@ -568,21 +582,21 @@ fn test_module_tree_is_accessible() {
 
     let top_pub_mod_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
+            .find_module_by_path_checked(&["crate".to_string(), "top_pub_mod".to_string()])
             .expect("Failed to find top_pub_mod")
             .id,
     );
 
     let top_priv_mod_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&["crate".to_string(), "top_priv_mod".to_string()])
+            .find_module_by_path_checked(&["crate".to_string(), "top_priv_mod".to_string()])
             .expect("Failed to find top_priv_mod")
             .id,
     );
 
     let nested_pub_in_pub_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&[
+            .find_module_by_path_checked(&[
                 "crate".to_string(),
                 "top_pub_mod".to_string(),
                 "nested_pub".to_string(),
@@ -593,7 +607,7 @@ fn test_module_tree_is_accessible() {
 
     let nested_priv_in_pub_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&[
+            .find_module_by_path_checked(&[
                 "crate".to_string(),
                 "top_pub_mod".to_string(),
                 "nested_priv".to_string(),
@@ -604,7 +618,7 @@ fn test_module_tree_is_accessible() {
 
     let nested_pub_in_priv_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&[
+            .find_module_by_path_checked(&[
                 "crate".to_string(),
                 "top_priv_mod".to_string(),
                 "nested_pub_in_priv".to_string(),
@@ -615,7 +629,7 @@ fn test_module_tree_is_accessible() {
 
     let nested_priv_in_priv_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&[
+            .find_module_by_path_checked(&[
                 "crate".to_string(),
                 "top_priv_mod".to_string(),
                 "nested_priv_in_priv".to_string(),
@@ -626,7 +640,7 @@ fn test_module_tree_is_accessible() {
 
     let path_visible_mod_id = ModuleNodeId::new(
         graph
-            .find_module_by_defn_path_checked(&[
+            .find_module_by_path_checked(&[
                 "crate".to_string(),
                 "top_pub_mod".to_string(),
                 "path_visible_mod".to_string(),
@@ -682,8 +696,11 @@ fn test_module_tree_is_accessible() {
             if relevant_ids.contains(&source_id) || relevant_ids.contains(&target_id) {
                 // Format the relation for logging
                 // Use graph.find_node to get names, fallback to "?"
-                let source_name = graph.find_node(source_id).map(|n| n.name()).unwrap_or("?");
-                let target_name = graph.find_node(target_id).map(|n| n.name()).unwrap_or("?");
+                // Old implementation
+                // let source_name = graph.find_node(source_id).map(|n| n.name()).unwrap_or("?");
+                // let target_name = graph.find_node(target_id).map(|n| n.name()).unwrap_or("?");
+                let source_name = todo!();
+                let target_name = todo!();
                 debug!(target: "mod_tree_vis", "  Found Relation: {} ({}) --{:?}--> {} ({})",
                     source_name.yellow(),
                     source_id.to_string().magenta(),

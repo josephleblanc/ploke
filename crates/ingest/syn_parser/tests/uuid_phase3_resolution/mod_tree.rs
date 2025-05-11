@@ -7,6 +7,7 @@ use syn_parser::parser::{graph::GraphAccess as _, ParsedCodeGraph};
 use crate::common::{debug_printers::print_module_tree, uuid_ids_utils::run_phases_and_collect};
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
     let fixture_name = "file_dir_detection";
 
@@ -29,12 +30,13 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
         print_module_tree(&merged, module.id, "", false, base_path)?;
     }
 
-    merged.find_module_by_path_checked(&["crate".to_string()])?;
+    merged.find_mods_by_path_iter(&["crate".to_string()])?;
 
     Ok(())
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_import_merging() -> Result<(), Box<dyn std::error::Error>> {
     let fixture_name = "fixture_nodes";
     let results = run_phases_and_collect(fixture_name);

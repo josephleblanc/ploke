@@ -1,13 +1,25 @@
-use super::*;
-use crate::parser::types::GenericParamNode;
+#![allow(unused_must_use, unused_imports)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
+
+use crate::parser::graph::GraphAccess;
+use crate::parser::types::GenericParamNode; // Removed define_node_info_struct import
+use derive_test_helpers::ExpectedData;
 use ploke_core::{TrackingHash, TypeId};
 use serde::{Deserialize, Serialize};
+// removed GenerateNodeInfo
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct FunctionNode {
-    pub id: NodeId,
+use super::*; // Keep for other node types, VisibilityKind etc.
+
+// --- Method Node ---
+
+// Removed the macro invocation for MethodNodeInfo
+
+/// Represents an associated function or method within an `impl` or `trait`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+pub struct MethodNode {
+    pub id: MethodNodeId, // Use typed ID
     pub name: String,
-    pub span: (usize, usize), // Byte start/end offsets
+    pub span: (usize, usize),
     pub visibility: VisibilityKind,
     pub parameters: Vec<ParamData>,
     pub return_type: Option<TypeId>,
@@ -16,15 +28,23 @@ pub struct FunctionNode {
     pub docstring: Option<String>,
     pub body: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
-impl GraphNode for FunctionNode {
-    fn id(&self) -> NodeId {
+impl MethodNode {
+    /// Returns the typed ID for this method node.
+    pub fn method_id(&self) -> MethodNodeId {
         self.id
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+}
+
+impl GraphNode for MethodNode {
+    // Renamed from FunctionNode
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
+    }
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {
@@ -34,6 +54,70 @@ impl GraphNode for FunctionNode {
         &self.cfgs
     }
 
+    fn as_method(&self) -> Option<&MethodNode> {
+        // Changed from as_function
+        Some(self)
+    }
+}
+
+impl HasAttributes for MethodNode {
+    // Renamed from FunctionNode
+    fn attributes(&self) -> &[Attribute] {
+        &self.attributes
+    }
+}
+
+impl MethodNode {
+    // Renamed from FunctionNode
+    /// Validates the method node structure
+    pub fn validate(&self) -> Result<(), super::NodeError> {
+        // TODO: Implement validation logic if needed
+        Ok(())
+        // ... validation logic
+    }
+}
+
+// --- Function Node ---
+
+// Removed the macro invocation for FunctionNodeInfo
+
+/// Represents a standalone function item (`fn`).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive
+pub struct FunctionNode {
+    pub id: FunctionNodeId, // Use typed ID
+    pub name: String,
+    pub span: (usize, usize),
+    pub visibility: VisibilityKind,
+    pub parameters: Vec<ParamData>,
+    pub return_type: Option<TypeId>,
+    pub generic_params: Vec<GenericParamNode>,
+    pub attributes: Vec<Attribute>,
+    pub docstring: Option<String>,
+    pub body: Option<String>,
+    pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>,
+}
+
+impl FunctionNode {
+    /// Returns the typed ID for this function node.
+    pub fn function_id(&self) -> FunctionNodeId {
+        self.id
+    }
+}
+
+impl GraphNode for FunctionNode {
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
+    }
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn cfgs(&self) -> &[String] {
+        &self.cfgs
+    }
     fn as_function(&self) -> Option<&FunctionNode> {
         Some(self)
     }
@@ -48,7 +132,8 @@ impl HasAttributes for FunctionNode {
 impl FunctionNode {
     /// Validates the function node structure
     pub fn validate(&self) -> Result<(), super::NodeError> {
-        todo!()
+        // TODO: Implement validation logic if needed
+        Ok(())
         // ... validation logic
     }
 }

@@ -1,6 +1,15 @@
-use ploke_core::NodeId;
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
 
-use super::*;
+use derive_test_helpers::ExpectedData;
+use serde::{Deserialize, Serialize};
+// removed GenerateNodeInfo
+
+use super::*; // Keep for other node types, VisibilityKind etc.
+
+// --- Import Node ---
+
+// Removed the macro invocation for ImportNodeInfo
 
 /// Represents all import/export semantics in the code graph, including:
 /// - Regular `use` statements
@@ -71,10 +80,10 @@ use super::*;
 ///     ...
 /// }
 /// ```
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, ExpectedData)] // Add derive
 pub struct ImportNode {
     /// Unique identifier for this import in the graph
-    pub id: NodeId,
+    pub id: ImportNodeId, // Use typed ID
 
     /// Source code span (byte offsets) of the import statement
     pub span: (usize, usize),
@@ -99,10 +108,15 @@ pub struct ImportNode {
 
     /// Whether this is a 'self' import, e.g. `std::fs::{self}`
     pub is_self_import: bool,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
 impl ImportNode {
+    /// Returns the typed ID for this import node.
+    pub fn import_id(&self) -> ImportNodeId {
+        self.id
+    }
+
     pub fn source_path(&self) -> &[String] {
         &self.source_path
     }
@@ -197,16 +211,16 @@ impl ImportNode {
 }
 
 impl GraphNode for ImportNode {
-    fn id(&self) -> NodeId {
-        self.id
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
 
-    fn visibility(&self) -> VisibilityKind {
+    fn visibility(&self) -> &VisibilityKind {
         // The visibility of the *use statement itself* determines its effect.
         // `extern crate` is effectively private to the module.
         match &self.kind {
-            ImportKind::UseStatement(vis) => vis.clone(),
-            ImportKind::ExternCrate => VisibilityKind::Inherited,
+            ImportKind::UseStatement(vis) => vis,
+            ImportKind::ExternCrate => &VisibilityKind::Inherited,
             // ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
         }
     }

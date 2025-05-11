@@ -1,54 +1,281 @@
 #![cfg(test)]
 
 // Imports mirrored from functions.rs, adjust as needed
-use crate::common::{paranoid::find_struct_node_paranoid, uuid_ids_utils::*};
-use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use crate::common::ParanoidArgs;
+use crate::paranoid_test_fields_and_values;
+use anyhow::Result;
+use lazy_static::lazy_static;
+use ploke_core::ItemKind; // Import TypeKind from ploke_core
+use std::collections::HashMap;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::{
-    nodes::{GraphId, GraphNode},
-    relations::RelationKind,                   // Added for relation checks
-    types::{GenericParamKind, VisibilityKind}, // Remove TypeKind from here
-};
+    nodes::{Attribute, ExpectedStructNode}, // Added ExpectedStructNode, Attribute
+    types::VisibilityKind,                  // Remove TypeKind from here
+}; // Import the test macro
 
-// --- Test Cases ---
+pub const LOG_TEST_STRUCT: &str = "log_test_struct";
+
+lazy_static! {
+    static ref EXPECTED_STRUCTS_DATA: HashMap<&'static str, ExpectedStructNode> = {
+        let mut m = HashMap::new();
+        m.insert(
+            "crate::structs::SampleStruct",
+            ExpectedStructNode {
+                name: "SampleStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1, // Has one field: pub field: String
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+                // Note: `value` field from ConstNode/StaticNode is not applicable here.
+                // Note: `type_id_check` from ConstNode/StaticNode is not applicable here.
+            },
+        );
+        m.insert(
+            "crate::structs::TupleStruct",
+            ExpectedStructNode {
+                name: "TupleStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 2,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::UnitStruct",
+            ExpectedStructNode {
+                name: "UnitStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 0,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::GenericStruct",
+            ExpectedStructNode {
+                name: "GenericStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 1,
+                attributes: vec![],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::AttributedStruct",
+            ExpectedStructNode {
+                name: "AttributedStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 0,
+                attributes: vec![Attribute {
+                    name: "derive".to_string(),
+                    args: vec!["Debug".to_string()],
+                    value: None,
+                }],
+                docstring: None,
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m.insert(
+            "crate::structs::DocumentedStruct",
+            ExpectedStructNode {
+                name: "DocumentedStruct",
+                visibility: VisibilityKind::Public,
+                fields_count: 1,
+                generic_params_count: 0,
+                attributes: vec![],
+                docstring: Some("This is a documented struct"),
+                tracking_hash_check: true,
+                cfgs: vec![],
+            },
+        );
+        m
+    };
+}
+
+lazy_static! {
+    static ref EXPECTED_STRUCTS_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        m.insert(
+            "crate::structs::SampleStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "SampleStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::TupleStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "TupleStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::UnitStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "UnitStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::GenericStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "GenericStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::AttributedStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "AttributedStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m.insert(
+            "crate::structs::DocumentedStruct",
+            ParanoidArgs {
+                fixture: "fixture_nodes",
+                relative_file_path: "src/structs.rs",
+                ident: "DocumentedStruct",
+                expected_path: &["crate", "structs"],
+                item_kind: ItemKind::Struct,
+                expected_cfg: None,
+            },
+        );
+        m
+    };
+}
+
+paranoid_test_fields_and_values!(
+    test_sample_struct_fields_and_values,
+    "crate::structs::SampleStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_tuple_struct_fields_and_values,
+    "crate::structs::TupleStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_unit_struct_fields_and_values,
+    "crate::structs::UnitStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_generic_struct_fields_and_values,
+    "crate::structs::GenericStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_attributed_struct_fields_and_values,
+    "crate::structs::AttributedStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+paranoid_test_fields_and_values!(
+    test_documented_struct_fields_and_values,
+    "crate::structs::DocumentedStruct",
+    EXPECTED_STRUCTS_ARGS,
+    EXPECTED_STRUCTS_DATA,
+    syn_parser::parser::nodes::StructNode,
+    syn_parser::parser::nodes::ExpectedStructNode,
+    as_struct,
+    LOG_TEST_STRUCT
+);
+
+// --- Old Test Cases (to be refactored/removed later) ---
 
 #[test]
-fn test_struct_node_generic_struct_paranoid() {
+#[cfg(not(feature = "type_bearing_ids"))]
+fn test_struct_node_generic_struct_paranoid() -> Result<()> {
     let fixture_name = "fixture_nodes";
-    let results: Vec<_> = run_phase1_phase2(fixture_name)
-        .into_iter()
-        .map(|res| res.expect("Parsing failed")) // Collect successful parses
-        .collect();
+    let all_parsed = run_phases_and_collect(fixture_name);
 
     let struct_name = "GenericStruct";
     let relative_file_path = "src/structs.rs";
     // Module path *within structs.rs* during Phase 2 parse is just ["crate"]
     let module_path = vec!["crate".to_string(), "structs".to_string()];
 
-    let struct_node = find_struct_node_paranoid(
-        &results,
-        fixture_name,
-        relative_file_path,
-        &module_path,
-        struct_name,
-    );
+    let struct_id_args = EXPECTED_STRUCTS_ARGS
+        .get("crate::structs::GenericStruct")
+        .expect("Struct Data key not found, see EXPECTED_STRUCTS_ARGS for available keys.");
 
-    // --- Assertions ---
-    let graph = &results // Need graph for type/relation lookups
+    let test_info = struct_id_args.generate_pid(&all_parsed)?;
+    // Basic Node Properties covered by macro paranoid_test_fields_and_values
+    let parsed = all_parsed
         .iter()
-        .find(|data| data.file_path.ends_with(relative_file_path))
-        .unwrap()
-        .graph;
-
-    // Basic Node Properties
-    assert!(matches!(struct_node.id(), NodeId::Synthetic(_)));
-    assert!(
-        struct_node.tracking_hash.is_some(),
-        "Tracking hash should be present"
-    );
-    assert_eq!(struct_node.name(), struct_name);
-    assert_eq!(struct_node.visibility(), VisibilityKind::Public);
-    assert!(struct_node.attributes.is_empty());
-    assert!(struct_node.docstring.is_none());
+        .find(|pg| {
+            pg.find_any_node_checked(test_info.test_pid().as_any())
+                .ok()
+                .is_some()
+        })
+        .unwrap();
+    let struct_node = parsed
+        .find_any_node_checked(test_info.test_pid().as_any())
+        .map(|n| n.as_struct().expect("If this node has been tested by the macro, then there is a problem with the macro."))?;
 
     // Generics <T>
     assert_eq!(struct_node.generic_params.len(), 1);
@@ -124,9 +351,11 @@ fn test_struct_node_generic_struct_paranoid() {
     // 3. Field Type Relation (FieldNode -> TypeId)
     // This isn't typically stored as a separate Relation edge, but implicitly via FieldNode.type_id.
     // We already checked the type_id and TypeNode above.
+    Ok(())
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_sample_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -193,6 +422,7 @@ fn test_struct_node_sample_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_tuple_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -275,6 +505,7 @@ fn test_struct_node_tuple_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_unit_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -328,6 +559,7 @@ fn test_struct_node_unit_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_attributed_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -412,6 +644,7 @@ fn test_struct_node_attributed_struct() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_struct_node_documented_struct() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

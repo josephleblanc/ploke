@@ -1,13 +1,22 @@
-use ploke_core::{NodeId, TrackingHash, TypeId};
-use serde::{Deserialize, Serialize};
+#![allow(unused_must_use)]
+// Needed to get rid of proc-macro induced warning for `ExpectedData`
 
 use crate::parser::types::GenericParamNode;
+use derive_test_helpers::ExpectedData;
+// Removed define_node_info_struct import
+use ploke_core::{TrackingHash, TypeId};
+use serde::{Deserialize, Serialize};
+// removed GenerateNodeInfo
 
-use super::*;
+use super::*; // Keep for other node types, VisibilityKind etc.
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+// --- Struct Node ---
+
+// Removed the macro invocation for StructNodeInfo
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive ExpectedData
 pub struct StructNode {
-    pub id: NodeId,
+    pub id: StructNodeId, // Use typed ID
     pub name: String,
     pub span: (usize, usize),
     pub visibility: VisibilityKind,
@@ -16,17 +25,35 @@ pub struct StructNode {
     pub attributes: Vec<Attribute>, // Replace Vec<String>
     pub docstring: Option<String>,
     pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+impl StructNode {
+    /// Returns the typed ID for this struct node.
+    pub fn struct_id(&self) -> StructNodeId {
+        self.id
+    }
+}
+
+// --- Field Node ---
+
+// Removed the macro invocation for FieldNodeInfo
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
 pub struct FieldNode {
-    pub id: NodeId,
+    pub id: FieldNodeId, // Use typed ID
     pub name: Option<String>,
     pub type_id: TypeId,
     pub visibility: VisibilityKind,
     pub attributes: Vec<Attribute>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
+    pub cfgs: Vec<String>,
+}
+
+impl FieldNode {
+    /// Returns the typed ID for this field node.
+    pub fn field_id(&self) -> FieldNodeId {
+        self.id
+    }
 }
 
 impl HasAttributes for FieldNode {
@@ -36,11 +63,11 @@ impl HasAttributes for FieldNode {
 }
 
 impl GraphNode for StructNode {
-    fn id(&self) -> NodeId {
-        self.id
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {

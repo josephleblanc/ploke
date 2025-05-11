@@ -1,4 +1,5 @@
 use super::state::VisitorState;
+use crate::parser::nodes::GenerateTypeId as _;
 use crate::parser::types::TypeNode; // Removed unused import: utils::type_to_string
 use ploke_core::TypeId;
 use ploke_core::TypeKind;
@@ -19,13 +20,6 @@ use syn::{
 ///
 /// # Returns
 /// The `TypeId` (Synthetic variant in Phase 2) for the given type.
-// NOTE: Known Issues:
-// * It is unclear exactly how the `syn` crate will handle "Self" types, which may not resolve
-// as we are hoping (into different types).
-// * Possible logical error: Two Structs with `impl` blocks in the same file that both use `self`
-// or `Self` types (not sure) may result in the same `type_to_string` and therefore the same
-// `TypeId`.
-//   * Duplicate TypeId == Bad
 pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId {
     // --- New Type Processing ---
 
@@ -33,20 +27,14 @@ pub(crate) fn get_or_create_type(state: &mut VisitorState, ty: &Type) -> TypeId 
     //    This handles recursion internally.
     let (type_kind, related_types) = process_type(state, ty);
 
-    // 2. Get the current parent scope ID from the state.
-    //    Assume it's always present because the root module ID is pushed first.
-    let parent_scope_id = state.current_definition_scope.last().copied().expect(
-        "VisitorState's current_definition_scope should not be empty during type processing",
-    );
-
-    // 3. Generate the new Synthetic Type ID using structural info AND parent scope
-    let new_id = TypeId::generate_synthetic(
-        state.crate_namespace,
-        &state.current_file_path,
-        &type_kind,            // Pass the determined TypeKind
-        &related_types,        // Pass the determined related TypeIds
-        Some(parent_scope_id), // Pass the non-optional parent scope ID wrapped in Some
-    );
+    // NOTE: within the private module to help prevent the possibility of a given type being
+    // generated improperly somewhere. This is more a simple extension of the approach we are
+    // currently using for NodeId creation, but it provides some additional safety at little cost
+    // and we have a natural extension point if we ever need to make some wrappers around `TypeId`,
+    // e.g. if we ever implement lifetime processing or want to distinguish differences in Generic
+    // types possibly.
+    // 2. Handle TypeId creation
+    let new_id = state.generate_type_id(&type_kind, &related_types);
 
     // 4. Check if a TypeNode with this ID already exists (handles recursion/cycles)
     //    We avoid adding duplicate TypeNodes.

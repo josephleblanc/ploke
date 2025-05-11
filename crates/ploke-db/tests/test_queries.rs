@@ -1,12 +1,12 @@
 //! Tests for database queries
-
+#![cfg(feature = "type_bearing_ids")]
 use ploke_db::CodeSnippet;
 use ploke_db::Database;
 use ploke_db::Error;
 // use ploke_db::query::QueryBuilder;
 // use ploke_db::result::CodeSnippet;
 // use ploke_db::error::Error;
-use ploke_graph::schema::{create_schema, insert_sample_data};
+use ploke_transform::schema::{create_schema, insert_sample_data};
 
 mod test_helpers;
 

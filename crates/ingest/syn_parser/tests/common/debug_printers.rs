@@ -1,3 +1,4 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 use std::path::Path;
 
 use colored::Colorize;
@@ -23,17 +24,17 @@ pub fn find_import_id(
     let parent_module = graph.modules.iter().find(|m| {
         // #[cfg(feature = "verbose_debug")]
         eprintln!(
-            "0. SEARCHING MODULE PATH: {:?}\nm.defn_path() = {:?}\nm.path = {:?}
+            "0. SEARCHING MODULE PATH: {:?}\nm.path() = {:?}\nm.path = {:?}
 m.name = {}\nm.id = {}\nm.is_file_based() = {}\n",
             module_path,
-            m.defn_path(),
+            m.path(),
             m.path,
             m.name,
             m.id,
             m.is_file_based(),
         );
-        (m.defn_path() == module_path && m.is_inline())
-            || (m.defn_path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline())
+            || (m.path() == module_path && m.is_file_based())
     })?;
     #[allow(clippy::suspicious_map)]
     let import_id = graph

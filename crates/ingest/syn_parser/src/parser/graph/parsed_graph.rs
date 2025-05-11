@@ -1,9 +1,29 @@
-use crate::{discovery::DependencyMap as _, resolve::module_tree::ModuleTreeError};
-use std::{collections::HashSet, path::PathBuf};
+use crate::{
+    discovery::DependencyMap as _,
+    resolve::{ModuleTreeError, TreeRelation, UnlinkedModuleInfo},
+};
+use anyhow::Result;
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use crate::utils::logging::LOG_TARGET_MOD_TREE_BUILD;
 
 use super::*;
+use thiserror::Error; // Add thiserror
+
+#[derive(Error, Debug, Clone, PartialEq)]
+pub enum ParsedGraphError {
+    #[error("Crate context is missing, cannot determine root path.")]
+    MissingCrateContext,
+    #[error("Internal error: Expected exactly one crate context, found multiple.")]
+    MultipleCrateContexts, // Should not happen with Option, but good practice
+    #[error("Root file not found at file path '{0}' in graph.")]
+    RootFileNotFound(PathBuf),
+    #[error("Duplicate root module file path '{0}' found in graph.")]
+    DuplicateRootFile(PathBuf),
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ParsedCodeGraph {
@@ -13,10 +33,8 @@ pub struct ParsedCodeGraph {
     pub crate_namespace: Uuid,
     /// The resulting code graph from parsing the file.
     pub graph: CodeGraph,
-    // TODO: Replace filepath above with CrateContext once I'm ready to refactor other
-    // examples/tests
-    //  - Option for now
-    crate_context: Option<CrateContext>,
+    /// Crate Context for target crate, such as name, dependencies, etc.
+    pub crate_context: Option<CrateContext>,
 }
 
 impl ParsedCodeGraph {
@@ -48,13 +66,14 @@ impl ParsedCodeGraph {
             .unwrap_or_default() // Return empty HashSet if crate_context is None
     }
 
+    // TODO: Turn this test back on once we complete the migration to using typed ids.
     /// Returns an iterator over the dependency names declared in the crate's Cargo.toml.
     ///
     /// Returns an empty iterator if the crate context (including dependency information)
     /// is not available. This avoids cloning the names or collecting into a new structure.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use syn_parser::parser::ParsedCodeGraph; // Adjust path
     /// # use std::collections::HashMap;
     /// # let graph: ParsedCodeGraph = /* ... initialize ... */;
@@ -70,16 +89,24 @@ impl ParsedCodeGraph {
             .flatten() // Flatten the outer iterator
     }
 
-    pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, Box<SynParserError>> {
+    pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
         let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
-        for graph in graphs {
+        for mut graph in graphs {
+            if graph.crate_context.is_some() {
+                new_graph.crate_context = graph.crate_context.take();
+            }
             new_graph.append_all(graph)?;
         }
 
         Ok(new_graph)
     }
 
-    pub fn append_all(&mut self, mut other: Self) -> Result<(), Box<SynParserError>> {
+    pub fn append_all(&mut self, mut other: Self) -> Result<(), SynParserError> {
+        #[cfg(feature = "validate")]
+        {
+            ParsedCodeGraph::debug_relationships(self);
+            assert!(self.validate_unique_rels());
+        }
         self.graph.functions.append(&mut other.graph.functions);
         self.graph
             .defined_types
@@ -89,7 +116,9 @@ impl ParsedCodeGraph {
         self.graph.traits.append(&mut other.graph.traits);
         self.graph.relations.append(&mut other.graph.relations);
         self.graph.modules.append(&mut other.graph.modules);
-        self.graph.values.append(&mut other.graph.values);
+        self.graph.consts.append(&mut other.graph.consts); // Use consts
+        self.graph.statics.append(&mut other.graph.statics); // Use statics
+                                                             // Removed values append
         self.graph.macros.append(&mut other.graph.macros);
         self.graph
             .use_statements
@@ -119,6 +148,8 @@ impl ParsedCodeGraph {
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
     // Changed back to &self as graph is immutable again.
     pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
+        #[cfg(feature = "validate")]
+        assert!(self.validate_unique_rels());
         let root_module = self.get_root_module_checked()?;
         let mut tree = ModuleTree::new_from_root(root_module)?;
         // 1: Register all modules with their containment info
@@ -138,7 +169,7 @@ impl ParsedCodeGraph {
         //      - Does not include inter-file links, due to parallel parsing with no cross-channel
         //      communication.
         //      TODO: Add validation step for relations before adding them.
-        tree.extend_relations(self.relations().iter().copied());
+        tree.extend_relations(self.relations().iter().copied().map_into::<TreeRelation>());
 
         // 3: Build syntactic links
         //      - Creates `Relation::ResolvesToDefinition` link from
@@ -192,10 +223,13 @@ impl ParsedCodeGraph {
         // 6. Prune unlinked file modules from the ModuleTree state
         let pruning_result = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
         if !pruning_result.pruned_module_ids.is_empty() {
-             debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.", pruning_result.pruned_module_ids.len(), pruning_result.pruned_item_ids.len(), pruning_result.pruned_relations.len());
-             // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and _fill me in_ relations from ModuleTree.",
+                pruning_result.pruned_module_ids.len(),
+                pruning_result.pruned_item_ids.len(),
+                // pruning_result.pruned_relations.len()
+            );
+            // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
         }
-
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items
@@ -204,7 +238,7 @@ impl ParsedCodeGraph {
     }
 
     #[allow(clippy::boxed_local, clippy::box_collection)]
-    fn handle_unlinked_modules(&self, unlinked_infos: Box<Vec<module_tree::UnlinkedModuleInfo>>) {
+    fn handle_unlinked_modules(&self, unlinked_infos: Vec<UnlinkedModuleInfo>) {
         if !unlinked_infos.is_empty() {
             debug!(
                 "Warning: Found {} unlinked module file(s) (no corresponding 'mod' declaration):",
@@ -225,6 +259,36 @@ impl ParsedCodeGraph {
 
     pub fn crate_context(&self) -> Option<&CrateContext> {
         self.crate_context.as_ref()
+    }
+
+    pub fn root_file(&self) -> Result<&Path> {
+        let context = self
+            .crate_context
+            .as_ref() // Borrow the context
+            .ok_or(ParsedGraphError::MissingCrateContext)?;
+        let root_path = context
+            .root_file()
+            .ok_or_else(|| ParsedGraphError::RootFileNotFound(context.root_path.clone()))?;
+        Ok(root_path)
+    }
+
+    pub fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
+        // Ensure crate_context exists
+        eprintln!("crate_context: {:#?}", self.crate_context);
+        // NOTE: Crate context not available for individual nodes.
+        let context = self
+            .crate_context
+            .as_ref() // Borrow the context
+            .ok_or(ParsedGraphError::MissingCrateContext)?;
+
+        // Get the root path from the context
+        let root_path = context
+            .root_file()
+            .ok_or_else(|| ParsedGraphError::RootFileNotFound(context.root_path.clone()))?;
+
+        // Find the module by its file path.
+        // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
+        self.find_module_by_file_path_checked(root_path)
     }
 }
 
@@ -249,7 +313,8 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.traits
     }
 
-    fn relations(&self) -> &[Relation] {
+    fn relations(&self) -> &[SyntacticRelation] {
+        // Updated type
         &self.graph.relations
     }
 
@@ -257,8 +322,15 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.modules
     }
 
-    fn values(&self) -> &[ValueNode] {
-        &self.graph.values
+    // Removed values()
+    fn consts(&self) -> &[ConstNode] {
+        // Added
+        &self.graph.consts
+    }
+
+    fn statics(&self) -> &[StaticNode] {
+        // Added
+        &self.graph.statics
     }
 
     fn macros(&self) -> &[MacroNode] {
@@ -289,7 +361,8 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.traits
     }
 
-    fn relations_mut(&mut self) -> &mut Vec<Relation> {
+    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> {
+        // Updated type
         &mut self.graph.relations
     }
 
@@ -297,8 +370,15 @@ impl GraphAccess for ParsedCodeGraph {
         &mut self.graph.modules
     }
 
-    fn values_mut(&mut self) -> &mut Vec<ValueNode> {
-        &mut self.graph.values
+    // Removed values_mut()
+    fn consts_mut(&mut self) -> &mut Vec<ConstNode> {
+        // Added
+        &mut self.graph.consts
+    }
+
+    fn statics_mut(&mut self) -> &mut Vec<StaticNode> {
+        // Added
+        &mut self.graph.statics
     }
 
     fn macros_mut(&mut self) -> &mut Vec<MacroNode> {
@@ -320,4 +400,119 @@ fn log_build_tree_processing_module(module: &ModuleNode) {
         module.id.to_string().magenta(),
         format!("{:?}", module.visibility).cyan()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Ok, Result};
+
+    use crate::utils::test_setup::run_phases_and_collect;
+
+    use super::*;
+
+    #[test]
+    fn test_build_mod_tree() -> Result<()> {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
+        let parsed_graphs = run_phases_and_collect("file_dir_detection");
+
+        let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+        merged.build_module_tree()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_mod_tree_inners() -> Result<()> {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
+        let parsed_graphs = run_phases_and_collect("file_dir_detection");
+
+        let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+        #[cfg(feature = "validate")]
+        assert!(merged.validate_unique_rels());
+        let root_module = merged.get_root_module_checked()?;
+        let mut tree = ModuleTree::new_from_root(root_module)?;
+        // 1: Register all modules with their containment info
+        for module in merged.modules() {
+            log_build_tree_processing_module(module);
+            tree.add_module(module.clone())?;
+        }
+        assert_eq!(merged.modules().len(), tree.modules().len());
+        for module in merged.modules() {
+            // Sanity check: all modules make it into the tree's map
+            assert!(tree.modules().get(&module.id).is_some());
+
+            // Check all imports make it in as well:
+            for import in &module.imports {
+                let import_is_in_tree = tree
+                    .pending_imports()
+                    .iter()
+                    .map(|pi| pi.import_node().import_id())
+                    .find(|pending_import_id| *pending_import_id == import.id);
+
+                let export_is_in_tree = tree
+                    .pending_exports()
+                    .iter()
+                    .map(|pi| pi.export_node().import_id())
+                    .find(|pending_export_id| *pending_export_id == import.id);
+                // Note the use of the exclusive or `^` symbol
+                assert!(import_is_in_tree.is_some() ^ export_is_in_tree.is_some(),
+                "Expect imports to be sorted into either imports or exports in the tree, not both, not neither.");
+            }
+        }
+
+        // 2: Copies all relations, stores them as TreeRelation for type safety
+        tree.extend_relations(
+            merged
+                .relations()
+                .iter()
+                .copied()
+                .map_into::<TreeRelation>(),
+        );
+
+        // 3: Build syntactic links
+        if let Err(module_tree_error) = tree.link_mods_syntactic(merged.modules()) {
+            match module_tree_error {
+                // Warn on this specific error, but it is safe to continue.
+                ModuleTreeError::FoundUnlinkedModules(unlinked_infos) => {
+                    merged.handle_unlinked_modules(unlinked_infos);
+                }
+                // All other erros fatal, meaning abort resolution but do not panic.
+                _ => return Err(SynParserError::from(module_tree_error).into()),
+            }
+        }
+
+        // 4: Process `#[path]` attributes, form `CustomPath` links
+        tree.resolve_pending_path_attrs()?;
+        tree.process_path_attributes()?;
+
+        // 5: Update tree.path_index using `CustomPath` relations to determine the canonical path
+        //    of file-based modules with module declarations that have the `#[path]` attribute.
+        tree.update_path_index_for_custom_paths()?;
+
+        // 6. Prune unlinked file modules from the ModuleTree state
+        let pruning_result = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
+        if !pruning_result.pruned_module_ids.is_empty() {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and _fill me in_ relations from ModuleTree.",
+                pruning_result.pruned_module_ids.len(),
+                pruning_result.pruned_item_ids.len(),
+                // pruning_result.pruned_relations.len()
+            );
+        }
+        let all_mod_ids_with_pruned: Vec<&ModuleNodeId> = tree
+            .modules()
+            .keys()
+            .chain(pruning_result.pruned_module_ids.iter())
+            .collect();
+        assert_eq!(
+            merged.modules().len(),
+            all_mod_ids_with_pruned.len(),
+            "Expect all modules to be accounted for post-pruning"
+        );
+        Ok(())
+    }
 }

@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::SynParserError;
-use crate::parser::nodes::*;
 
 use crate::parser::{
-    nodes::{FunctionNode, ImplNode, MacroNode, ModuleNode, TraitNode, TypeDefNode, ValueNode},
-    relations::Relation,
+    // Updated node types
+    nodes::{
+        ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
+        TraitNode, TypeDefNode,
+    },
+    relations::SyntacticRelation, // Use new relation enum
     types::TypeNode,
 };
 
@@ -26,11 +29,13 @@ pub struct CodeGraph {
     // Public traits defined in the code
     pub traits: Vec<TraitNode>,
     // Relations between nodes
-    pub relations: Vec<Relation>,
+    pub relations: Vec<SyntacticRelation>, // Updated type
     // Modules defined in the code
     pub modules: Vec<ModuleNode>,
-    // Constants and static variables
-    pub values: Vec<ValueNode>,
+    // Constants defined in the code
+    pub consts: Vec<ConstNode>, // Added
+    // Static variables defined in the code
+    pub statics: Vec<StaticNode>, // Added
     // Macros defined in the code
     pub macros: Vec<MacroNode>,
     pub use_statements: Vec<ImportNode>,
@@ -57,7 +62,8 @@ impl GraphAccess for CodeGraph {
         &self.traits
     }
 
-    fn relations(&self) -> &[Relation] {
+    fn relations(&self) -> &[SyntacticRelation] {
+        // Updated type
         &self.relations
     }
 
@@ -65,8 +71,15 @@ impl GraphAccess for CodeGraph {
         &self.modules
     }
 
-    fn values(&self) -> &[ValueNode] {
-        &self.values
+    // Removed values()
+    fn consts(&self) -> &[ConstNode] {
+        // Added
+        &self.consts
+    }
+
+    fn statics(&self) -> &[StaticNode] {
+        // Added
+        &self.statics
     }
 
     fn macros(&self) -> &[MacroNode] {
@@ -99,7 +112,8 @@ impl GraphAccess for CodeGraph {
         &mut self.traits
     }
 
-    fn relations_mut(&mut self) -> &mut Vec<Relation> {
+    fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> {
+        // Updated type
         &mut self.relations
     }
 
@@ -107,8 +121,15 @@ impl GraphAccess for CodeGraph {
         &mut self.modules
     }
 
-    fn values_mut(&mut self) -> &mut Vec<ValueNode> {
-        &mut self.values
+    // Removed values_mut()
+    fn consts_mut(&mut self) -> &mut Vec<ConstNode> {
+        // Added
+        &mut self.consts
+    }
+
+    fn statics_mut(&mut self) -> &mut Vec<StaticNode> {
+        // Added
+        &mut self.statics
     }
 
     fn macros_mut(&mut self) -> &mut Vec<MacroNode> {
@@ -138,7 +159,9 @@ impl CodeGraph {
         self.traits.append(&mut other.traits);
         self.relations.append(&mut other.relations);
         self.modules.append(&mut other.modules);
-        self.values.append(&mut other.values);
+        self.consts.append(&mut other.consts); // Added
+        self.statics.append(&mut other.statics); // Added
+                                                 // Removed values append
         self.macros.append(&mut other.macros);
         self.use_statements.append(&mut other.use_statements);
         Ok(())

@@ -45,7 +45,7 @@ pub fn find_import_node_paranoid<'a>(
     let module_node = graph
         .modules
         .iter()
-        .find(|m| m.defn_path() == expected_module_path)
+        .find(|m| m.path() == expected_module_path)
         .unwrap_or_else(|| {
             panic!(
                 "ModuleNode not found for definition path: {:?} in file '{}'",

@@ -50,7 +50,8 @@ fn sibling_test_outer_private() {
 // outer_function(); // Incorrect. cannot call function outside a function like this.
 
 mod sibling_unrelated {
-    pub fn test_outer_sibling_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_sibling_unrelated() {
         // outer_function(); // Error E0425
     }
 }
@@ -59,7 +60,8 @@ mod sibling_unrelated_with_super_import {
                                              // location (which is main.rs)
                                              // use super::outer::outer_function; // Incorrect `super` since we are in different file
 
-    pub fn test_outer_sibling_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_sibling_unrelated() {
         crate::outer::outer_function(); // Correct, since we are sibling of main.rs
         super::super::outer::outer_function(); // Correct, shadowing import namespace allowed for function
                                                // name
@@ -72,7 +74,8 @@ mod sibling_unrelated_with_crate_import {
     // `fixture_test_crate/src/main.rs`
     use crate::outer::outer_function;
 
-    pub fn test_outer_sibling_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_sibling_unrelated() {
         outer_function(); // Correct
                           // outer::outer_function(); // Error E0433 Incorrect, because we have not imported `crate::outer`
     }
@@ -83,7 +86,8 @@ mod sibling_unrelated_with_short_import {
     // `fixture_test_crate/src/main.rs`
     use crate::outer; //
 
-    pub fn test_outer_sibling_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_sibling_unrelated() {
         // outer_function(); // Error E0425 since we are not providing full path for function which
         // includes function name
         outer::outer_function(); // Correct

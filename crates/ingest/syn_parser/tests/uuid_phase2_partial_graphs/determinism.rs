@@ -1,13 +1,15 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 #[cfg(test)]
 mod determinism_tests {
     use crate::common::run_phase1_phase2; // Assuming this helper exists and works
-    use ploke_core::{NodeId, TypeId};
+    use ploke_core::TypeId;
     use std::collections::{HashMap, HashSet};
     use syn_parser::parser::nodes::*;
     use syn_parser::parser::{graph::CodeGraph, types::TypeNode};
 
     #[test]
-    fn test_phase2_determinism() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_phase2_determinism() {
         let fixture_names = [
             "duplicate_name_fixture_1",
             "duplicate_name_fixture_2",

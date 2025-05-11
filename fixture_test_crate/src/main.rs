@@ -29,7 +29,8 @@ mod a {
     mod d {
         pub fn public_func_in_private_mod() {}
     }
-    fn test_func() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_func() {
         // public_func(); // incorrect, not found E0425
         // private_func(); // incorrect, not found E0425
         // public_func_in_private_mod; // incorrect, not found E0425
@@ -50,6 +51,7 @@ mod a {
         
     }
 }
+#[cfg(not(feature = "type_bearing_ids"))]
 pub fn test_pub_in_priv() {
     // use a::d; // Incorrect, E0603 module is private
     // use a::d::private_func; // Incorrect, E0603 module is private
@@ -57,10 +59,12 @@ pub fn test_pub_in_priv() {
     public_func(); // Correct
 }
 
+#[cfg(not(feature = "type_bearing_ids"))]
 pub fn test_outer() {
     // outer_function(); // Error E0425
 }
 
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_outer_private() {
     // outer_function(); // Error E0425
 }
@@ -68,14 +72,16 @@ fn test_outer_private() {
 // outer_function(); // Incorrect. cannot call function outside a function like this.
 
 mod unrelated {
-    pub fn test_outer_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_unrelated() {
         // outer_function(); // Error E0425
     }
 }
 mod unrelated_with_super_import {
     use super::outer::outer_function; // Correct import using `super` since we are in same file
 
-    pub fn test_outer_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_unrelated() {
         outer_function(); // Correct
         crate::outer::outer_function(); // Correct
         super::outer::outer_function(); // Correct, shadowing import namespace allowed for function
@@ -88,7 +94,8 @@ mod unrelated_with_crate_import {
     // `fixture_test_crate/src/main.rs`
     use crate::outer::outer_function;
 
-    pub fn test_outer_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_unrelated() {
         outer_function(); // Correct
                           // outer::outer_function(); // Error E0433 Incorrect, because we have not imported `crate::outer`
     }
@@ -99,7 +106,8 @@ mod unrelated_with_short_import {
     // `fixture_test_crate/src/main.rs`
     use crate::outer; //
 
-    pub fn test_outer_unrelated() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+pub fn test_outer_unrelated() {
         // outer_function(); // Error E0425 since we are not providing full path for function which
         // includes function name
         outer::outer_function(); // Correct

@@ -1,1353 +1,678 @@
-use crate::common::uuid_ids_utils::*;
-use ploke_common::fixtures_crates_dir;
-use ploke_core::NodeId;
-use syn_parser::parser::nodes::GraphId;
-// Import TypeAliasNode specifically
+//! Tests for `ModuleNode` parsing and field extraction.
+//!
+//! ## Test Coverage Analysis
+//!
+//! *   **Fixture:** `tests/fixture_crates/file_dir_detection/`
+//! *   **Tests:** `crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/modules.rs` (using `paranoid_test_fields_and_values!`)
+//!
+//! ### 1. Coverage of Fixture Items:
+//!
+//! The `EXPECTED_MODULES_DATA` and `EXPECTED_MODULES_ARGS` maps cover 19 distinct module declarations or definitions from the `file_dir_detection` fixture. This includes:
+//! *   Crate root module (`main.rs`).
+//! *   Top-level file-based modules (e.g., `top_pub_mod.rs`, `top_priv_mod.rs`).
+//! *   Inline modules (e.g., `inline_pub_mod`, `inline_priv_mod` in `main.rs`).
+//! *   Modules declared with `#[path]` attributes (e.g., `logical_name` pointing to `custom_path/real_file.rs`).
+//! *   Nested modules, both file-based (e.g., `example_mod/mod.rs`, `example_mod/example_submod/mod.rs`) and inline.
+//! *   Deeply nested modules (e.g., `deeply_nested_mod` and `deeply_nested_file`).
+//! *   Modules within subdirectories.
+//!
+//! **Conclusion for Fixture Coverage:** Good. A diverse range of module structures (declarations, file-based definitions, inline definitions, path attributes, nesting) from the fixture are covered by the `paranoid_test_fields_and_values!` tests.
+//!
+//! ### 2. Coverage of `ModuleNode` Property Variations:
+//!
+//! Based on the 19 items covered by `paranoid_test_fields_and_values!`:
+//!
+//! *   `id: ModuleNodeId`: Implicitly covered by ID generation and lookup.
+//! *   `name: String`: Excellent coverage (e.g., "crate", "top_pub_mod", "inline_pub_mod", "real_file" from file stem, "logical_name").
+//! *   `path: Vec<String>`: Excellent coverage (crate root `["crate"]`, simple `["crate", "foo"]`, nested `["crate", "foo", "bar"]`, path-attribute influenced paths like `["crate", "custom_path", "real_file"]`).
+//! *   `visibility: VisibilityKind`: Good coverage (`Public`, `Inherited`, `Crate`). `VisibilityKind::Restricted` (e.g., `pub(in path)`) is not explicitly tested.
+//! *   `attributes: Vec<Attribute>`: Good coverage (no attributes, `#[path = "..."]`, `#[cfg(...)]` which is then moved to `cfgs` field).
+//! *   `docstring: Option<String>`: Good coverage (`Some` for `inline_pub_mod`, `None` for most declarations and file-based module definitions). File-level docstrings (`//!`) are checked via `file_docs_is_some`.
+//! *   `imports: Vec<ImportNode>`: Covered by `ExpectedModuleNode.imports_count`. Good coverage (modules with 0, 1, or 2 imports are tested).
+//! *   `exports: Vec<ImportNodeId>`: Covered by `ExpectedModuleNode.exports_count`. Currently always 0 as Phase 2 does not populate `exports`. This is a known limitation.
+//! *   `span: (usize, usize)`: Not directly asserted by value.
+//! *   `tracking_hash: Option<TrackingHash>`: Covered by `ExpectedModuleNode.tracking_hash_check`. Excellent coverage (checked for `Some` on declarations/inline modules, and `None` for file-based root module definitions as per current implementation).
+//! *   `module_def: ModuleKind`:
+//!     *   `mod_disc: ModDisc`: Excellent coverage (all three variants `FileBased`, `Inline`, `Declaration` are tested).
+//!     *   `expected_file_path_suffix: Option<&'static str>`: Excellent coverage (checked for `FileBased` modules, `None` for others).
+//!     *   `items_count: usize`: Good coverage (various counts, including 0 for declarations, and counts for items within file-based and inline modules).
+//!     *   `file_attrs_count: usize`: Good coverage (tested for `main.rs` which has `#![allow(unused)]`).
+//!     *   `file_docs_is_some: bool`: Good coverage (tested for `main.rs` which has `//! ...`).
+//! *   `cfgs: Vec<String>`: Fair coverage (tested `#[cfg(test)]` on `inline_pub_mod`). More complex `cfg` attributes or combinations are not explicitly tested.
+//!
+//! **Conclusion for Property Variation Coverage:** Most `ModuleNode` fields have good to excellent coverage.
+//! *   **Areas for potential expansion:**
+//!     *   `VisibilityKind::Restricted`.
+//!     *   More complex `#[cfg(...)]` attributes.
+//!     *   Testing `exports_count` once Phase 3 populates `ModuleNode.exports`.
+//!
+//! ### 3. Differences in Testing `ModuleNode` vs. Other Nodes:
+//!
+//! Testing `ModuleNode`s has several unique aspects:
+//!
+//! *   **`ModuleKind` Variants:** The core distinction is between `FileBased`, `Inline`, and `Declaration` modules. `ExpectedModuleNode` uses `mod_disc` and associated fields (`expected_file_path_suffix`, `items_count`, `file_attrs_count`, `file_docs_is_some`) to verify these.
+//! *   **Declarations vs. Definitions:** The parser creates distinct `ModuleNode`s for a module declaration (`mod foo;`) and its definition (e.g., `foo.rs` or `mod foo {}`). Tests verify properties specific to each, like `tracking_hash` presence or `imports_count` (declarations should have 0).
+//! *   **`#[path]` Attribute:** The `logical_name` test case specifically covers a `mod logical_name;` declaration with a `#[path = "custom_path/real_file.rs"]` attribute. The test for the `Declaration` node checks for this attribute, while the test for the `FileBased` definition node (`real_file`) verifies its file-derived path and name.
+//! *   **File-Level vs. Item-Level Metadata:** For `FileBased` modules, `ModuleNode.module_def.FileBased.file_attrs` and `file_docs` capture `#![...]` and `//!` from the module's file. These are distinct from attributes/docs on the `mod item;` itself (which are on `ModuleNode.attributes` and `ModuleNode.docstring`). `ExpectedModuleNode` checks these via `file_attrs_count` and `file_docs_is_some`.
+//! *   **`items` Field:** `ExpectedModuleNode.items_count` verifies the number of `PrimaryNodeId`s directly contained within a module's definition. The `paranoid_test_fields_and_values!` macro also asserts the `SyntacticRelation::Contains` between the parent module and the tested node.
+//! *   **`imports` and `exports`:** `imports_count` checks the number of `ImportNode`s parsed directly within the module. `exports_count` is for re-exported `ImportNodeId`s, which are not populated in Phase 2.
+//!
+//! ### 4. Lost Coverage from Old Tests:
+//!
+//! The refactoring to `paranoid_test_fields_and_values!` replaces older, more manual tests. Potential areas of lost coverage include:
+//!
+//! *   **Explicit Span Checks:** Older tests might have explicitly checked `ModuleNode.span`, `ModuleKind::Declaration.declaration_span`, or `ModuleKind::Inline.span` for non-zero values or specific ranges. The new macro framework does not assert specific span values.
+//! *   **Explicit ID Regeneration Assertions:** While the new macro framework uses ID generation for lookup, it doesn't explicitly assert the regeneration logic for module IDs in the same direct way some older tests might have.
+//! *   **Specific Relation Checks (Phase 3 concepts):**
+//!     *   `RelationKind::ModuleDeclarationResolvesToDefinition`: Older tests (potentially targeting Phase 3 logic) would have checked the link between a `ModuleNode` of kind `Declaration` and its corresponding `FileBased` or `Inline` definition node. This relation is established in Phase 3 and not covered by the current Phase 2 `paranoid_test_fields_and_values!` tests for `ModuleNode`.
+//! *   **`ModuleKind::Declaration.resolved_definition` Field:** This `Option<ModuleNodeId>` field is populated during Phase 3 to link a declaration to its definition. Phase 2 tests would only see this as `None`. The `ExpectedModuleNode` does not currently have a field to check this.
+//! *   **Detailed `items` List Verification:** Old tests might have asserted the exact set and order of `PrimaryNodeId`s within a `ModuleNode.items` list. The new `ExpectedModuleNode.items_count` only checks the length. However, individual tests for other node types (e.g., `FunctionNode`) do verify their `Contains` relation from their parent module, providing indirect coverage.
+//!
+//! ### 5. Suggestions for Future Inclusions:
+//!
+//! *   Add fixture modules using `pub(in path) some_module;` to test `VisibilityKind::Restricted`.
+//! *   Expand `cfgs` coverage with more complex `#[cfg(...)]` attributes on modules (e.g., `#[cfg(all(unix, target_pointer_width = "64"))]`).
+//! *   Once Phase 3 logic is integrated into testing:
+//!     *   Add tests to verify that `ModuleNode.exports` (and `ExpectedModuleNode.exports_count`) are correctly populated for modules containing `pub use` statements.
+//!     *   Add tests to verify that `ModuleKind::Declaration.resolved_definition` is correctly populated.
+//!     *   Add tests to verify the presence of `RelationKind::ModuleDeclarationResolvesToDefinition`.
+//! *   If precise span checking for module declarations or inline blocks becomes critical, consider adding specific assertions for `declaration_span` or `inline_span`, possibly through an extension to `ExpectedModuleNode` or separate, targeted tests.
+//! *   Add tests for modules containing `extern crate` items, ensuring they are correctly included in `items_count` and that the corresponding `ImportNode` is created.
+//! *   Add tests for modules that are part of a `#[cfg_attr(..., path = "...")]` scenario.
+use crate::common::{new_path_attribute, ParanoidArgs};
+use lazy_static::lazy_static;
+use ploke_core::ItemKind;
+use std::collections::HashMap;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::{ExpectedModuleNode, ModDisc};
 use syn_parser::parser::types::VisibilityKind;
-// Import EnumNode specifically
-use syn_parser::parser::{
-    nodes::{GraphNode, ImportNode},
-    relations::RelationKind,
-};
-// ----- paranoid helper functions ------
-use crate::common::paranoid::{
-    find_declaration_node_paranoid, find_file_module_node_paranoid,
-    find_inline_module_node_paranoid,
-};
 
-#[test]
-fn test_module_node_top_pub_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
+// macro-related imports
+use crate::paranoid_test_fields_and_values;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 
-    // Target: `pub mod top_pub_mod;` declared in main.rs, defined in top_pub_mod.rs
-    // Definition file (where items/submodules are likely parsed)
-    let definition_file = "src/top_pub_mod.rs";
-    let module_name = "top_pub_mod";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
+pub const LOG_TEST_MODULE: &str = "log_test_module";
 
-    // --- Find Nodes ---
-    // Find the DEFINITION node (in src/top_pub_mod.rs)
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file, // "src/top_pub_mod.rs"
-        &module_path_vec,
-    );
+lazy_static! {
+    static ref EXPECTED_MODULES_DATA: HashMap<&'static str, ExpectedModuleNode> = {
+        let mut m = HashMap::new();
 
-    // Find the DECLARATION node (in src/main.rs)
-    let declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        "src/main.rs",
-        &module_path_vec, // The path of the module being declared
-    );
+        // Test case: `pub mod top_pub_mod;` (declaration in main.rs)
+        // Key format: "decl::{file_where_decl_is}::{module_name_at_decl}"
+        m.insert("decl::main_rs::top_pub_mod", ExpectedModuleNode {
+            name: "top_pub_mod", // Name of the module as declared
+            path: &["crate", "top_pub_mod"], // Canonical path of the module
+            visibility: VisibilityKind::Public, // Visibility of the `mod ...;` statement
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, // Declarations should have 0 imports
+            exports_count: 0,
+            tracking_hash_check: true, // Declarations have a tracking hash
+            mod_disc: ModDisc::Declaration,
+            expected_file_path_suffix: None, // Not FileBased
+            items_count: 0, // Declarations don't have items in ModuleNode.items directly
+            file_attrs_count: 0, // Not FileBased
+            file_docs_is_some: false, // Not FileBased
+            cfgs: vec![],
+        });
 
-    // --- Assertions for DEFINITION Node (src/top_pub_mod.rs) ---
+        // Test case: `top_pub_mod` (definition in top_pub_mod.rs)
+        // Key format: "file::{path_to_definition_file}::{module_name_as_per_file_rules}"
+        m.insert("file::top_pub_mod_rs::top_pub_mod", ExpectedModuleNode {
+            name: "top_pub_mod", // Name of the module (often from file stem or parent decl)
+            path: &["crate", "top_pub_mod"], // Canonical path
+            visibility: VisibilityKind::Inherited, // File-level module definitions have inherited visibility
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, // No imports directly in top_pub_mod.rs
+            exports_count: 0,
+            tracking_hash_check: false, // File-level root module definitions don't have a separate tracking hash in current impl
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/top_pub_mod.rs"), // Relative to fixture root
+            items_count: 6, // top_pub_func, duplicate_name, top_pub_priv_func, mod nested_pub, mod nested_priv, mod path_visible_mod
+            file_attrs_count: 0, // No file-level attributes in top_pub_mod.rs
+            file_docs_is_some: false, // No file-level doc comments in top_pub_mod.rs
+            cfgs: vec![],
+        });
 
-    // Basic Properties
-    assert_eq!(definition_node.name(), module_name);
-    assert_eq!(definition_node.path, module_path_vec);
-    // Default to inherited for file-level modules
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited);
-    assert!(
-        definition_node.attributes.is_empty(),
-        "Expected no attributes on top_pub_mod definition node"
-    );
-    assert!(
-        definition_node.docstring.is_none(),
-        "Expected no docstring on top_pub_mod definition node"
-    );
-    // File-level root modules don't have a separate tracking hash in current impl
-    assert!(
-        definition_node.tracking_hash.is_none(),
-        "Tracking hash should be None for file-level root module definition"
-    );
-    assert!(definition_node.is_file_based());
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file)
-    );
+        // --- main.rs declarations ---
+        m.insert("decl::main_rs::top_priv_mod", ExpectedModuleNode {
+            name: "top_priv_mod",
+            path: &["crate", "top_priv_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::crate_visible_mod", ExpectedModuleNode {
+            name: "crate_visible_mod",
+            path: &["crate", "crate_visible_mod"], // in src/main.rs
+            visibility: VisibilityKind::Crate, // pub(crate)
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::logical_name", ExpectedModuleNode {
+            name: "logical_name",
+            path: &["crate", "logical_name"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![new_path_attribute("custom_path/real_file.rs")],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::main_rs::example_mod", ExpectedModuleNode {
+            name: "example_mod",
+            path: &["crate", "example_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Contents (Items defined in top_pub_mod.rs)
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
+        // --- main.rs inline definitions ---
+        m.insert("inline::main_rs::inline_pub_mod", ExpectedModuleNode {
+            name: "inline_pub_mod",
+            path: &["crate", "inline_pub_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], // cfg(test) is extracted to cfgs
+            docstring: Some("An inline public module doc comment."),
+            imports_count: 1, // use std::collections::HashMap;
+            exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Inline, expected_file_path_suffix: None,
+            items_count: 5, // HashMap import, inline_pub_func, duplicate_name, inline_nested_priv decl, super_visible_inline decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec!["test".to_string()],
+        });
+        m.insert("inline::main_rs::inline_priv_mod", ExpectedModuleNode {
+            name: "inline_priv_mod",
+            path: &["crate", "inline_priv_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![],
+            docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Inline, expected_file_path_suffix: None,
+            items_count: 2, // inline_priv_func, inline_nested_pub decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Find item IDs expected to be defined *directly* within top_pub_mod.rs
-    let func_id = find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_func")
-        .expect("Failed to find NodeId for top_pub_func");
-    let priv_func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_pub_priv_func")
-            .expect("Failed to find NodeId for top_pub_priv_func");
-    let duplicate_func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "duplicate_name")
-            .expect("Failed to find NodeId for duplicate_name in top_pub_mod");
+        // --- File-based module definitions (other than top_pub_mod.rs) ---
+        m.insert("file::top_priv_mod_rs::top_priv_mod", ExpectedModuleNode {
+            name: "top_priv_mod",
+            path: &["crate", "top_priv_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/top_priv_mod.rs"),
+            items_count: 4, // nested_pub_in_priv decl, nested_priv_in_priv decl, top_priv_func, top_priv_priv_func
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::crate_visible_mod_rs::crate_visible_mod", ExpectedModuleNode {
+            name: "crate_visible_mod",
+            path: &["crate", "crate_visible_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/crate_visible_mod.rs"),
+            items_count: 3, // crate_vis_func, nested_priv decl, nested_crate_vis decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::custom_path_real_file_rs::real_file", ExpectedModuleNode {
+            name: "real_file", // Name from file stem due to #[path]
+            path: &["crate", "custom_path", "real_file"], // Path from file system
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/custom_path/real_file.rs"),
+            items_count: 2, // item_in_real_file, nested_in_real_file decl
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("file::example_mod_mod_rs::example_mod", ExpectedModuleNode {
+            name: "example_mod",
+            path: &["crate", "example_mod"],
+            visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
+            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/mod.rs"),
+            items_count: 6, // example_submod decl, example_private_submod decl, mod_sibling_one decl, mod_sibling_two decl, mod mod_sibling_private, item_in_example_mod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Find submodule declaration IDs within top_pub_mod.rs
-    let nested_pub_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_pub")
-            .expect("Failed to find NodeId for nested_pub module declaration");
-    let nested_priv_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv")
-            .expect("Failed to find NodeId for nested_priv module declaration");
-    let path_vis_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "path_visible_mod")
-            .expect("Failed to find NodeId for path_visible_mod module declaration");
+        // --- example_mod/mod.rs declarations ---
+        m.insert("decl::example_mod_mod_rs::example_submod", ExpectedModuleNode {
+            name: "example_submod", path: &["crate", "example_mod", "example_submod"], visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+        m.insert("decl::example_mod_mod_rs::example_private_submod", ExpectedModuleNode {
+            name: "example_private_submod", path: &["crate", "example_mod", "example_private_submod"], visibility: VisibilityKind::Inherited, // private mod
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Check definition_node.items contains these IDs (order doesn't matter)
-    let expected_item_ids = vec![
-        func_id,
-        priv_func_id,
-        duplicate_func_id,
-        nested_pub_decl_id,  // Declaration ID from top_pub_mod.rs
-        nested_priv_decl_id, // Declaration ID from top_pub_mod.rs
-        path_vis_decl_id,    // Declaration ID from top_pub_mod.rs
-    ];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
+        // --- example_mod/example_submod/mod.rs definition ---
+        m.insert("file::example_mod_example_submod_mod_rs::example_submod", ExpectedModuleNode {
+            name: "example_submod", path: &["crate", "example_mod", "example_submod"], visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_submod/mod.rs"),
+            items_count: 4, // submod_sibling_one, submod_sibling_private, submod_sibling_two, item_in_example_submod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Check definition_node.imports (Should be empty for top_pub_mod.rs)
-    assert!(
-        definition_node.imports.is_empty(),
-        "Expected imports list to be empty for definition node {}",
-        module_name
-    );
+        // --- Crate root module (main.rs file itself) ---
+        m.insert("file::main_rs::crate", ExpectedModuleNode {
+            name: "crate", // Name is just "crate" for now, might replace with actual crate name,
+                           // e.g. "my_project", "serde", "anyhow", later
+            path: &["crate"],
+            visibility: VisibilityKind::Public, // Crate root is implicitly public
+            attributes: vec![], // Outer attributes of the crate, not file-level #![...]
+            docstring: None, // Crate-level docstring is on file_docs
+            imports_count: 2, // use std::path::Path; pub use ... as reexported_func;
+            exports_count: 0, // Phase 2, exports not populated yet
+            tracking_hash_check: false, // File-level root
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/main.rs"),
+            items_count: 13, // example_mod, top_pub_mod, top_priv_mod, crate_visible_mod, logical_name, inline_pub_mod, inline_priv_mod, main_pub_func, main_priv_func, reexported_func (ImportNode), duplicate_name, main, use std::path::Path (ImportNode)
+            file_attrs_count: 1, // #![allow(unused)]
+            file_docs_is_some: true, // //! This is the crate root doc comment.
+            cfgs: vec![], // No cfgs on the crate module item itself
+        });
 
-    // Check definition_node.exports (Should be empty)
-    assert!(
-        definition_node.exports.is_empty(),
-        "Expected exports list to be empty for definition node {}",
-        module_name
-    );
 
-    // --- Assertions for DECLARATION Node (src/main.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Public); // Visibility from `pub mod ...;`
-    assert!(
-        declaration_node.attributes.is_empty(),
-        "Expected no attributes on top_pub_mod declaration node"
-    );
-    assert!(
-        declaration_node.docstring.is_none(),
-        "Expected no docstring on top_pub_mod declaration node"
-    );
-    // Declarations have a tracking hash based on the `mod name;` item itself
-    assert!(
-        declaration_node.tracking_hash.is_some(),
-        "Tracking hash should be Some for declaration node"
-    );
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some()); // Should have the span of `mod ...;`
-    assert!(declaration_node.resolved_definition().is_none()); // Not resolved in Phase 2
+        // TODO: Add more entries for all modules in the fixture. This is a representative start.
+        // Key areas to cover:
+        // - Deeply nested modules (declarations and definitions)
+        // - Modules in subdirectories (e.g., example_mod/example_private_submod/...)
+        // - Inline modules within other inline or file-based modules
+        // - Modules with file-level attributes and doc comments (e.g. main.rs itself)
 
-    // --- Relation Check (Declaration Containment) ---
-    // Check that the 'crate' module (from main.rs graph) contains the declaration for this module.
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with("src/main.rs"))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
+        // --- deeply_nested_mod (declared in subsubsubmod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod", ExpectedModuleNode {
+            name: "deeply_nested_mod",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Find the 'crate' module node (file-level root of main.rs)
-    let crate_module_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        "src/main.rs",
-        &crate_path_vec, // ["crate"]
-    );
+        // --- deeply_nested_mod (defined in deeply_nested_mod/mod.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod", ExpectedModuleNode {
+            name: "deeply_nested_mod",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs"),
+            items_count: 2, // pub mod deeply_nested_file; fn item_in_deeply_nested_mod
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Assert the 'crate' module node contains the 'top_pub_mod' declaration node
-    assert_relation_exists(
-        main_graph, // Check in the graph where the declaration happens (main.rs)
-        GraphId::Node(crate_module_node.id()), // Source: crate module in main.rs
-        GraphId::Node(declaration_node.id()), // Target: top_pub_mod declaration in main.rs
-        RelationKind::Contains,
-        "Expected 'crate' module in main.rs to Contain 'top_pub_mod' declaration",
-    );
+        // --- deeply_nested_file (declared in deeply_nested_mod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file", ExpectedModuleNode {
+            name: "deeply_nested_file",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod", "deeply_nested_file"],
+            visibility: VisibilityKind::Public,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
+            mod_disc: ModDisc::Declaration, expected_file_path_suffix: None, items_count: 0,
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
 
-    // Also check the declaration node's ID is in the crate module's items list
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected crate module items list to contain top_pub_mod declaration ID"
-    );
+        // --- deeply_nested_file (defined in deeply_nested_file.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file", ExpectedModuleNode {
+            name: "deeply_nested_file",
+            path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod", "deeply_nested_file"],
+            visibility: VisibilityKind::Inherited,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            mod_disc: ModDisc::FileBased,
+            expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs"),
+            items_count: 1, // fn item_in_deeply_nested_file
+            file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
+        });
+
+        m
+    };
 }
 
-#[test]
-fn test_module_node_top_priv_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
+lazy_static! {
+    static ref EXPECTED_MODULES_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
 
-    let module_name = "top_priv_mod";
-    let main_file = "src/main.rs";
-    let definition_file = "src/top_priv_mod.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
+        m.insert("decl::main_rs::top_pub_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/main.rs", // Declaration is in main.rs
+            ident: "top_pub_mod",
+            expected_path: &["crate"], // Parent module is the crate root
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
 
-    // --- Find Nodes ---
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-    let definition_node =
-        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
+        m.insert("file::top_pub_mod_rs::top_pub_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/top_pub_mod.rs", // Definition is in this file
+            ident: "top_pub_mod", // The name of the module itself
+            expected_path: &["crate"], // The path of the module's parent defaults to "crate" itself
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
 
-    // --- Assertions for DECLARATION Node (main.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Inherited); // `mod top_priv_mod;`
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some());
-    assert!(declaration_node.tracking_hash.is_some()); // Declarations have hash
-    assert!(declaration_node.resolved_definition().is_none());
+        // --- main.rs declarations ---
+        m.insert("decl::main_rs::top_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "top_priv_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::crate_visible_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "crate_visible_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::logical_name", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "logical_name",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::main_rs::example_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "example_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
 
-    // --- Assertions for DEFINITION Node (top_priv_mod.rs) ---
-    assert_eq!(definition_node.name(), module_name);
-    assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
-    assert!(definition_node.is_file_based());
-    assert!(definition_node.tracking_hash.is_none()); // File root has no hash
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file)
-    );
+        // --- main.rs inline definitions ---
+        m.insert("inline::main_rs::inline_pub_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "inline_pub_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: Some(&["test"]),
+        });
+        m.insert("inline::main_rs::inline_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/main.rs", ident: "inline_priv_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
 
-    // Check items in definition node
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
+        // --- File-based module definitions ---
+        m.insert("file::top_priv_mod_rs::top_priv_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/top_priv_mod.rs", ident: "top_priv_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::crate_visible_mod_rs::crate_visible_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/crate_visible_mod.rs", ident: "crate_visible_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::custom_path_real_file_rs::real_file", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/custom_path/real_file.rs", ident: "real_file",
+            expected_path: &["crate", "custom_path"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("file::example_mod_mod_rs::example_mod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_mod",
+            expected_path: &["crate"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
 
-    let nested_pub_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_pub_in_priv")
-            .expect("Failed to find NodeId for nested_pub_in_priv declaration");
-    let nested_priv_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv_in_priv")
-            .expect("Failed to find NodeId for nested_priv_in_priv declaration");
-    let func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_priv_func")
-            .expect("Failed to find NodeId for top_priv_func");
-    let priv_func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "top_priv_priv_func")
-            .expect("Failed to find NodeId for top_priv_priv_func");
+        // --- example_mod/mod.rs declarations ---
+        m.insert("decl::example_mod_mod_rs::example_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_submod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
+        m.insert("decl::example_mod_mod_rs::example_private_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/mod.rs", ident: "example_private_submod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
 
-    let expected_item_ids = vec![
-        nested_pub_decl_id,
-        nested_priv_decl_id,
-        func_id,
-        priv_func_id,
-    ];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
+        // --- example_mod/example_submod/mod.rs definition ---
+        m.insert("file::example_mod_example_submod_mod_rs::example_submod", ParanoidArgs {
+            fixture: "file_dir_detection", relative_file_path: "src/example_mod/example_submod/mod.rs", ident: "example_submod",
+            expected_path: &["crate", "example_mod"], item_kind: ItemKind::Module, expected_cfg: None,
+        });
 
-    // --- Relation & Items List Check (Declaration Containment) ---
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
+        // --- Crate root module (main.rs file itself) ---
+        m.insert("file::main_rs::crate", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/main.rs",
+            ident: "crate", // root name is "crate" for now, might replace later with actual crate
+                            // name.
+            expected_path: &[], // Its own path
+            item_kind: ItemKind::Module,
+            expected_cfg: None,
+        });
 
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'top_priv_mod' declaration",
-    );
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected crate module items list to contain top_priv_mod declaration ID"
-    );
+
+        // TODO: Add more entries for all modules in the fixture.
+
+        // --- deeply_nested_mod (declared in subsubsubmod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs",
+            ident: "deeply_nested_mod",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod"],
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_mod (defined in deeply_nested_mod/mod.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs",
+            ident: "deeply_nested_mod",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod"], // Parent path for ID gen
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_file (declared in deeply_nested_mod/mod.rs) ---
+        m.insert("decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs",
+            ident: "deeply_nested_file",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        // --- deeply_nested_file (defined in deeply_nested_file.rs) ---
+        m.insert("file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file", ParanoidArgs {
+            fixture: "file_dir_detection",
+            relative_file_path: "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs",
+            ident: "deeply_nested_file",
+            expected_path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"], // Parent path for ID gen
+            item_kind: ItemKind::Module, expected_cfg: None,
+        });
+
+        m
+    };
 }
 
-#[test]
-fn test_module_node_crate_visible_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "crate_visible_mod";
-    let main_file = "src/main.rs";
-    let definition_file = "src/crate_visible_mod.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-
-    // --- Find Nodes ---
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-    let definition_node =
-        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
-
-    // --- Assertions for DECLARATION Node (main.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
-    // TODO: Fix visibility parsing/testing - currently `pub(crate)` might be parsed as Restricted or Public.
-    // assert_eq!(declaration_node.visibility(), VisibilityKind::Crate); // `pub(crate) mod ...;`
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some());
-    assert!(declaration_node.tracking_hash.is_some());
-    assert!(declaration_node.resolved_definition().is_none());
-
-    // --- Assertions for DEFINITION Node (crate_visible_mod.rs) ---
-    assert_eq!(definition_node.name(), module_name);
-    assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
-    assert!(definition_node.is_file_based());
-    assert!(definition_node.tracking_hash.is_none()); // File root has no hash
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file)
-    );
-
-    // Check items in definition node
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
-
-    let func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "crate_vis_func")
-            .expect("Failed to find NodeId for crate_vis_func");
-    let nested_priv_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_priv")
-            .expect("Failed to find NodeId for nested_priv declaration");
-    let nested_crate_vis_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "nested_crate_vis")
-            .expect("Failed to find NodeId for nested_crate_vis declaration");
-
-    let expected_item_ids = vec![func_id, nested_priv_decl_id, nested_crate_vis_decl_id];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Declaration Containment) ---
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'crate_visible_mod' declaration",
-    );
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected crate module items list to contain crate_visible_mod declaration ID"
-    );
-}
-
-#[test]
-fn test_module_node_logical_name_path_attr_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "logical_name";
-    let main_file = "src/main.rs";
-    let definition_file = "src/custom_path/real_file.rs"; // Note the actual file path
-    let crate_path_vec = vec!["crate".to_string()];
-    let logical_module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-    // The path derived from the file system for the definition file
-    let definition_file_derived_path_vec = vec![
-        "crate".to_string(),
-        "custom_path".to_string(),
-        "real_file".to_string(),
-    ];
-
-    // --- Find Nodes ---
-    // Find declaration using its logical path
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, main_file, &logical_module_path_vec);
-    // Find definition using its file-derived path
-    let definition_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,                   // Use the actual file path here
-        &definition_file_derived_path_vec, // Use the file-derived path
-    );
-
-    // --- Assertions for DECLARATION Node (main.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, logical_module_path_vec); // Declaration has logical path
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some());
-    assert!(declaration_node.tracking_hash.is_some());
-    assert!(declaration_node.resolved_definition().is_none());
-    // Check for #[path] attribute
-    assert!(
-        declaration_node.attributes.iter().any(
-            |attr| attr.name == "path" && attr.value == Some("custom_path/real_file.rs".into())
-        ),
-        "Expected #[path] attribute not found or incorrect on declaration node"
-    );
-
-    // --- Assertions for DEFINITION Node (real_file.rs) ---
-    // NOTE: In Phase 2, the definition node parsed from real_file.rs gets its name
-    // from the file stem ("real_file") and its path from the file system derivation.
-    // The link to "logical_name" happens in Phase 3.
-    assert_eq!(definition_node.name(), "real_file"); // Name derived from file stem
-    assert_eq!(definition_node.path, definition_file_derived_path_vec); // Path derived from file system
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
-    assert!(definition_node.is_file_based());
-    assert!(definition_node.tracking_hash.is_none()); // File root has no hash
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file) // Check it points to the correct file
-    );
-
-    // Check items in definition node
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
-
-    // Find items using the definition node's file-derived path
-    let func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &definition_file_derived_path_vec, // Use file-derived path
-        "item_in_real_file",
-    )
-    .expect("Failed to find NodeId for item_in_real_file");
-    let nested_decl_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &definition_file_derived_path_vec, // Use file-derived path
-        "nested_in_real_file",
-    )
-    .expect("Failed to find NodeId for nested_in_real_file declaration");
-
-    let expected_item_ids = vec![func_id, nested_decl_id];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Declaration Containment) ---
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'logical_name' declaration",
-    );
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected crate module items list to contain logical_name declaration ID"
-    );
-}
-
-#[test]
-fn test_module_node_inline_pub_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "inline_pub_mod";
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-
-    // --- Find Node ---
-    let inline_node =
-        find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-
-    // --- Assertions for INLINE Node (main.rs) ---
-    assert_eq!(inline_node.name(), module_name);
-    assert_eq!(inline_node.path, module_path_vec);
-    assert_eq!(inline_node.visibility(), VisibilityKind::Public);
-    assert!(inline_node.is_inline());
-    assert!(inline_node.inline_span().is_some());
-    assert!(inline_node.tracking_hash.is_some()); // Inline modules have hash
-
-    // Check items defined inside the inline block
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-
-    // Find `use std::collections::HashMap;` in inline_pub_mod
-    let hashmap_import_id = main_graph
-        .use_statements
-        .iter()
-        .find(|imp| {
-            imp.source_path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap"
-        })
-        .expect("Failed to find ImportNode for 'use std::collections::HashMap'")
-        .id;
-    let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_pub_func")
-        .expect("Failed to find NodeId for inline_pub_func");
-    let duplicate_func_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "duplicate_name")
-            .expect("Failed to find NodeId for duplicate_name in inline_pub_mod");
-    let nested_priv_decl_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_nested_priv")
-            .expect("Failed to find NodeId for inline_nested_priv declaration");
-    let super_visible_decl_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "super_visible_inline")
-            .expect("Failed to find NodeId for super_visible_inline declaration");
-
-    let expected_item_ids = vec![
-        hashmap_import_id,
-        func_id,
-        duplicate_func_id,
-        nested_priv_decl_id,
-        super_visible_decl_id,
-    ];
-    let inline_items = inline_node
-        .items()
-        .expect("Inline module node should have items");
-    assert_eq!(
-        inline_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for inline module {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            inline_items.contains(id),
-            "Expected item ID {:?} not found in inline module {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Inline Containment) ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(inline_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'inline_pub_mod' definition",
-    );
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&inline_node.id()),
-        "Expected crate module items list to contain inline_pub_mod definition ID"
-    );
-}
-
-#[test]
-fn test_module_node_inline_priv_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "inline_priv_mod";
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-
-    // --- Find Node ---
-    let inline_node =
-        find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-
-    // --- Assertions for INLINE Node (main.rs) ---
-    assert_eq!(inline_node.name(), module_name);
-    assert_eq!(inline_node.path, module_path_vec);
-    assert_eq!(inline_node.visibility(), VisibilityKind::Inherited); // `mod ...` is private
-    assert!(inline_node.is_inline());
-    assert!(inline_node.inline_span().is_some());
-    assert!(inline_node.tracking_hash.is_some());
-
-    // Check items defined inside the inline block
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-
-    let func_id = find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_priv_func")
-        .expect("Failed to find NodeId for inline_priv_func");
-    let nested_pub_decl_id =
-        find_node_id_by_path_and_name(main_graph, &module_path_vec, "inline_nested_pub")
-            .expect("Failed to find NodeId for inline_nested_pub declaration");
-
-    let expected_item_ids = vec![func_id, nested_pub_decl_id];
-    let inline_items = inline_node
-        .items()
-        .expect("Inline module node should have items");
-    assert_eq!(
-        inline_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for inline module {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            inline_items.contains(id),
-            "Expected item ID {:?} not found in inline module {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Inline Containment) ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(inline_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'inline_priv_mod' definition",
-    );
-    assert!(
-        crate_module_node
-            .items()
-            .expect("crate module node items failed")
-            .contains(&inline_node.id()),
-        "Expected crate module items list to contain inline_priv_mod definition ID"
-    );
-}
-
-#[test]
-fn test_module_node_nested_example_submod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "example_submod";
-    let declaration_file = "src/example_mod/mod.rs";
-    let definition_file = "src/example_mod/example_submod/mod.rs";
-    let parent_path_vec = vec!["crate".to_string(), "example_mod".to_string()];
-    let module_path_vec = vec![
-        "crate".to_string(),
-        "example_mod".to_string(),
-        module_name.to_string(),
-    ];
-
-    // --- Find Nodes ---
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, declaration_file, &module_path_vec);
-    let definition_node =
-        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
-
-    // --- Assertions for DECLARATION Node (example_mod/mod.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some());
-    assert!(declaration_node.tracking_hash.is_some());
-    assert!(declaration_node.resolved_definition().is_none());
-
-    // --- Assertions for DEFINITION Node (example_submod/mod.rs) ---
-    assert_eq!(definition_node.name(), module_name);
-    assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
-    assert!(definition_node.is_file_based());
-    assert!(definition_node.tracking_hash.is_none()); // File root has no hash
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file)
-    );
-
-    // Check items in definition node
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
-
-    let sibling_one_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_one")
-            .expect("Failed to find NodeId for item_in_example_submod");
-    let sibling_two_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_two")
-            .expect("Failed to find NodeId for item_in_example_submod");
-    let sibling_private_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "submod_sibling_private")
-            .expect("Failed to find NodeId for item_in_example_submod");
-    let func_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "item_in_example_submod")
-            .expect("Failed to find NodeId for item_in_example_submod");
-
-    let expected_item_ids = vec![sibling_one_id, sibling_two_id, sibling_private_id, func_id];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Declaration Containment) ---
-    let declaration_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(declaration_file))
-        .expect("Graph for declaration file not found");
-    let declaration_graph = &declaration_graph_data.graph;
-    let parent_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, declaration_file, &parent_path_vec);
-
-    assert_relation_exists(
-        declaration_graph,
-        GraphId::Node(parent_module_node.id()),
-        GraphId::Node(declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'example_mod' module to Contain 'example_submod' declaration",
-    );
-    assert!(
-        parent_module_node
-            .items()
-            .expect("parent module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected example_mod module items list to contain example_submod declaration ID"
-    );
-}
-
-#[test]
-fn test_module_node_deeply_nested_mod_paranoid() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "deeply_nested_mod";
-    let declaration_file = "src/example_mod/example_private_submod/subsubmod/subsubsubmod/mod.rs";
-    let definition_file =
-        "src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs";
-    let parent_path_vec = vec![
-        "crate".to_string(),
-        "example_mod".to_string(),
-        "example_private_submod".to_string(),
-        "subsubmod".to_string(),
-        "subsubsubmod".to_string(),
-    ];
-    let module_path_vec = vec![
-        "crate".to_string(),
-        "example_mod".to_string(),
-        "example_private_submod".to_string(),
-        "subsubmod".to_string(),
-        "subsubsubmod".to_string(),
-        module_name.to_string(),
-    ];
-
-    // --- Find Nodes ---
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, declaration_file, &module_path_vec);
-    let definition_node =
-        find_file_module_node_paranoid(&results, fixture_name, definition_file, &module_path_vec);
-
-    // --- Assertions for DECLARATION Node (subsubsubmod/mod.rs) ---
-    assert_eq!(declaration_node.name(), module_name);
-    assert_eq!(declaration_node.path, module_path_vec);
-    assert_eq!(declaration_node.visibility(), VisibilityKind::Public);
-    assert!(declaration_node.is_declaration());
-    assert!(declaration_node.declaration_span().is_some());
-    assert!(declaration_node.tracking_hash.is_some());
-    assert!(declaration_node.resolved_definition().is_none());
-
-    // --- Assertions for DEFINITION Node (deeply_nested_mod/mod.rs) ---
-    assert_eq!(definition_node.name(), module_name);
-    assert_eq!(definition_node.path, module_path_vec);
-    assert_eq!(definition_node.visibility(), VisibilityKind::Inherited); // File root default
-    assert!(definition_node.is_file_based());
-    assert!(definition_node.tracking_hash.is_none()); // File root has no hash
-    assert_eq!(
-        definition_node.file_path().unwrap(),
-        &fixtures_crates_dir()
-            .join(fixture_name)
-            .join(definition_file)
-    );
-
-    // Check items in definition node
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
-
-    let func_id = find_node_id_by_path_and_name(
-        definition_graph,
-        &module_path_vec,
-        "item_in_deeply_nested_mod",
-    )
-    .expect("Failed to find NodeId for item_in_deeply_nested_mod");
-    let nested_file_decl_id =
-        find_node_id_by_path_and_name(definition_graph, &module_path_vec, "deeply_nested_file")
-            .expect("Failed to find NodeId for deeply_nested_file declaration");
-
-    let expected_item_ids = vec![nested_file_decl_id, func_id];
-    let definition_items = definition_node
-        .items()
-        .expect("FileBased module node should have items");
-    assert_eq!(
-        definition_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in number of items for module definition {}",
-        module_name
-    );
-    for id in &expected_item_ids {
-        assert!(
-            definition_items.contains(id),
-            "Expected item ID {:?} not found in module definition {}",
-            id,
-            module_name
-        );
-    }
-
-    // --- Relation & Items List Check (Declaration Containment) ---
-    let declaration_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(declaration_file))
-        .expect("Graph for declaration file not found");
-    let declaration_graph = &declaration_graph_data.graph;
-    let parent_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, declaration_file, &parent_path_vec);
-
-    assert_relation_exists(
-        declaration_graph,
-        GraphId::Node(parent_module_node.id()),
-        GraphId::Node(declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'subsubsubmod' module to Contain 'deeply_nested_mod' declaration",
-    );
-    assert!(
-        parent_module_node
-            .items()
-            .expect("parent module node items failed")
-            .contains(&declaration_node.id()),
-        "Expected subsubsubmod module items list to contain deeply_nested_mod declaration ID"
-    );
-}
-
-#[test]
-fn test_module_node_file_attributes_and_docs() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-
-    // --- Find Node (crate module in main.rs) ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    // --- Assert File-Level Attributes ---
-    let file_attrs = crate_module_node
-        .file_attrs()
-        .expect("FileBased module should provide file_attrs");
-    assert_eq!(
-        file_attrs.len(),
-        1,
-        "Expected 1 file-level attribute in main.rs"
-    );
-    assert_eq!(file_attrs[0].name, "allow");
-    assert!(
-        file_attrs[0].args.contains(&"unused".to_string()),
-        "Expected '#![allow(unused)]'"
-    );
-
-    // --- Assert File-Level Docs ---
-    let file_docs = crate_module_node
-        .file_docs()
-        .expect("FileBased module should provide file_docs");
-    assert_eq!(file_docs.trim(), "This is the crate root doc comment.");
-}
-
-#[test]
-fn test_module_node_mod_attributes_and_docs() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "inline_pub_mod";
-    let main_file = "src/main.rs";
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-
-    // --- Find Node (inline_pub_mod in main.rs) ---
-    let inline_node =
-        find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-
-    // --- Assert Module-Level CFGs ---
-    assert_eq!(
-        inline_node.cfgs.len(),
-        1,
-        "Expected 1 cfg string on inline_pub_mod, found {}. Cfgs: {:?}",
-        inline_node.cfgs.len(),
-        inline_node.cfgs
-    );
-    assert_eq!(
-        inline_node.cfgs[0], "test",
-        "Expected cfg string 'test', found '{}'",
-        inline_node.cfgs[0]
-    );
-    // Assert attributes list is now empty
-    assert!(
-        inline_node.attributes.is_empty(),
-        "Expected attributes list to be empty for inline_pub_mod, found: {:?}",
-        inline_node.attributes
-    );
-
-    // --- Assert Module-Level Docs ---
-    let docstring = inline_node
-        .docstring
-        .as_ref()
-        .expect("Expected docstring on inline_pub_mod");
-    assert_eq!(docstring.trim(), "An inline public module doc comment.");
-
-    // --- Check Declaration Node Docs (Example) ---
-    let decl_module_name = "top_pub_mod";
-    let decl_module_path_vec = vec!["crate".to_string(), decl_module_name.to_string()];
-    let declaration_node =
-        find_declaration_node_paranoid(&results, fixture_name, main_file, &decl_module_path_vec);
-    // NOTE: Currently, doc comments on `mod item;` are NOT attached to the ModuleNode declaration.
-    // This might be a visitor enhancement needed later if required.
-    assert!(
-        declaration_node.docstring.is_none(),
-        "Expected no docstring on top_pub_mod declaration (current limitation)"
-    );
-}
-
-// #[test] // TODO: Add a fixture with attributes/docs on modules
-// fn test_module_node_with_attributes_and_docs() { // REMOVE THIS OLD STUB
-//     // Requires a fixture with modules having attributes (#![...]) and doc comments (//! or /// mod)
-//     // e.g., Add attributes/docs to `inline_pub_mod` or a file-based module.
-//     // Verify:
-//     // 1. Find the relevant module node (declaration or definition).
-//     // 2. Assert `attributes` field contains the expected parsed Attribute structs.
-//     // 3. Assert `docstring` field contains the expected doc comment string.
-//     // 4. For FileBased modules, also check `file_attrs` and `file_docs`.
-//     todo!("Implement test_module_node_with_attributes_and_docs");
-// }
-
-#[test]
-fn test_module_node_items_list_comprehensiveness() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-
-    // --- Find Nodes ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-
-    // --- Find Expected Item IDs in main.rs ---
-    let main_pub_func_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "main_pub_func")
-            .expect("Failed to find NodeId for main_pub_func");
-    let main_priv_func_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "main_priv_func")
-            .expect("Failed to find NodeId for main_priv_func");
-    let duplicate_func_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "duplicate_name")
-            .expect("Failed to find NodeId for duplicate_name in main");
-    let main_func_id = find_node_id_by_path_and_name(main_graph, &crate_path_vec, "main")
-        .expect("Failed to find NodeId for main");
-
-    // Module Declarations
-    let example_mod_decl_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "example_mod")
-            .expect("Failed to find NodeId for example_mod declaration");
-    let top_pub_mod_decl_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "top_pub_mod")
-            .expect("Failed to find NodeId for top_pub_mod declaration");
-    let top_priv_mod_decl_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "top_priv_mod")
-            .expect("Failed to find NodeId for top_priv_mod declaration");
-    let crate_visible_mod_decl_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "crate_visible_mod")
-            .expect("Failed to find NodeId for crate_visible_mod declaration");
-    let logical_name_decl_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "logical_name")
-            .expect("Failed to find NodeId for logical_name declaration");
-
-    // Inline Module Definitions
-    let inline_pub_mod_def_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "inline_pub_mod")
-            .expect("Failed to find NodeId for inline_pub_mod definition");
-    let inline_priv_mod_def_id =
-        find_node_id_by_path_and_name(main_graph, &crate_path_vec, "inline_priv_mod")
-            .expect("Failed to find NodeId for inline_priv_mod definition");
-
-    println!("imports: {:#?}", main_graph.use_statements);
-    // Imports
-    let import_std = find_import_id(
-        main_graph,
-        &crate_path_vec,
-        "Path",
-        &["std", "path", "Path"],
-    )
-    .expect("Failed to find NodeId for `use std::path::Path;` definition");
-    let import_complex = find_import_id(
-        main_graph,
-        &crate_path_vec,
-        "reexported_func",
-        &["crate", "top_pub_mod", "top_pub_func"],
-    ).expect("Failed to find NodeId for `pub use crate::top_pub_mod::top_pub_func as reexported_func;` definition");
-    // find_node_id_by_path_and_name(main_graph, &crate_path_vec, "reexported_func")
-
-    // --- Assert Items List ---
-    let expected_item_ids = vec![
-        // Functions
-        main_pub_func_id,
-        main_priv_func_id,
-        duplicate_func_id,
-        main_func_id,
-        // Module Declarations
-        example_mod_decl_id,
-        top_pub_mod_decl_id,
-        top_priv_mod_decl_id,
-        crate_visible_mod_decl_id,
-        logical_name_decl_id,
-        // Inline Module Definitions
-        inline_pub_mod_def_id,
-        inline_priv_mod_def_id,
-        // Imports
-        import_std,
-        import_complex,
-        // Note: Macros, Constants, Statics, etc., would also be included here if present in main.rs
-    ];
-
-    let crate_items = crate_module_node
-        .items()
-        .expect("Crate module node should have items");
-
-    for item in crate_items
-        .iter()
-        .filter(|item| expected_item_ids.contains(item))
-    {
-        println!("Missing: {}", item);
-    }
-
-    // Use HashSet for efficient comparison regardless of order
-    let expected_ids_set: std::collections::HashSet<_> =
-        expected_item_ids.iter().cloned().collect();
-    let actual_ids_set: std::collections::HashSet<_> = crate_items.iter().cloned().collect();
-
-    assert_eq!(
-        actual_ids_set, expected_ids_set,
-        "Mismatch in items for 'crate' module in main.rs.\nExpected: {:?}\nActual: {:?}",
-        expected_ids_set, actual_ids_set
-    );
-    assert_eq!(
-        crate_items.len(),
-        expected_item_ids.len(),
-        "Mismatch in the *number* of items for 'crate' module in main.rs"
-    );
-}
-
-#[test]
-fn test_module_node_imports_list() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let inline_mod_name = "inline_pub_mod";
-    let inline_mod_path_vec = vec!["crate".to_string(), inline_mod_name.to_string()];
-
-    // --- Find Nodes ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-    let inline_module_node =
-        find_inline_module_node_paranoid(&results, fixture_name, main_file, &inline_mod_path_vec);
-
-    // --- Find Graph ---
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-
-    // --- Find Import Node IDs ---
-    // Find `use std::path::Path;` in crate root
-    let path_import_node = main_graph
-        .use_statements
-        .iter()
-        .find(|imp| imp.source_path == ["std", "path", "Path"] && imp.visible_name == "Path")
-        .expect("Failed to find ImportNode for 'use std::path::Path'");
-
-    // Find `pub use crate::top_pub_mod::top_pub_func as reexported_func;` in crate root
-    let pub_use_node = main_graph
-        .use_statements
-        .iter()
-        .find(|imp| {
-            imp.source_path == ["crate", "top_pub_mod", "top_pub_func"]
-                && imp.visible_name == "reexported_func"
-        })
-        .expect("Failed to find ImportNode for 'pub use ... as reexported_func'");
-
-    // Find `use std::collections::HashMap;` in inline_pub_mod
-    let hashmap_import_node = main_graph
-        .use_statements
-        .iter()
-        .find(|imp| {
-            imp.source_path == ["std", "collections", "HashMap"] && imp.visible_name == "HashMap"
-        })
-        .expect("Failed to find ImportNode for 'use std::collections::HashMap'");
-
-    // --- Assert Crate Module Imports/Items ---
-    let crate_imports = &crate_module_node
-        .imports
-        .iter()
-        .map(|imp| imp.id)
-        .collect::<Vec<NodeId>>();
-    let crate_items = crate_module_node
-        .items()
-        .expect("Crate module node should have items");
-
-    let debug_crate_imports = &crate_module_node
-        .imports
-        .iter()
-        .collect::<Vec<&ImportNode>>();
-    let debug_graph = &crate_module_node.imports;
-    assert_eq!(
-        crate_imports.len(),
-        2,
-        "Expected 2 imports in crate module with name: {}, path: {:?}
-All imports for crate ModuleNode: {:#?}
-All imports in CodeGraph:{:#?}",
-        &crate_module_node.name,
-        &crate_module_node.path,
-        debug_crate_imports,
-        debug_graph
-    );
-    assert!(
-        crate_imports.contains(&path_import_node.id),
-        "Crate imports should contain Path import ID"
-    );
-    assert!(
-        crate_imports.contains(&pub_use_node.id),
-        "Crate imports should contain pub use import ID"
-    );
-    assert!(
-        crate_items.contains(&path_import_node.id),
-        "Crate items should contain Path import ID"
-    );
-    assert!(
-        crate_items.contains(&pub_use_node.id),
-        "Crate items should contain pub use import ID"
-    );
-
-    // --- Assert Inline Module Imports/Items ---
-    let inline_imports = &inline_module_node
-        .imports
-        .iter()
-        .map(|imp| imp.id)
-        .collect::<Vec<NodeId>>();
-    let inline_items = inline_module_node
-        .items()
-        .expect("Inline module node should have items");
-
-    assert_eq!(
-        inline_imports.len(),
-        1,
-        "Expected 1 import in inline_pub_mod"
-    );
-    assert!(
-        inline_imports.contains(&hashmap_import_node.id),
-        "Inline imports should contain HashMap import ID"
-    );
-    assert!(
-        inline_items.contains(&hashmap_import_node.id),
-        "Inline items should contain HashMap import ID"
-    );
-}
-
-#[test]
-fn test_module_contains_relation_inline() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let module_name = "inline_pub_mod";
-    let main_file = "src/main.rs";
-    let crate_path_vec = vec!["crate".to_string()];
-    let module_path_vec = vec!["crate".to_string(), module_name.to_string()];
-
-    // --- Find Nodes ---
-    let crate_module_node =
-        find_file_module_node_paranoid(&results, fixture_name, main_file, &crate_path_vec);
-    let inline_node =
-        find_inline_module_node_paranoid(&results, fixture_name, main_file, &module_path_vec);
-
-    // --- Find Graph ---
-    let main_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(main_file))
-        .expect("Graph for main.rs not found");
-    let main_graph = &main_graph_data.graph;
-
-    // --- Assert Relation ---
-    assert_relation_exists(
-        main_graph,
-        GraphId::Node(crate_module_node.id()),
-        GraphId::Node(inline_node.id()),
-        RelationKind::Contains,
-        "Expected 'crate' module to Contain 'inline_pub_mod' definition",
-    );
-}
-
-#[test]
-fn test_module_contains_relation_declaration_nested() {
-    let fixture_name = "file_dir_detection";
-    let results = run_phases_and_collect(fixture_name);
-
-    let parent_module_name = "top_pub_mod";
-    let child_module_name = "nested_pub";
-    let definition_file = "src/top_pub_mod.rs"; // File where the declaration occurs
-    let parent_module_path_vec = vec!["crate".to_string(), parent_module_name.to_string()];
-    let child_module_path_vec = vec![
-        "crate".to_string(),
-        parent_module_name.to_string(),
-        child_module_name.to_string(),
-    ];
-
-    // --- Find Nodes ---
-    // Find the parent module node (definition of top_pub_mod)
-    let parent_module_node = find_file_module_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file,
-        &parent_module_path_vec,
-    );
-    // Find the child module node (declaration of nested_pub within top_pub_mod.rs)
-    let child_declaration_node = find_declaration_node_paranoid(
-        &results,
-        fixture_name,
-        definition_file, // Declaration is in this file
-        &child_module_path_vec,
-    );
-
-    // --- Find Graph ---
-    let definition_graph_data = results
-        .iter()
-        .find(|data| data.file_path.ends_with(definition_file))
-        .expect("Graph for definition file not found");
-    let definition_graph = &definition_graph_data.graph;
-
-    // --- Assert Relation ---
-    assert_relation_exists(
-        definition_graph, // Relation exists within the graph of top_pub_mod.rs
-        GraphId::Node(parent_module_node.id()),
-        GraphId::Node(child_declaration_node.id()),
-        RelationKind::Contains,
-        "Expected 'top_pub_mod' module to Contain 'nested_pub' declaration",
-    );
-
-    // --- Assert Items List ---
-    assert!(
-        parent_module_node
-            .items()
-            .expect("parent module node items failed")
-            .contains(&child_declaration_node.id()),
-        "Expected top_pub_mod module items list to contain nested_pub declaration ID"
-    );
-}
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_top_pub_mod,
+    "decl::main_rs::top_pub_mod",
+    EXPECTED_MODULES_ARGS,                         // args_map
+    EXPECTED_MODULES_DATA,                         // expected_data_map
+    syn_parser::parser::nodes::ModuleNode,         // node_type
+    syn_parser::parser::nodes::ExpectedModuleNode, // derived Expeced*Node
+    as_module,                                     // downcast_method
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_top_pub_mod_rs_top_pub_mod,
+    "file::top_pub_mod_rs::top_pub_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_top_priv_mod,
+    "decl::main_rs::top_priv_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_top_priv_mod_rs_top_priv_mod,
+    "file::top_priv_mod_rs::top_priv_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_crate_visible_mod,
+    "decl::main_rs::crate_visible_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_crate_visible_mod_rs_crate_visible_mod,
+    "file::crate_visible_mod_rs::crate_visible_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_logical_name,
+    "decl::main_rs::logical_name",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_custom_path_real_file_rs_real_file,
+    "file::custom_path_real_file_rs::real_file",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_inline_main_rs_inline_pub_mod,
+    "inline::main_rs::inline_pub_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_inline_main_rs_inline_priv_mod,
+    "inline::main_rs::inline_priv_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_main_rs_example_mod,
+    "decl::main_rs::example_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_mod_rs_example_mod,
+    "file::example_mod_mod_rs::example_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_mod_rs_example_submod,
+    "decl::example_mod_mod_rs::example_submod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_submod_mod_rs_example_submod,
+    "file::example_mod_example_submod_mod_rs::example_submod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_mod_rs_example_private_submod,
+    "decl::example_mod_mod_rs::example_private_submod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_main_rs_crate,
+    "file::main_rs::crate",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs_deeply_nested_mod,
+    "decl::example_mod_example_private_submod_subsubmod_subsubsubmod_mod_rs::deeply_nested_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs_deeply_nested_mod,
+    "file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_mod",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_decl_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs_deeply_nested_file,
+    "decl::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_mod_rs::deeply_nested_file",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);
+paranoid_test_fields_and_values!(
+    node_file_example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs_deeply_nested_file,
+    "file::example_mod_example_private_submod_subsubmod_subsubsubmod_deeply_nested_mod_deeply_nested_file_rs::deeply_nested_file",
+    EXPECTED_MODULES_ARGS,
+    EXPECTED_MODULES_DATA,
+    syn_parser::parser::nodes::ModuleNode,
+    syn_parser::parser::nodes::ExpectedModuleNode,
+    as_module,
+    LOG_TEST_MODULE
+);

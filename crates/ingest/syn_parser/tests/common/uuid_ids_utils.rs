@@ -1,8 +1,8 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 use ploke_common::{fixtures_crates_dir, workspace_root};
-use ploke_core::{NodeId, TypeId};
+use ploke_core::TypeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::parser::graph::{CodeGraph, GraphAccess as _};
-use syn_parser::parser::relations::RelationKind;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 // Removed `use syn_parser::parser::visitor::ParsedCodeGraph;` - import directly in tests
@@ -44,19 +44,18 @@ pub fn find_node_id_by_path_and_name(
     let parent_module = graph.modules.iter().find(|m| {
         #[cfg(feature = "verbose_debug")]
         println!(
-            "searching for: {:?}\nm.defn_path() = {:?}\nm.path = {:?}
+            "searching for: {:?}\nm.path() = {:?}\nm.path = {:?}
 m.name = {}\nm.id = {}\nm.is_file_based() = {}
 m.items() = {:#?}",
             module_path,
-            m.defn_path(),
+            m.path(),
             m.path,
             m.name,
             m.id,
             m.is_file_based(),
             m.items()
         );
-        (m.defn_path() == module_path && m.is_inline())
-            || (m.defn_path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline()) || (m.path() == module_path && m.is_file_based())
     })?;
 
     // Convert items Vec<NodeId> to a HashSet for faster lookups if needed,
@@ -131,8 +130,7 @@ pub fn find_import_id(
 ) -> Option<NodeId> {
     let parent_module = graph.modules.iter().find(|m| {
         // #[cfg(feature = "verbose_debug")]
-        (m.defn_path() == module_path && m.is_inline())
-            || (m.defn_path() == module_path && m.is_file_based())
+        (m.path() == module_path && m.is_inline()) || (m.path() == module_path && m.is_file_based())
     })?;
     let import_id = graph
         .use_statements
@@ -196,29 +194,6 @@ pub fn find_import_longname_by_id(graph: &CodeGraph, node_id: NodeId) -> Option<
                 }
             )
         })
-}
-pub fn find_node_id_name(graph: &CodeGraph, node_id: NodeId) -> Option<String> {
-    graph
-        .find_node(node_id)
-        .map(|n| n.name().to_string())
-        .or_else(|| find_import_longname_by_id(graph, node_id))
-        .or_else(|| {
-            graph
-                .defined_types
-                .iter()
-                .find_map(|def_type| match def_type {
-                    TypeDefNode::Struct(struct_node) => struct_node
-                        .fields
-                        .iter()
-                        .find(|field| field.id == node_id)
-                        .map(|field| field.name.clone()),
-                    TypeDefNode::Enum(_enum_node) => None, // fill out as needed
-                    TypeDefNode::TypeAlias(_type_alias_node) => None, // fill out as needed
-                    TypeDefNode::Union(_union_node) => None, // fill out as needed
-                })
-                .unwrap_or(None)
-        })
-    // incomplete, can add more
 }
 pub fn find_type_id_name(graph: &CodeGraph, ty_id: TypeId) -> Option<String> {
     let found_name: Option<String> = graph
@@ -444,10 +419,7 @@ pub fn find_inline_module_by_path<'a>(
     graph: &'a CodeGraph,
     module_path: &[String],
 ) -> Option<&'a ModuleNode> {
-    let mut modules = graph
-        .modules
-        .iter()
-        .filter(|m| m.defn_path() == module_path);
+    let mut modules = graph.modules.iter().filter(|m| m.path() == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
     for unexpected_module in modules {
@@ -472,7 +444,7 @@ pub fn find_mod_decl_by_path_and_name<'a>(
     let mut modules = graph
         .modules
         .iter()
-        .filter(|m| m.is_declaration() && m.name() == name && m.path == module_path);
+        .filter(|m| m.is_decl() && m.name() == name && m.path == module_path);
     let found = modules.next();
     let mut errs = Vec::new();
     for unexpected_module in modules {
@@ -599,7 +571,7 @@ pub fn find_function_node_paranoid<'a>(
     // 7. PARANOID CHECK: Calculate expected CFG hash bytes
     let item_cfgs = &func_node.cfgs; // Get the function's own CFGs
     let scope_cfgs: Vec<String> = actual_parent_scope_id
-        .and_then(|p_id| graph.find_node(p_id)) // Find the parent node
+        .map(|p_id| graph.get_item_module(p_id)) // Find the parent node
         .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs using the GraphNode trait method
         .unwrap_or_default(); // Default to empty if no parent found (e.g., root module items)
 
@@ -625,7 +597,7 @@ pub fn find_function_node_paranoid<'a>(
     );
 
     // 9. Assert Regenerated ID Matches Actual ID
-    let possible_parent = actual_parent_scope_id.and_then(|id| graph.find_node(id));
+    let possible_parent = actual_parent_scope_id.and_then(|id| graph.find_containing_mod(id));
     assert_eq!(
         func_id, regenerated_id, // Compare actual ID with the regenerated ID (which now includes CFG)
         "PARANOID CHECK FAILED: Mismatch between node's actual ID ({}) and regenerated ID ({}) for function '{}' in file '{}'.\nExpected Module Path: {:?}\nParent Scope ID: {:?}\nParent Node Name: {}\nScope CFGs (Parent): {:?}\nItem CFGs (Function): {:?}\nCombined & Sorted CFGs for Hash: {:?}\nFOUND FUNCTION NODE: {:#?}",
@@ -766,7 +738,8 @@ pub fn find_method_node_paranoid<'a>(
     let item_cfgs = &method_node.cfgs; // Get the method's own CFGs
                                        // Explicitly use target_data.graph to avoid potential shadowing issues
     let scope_cfgs: Vec<String> = target_data.graph
-        .find_node(parent_node_id) // Find the parent impl/trait node
+        // Needs work
+        .map(todo!("rework this whole function"))
         .map(|p_node| p_node.cfgs().to_vec()) // Get the parent's CFGs
         .unwrap_or_else(|| {
             eprintln!("Warning: Could not find parent node {:?} to get scope CFGs for method '{}'. Defaulting to empty.", parent_node_id, method_name);

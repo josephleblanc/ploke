@@ -15,6 +15,8 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
+pub mod graph;
+
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
     use std::hash::Hasher;
@@ -82,12 +84,14 @@ mod ids {
     // Import TypeKind into the ids module scope
     use crate::{IdConversionError, TypeKind}; // Add IdConversionError
 
+    use cozo::{DataValue, UuidWrapper};
     use serde::{Deserialize, Serialize};
     use uuid::Uuid;
 
     use crate::{ItemKind, PROJECT_NAMESPACE_UUID}; // Import ItemKind
                                                    // Removed unused std::io import
 
+    #[allow(dead_code, reason = "useful later")]
     pub struct ResolvedIds {
         canon: CanonId,
         short_pub: Option<PubPathId>,
@@ -356,6 +360,37 @@ mod ids {
         }
     }
 
+    #[allow(clippy::from_over_into)]
+    impl Into<DataValue> for TypeId {
+        fn into(self) -> DataValue {
+            DataValue::Uuid(UuidWrapper(self.uuid()))
+        }
+    }
+    #[allow(clippy::from_over_into)]
+    impl Into<DataValue> for &TypeId {
+        fn into(self) -> DataValue {
+            DataValue::Uuid(UuidWrapper(self.uuid()))
+        }
+    }
+    #[allow(clippy::from_over_into)]
+    impl Into<DataValue> for TrackingHash {
+        fn into(self) -> DataValue {
+            DataValue::Uuid(UuidWrapper(self.0))
+        }
+    }
+    #[allow(clippy::from_over_into)]
+    impl Into<DataValue> for CanonId {
+        fn into(self) -> DataValue {
+            DataValue::Uuid(UuidWrapper(self.uuid()))
+        }
+    }
+    #[allow(clippy::from_over_into)]
+    impl Into<DataValue> for PubPathId {
+        fn into(self) -> DataValue {
+            DataValue::Uuid(UuidWrapper(self.uuid()))
+        }
+    }
+
     /// Stable identifier for a type's logical identity across crate versions.
     /// Primarily used for linking embeddings or tracking concepts over time.
     /// Can be generated based on project namespace, crate name, and type path.
@@ -420,8 +455,8 @@ mod ids {
         ///     - e.g. for canonical: `crate::module_a::Item`
         ///     - e.g. for public path: `my_project::module_a::Item`
         ///     - Note: if public path had in main.rs, `pub use my_project::module_a::Item`, the
-        ///     shortest public path would be `my_project::Item`, but canonical path would still be
-        ///     `crate::module_a::Item`
+        ///       shortest public path would be `my_project::Item`, but canonical path would still be
+        ///       `crate::module_a::Item`
         /// * `item_kind` - The kind of item, used to determine Node vs. Type variant.
         ///     - Note: Might remove this. Needs design attention
         /// * `cfg`: Required to distinguish identical nodes that have mutually exclusive cfgs
@@ -435,10 +470,22 @@ mod ids {
         ) -> Result<Self, IdConversionError>;
     }
 
+    /// Contains the necessary information to generate a resolved ID (`CanonId` or `PubPathId`).
+    ///
+    /// This struct bundles context required for deterministic ID generation after
+    /// name resolution (Phase 3).
+    #[derive(Debug, Clone, Copy)] // Add derives for convenience if needed elsewhere
     pub struct IdInfo<'a> {
+        /// Absolute path to the source file containing the item's definition.
+        /// Canonicalized for `CanonId`, original path for `PubPathId`.
         file_path: &'a Path,
+        /// The logical path segments used for this ID type (canonical or shortest public).
+        /// e.g., `["crate", "module", "Item"]`.
         logical_item_path: &'a [String],
-        cfgs: &'a [String], // placeholder &str type, needs design attention
+        /// Conditional compilation flags (`cfg`) active for this item.
+        /// Required to distinguish identical items under different `cfg`s.
+        cfgs: &'a [String],
+        /// The kind of the code item (e.g., Function, Struct).
         item_kind: ItemKind,
     }
 
@@ -548,6 +595,7 @@ mod ids {
             // TODO: Refine ItemKind mapping if necessary (e.g., handle fields/variants differently?)
             match id_info.item_kind() {
                 ItemKind::Function
+                | ItemKind::Method // Added Method
                 | ItemKind::Struct
                 | ItemKind::Enum
                 | ItemKind::Union
@@ -635,6 +683,7 @@ mod ids {
             // Determine Node or Type variant based on ItemKind
             match id_info.item_kind() {
                 ItemKind::Function
+                | ItemKind::Method // Added Method
                 | ItemKind::Struct
                 | ItemKind::Enum
                 | ItemKind::Union
@@ -726,7 +775,8 @@ pub enum IdConversionError {
 /// will generate distinct `NodeId`s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ItemKind {
-    Function,
+    Function, // Standalone function
+    Method,   // Associated function/method
     Struct,
     Enum,
     Union,

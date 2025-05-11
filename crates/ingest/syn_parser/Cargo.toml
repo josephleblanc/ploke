@@ -23,15 +23,17 @@ tokio = { workspace = true }
 dashmap = { workspace = true }
 
 # Data structures and algorithms
-petgraph = { workspace = true }
 cozo = { workspace = true }
-# uuid is now an optional transitive dependency via ploke-core
+# Uuid handling
 uuid = { workspace = true, features = ["v5", "serde"] }
 
 # Error handling
-thiserror = { workspace = true }                          # version 2
+thiserror = { workspace = true }                                                   # version 2
 ploke-common = { path = "../../common" }
-ploke-core = { path = "../../ploke-core", features = [] } # Added dependency
+ploke-core = { path = "../../ploke-core", features = [] }
+ploke-error = { path = "../../ploke-error" }
+syn_parser_macros = { path = "../../../proc_macros/syn_parser/syn_parser_macros" } # Add dependency on the
+anyhow = "1.0"
 
 # Added for Phase 1 Discovery (Optional)
 toml = { version = "0.8" }
@@ -42,18 +44,31 @@ parse_cfg = "4.1.1"
 
 # debugging
 log = { workspace = true }
-colored = "3.0"
-itertools = "0.14.0"
+colored = { workspace = true }
+
+# Convenience
+itertools = { workspace = true }
+
+derive_test_helpers = { path = "../../../proc_macros/syn_parser/derive_test_helpers" }
 
 [dev-dependencies]
-tempfile = "3.10"   # For creating temporary files/dirs in tests
-env_logger = "0.11" # Add env_logger for test logging
+tempfile = "3.10"                                                                  # For creating temporary files/dirs in tests
+env_logger = "0.11"                                                                # Add env_logger for test logging
+lazy_static = "1.4.0"                                                              # Added lazy_static
+ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros" } # Add dependency on the
 
 # Feature flags
 [features]
-feature_a = []     # Add feature_a used by fixture
-feature_b = []     # Add feature_b used by test
+default = ["type_bearing_ids", "validate", "reexport", "not_wip_marker"]
+feature_a = []                                                           # Add feature_a used by fixture
+feature_b = []                                                           # Add feature_b used by test
 verbose_debug = []
+temp_target = []
+not_wip_marker = []
+type_bearing_ids = []
+ghost_data_graphs = []
+validate = []
+public_path = []
 mod_tree_cfg = []
 reexport = []
 # Post-MVP feature

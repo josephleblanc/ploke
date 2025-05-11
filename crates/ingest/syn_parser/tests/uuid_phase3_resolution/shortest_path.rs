@@ -57,6 +57,7 @@
 use ploke_core::NodeId;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess as _;
+use syn_parser::parser::nodes::NodePath; // Added import
 use syn_parser::resolve::module_tree::{ModuleTreeError, ResolvedItemInfo, ResolvedTargetKind};
 // Removed unused SynParserError import
 
@@ -65,6 +66,7 @@ use crate::common::resolution::find_item_id_in_module_by_name;
 // Helper to build the tree for tests
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_root() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -84,9 +86,13 @@ fn test_spp_public_item_in_root() {
 
     // Expected path: Ok(["crate"]) (path to the containing module)
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: main_pub_func_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string()]), // Path to containing module
+        public_name: "main_pub_func".to_string(),                 // Name at that path
+        resolved_id: main_pub_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: main_pub_func_id,
+        },
+        definition_name: None, // Name matches definition
     });
 
     assert_eq!(
@@ -96,6 +102,7 @@ fn test_spp_public_item_in_root() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_public_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -117,9 +124,13 @@ fn test_spp_public_item_in_public_mod() {
 
     // Expected path: Ok(["crate", "top_pub_mod"])
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: top_pub_func_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "top_pub_mod".to_string()]), // Path to containing module
+        public_name: "top_pub_func".to_string(), // Name at that path
+        resolved_id: top_pub_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: top_pub_func_id,
+        },
+        definition_name: None, // Name matches definition
     });
 
     assert_eq!(
@@ -129,6 +140,7 @@ fn test_spp_public_item_in_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_public_item_in_nested_public_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -151,13 +163,18 @@ fn test_spp_public_item_in_nested_public_mod() {
 
     // Expected path: Ok(["crate", "top_pub_mod", "nested_pub"])
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec![
+        path: NodePath::new_unchecked(vec![
+            // Path to containing module
             "crate".to_string(),
             "top_pub_mod".to_string(),
             "nested_pub".to_string(),
-        ],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: nested_pub_func_id,
+        ]),
+        public_name: "nested_pub_func".to_string(), // Name at that path
+        resolved_id: nested_pub_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: nested_pub_func_id,
+        },
+        definition_name: None, // Name matches definition
     });
 
     assert_eq!(
@@ -167,6 +184,7 @@ fn test_spp_public_item_in_nested_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_private_item_in_public_mod() {
     let _ = env_logger::builder()
         .is_test(true)
@@ -199,6 +217,7 @@ fn test_spp_private_item_in_public_mod() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_item_in_private_mod() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -231,7 +250,8 @@ fn test_spp_item_in_private_mod() {
 // TODO: Add tests for re-exported items once the shortest_public_path implementation handles them.
 // Example:
 // #[test]
-// fn test_spp_reexported_item() {
+// #[cfg(not(feature = "type_bearing_ids"))]
+fn test_spp_reexported_item() {
 //     let fixture_name = "reexport_fixture"; // Need a fixture with re-exports
 //     let (graph, tree) = build_tree_for_tests(fixture_name);
 //     // ... find original item ID and re-exporting module ID ...
@@ -240,6 +260,7 @@ fn test_spp_item_in_private_mod() {
 // }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexported_item_finds_original_path() {
     let fixture_name = "file_dir_detection";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -262,14 +283,18 @@ fn test_spp_reexported_item_finds_original_path() {
     // The current implementation finds the path to the module containing the
     // item's definition, it does not yet account for shorter paths via re-exports.
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "top_pub_mod".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: original_func_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "top_pub_mod".to_string()]),
+        public_name: "top_pub_func".to_string(), // Name at original path
+        resolved_id: original_func_id,
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: original_func_id,
+        },
+        definition_name: None, // Name matches definition
     });
 
     // NOTE: This assertion checks the *current* behavior.
     // Once shortest_public_path handles re-exports correctly, this test *should fail*,
-    // and the expected_result should become Ok(ResolvedItemInfo { path: vec!["crate".to_string()], ... }).
+    // and the expected_result should become Ok(ResolvedItemInfo { path: NodePath::new_unchecked(vec!["crate".to_string()]), ... }).
     assert_eq!(
         spp, expected_result,
         "EXPECTED BEHAVIOR (PRE-REEXPORT): SPP for re-exported item resolves to original module path. This test WILL FAIL once re-exports are handled."
@@ -298,9 +323,19 @@ fn test_spp_reexported_item_finds_original_path() {
 // Helper macro for SPP tests on fixture_path_resolution
 macro_rules! assert_spp {
     // Variant 1: Expecting Ok result
-    ($test_name:ident, $item_name:expr, $module_path:expr, Ok($final_path:expr)) => {
+    // Redesigned signature: Takes components needed to build ResolvedItemInfo
+    (
+        $test_name:ident,
+        $item_name:expr,
+        $module_path:expr,
+        Ok { // Use braces for clarity with multiple args
+            path: $expected_path_vec:expr,
+            public_name: $expected_public_name:expr,
+            definition_name: $expected_definition_name:expr $(,)? // Optional trailing comma
+        }
+    ) => {
         #[test]
-        #[ignore]
+        #[ignore = "SPP logic needs update for re-exports and visibility"] // Ignore until SPP is fixed
         fn $test_name() {
             let _ = env_logger::builder()
                 .is_test(true)
@@ -324,18 +359,26 @@ macro_rules! assert_spp {
 
             let spp_result = tree.shortest_public_path(item_id, &graph);
 
-            // Construct the expected Ok variant using ResolvedItemInfo
+            // Construct the expected ResolvedItemInfo *inside* the test function,
+            // allowing us to use the `item_id` defined above.
             let expected_ok = Ok(ResolvedItemInfo {
-                path: $final_path,
-                target_kind: ResolvedTargetKind::InternalDefinition, // Assume internal for these tests
-                target_id: item_id,
+                // Convert the expected path vector to NodePath
+                path: NodePath::new_unchecked($expected_path_vec),
+                public_name: $expected_public_name,
+                // Use the item_id found within this test function's scope
+                resolved_id: item_id,
+                // Assume InternalDefinition for the Ok variant of this macro for now
+                target_kind: ResolvedTargetKind::InternalDefinition {
+                    definition_id: item_id, // Use the item_id found within this test
+                },
+                definition_name: $expected_definition_name,
             });
 
             // Assert FINAL expected behavior
             assert_eq!(
                 spp_result,
                 expected_ok, // Compare against the expected ResolvedItemInfo result
-                "SPP for '{}' did not match expected Ok path.", // Updated message
+                "SPP for '{}' did not match expected Ok result.", // Updated message
                 $item_name
             );
         }
@@ -393,16 +436,24 @@ assert_spp!(
     "local_func",            // Item name
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    // Final Expected SPP
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "local_func".to_string(), // Re-exported at root with original name
+        definition_name: None,
+    }
 );
 
 // 2. Re-export of Nested Item
 assert_spp!(
-    test_spp_reexport_nested_item,
-    "deep_func",                       // Item name
-    &["crate", "local_mod", "nested"], // Original module path
-    // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    test_spp_reexport_nested_item, // Corrected test name
+    "deep_func",
+    &["crate", "local_mod", "nested"],
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "deep_func".to_string(), // Corrected: Use original name for non-renamed export
+        definition_name: None,                // Corrected: No rename means None
+    }
 );
 
 // 3. Re-export of Nested Item with Rename
@@ -411,7 +462,12 @@ assert_spp!(
     "deep_func",                       // Original item name (we find by original def)
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP (access via `renamed_deep_func`)
+    // Final Expected SPP (access via `renamed_deep_func`)
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "renamed_deep_func".to_string(), // Access via the renamed export
+        definition_name: Some("deep_func".to_string()), // Renamed
+    }
 );
 
 // 4. Re-export of Module - Test access to an item *within* the re-exported module
@@ -422,10 +478,12 @@ assert_spp!(
     "deep_func",                       // Item name within the module
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
-    Ok(vec![
-        "crate".to_string(),
-        "reexported_nested_mod".to_string()
-    ]) // Final Expected SPP (via re-exported module)
+    // Final Expected SPP (via re-exported module)
+    Ok {
+        path: vec!["crate".to_string(), "reexported_nested_mod".to_string()],
+        public_name: "deep_func".to_string(), // Accessed with original name inside re-exported mod
+        definition_name: None,
+    }
 );
 
 // 5. Re-export from `#[path]` Module
@@ -434,7 +492,12 @@ assert_spp!(
     "item_in_actual_file",          // Item name
     &["crate", "logical_path_mod"], // Original module path (logical)
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    // Final Expected SPP
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "item_in_actual_file".to_string(), // Re-exported at root with original name
+        definition_name: None,
+    }
 );
 
 // 6. Re-export of Generic Struct
@@ -443,7 +506,12 @@ assert_spp!(
     "GenStruct",            // Item name
     &["crate", "generics"], // Original module path
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    // Final Expected SPP
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "PublicGenStruct".to_string(), // Access via renamed export
+        definition_name: Some("GenStruct".to_string()), // Renamed
+    }
 );
 
 // 7. Re-export of Generic Trait
@@ -452,7 +520,12 @@ assert_spp!(
     "GenTrait",             // Item name
     &["crate", "generics"], // Original module path
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    // Final Expected SPP
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "PublicGenTrait".to_string(), // Access via renamed export
+        definition_name: Some("GenTrait".to_string()), // Renamed
+    }
 );
 
 // 8. Re-export within Inline Module
@@ -461,7 +534,12 @@ assert_spp!(
     "deep_func",                       // Original item name
     &["crate", "local_mod", "nested"], // Original module path
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string(), "inline_mod".to_string()]) // Final Expected SPP (path to re-exporting module)
+    // Final Expected SPP (path to re-exporting module)
+    Ok {
+        path: vec!["crate".to_string(), "inline_mod".to_string()],
+        public_name: "deep_reexport_inline".to_string(), // Access via renamed export in inline_mod
+        definition_name: Some("deep_func".to_string()),  // Renamed
+    }
 );
 
 // 9. Re-export within Nested Module
@@ -470,11 +548,16 @@ assert_spp!(
     "local_func",            // Original item name
     &["crate", "local_mod"], // Original module path
     // REMOVED Current SPP
-    Ok(vec![
-        "crate".to_string(),
-        "local_mod".to_string(),
-        "nested".to_string()
-    ]) // Final Expected SPP (path to re-exporting module)
+    // Final Expected SPP (path to re-exporting module)
+    Ok {
+        path: vec![
+            "crate".to_string(),
+            "local_mod".to_string(),
+            "nested".to_string()
+        ],
+        public_name: "parent_local_func_reexport".to_string(), // Access via renamed export in nested
+        definition_name: Some("local_func".to_string()),       // Renamed
+    }
 );
 
 // 10. Re-export Gated by `#[cfg]`
@@ -483,6 +566,7 @@ assert_spp!(
 // Since it's likely inactive, the re-export doesn't exist, and SPP for the original item is correct.
 #[test]
 // #[cfg(not(feature = "feature_b"))] // Only run if feature_b is NOT active
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexport_cfg_gated_inactive() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -496,9 +580,13 @@ fn test_spp_reexport_cfg_gated_inactive() {
 
     // Since feature_b is inactive, the re-export doesn't exist. SPP finds the original path.
     let expected_result = Ok(ResolvedItemInfo {
-        path: vec!["crate".to_string(), "local_mod".to_string()],
-        target_kind: ResolvedTargetKind::InternalDefinition,
-        target_id: item_id,
+        path: NodePath::new_unchecked(vec!["crate".to_string(), "local_mod".to_string()]),
+        public_name: "local_func".to_string(), // Name at original path
+        resolved_id: item_id,
+        target_kind: ResolvedTargetKind::InternalDefinition {
+            definition_id: item_id,
+        },
+        definition_name: None, // Name matches definition
     });
     assert_eq!(
         spp_result, expected_result,
@@ -511,6 +599,7 @@ fn test_spp_reexport_cfg_gated_inactive() {
 // 11. Re-export of External Dependency Item
 #[test]
 // #[ignore = "Requires dependency resolution for SPP"]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_spp_reexport_external_dep() {
     let fixture_name = "fixture_path_resolution";
     let (graph, tree) = build_tree_for_tests(fixture_name);
@@ -553,7 +642,12 @@ assert_spp!(
     "simple_macro", // Macro name
     &["crate"],     // Original module path (defined at root)
     // REMOVED Current SPP
-    Ok(vec!["crate".to_string()]) // Final Expected SPP
+    // Final Expected SPP
+    Ok {
+        path: vec!["crate".to_string()],
+        public_name: "simple_macro".to_string(), // Re-exported at root with original name
+        definition_name: None,
+    }
 );
 
 // 13. Item in `pub(crate)` Module

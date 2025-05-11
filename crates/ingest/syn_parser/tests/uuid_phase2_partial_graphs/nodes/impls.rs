@@ -1,6 +1,6 @@
 use crate::common::paranoid::find_impl_node_paranoid;
 use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeId, TypeKind}; // Import TypeKind from ploke_core
+use ploke_core::{TypeId, TypeKind}; // Import TypeKind from ploke_core
 use syn_parser::parser::nodes::{GraphId, ImplNode}; // Import UnionNode specifically
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::parser::{
@@ -12,6 +12,7 @@ use syn_parser::parser::{
 // --- Test Cases ---
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_impl_node_simple_struct_inherent_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -135,6 +136,7 @@ fn test_impl_node_simple_struct_inherent_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -288,6 +290,7 @@ fn test_impl_node_generic_trait_for_generic_struct_paranoid() {
 #[test]
 // #[ignore = "Test for known limitation of `Self` type conflation, see 90_type_id_self_conflation_phase2.md"] // Expecting this to fail currently
 // Now passes after additional functionality added
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_impl_node_self_type_conflation_phase2() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

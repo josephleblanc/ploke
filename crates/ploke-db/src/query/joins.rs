@@ -6,6 +6,7 @@
 //! - Recursive queries (for module hierarchy, etc)
 
 /// Join specification
+#[allow(dead_code)]
 pub struct Join {
     // Will specify:
     // - Source and target relations

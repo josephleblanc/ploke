@@ -1,14 +1,41 @@
-use ploke_core::{NodeId, TrackingHash};
+use ploke_core::TrackingHash;
+use serde::{Deserialize, Serialize};
+// removed GenerateNodeInfo
 
-use super::*;
+use super::*; // Keep for other node types, VisibilityKind etc.
+
+// --- Macro Node ---
+
+// Removed the macro invocation for MacroNodeInfo
 
 // Represents a macro definition
-impl GraphNode for MacroNode {
-    fn id(&self) -> NodeId {
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)] // Add derive
+pub struct MacroNode {
+    pub id: MacroNodeId, // Use typed ID
+    pub name: String,
+    pub span: (usize, usize),
+    pub visibility: VisibilityKind,
+    pub kind: MacroKind,
+    pub attributes: Vec<Attribute>,
+    pub docstring: Option<String>,
+    pub body: Option<String>,
+    pub tracking_hash: Option<TrackingHash>,
+    pub cfgs: Vec<String>,
+}
+
+impl MacroNode {
+    /// Returns the typed ID for this macro node.
+    pub fn macro_id(&self) -> MacroNodeId {
         self.id
     }
-    fn visibility(&self) -> VisibilityKind {
-        self.visibility.clone()
+}
+
+impl GraphNode for MacroNode {
+    fn any_id(&self) -> AnyNodeId {
+        self.id.into() // Return base NodeId
+    }
+    fn visibility(&self) -> &VisibilityKind {
+        &self.visibility
     }
 
     fn name(&self) -> &str {
@@ -29,27 +56,8 @@ impl HasAttributes for MacroNode {
         &self.attributes
     }
 }
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct MacroNode {
-    pub id: NodeId,
-    pub name: String,
-    pub span: (usize, usize), // Add span field
-    pub visibility: VisibilityKind,
-    pub kind: MacroKind,
-    pub attributes: Vec<Attribute>,
-    pub docstring: Option<String>,
-    pub body: Option<String>,
-    pub tracking_hash: Option<TrackingHash>,
-    pub cfgs: Vec<String>, // NEW: Store raw CFG strings for this item
-}
 
-// Represents a macro rule
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct MacroRuleNode {
-    pub id: NodeId,
-    pub pattern: String,
-    pub expansion: String,
-}
+// Removed MacroRuleNode for now (complex to implement)
 
 // Different kinds of macros
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]

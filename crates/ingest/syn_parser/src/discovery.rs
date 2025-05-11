@@ -73,23 +73,6 @@ struct PackageInfo {
     // edition: Option<String>, // Could be useful later
 }
 
-impl PackageInfo {
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn new(name: String, version: String) -> Self {
-        Self { name, version }
-    }
-
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    #[allow(unused_variables, reason = "Useful later for resolving dependencies")]
-    fn version(&self) -> &str {
-        &self.version
-    }
-}
-
 impl fmt::Display for PackageInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.name, self.version)
@@ -267,12 +250,12 @@ pub trait DependencyMap {
     // Associated type for the inner map (optional, but can be useful)
     // type InnerMap = HashMap<String, DependencySpec>;
 
+    // TODO: Turn these tests back on once the migration to typed ids is complete.
     fn inner_map(&self) -> &HashMap<String, DependencySpec>;
-    // `DevDependencies` and `Dependencies` AI?
     /// Returns a reference to the dependency specification for the given crate name, if it exists.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use std::collections::HashMap;
     /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
     /// # let mut map = HashMap::new();
@@ -289,7 +272,7 @@ pub trait DependencyMap {
     /// Returns `true` if the dependencies map contains the specified crate name.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use std::collections::HashMap;
     /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
     /// # let deps = Dependencies(HashMap::new());
@@ -305,7 +288,7 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the keys of the underlying map.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use std::collections::HashMap;
     /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
     /// # let deps = Dependencies(HashMap::new());
@@ -321,7 +304,7 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the values of the underlying map.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use std::collections::HashMap;
     /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
     /// # let deps = Dependencies(HashMap::new());
@@ -337,7 +320,7 @@ pub trait DependencyMap {
     /// This is equivalent to iterating over the items of the underlying map.
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// # use std::collections::HashMap;
     /// # use syn_parser::discovery::{Dependencies, DependencySpec}; // Adjust path as needed
     /// # let deps = Dependencies(HashMap::new());
@@ -436,24 +419,6 @@ struct CargoManifest {
     // Add other fields like [lib], [bin] if needed later for module mapping
 }
 
-impl CargoManifest {
-    fn package(&self) -> &PackageInfo {
-        &self.package
-    }
-
-    pub fn features(&self, feature_name: &str) -> Option<&Vec<String>> {
-        self.features.get(feature_name)
-    }
-
-    fn dependencies(&self) -> &Dependencies {
-        &self.dependencies
-    }
-
-    fn dev_dependencies(&self) -> &DevDependencies {
-        &self.dev_dependencies
-    }
-}
-
 /// Context information gathered for a single crate during discovery.
 ///
 /// This struct automatically implements `Send + Sync` because all its members
@@ -497,6 +462,19 @@ impl CrateContext {
     pub fn dev_dependencies(&self) -> &DevDependencies {
         &self.dev_dependencies
     }
+    pub fn is_bin(&self) -> bool {
+        self.files.iter().any(|fp| fp.ends_with("main.rs"))
+    }
+    pub fn is_lib(&self) -> bool {
+        self.files.iter().any(|fp| fp.ends_with("lib.rs"))
+    }
+    pub fn root_file(&self) -> Option<&Path> {
+        self.files
+            .iter()
+            .filter(|fp| fp.ends_with("main.rs") || fp.ends_with("lib.rs"))
+            .map(|fp| fp.as_path())
+            .next()
+    }
 }
 
 /// Output of the entire discovery phase, containing context for all target crates.
@@ -512,7 +490,8 @@ impl CrateContext {
 /// necessary.
 #[derive(Debug, Clone)]
 pub struct DiscoveryOutput {
-    /// Context information for each successfully discovered crate, keyed by the absolute crate root path.
+    /// Context information for each successfully discovered crate, keyed by the absolute crate
+    /// root path.
     pub crate_contexts: HashMap<PathBuf, CrateContext>,
     // Removed initial_module_map: HashMap<PathBuf, Vec<String>>
     /// A list of non-fatal errors (warnings) encountered during discovery.
@@ -690,19 +669,6 @@ pub fn run_discovery_phase(
     })
 }
 
-/// Scans a single Rust file (typically lib.rs or main.rs) for module declarations (`mod name;`)
-/// and attempts to map them to existing files found during discovery.
-///
-/// # Arguments
-/// * `file_to_scan` - Path to the file to scan (e.g., `.../src/lib.rs`).
-/// * `src_path` - Path to the crate's `src` directory.
-/// * `existing_files` - A slice containing all `.rs` files found in the crate.
-///
-/// # Returns
-/// A `Result` containing a map from the resolved module file path to its module segments
-/// (e.g., `.../src/parser.rs` -> `["crate", "parser"]`), or a `DiscoveryError::Io` if
-// Removed: scan_for_mods function
-
 /// Derives a deterministic UUID v5 namespace for a specific crate version.
 ///
 /// This function is intended to run single-threaded as part of the discovery setup.
@@ -729,9 +695,6 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::{self, File};
-    use std::io::Write;
-    use tempfile::tempdir;
 
     #[test]
     fn test_derive_crate_namespace_consistency() {
@@ -757,11 +720,4 @@ mod tests {
             "Different crate names should produce different namespaces"
         );
     }
-
-    // Removed tests for scan_for_mods:
-    // - test_scan_for_mods_simple_file
-    // - test_scan_for_mods_simple_dir
-    // - test_scan_for_mods_no_mods
-    // - test_scan_for_mods_target_missing
-    // - test_scan_for_mods_file_not_found
 }

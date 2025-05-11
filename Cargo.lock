@@ -122,6 +122,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.98"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e16d2d3311acee920a9eb8d33b8cbc1787ce4a264e85f964c2404b969bdcd487"
+
+[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,6 +547,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_test_helpers"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "ploke-core",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -558,10 +576,6 @@ checksum = "95249b50c6c185bee49034bcb378a49dc2b5dff0be90ff6616d31d64febab05d"
 dependencies = [
  "litrs",
 ]
-
-[[package]]
-name = "duplicate_name_crate"
-version = "0.1.0"
 
 [[package]]
 name = "either"
@@ -622,10 +636,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "example_crate"
-version = "0.1.0"
-
-[[package]]
 name = "fast-float2"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -647,79 +657,6 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
-
-[[package]]
-name = "file_dir_detection"
-version = "0.1.0"
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
-
-[[package]]
-name = "fixture_attributes"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_conflation"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_cyclic_types"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_edge_cases"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_generics"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_macros"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_nodes"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "fixture_path_resolution"
-version = "0.1.0"
-dependencies = [
- "log",
- "ploke-core",
- "regex",
- "serde",
- "thiserror 2.0.12",
- "uuid",
-]
-
-[[package]]
-name = "fixture_spp_edge_cases"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_spp_edge_cases_no_cfg"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_test_crate"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_tracking_hash"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_types"
-version = "0.1.0"
 
 [[package]]
 name = "flume"
@@ -855,6 +792,12 @@ name = "hashbrown"
 version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf151400ff0baff5465007dd2f3e717f3fe502074ca563069ce3a6629d07b289"
+
+[[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hermit-abi"
@@ -1434,16 +1377,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petgraph"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
-dependencies = [
- "fixedbitset",
- "indexmap 2.8.0",
-]
-
-[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1505,6 +1438,7 @@ dependencies = [
 name = "ploke-core"
 version = "0.1.0"
 dependencies = [
+ "cozo",
  "proc-macro2",
  "serde",
  "thiserror 2.0.12",
@@ -1516,7 +1450,7 @@ name = "ploke-db"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "ploke-graph",
+ "ploke-transform",
  "serde",
  "serde_json",
  "syn_parser",
@@ -1529,19 +1463,35 @@ name = "ploke-embed"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "ploke-graph",
+ "ploke-transform",
  "serde",
  "syn_parser",
 ]
 
 [[package]]
-name = "ploke-graph"
+name = "ploke-error"
 version = "0.1.0"
 dependencies = [
- "cozo",
- "itertools 0.12.1",
- "ploke-test-utils",
- "serde",
+ "proc-macro2",
+ "thiserror 2.0.12",
+]
+
+[[package]]
+name = "ploke-test-macros"
+version = "0.1.0"
+dependencies = [
+ "colored",
+ "env_logger 0.11.8",
+ "heck",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "ploke-common",
+ "ploke-core",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
  "syn_parser",
 ]
 
@@ -1549,12 +1499,29 @@ dependencies = [
 name = "ploke-test-utils"
 version = "0.1.0"
 dependencies = [
+ "log",
  "ploke-common",
  "ploke-core",
+ "ploke-error",
  "proc-macro2",
  "serde",
  "syn_parser",
  "uuid",
+]
+
+[[package]]
+name = "ploke-transform"
+version = "0.1.0"
+dependencies = [
+ "cozo",
+ "env_logger 0.11.8",
+ "itertools 0.14.0",
+ "log",
+ "ploke-core",
+ "ploke-test-utils",
+ "serde",
+ "serde_json",
+ "syn_parser",
 ]
 
 [[package]]
@@ -1589,6 +1556,30 @@ checksum = "a0bda9164fe05bc9225752d54aae413343c36f684380005398a6a8fde95fe785"
 dependencies = [
  "autocfg",
  "indexmap 1.9.3",
+]
+
+[[package]]
+name = "proc-macro-error"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
+dependencies = [
+ "proc-macro-error-attr",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "version_check",
 ]
 
 [[package]]
@@ -1944,10 +1935,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple_crate"
-version = "0.1.0"
-
-[[package]]
 name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2102,17 +2089,21 @@ dependencies = [
 name = "syn_parser"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "colored",
  "cozo",
  "dashmap 6.1.0",
+ "derive_test_helpers",
  "env_logger 0.11.8",
  "flume",
  "itertools 0.14.0",
+ "lazy_static",
  "log",
  "parse_cfg",
- "petgraph",
  "ploke-common",
  "ploke-core",
+ "ploke-error",
+ "ploke-test-macros",
  "proc-macro2",
  "quote",
  "rayon",
@@ -2120,12 +2111,24 @@ dependencies = [
  "serde",
  "serde_json",
  "syn 2.0.100",
+ "syn_parser_macros",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "toml",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "syn_parser_macros"
+version = "0.1.0"
+dependencies = [
+ "ploke-core",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 //! Common test helpers for graph tests
 
 use cozo::{Db, MemStorage};
-use ploke_graph::schema::create_schema;
+use ploke_transform::schema::create_schema;
 
 /// Creates a new in-memory database with the schema initialized
 pub fn setup_test_db() -> Db<MemStorage> {

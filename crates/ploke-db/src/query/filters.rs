@@ -7,6 +7,7 @@
 //! - Composite conditions (AND/OR)
 
 /// Filter condition representation
+#[allow(dead_code)]
 pub enum Filter {
     // Will represent:
     // - Property comparisons

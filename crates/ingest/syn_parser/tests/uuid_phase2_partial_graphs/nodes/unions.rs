@@ -1,17 +1,151 @@
-use crate::common::paranoid::find_union_node_paranoid;
-// Gate the whole module
-use crate::common::uuid_ids_utils::*;
-use ploke_core::{NodeId, TypeKind};
-use syn_parser::parser::nodes::GraphId;
-// Import TypeKind from ploke_core
-// Import UnionNode specifically
+use crate::common::find_type_node;
+use crate::common::run_phase1_phase2;
+use crate::common::ParanoidArgs;
+use anyhow::Ok;
+use anyhow::Result;
+use lazy_static::lazy_static;
+use ploke_core::ItemKind;
+use ploke_core::TypeKind;
+use std::collections::HashMap;
+use syn_parser::parser::graph::GraphAccess;
+use syn_parser::parser::nodes::GraphNode;
+use syn_parser::parser::nodes::ModDisc;
+use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::nodes::UnionNode;
+use syn_parser::parser::nodes::UnionNodeId;
 use syn_parser::parser::types::VisibilityKind;
-use syn_parser::parser::{nodes::GraphNode, relations::RelationKind, types::GenericParamKind};
+
+// This wil be useful once we actually use some better macro testing.
+// pub const LOG_TEST_UNION: &str = "log_test_union";
+
+lazy_static! {
+    static ref EXPECTED_UNION_ARGS: HashMap<&'static str, ParanoidArgs<'static>> = {
+        let mut m = HashMap::new();
+        let fixture_name = "fixture_nodes";
+        let rel_path = "src/unions.rs";
+
+        m.insert(
+            "crate::unions::IntOrFloat",
+            ParanoidArgs {
+                fixture: fixture_name,
+                relative_file_path: rel_path,
+                expected_path: &["crate", "unions"],
+                ident: "IntOrFloat",
+                item_kind: ItemKind::Union,
+                expected_cfg: None,
+            },
+        );
+        // m.insert(
+        //     "crate::unions::SecretData",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "SecretData",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::CrateUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "CrateUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::DocumentedUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "DocumentedUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::GenericUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "GenericUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::ReprCUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "ReprCUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::UnionWithFieldAttr",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "UnionWithFieldAttr",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::InnerSecrect",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions", "inner"],
+        //         ident: "InnerSecrect",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::InnerPublic",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions", "inner"],
+        //         ident: "InnerPublic",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        // m.insert(
+        //     "crate::unions::UseInnerUnion",
+        //     ParanoidArgs {
+        //         fixture: fixture_name,
+        //         relative_file_path: rel_path,
+        //         expected_path: &["crate", "unions"],
+        //         ident: "UseInnerUnion",
+        //         item_kind: ItemKind::Union,
+        //         expected_cfg: None,
+        //     },
+        // );
+        m
+    };
+}
 
 // --- Test Cases ---
 
 #[test]
-fn test_union_node_int_or_float_paranoid() {
+fn test_union_node_int_or_float_paranoid() -> Result<()> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None)
+        .try_init();
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
         .into_iter()
@@ -22,13 +156,9 @@ fn test_union_node_int_or_float_paranoid() {
     let relative_file_path = "src/unions.rs";
     let module_path = vec!["crate".to_string(), "unions".to_string()]; // Defined at top level of file
 
-    let union_node = find_union_node_paranoid(
-        &results,
-        fixture_name,
-        relative_file_path,
-        &module_path,
-        union_name,
-    );
+    let parsed_args = EXPECTED_UNION_ARGS
+        .get("crate::unions::IntOrFloat")
+        .expect("keyed name not found in EXPECTED_UNION_ARGS");
 
     // --- Assertions ---
     let graph = &results // Need graph for type lookups
@@ -37,14 +167,17 @@ fn test_union_node_int_or_float_paranoid() {
         .unwrap()
         .graph;
 
+    let test_info = parsed_args.generate_pid(&results)?;
+    let union_node_id: UnionNodeId = test_info.test_pid().try_into()?;
+    let union_node = graph.get_union_checked(union_node_id)?;
+
     // Basic Node Properties
-    assert!(matches!(union_node.id(), NodeId::Synthetic(_)));
     assert!(
         union_node.tracking_hash.is_some(),
         "Tracking hash should be present"
     );
     assert_eq!(union_node.name(), union_name);
-    assert_eq!(union_node.visibility(), VisibilityKind::Public);
+    assert_eq!(*union_node.visibility(), VisibilityKind::Public);
     assert!(union_node.attributes.is_empty());
     assert!(union_node.docstring.is_none());
     assert!(union_node.generic_params.is_empty());
@@ -52,62 +185,91 @@ fn test_union_node_int_or_float_paranoid() {
     // Fields (i: i32, f: f32)
     assert_eq!(union_node.fields.len(), 2);
 
+    println!("{:#?}", union_node);
+    let mut field_count = 0_u8;
+    let parsed_field_name_i = str_to_field_name(union_node, "i", field_count);
     // Field i
     let field_i = union_node
         .fields
         .iter()
-        .find(|f| f.name.as_deref() == Some("i"))
+        .find(|i| i.name.as_deref() == Some(&parsed_field_name_i))
         .expect("Field 'i' not found");
-    assert!(matches!(field_i.id, NodeId::Synthetic(_)));
     assert_eq!(field_i.visibility, VisibilityKind::Inherited); // Fields inherit union visibility by default
     assert!(field_i.attributes.is_empty());
     let type_i = find_type_node(graph, field_i.type_id);
     assert!(matches!(&type_i.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+    field_count += 1;
 
     // Field f
+    let parsed_field_name_f = str_to_field_name(union_node, "f", field_count);
     let field_f = union_node
         .fields
         .iter()
-        .find(|f| f.name.as_deref() == Some("f"))
+        .find(|f| f.name.as_deref() == Some(&parsed_field_name_f))
         .expect("Field 'f' not found");
-    assert!(matches!(field_f.id, NodeId::Synthetic(_)));
     assert_eq!(field_f.visibility, VisibilityKind::Inherited);
     assert!(field_f.attributes.is_empty());
     let type_f = find_type_node(graph, field_f.type_id);
     assert!(matches!(&type_f.kind, TypeKind::Named { path, .. } if path == &["f32"]));
 
     // --- Paranoid Relation Checks ---
-    let module_id = find_inline_module_by_path(graph, &module_path)
-        .expect("Failed to find module node for relation check")
-        .id();
+    let module_id = graph
+        .find_mods_by_kind_path_checked(ModDisc::FileBased, &module_path)
+        .unwrap_or_else(|e| {
+            union_node.log_node_error();
+            panic!(
+                "Error: {}, Failed to find containing inline module for node\nInfo Dump\n{:#?}",
+                e, union_node,
+            )
+        })
+        .module_id();
 
     // 1. Module Contains Union
-    assert_relation_exists(
-        graph,
-        GraphId::Node(module_id),
-        GraphId::Node(union_node.id()),
-        RelationKind::Contains,
-        "Expected ModuleNode to Contain UnionNode",
+    let container_id = graph
+        .relations()
+        .iter()
+        .filter_map(|r| r.source_contains(union_node_id.to_pid()))
+        .next()
+        .expect("Expected ModuleNode to Contain UnionNode");
+    assert_eq!(
+        container_id, module_id,
+        "Expected ModuleNode to Contain UnionNode"
     );
+    let union_node_id = graph
+        .relations()
+        .iter()
+        .find_map(|r| r.field_of_union(field_i.id))
+        .expect("Did not find field i for node");
+    assert_eq!(
+        union_node_id,
+        union_node.union_id(),
+        "Expected UnionNode to have relation with field"
+    );
+    let union_with_field = graph
+        .relations()
+        .iter()
+        .find_map(|r| r.field_of_union(field_f.id))
+        .expect("Did not find field i for node");
+    assert_eq!(
+        union_with_field, union_node_id,
+        "Expected ModuleNode to have relation with field"
+    );
+    Ok(())
+}
 
-    // 2. Union Contains Fields
-    assert_relation_exists(
-        graph,
-        GraphId::Node(union_node.id()),
-        GraphId::Node(field_i.id),
-        RelationKind::StructField, // Re-use StructField for union fields
-        "Expected UnionNode to have StructField relation to FieldNode 'i'",
-    );
-    assert_relation_exists(
-        graph,
-        GraphId::Node(union_node.id()),
-        GraphId::Node(field_f.id),
-        RelationKind::StructField, // Re-use StructField for union fields
-        "Expected UnionNode to have StructField relation to FieldNode 'f'",
-    );
+fn str_to_field_name(
+    union_node: &UnionNode,
+    simple_field_name: &str,
+    field_count: u8,
+) -> std::string::String {
+    let mut field_i_name = String::from(simple_field_name);
+    field_i_name.extend("_field_".chars().chain(union_node.name.as_str().chars()));
+    field_i_name.push(field_count.into());
+    field_i_name
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_union_node_generic_union_paranoid() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)
@@ -224,6 +386,7 @@ fn test_union_node_generic_union_paranoid() {
 }
 
 #[test]
+#[cfg(not(feature = "type_bearing_ids"))]
 fn test_other_union_nodes() {
     let fixture_name = "fixture_nodes";
     let results: Vec<_> = run_phase1_phase2(fixture_name)

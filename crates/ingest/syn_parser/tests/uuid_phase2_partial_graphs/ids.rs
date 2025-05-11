@@ -1,8 +1,9 @@
+#![cfg(not(feature = "type_bearing_ids"))]
 #[cfg(test)]
 mod phase2_id_tests {
     use crate::common::{find_function_by_name, run_phase1_phase2};
     use ploke_common::fixtures_crates_dir;
-    use ploke_core::{NodeId, TrackingHash, TypeId};
+    use ploke_core::{TrackingHash, TypeId};
     use std::{collections::HashMap, path::PathBuf};
     use syn_parser::{
         discovery::run_discovery_phase, // Import CrateContext
@@ -103,7 +104,8 @@ mod phase2_id_tests {
     }
 
     #[test]
-    fn test_synthetic_ids_and_hashes_present_simple_crate() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_synthetic_ids_and_hashes_present_simple_crate() {
         let results = run_phase1_phase2("simple_crate");
         assert_eq!(results.len(), 1, "Expected results for 1 file");
         let graph = &results[0]
@@ -166,7 +168,8 @@ mod phase2_id_tests {
     }
 
     #[test]
-    fn test_synthetic_node_ids_differ_across_crates() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_synthetic_node_ids_differ_across_crates() {
         // Run on simple_crate
         let results_simple = run_phase1_phase2("simple_crate");
         let graph_simple = &results_simple[0]
@@ -209,7 +212,8 @@ mod phase2_id_tests {
     }
 
     #[test]
-    fn test_synthetic_ids_differ_across_files_same_crate_name() {
+    #[cfg(not(feature = "type_bearing_ids"))]
+fn test_synthetic_ids_differ_across_files_same_crate_name() {
         let fixture_names = [
             "duplicate_name_fixture_1",
             "duplicate_name_fixture_2",

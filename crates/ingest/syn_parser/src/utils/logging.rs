@@ -1,10 +1,19 @@
-pub(crate) const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
-pub(crate) const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
-pub(crate) const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
-pub(crate) const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
-pub(crate) const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
+pub const LOG_TARGET_VIS: &str = "mod_tree_vis"; // Define log target for visibility checks
+pub const LOG_TARGET_BUILD: &str = "mod_tree_build"; // Define log target for build checks
+pub const LOG_TARGET_PATH_ATTR: &str = "mod_tree_path"; // Define log target for path attribute handling
+pub const LOG_TARGET_PATH_CFGS: &str = "mod_tree_cfgs"; // Define log target for path attribute handling
+pub const LOG_TARGET_BFS: &str = "mod_tree_bfs"; // Define log target for path attribute handling
+pub const LOG_TARGET_GRAPH_FIND: &str = "graph_find"; // Define log target for this file
+pub const LOG_TARGET_MOD_TREE_BUILD: &str = "mod_tree_build"; // Define log target for tree build
+pub const LOG_TARGET_NODE: &str = "node_info"; // Define log target for visibility checks
+pub const LOG_TARGET_RELS: &str = "rels"; // Define log target for relation checks
+pub const LOG_TARGET_NODE_ID: &str = "node_id";
+
+/// Good for debugging the inputs to id generation. Shows the inputs for each generated ID.
+/// Logs generated inputs to id gen during:
+/// - parsing by `VisitorState` in internal.rs
+/// - testing by `ParanoidArgs` in tests/common/mod.rs
+pub const LOG_TEST_ID_REGEN: &str = "test_id_regen";
 
 // Color scheme constants (Tokyo Night inspired)
 const COLOR_HEADER: Color = Color::TrueColor {
@@ -81,14 +90,13 @@ const COLOR_SPRING_GREEN: Color = Color::TrueColor {
 }; // #73daca - Teal/Spring Green (Types)
 
 use crate::{
-    parser::nodes::{ImportNode, NodePath},
-    resolve::module_tree::{ModuleTree, ModuleTreeError},
+    parser::nodes::{AnyNodeId, ImportNode, ImportNodeId, NodePath},
+    resolve::{module_tree::ModuleTree, ModuleTreeError},
 };
 pub use colored::Colorize;
 
 use colored::{Color, ColoredString};
 use log::debug;
-use ploke_core::NodeId;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -96,7 +104,7 @@ use std::{
 
 use crate::parser::{
     nodes::{GraphNode, ModuleKind, ModuleNode, ModuleNodeId},
-    relations::Relation,
+    relations::SyntacticRelation,
     types::VisibilityKind,
 };
 
@@ -129,6 +137,9 @@ pub trait LogStyle: AsRef<str> {
     fn log_yellow(&self) -> ColoredString {
         self.as_ref().color(COLOR_YELLOW)
     }
+    fn log_warning(&self) -> ColoredString {
+        self.as_ref().color(COLOR_YELLOW).bold() // Using yellow bold for warnings
+    }
     fn log_magenta(&self) -> ColoredString {
         self.as_ref().color(COLOR_MAGENTA)
     }
@@ -157,7 +168,6 @@ pub trait LogStyle: AsRef<str> {
         format!("{:?}", self).normal()
     }
 }
-
 impl<T: AsRef<str> + ?Sized> LogStyle for T {}
 
 #[allow(warnings)]
@@ -185,6 +195,9 @@ pub trait LogStyleDebug: Debug {
     }
     fn log_yellow_debug(&self) -> ColoredString {
         format!("{:?}", self).color(COLOR_YELLOW)
+    }
+    fn log_warning_debug(&self) -> ColoredString {
+        format!("{:?}", self).color(COLOR_YELLOW).bold()
     }
     fn log_magenta_debug(&self) -> ColoredString {
         format!("{:?}", self).color(COLOR_MAGENTA)
@@ -238,12 +251,12 @@ pub trait LogDataStructure {
             "BFS ".log_header(),
             step.white().italic(),
             g_node.name().log_name(),
-            g_node.id().to_string().log_id(),
+            g_node.any_id().to_string().log_id(),
             g_node.kind().log_vis_debug(),
             g_node.visibility().log_name_debug(),
         )
     }
-    fn log_bfs_path(&self, id: NodeId, path: &[String], step: &str) {
+    fn log_bfs_path(&self, id: ModuleNodeId, path: &[String], step: &str) {
         debug!( target: LOG_TARGET_BFS,
             "{} {: <14} {: <12} {: <20} | {: <12}",
             "BFS ".log_header(),
@@ -269,13 +282,13 @@ pub trait LogDataStructure {
         );
     }
 
-    fn log_module_insert(&self, module: &ModuleNode, id: ModuleNodeId) {
+    fn log_module_insert(&self, module: &ModuleNode) {
         // Get the string representation of the module definition kind
         let def_kind_str = get_module_def_kind_str(module);
         debug!(target: LOG_TARGET_BUILD, "{} {} {} | {} | {}", // Added one more {} placeholder
             "Insert".log_header(),
             module.name.log_name(),
-            format!("({})", id).log_id(),
+            format!("({})", module.id).log_id(),
             def_kind_str.log_name(), // Log the kind using name style
             module.visibility.log_vis_debug()
         );
@@ -326,13 +339,11 @@ pub trait LogDataStructure {
             result.unwrap_or("✓").log_vis()
         );
     }
-    fn log_relation(&self, relation: Relation, note: Option<&str>) {
+    fn log_relation(&self, relation: SyntacticRelation, note: Option<&str>) {
         debug!(target: LOG_TARGET_PATH_ATTR,
-            "{} {}: {} → {} {}",
+            "{} | {} | {}",
             "Relation".log_header(),
-            format!("{:?}", relation.kind).log_name(),
-            relation.source.to_string().log_id(),
-            relation.target.to_string().log_id(),
+            relation,
             note.map(|n| format!("({})", n)).unwrap_or_default().log_vis()
         );
     }
@@ -469,7 +480,7 @@ pub trait LogDataStructure {
         );
     }
 
-    fn log_resolve_segment_relation(&self, target_id: NodeId) {
+    fn log_resolve_segment_relation(&self, target_id: AnyNodeId) {
         debug!(target: LOG_TARGET_MOD_TREE_BUILD,
             "  {} Relation Target ID: {}",
             "->".log_comment(),
@@ -504,27 +515,19 @@ pub trait LogDataStructure {
     }
 
     fn log_spp_check_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Check if root");
+        self.log_bfs_path(current_mod_id, path_to_item, "Check if root");
     }
 
     fn log_spp_found_root(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(current_mod_id.into_inner(), path_to_item, "Found root!");
+        self.log_bfs_path(current_mod_id, path_to_item, "Found root!");
     }
 
     fn log_spp_explore_containment(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            current_mod_id.into_inner(),
-            path_to_item,
-            "Explore Up (Containment)",
-        );
+        self.log_bfs_path(current_mod_id, path_to_item, "Explore Up (Containment)");
     }
 
     fn log_spp_explore_reexports(&self, current_mod_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            current_mod_id.into_inner(),
-            path_to_item,
-            "Explore Up (Re-exports)",
-        );
+        self.log_bfs_path(current_mod_id, path_to_item, "Explore Up (Re-exports)");
     }
 
     // --- Logging Helpers for explore_up_via_containment ---
@@ -554,7 +557,7 @@ pub trait LogDataStructure {
     }
 
     fn log_spp_containment_queue_parent(&self, parent_mod_id: ModuleNodeId, new_path: &[String]) {
-        self.log_bfs_path(parent_mod_id.into_inner(), new_path, "Queueing Parent");
+        self.log_bfs_path(parent_mod_id, new_path, "Queueing Parent");
     }
 
     fn log_spp_containment_parent_visited(&self, parent_mod_id: ModuleNodeId) {
@@ -577,14 +580,10 @@ pub trait LogDataStructure {
     // --- Logging Helpers for explore_up_via_reexports ---
 
     fn log_spp_reexport_start(&self, target_id: ModuleNodeId, path_to_item: &[String]) {
-        self.log_bfs_path(
-            target_id.into_inner(),
-            path_to_item,
-            "Start Re-export Explore",
-        );
+        self.log_bfs_path(target_id, path_to_item, "Start Re-export Explore");
     }
 
-    fn log_spp_reexport_missing_import_node(&self, import_node_id: NodeId) {
+    fn log_spp_reexport_missing_import_node(&self, import_node_id: ImportNodeId) {
         log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: ReExport relation points to non-existent ImportNode {}", import_node_id.to_string().log_id());
     }
 
@@ -607,24 +606,24 @@ pub trait LogDataStructure {
         new_path: &[String],
     ) {
         self.log_bfs_step(import_node, "Queueing Re-exporting Module");
-        self.log_bfs_path(reexporting_mod_id.into_inner(), new_path, "  New Path");
+        self.log_bfs_path(reexporting_mod_id, new_path, "  New Path");
     }
 
     fn log_spp_reexport_module_visited(&self, reexporting_mod_id: ModuleNodeId) {
         debug!(target: LOG_TARGET_BFS, "  {} Re-exporting module {} already visited.", "->".log_comment(), reexporting_mod_id.to_string().log_id());
     }
 
-    fn log_spp_reexport_no_container(&self, import_node_id: NodeId) {
+    fn log_spp_reexport_no_container(&self, import_node_id: ImportNodeId) {
         log::warn!(target: LOG_TARGET_MOD_TREE_BUILD, "SPP: No containing module found for ImportNode {}", import_node_id.to_string().log_id());
     }
 
     // --- Logging Helpers for is_accessible ---
 
-    fn log_access_missing_decl_node(&self, decl_id: NodeId, target_defn_id: NodeId) {
+    fn log_access_missing_decl_node(&self, decl_id: ModuleNodeId, target_defn_id: ModuleNodeId) {
         log::warn!(target: LOG_TARGET_VIS, "Declaration node {} not found for definition {}", decl_id.to_string().log_id(), target_defn_id.to_string().log_id());
     }
 
-    // --- Logging Helpers for find_declaring_file_dir ---
+    // --- Logging Helpers for get_file_declaring_dir ---
 
     fn log_find_decl_dir_missing_parent(&self, current_id: ModuleNodeId) {
         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "Inconsistent ModuleTree: Parent not found for module {} during file dir search.", current_id.to_string().log_id());
@@ -632,11 +631,7 @@ pub trait LogDataStructure {
 
     // --- Logging Helpers for process_path_attributes ---
 
-    fn log_path_attr_external_not_found(
-        &self,
-        decl_module_id: ModuleNodeId,
-        resolved_path: &PathBuf,
-    ) {
+    fn log_path_attr_external_not_found(&self, decl_module_id: ModuleNodeId, resolved_path: &Path) {
         log::warn!(
             target: LOG_TARGET_PATH_ATTR,
             "{} {} | {}",
@@ -660,7 +655,7 @@ pub trait LogDataStructure {
     fn wrap_resolution_error(
         &self,
         error: ModuleTreeError,
-        export_node_id: NodeId,
+        export_node_id: AnyNodeId,
         original_path_segments: &[String],
     ) -> ModuleTreeError {
         match error {
@@ -713,7 +708,7 @@ pub trait LogDataStructure {
 
     fn log_update_path_index_remove_inconsistency(
         &self,
-        removed_id: NodeId,
+        removed_id: ModuleNodeId,
         original_path: &NodePath,
         expected_def_mod_id: ModuleNodeId,
     ) {
@@ -757,7 +752,7 @@ pub trait LogDataStructure {
         &self,
         canonical_path: &NodePath,
         def_mod_id: ModuleNodeId,
-        existing_id: NodeId,
+        existing_id: ModuleNodeId,
     ) {
         log::error!(target: LOG_TARGET_MOD_TREE_BUILD, "{} Path index conflict: Tried to insert canonical path {} -> {} but path already mapped to {}. {}",
             "Error:".log_error(),
@@ -769,8 +764,110 @@ pub trait LogDataStructure {
     }
 }
 
+// --- New Trait for Error Logging ---
+
+use crate::parser::nodes::AnyNodeIdConversionError;
+use crate::parser::visitor::VisitorState; // Import VisitorState
+use ploke_core::ItemKind; // Import ItemKind
+
+/// Trait for logging specific conversion errors within the VisitorState.
+pub trait LogErrorConversion {
+    /// Logs an error when AnyNodeId fails to convert to GenericParamNodeId.
+    fn log_generic_param_id_conversion_error(
+        &self,
+        generic_param_name: &str,
+        item_kind: ItemKind, // Add item_kind for context
+        error: AnyNodeIdConversionError,
+    );
+
+    /// Logs an error when AnyNodeId fails to convert to ImportNodeId.
+    fn log_import_id_conversion_error(
+        &self,
+        import_name: &str,      // Name or placeholder like "<glob>" or "*"
+        import_path: &[String], // The path leading to the import
+        error: AnyNodeIdConversionError,
+    );
+
+    /// Logs an error when AnyNodeId fails to convert to FunctionNodeId.
+    fn log_function_id_conversion_error(
+        &self,
+        function_name: &str,
+        error: AnyNodeIdConversionError,
+    );
+
+    /// Logs an error when AnyNodeId fails to convert to MacroNodeId.
+    fn log_macro_id_conversion_error(&self, macro_name: &str, error: AnyNodeIdConversionError);
+}
+
+impl LogErrorConversion for VisitorState {
+    fn log_generic_param_id_conversion_error(
+        &self,
+        generic_param_name: &str,
+        item_kind: ItemKind,
+        _error: AnyNodeIdConversionError, // Error itself doesn't carry much info yet
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for generic parameter '{}' ({:?}) in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "GenericParamNodeId".log_id(),
+            generic_param_name.log_name(),
+            item_kind.log_vis_debug(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+        // Consider adding more context like parent_scope_id if helpful
+    }
+
+    fn log_import_id_conversion_error(
+        &self,
+        import_name: &str,
+        import_path: &[String],
+        _error: AnyNodeIdConversionError, // Error itself doesn't carry much info yet
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for import '{}' (path: [{}]) in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "ImportNodeId".log_id(),
+            import_name.log_name(),
+            import_path.join("::").log_path(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+    }
+
+    fn log_function_id_conversion_error(
+        &self,
+        function_name: &str,
+        _error: AnyNodeIdConversionError,
+    ) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for function '{}' in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "FunctionNodeId".log_id(),
+            function_name.log_name(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+    }
+
+    fn log_macro_id_conversion_error(&self, macro_name: &str, _error: AnyNodeIdConversionError) {
+        log::error!(target: LOG_TARGET_NODE_ID,
+            "{} Failed to convert {} to {} for macro '{}' in file '{}' at module path '[{}]'. This indicates an internal inconsistency.",
+            "ID Conversion Error:".log_error(),
+            "AnyNodeId".log_id(),
+            "MacroNodeId".log_id(),
+            macro_name.log_name(),
+            self.current_file_path.display().to_string().log_path(),
+            self.current_module_path.join("::").log_path()
+        );
+    }
+}
+
 /// Helper struct to hold context for accessibility logging.
-pub(crate) struct AccLogCtx<'a> {
+pub struct AccLogCtx<'a> {
     pub source_name: &'a str,
     pub target_name: &'a str,
     pub effective_vis: Option<&'a VisibilityKind>, // Store as Option<&VisibilityKind>
@@ -778,7 +875,7 @@ pub(crate) struct AccLogCtx<'a> {
 
 impl<'a> AccLogCtx<'a> {
     /// Creates a new context for logging accessibility checks.
-    pub(crate) fn new(
+    pub fn new(
         source_id: ModuleNodeId,                   // Keep ID args for name lookup
         target_id: ModuleNodeId,                   // Keep ID args for name lookup
         effective_vis: Option<&'a VisibilityKind>, // Accept Option<&VisibilityKind>
@@ -805,7 +902,7 @@ impl<'a> AccLogCtx<'a> {
 }
 
 /// Helper function to get a string representation of the ModuleKind kind.
-pub(crate) fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
+pub fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
     match module.module_def {
         ModuleKind::FileBased { .. } => "File",
         ModuleKind::Inline { .. } => "Inline",
@@ -814,7 +911,7 @@ pub(crate) fn get_module_def_kind_str(module: &ModuleNode) -> &'static str {
 }
 
 /// Helper struct to hold context for path attribute logging.
-pub(crate) struct PathProcessingContext<'a> {
+pub struct PathProcessingContext<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub attr_value: Option<&'a str>,
@@ -822,12 +919,12 @@ pub(crate) struct PathProcessingContext<'a> {
 }
 
 /// Helper struct to hold context for path attribute logging.
-pub(crate) struct CfgLogCtx<'a> {
+pub struct CfgLogCtx<'a> {
     pub module_id: ModuleNodeId,
     pub module_name: &'a str,
     pub module_path: &'a [String], // Use slice for efficiency
-    pub module_cfgs: &'a [String],
-    // module_attrs: &'a [Attribute],
+    pub module_cfgs: &'a [String], // Changed to owned Vec<String>
+                                   // module_attrs: &'a [Attribute],
 }
 
 #[allow(dead_code, reason = "useful later for cfg-aware handling")]
@@ -835,11 +932,25 @@ impl<'a> CfgLogCtx<'a> {
     /// Creates a new context for logging path attribute processing.
     fn new(module_node: &'a ModuleNode) -> Self {
         Self {
-            module_id: ModuleNodeId::new(module_node.id()),
+            module_id: module_node.id, // Use the ID from the passed ModuleNode
             module_name: &module_node.name,
             module_path: &module_node.path,
-            module_cfgs: module_node.cfgs(),
-            // module_attrs: &module_node.attributes(),
+            module_cfgs: module_node.cfgs(), // Assign the owned Vec<String> directly
+                                             // module_attrs: &module_node.attributes(),
+        }
+    }
+}
+
+pub trait LogStyleBool {
+    fn log_bool(&self) -> ColoredString;
+}
+
+impl LogStyleBool for bool {
+    fn log_bool(&self) -> ColoredString {
+        if *self {
+            self.to_string().log_green()
+        } else {
+            self.to_string().log_error()
         }
     }
 }
