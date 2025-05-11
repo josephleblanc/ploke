@@ -1,10 +1,25 @@
 use super::*;
-// crates/error/src/warning.rs
+use std::path::PathBuf;
+
 #[derive(Debug, thiserror::Error)]
 pub enum WarningError {
-    #[error("File not in module tree: {0}")]
-    OrphanFile(PathBuf),
-    #[error("Unresolved reference: {0}")]
-    UnresolvedRef(String),
-    // ...
+    #[error("Unlinked modules detected")]
+    UnlinkedModules {
+        modules: Vec<String>,
+        #[backtrace]
+        backtrace: Backtrace,
+    },
+    
+    #[error("Orphaned file: {path}")]
+    OrphanFile {
+        path: PathBuf,
+        #[backtrace]
+        backtrace: Backtrace,
+    },
+    
+    #[error("Unresolved reference to {name}")]
+    UnresolvedRef {
+        name: String,
+        location: Option<String>,
+    },
 }
