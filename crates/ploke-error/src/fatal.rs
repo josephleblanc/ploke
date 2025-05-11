@@ -9,6 +9,7 @@ pub enum FatalError {
         path: Vec<String>,
         existing_id: String,
         conflicting_id: String,
+        backtrace: Backtrace,
     },
     
     #[error("Unresolved re-export")]

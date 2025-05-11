@@ -1,11 +1,13 @@
 use std::path::PathBuf;
+use std::backtrace::Backtrace;
+use std::backtrace::Backtrace;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WarningError {
     #[error("Unlinked modules detected: {modules:?}")]
     UnlinkedModules {
         modules: Vec<String>,
-        // backtrace: std::backtrace::Backtrace,
+        backtrace: Backtrace,
     },
 
     #[error("Orphaned file: {path}")]
