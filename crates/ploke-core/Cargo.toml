@@ -11,6 +11,7 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 thiserror = { workspace = true }
+cozo = { workspace = true }
 
 [features]
 default = []

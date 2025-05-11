@@ -578,10 +578,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "duplicate_name_crate"
-version = "0.1.0"
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -640,10 +636,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "example_crate"
-version = "0.1.0"
-
-[[package]]
 name = "fast-float2"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -667,76 +659,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
-name = "file_dir_detection"
-version = "0.1.0"
-
-[[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
-
-[[package]]
-name = "fixture_attributes"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_conflation"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_cyclic_types"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_edge_cases"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_generics"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_macros"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_nodes"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "fixture_path_resolution"
-version = "0.1.0"
-dependencies = [
- "log",
- "ploke-core",
- "regex",
- "serde",
- "thiserror 2.0.12",
- "uuid",
-]
-
-[[package]]
-name = "fixture_spp_edge_cases"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_spp_edge_cases_no_cfg"
-version = "0.1.0"
-
-[[package]]
 name = "fixture_test_crate"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_tracking_hash"
-version = "0.1.0"
-
-[[package]]
-name = "fixture_types"
 version = "0.1.0"
 
 [[package]]
@@ -1458,16 +1381,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "petgraph"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3672b37090dbd86368a4145bc067582552b29c27377cad4e0a306c97f9bd7772"
-dependencies = [
- "fixedbitset",
- "indexmap 2.8.0",
-]
-
-[[package]]
 name = "phf"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1529,6 +1442,7 @@ dependencies = [
 name = "ploke-core"
 version = "0.1.0"
 dependencies = [
+ "cozo",
  "proc-macro2",
  "serde",
  "thiserror 2.0.12",
@@ -1540,7 +1454,7 @@ name = "ploke-db"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "ploke-graph",
+ "ploke-transform",
  "serde",
  "serde_json",
  "syn_parser",
@@ -1553,18 +1467,7 @@ name = "ploke-embed"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "ploke-graph",
- "serde",
- "syn_parser",
-]
-
-[[package]]
-name = "ploke-graph"
-version = "0.1.0"
-dependencies = [
- "cozo",
- "itertools 0.12.1",
- "ploke-test-utils",
+ "ploke-transform",
  "serde",
  "syn_parser",
 ]
@@ -1598,6 +1501,19 @@ dependencies = [
  "serde",
  "syn_parser",
  "uuid",
+]
+
+[[package]]
+name = "ploke-transform"
+version = "0.1.0"
+dependencies = [
+ "cozo",
+ "itertools 0.14.0",
+ "ploke-core",
+ "ploke-test-utils",
+ "serde",
+ "serde_json",
+ "syn_parser",
 ]
 
 [[package]]
@@ -2011,10 +1927,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple_crate"
-version = "0.1.0"
-
-[[package]]
 name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2180,7 +2092,6 @@ dependencies = [
  "lazy_static",
  "log",
  "parse_cfg",
- "petgraph",
  "ploke-common",
  "ploke-core",
  "ploke-test-macros",

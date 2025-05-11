@@ -3,6 +3,22 @@ exclude = [
     "ai_workflow",
     "tests/fixture_crates/subdir/duplicate_name_fixture_3",
     "tests/fixture_crates/duplicate_name_fixture_2",
+    "tests/fixture_crates/fixture_conflation",
+    "tests/fixture_crates/fixture_attributes",
+    "tests/fixture_crates/duplicate_name_fixture_1",
+    "tests/fixture_crates/example_crate",
+    "tests/fixture_crates/file_dir_detection",
+    "tests/fixture_crates/fixture_cyclic_types",
+    "tests/fixture_crates/fixture_edge_cases",
+    "tests/fixture_crates/fixture_generics",
+    "tests/fixture_crates/fixture_macros",
+    "tests/fixture_crates/fixture_tracking_hash",
+    "tests/fixture_crates/fixture_types",
+    "tests/fixture_crates/simple_crate",
+    "tests/fixture_crates/fixture_nodes",
+    "tests/fixture_crates/fixture_path_resolution",
+    "tests/fixture_crates/fixture_spp_edge_cases",
+    "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
 ]
 resolver = "2"
 members = [
@@ -14,25 +30,9 @@ members = [
     "crates/test-utils",
     "fixture_test_crate",
     "crates/ploke-core",
-    "tests/fixture_crates/duplicate_name_fixture_1",
-    "tests/fixture_crates/example_crate",
-    "tests/fixture_crates/file_dir_detection",
-    "tests/fixture_crates/fixture_attributes",
-    "tests/fixture_crates/fixture_cyclic_types",
-    "tests/fixture_crates/fixture_edge_cases",
-    "tests/fixture_crates/fixture_generics",
-    "tests/fixture_crates/fixture_macros",
-    "tests/fixture_crates/fixture_tracking_hash",
-    "tests/fixture_crates/fixture_types",
-    "tests/fixture_crates/simple_crate",
-    "tests/fixture_crates/fixture_nodes",
-    "tests/fixture_crates/fixture_conflation",
-    "tests/fixture_crates/fixture_path_resolution",
-    "tests/fixture_crates/fixture_spp_edge_cases",
-    "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
     "proc_macros/syn_parser/syn_parser_macros",
     "proc_macros/syn_parser/ploke-test-macros",
-    "proc_macros/syn_parser/derive_test_helpers",
+    "proc_macros/syn_parser/derive_test_helpers", "crates/ploke-error",
     # Add more modules as needed
 ]
 
@@ -55,7 +55,6 @@ tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
 
 # Data structures and algorithms
-petgraph = "0.7.1"
 cozo = "0.7.6"
 uuid = { version = "1.16.0", features = ["v5", "atomic"] }
 
@@ -64,6 +63,9 @@ thiserror = "2"
 
 # Debugging
 log = "0.4"
+
+# Convenience
+itertools = "0.14"
 
 # Ploke Core Types
 ploke-core = { path = "crates/ploke-core", version = "0.1.0" }

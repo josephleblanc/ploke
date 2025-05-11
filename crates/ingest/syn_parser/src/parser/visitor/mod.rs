@@ -12,10 +12,11 @@ pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
 
 use crate::{
+    error::SynParserError,
     parser::{
         nodes::{ModuleNodeInfo, PrimaryNodeId},
         relations::SyntacticRelation,
-    }, // Import the new relation type
+    },
     utils::{LogStyle, LogStyleDebug, LOG_TARGET_RELS},
 };
 
@@ -322,7 +323,7 @@ fn debug_relationships(visitor: &CodeVisitor<'_>) {
 pub fn analyze_files_parallel(
     discovery_output: &DiscoveryOutput, // Takes output from Phase 1
     _num_workers: usize, // May not be directly used if relying on rayon's default pool size
-) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
+) -> Vec<Result<ParsedCodeGraph, SynParserError>> {
     // Adjust error type if needed
 
     log::debug!(target: "crate_context",
@@ -331,7 +332,7 @@ pub fn analyze_files_parallel(
         discovery_output.crate_contexts.len()
     );
 
-    let parsed_results: Vec<Result<ParsedCodeGraph, syn::Error>> = discovery_output
+    let parsed_results: Vec<Result<ParsedCodeGraph, SynParserError>> = discovery_output
         .crate_contexts
         .values() // Iterate over CrateContext values
         .par_bridge() // Bridge into a parallel iterator (efficient for HashMap values)
@@ -354,18 +355,26 @@ pub fn analyze_files_parallel(
                     logical_path, // Pass the derived path
                 ) 
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
+                .map_err(|e| e.into())
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) })
             })
         })
         .collect(); // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
 
-    let root_graph = parsed_results.iter().filter_map(|pr| pr.as_ref().ok()).find(|pr| pr.crate_context.is_some()).unwrap();
+    let root_graph = parsed_results
+        .iter()
+        .filter_map(|pr| pr.as_ref().ok())
+        .find(|pr| pr.crate_context.is_some())
+        .unwrap();
     log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
 
     parsed_results
 }
 
-fn set_root_context(crate_context: &crate::discovery::CrateContext, mut pg: ParsedCodeGraph) -> ParsedCodeGraph {
+fn set_root_context(
+    crate_context: &crate::discovery::CrateContext,
+    mut pg: ParsedCodeGraph,
+) -> ParsedCodeGraph {
     if pg
         .file_path
         .file_name()
@@ -379,10 +388,7 @@ fn set_root_context(crate_context: &crate::discovery::CrateContext, mut pg: Pars
 fn info_crate_context(src_dir: &PathBuf, pg: &ParsedCodeGraph) -> String {
     format!(
         "parsed_graph file_path: {}, crate_context: {:#?}",
-        pg.file_path
-            .strip_prefix(src_dir)
-            .as_ref()
-            .log_path_debug(),
+        pg.file_path.strip_prefix(src_dir).as_ref().log_path_debug(),
         pg.crate_context
     )
 }

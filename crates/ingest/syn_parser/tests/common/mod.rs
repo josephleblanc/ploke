@@ -29,7 +29,7 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
         .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
 
-    let results_with_errors: Vec<Result<ParsedCodeGraph, syn::Error>> =
+    let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
 
     // Collect successful results, panicking if any file failed to parse in Phase 2
@@ -301,7 +301,7 @@ pub use resolution::build_tree_for_tests;
 
 pub mod uuid_ids_utils;
 
-pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, syn::Error>> {
+pub fn run_phase1_phase2(fixture_name: &str) -> Vec<Result<ParsedCodeGraph, SynParserError>> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let discovery_output = run_discovery_phase(&PathBuf::from("."), &[crate_path]) // Adjust project_root if needed
         .expect("Phase 1 Discovery failed");

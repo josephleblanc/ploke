@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 cozo = { workspace = true }
 syn_parser = { path = "../syn_parser" }
-ploke-graph = { path = "../ploke-graph" }
+ploke-transform = { path = "../ploke-transform" }
 serde = { workspace = true }
 
 [features]

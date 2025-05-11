@@ -23,7 +23,6 @@ tokio = { workspace = true }
 dashmap = { workspace = true }
 
 # Data structures and algorithms
-petgraph = { workspace = true }
 cozo = { workspace = true }
 # uuid is now an optional transitive dependency via ploke-core
 uuid = { workspace = true, features = ["v5", "serde"] }
@@ -45,7 +44,9 @@ parse_cfg = "4.1.1"
 # debugging
 log = { workspace = true }
 colored = "3.0"
-itertools = "0.14.0"
+
+# Convenience
+itertools = { workspace = true }
 
 derive_test_helpers = { path = "../../../proc_macros/syn_parser/derive_test_helpers" }
 

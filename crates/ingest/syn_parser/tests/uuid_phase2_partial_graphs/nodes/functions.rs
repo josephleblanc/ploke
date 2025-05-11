@@ -85,6 +85,7 @@ use syn_parser::parser::nodes::FunctionNodeId;
 use syn_parser::parser::nodes::GraphNode;
 use syn_parser::parser::nodes::ModuleNodeId;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
+use syn_parser::parser::nodes::ToUuidString;
 use syn_parser::parser::types::GenericParamKind;
 use syn_parser::parser::types::VisibilityKind;
 use syn_parser::utils::LogStyle;
@@ -864,9 +865,9 @@ attributes, docstring, span, body, tracking_hash, cfgs] <- [\n",
         write!(
             output,
             "  [\n    '{}',\n    '{}',\n    '{}',\n    '{}',\n    {},",
-            func.id.base_tid().uuid(),
+            func.id.to_uuid_string(),
             escape_str(&func.name),
-            module_id.base_tid().uuid(), // Assuming this exists
+            module_id.to_uuid_string(), // Assuming this exists
             func.visibility,
             func.return_type
                 .as_ref()

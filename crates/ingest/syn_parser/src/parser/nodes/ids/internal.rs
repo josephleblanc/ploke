@@ -11,13 +11,60 @@ use crate::parser::visitor::VisitorState;
 // We will move ID definitions, trait implementations, etc., here later.
 use super::*;
 use crate::utils::{LogStyle, LogStyleDebug};
+use cozo::{DataValue, UuidWrapper};
 use log::debug;
-use ploke_core::{NodeId, TypeKind};
+use ploke_core::{IdTrait, NodeId, TypeKind};
 use uuid::Uuid;
 // Removed IdConversionError import
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
+
+// NOTE: WIP, turn this into macro for, e.g. FunctionNodeId, StructNodeId, etc
+pub trait HasAnyNodeId {
+    fn any_id(&self) -> AnyNodeId;
+}
+
+impl HasAnyNodeId for FunctionNode {
+    fn any_id(&self) -> AnyNodeId {
+        self.id.as_any()
+    }
+}
+
+pub trait ToUuidString: TypedId {
+    fn to_uuid_string(&self) -> String;
+}
+
+impl ToUuidString for FunctionNodeId {
+    fn to_uuid_string(&self) -> String {
+        self.base_id().uuid().to_string()
+    }
+}
+impl ToUuidString for ModuleNodeId {
+    fn to_uuid_string(&self) -> String {
+        self.base_id().uuid().to_string()
+    }
+}
+
+
+pub trait ToCozoUuid {
+    fn to_cozo_uuid(self) -> DataValue;
+}
+
+impl ToCozoUuid for AnyNodeId {
+    fn to_cozo_uuid(self) -> DataValue {
+    match self.base_id() {
+        NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+        NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+    }
+    }
+}
+
+impl ToCozoUuid for PrimaryNodeId {
+    fn to_cozo_uuid(self) -> DataValue {
+        DataValue::Uuid(UuidWrapper(self.base_id().uuid()))
+    }
+}
 
 pub mod test_ids {
     use ploke_core::NodeId;
@@ -138,7 +185,7 @@ impl GeneratesAnyNodeId for VisitorState {
         let primary_parent_scope_id = self
             .current_primary_defn_scope
             .last()
-            .copied()
+         .copied()
             .map(|p_id| p_id.base_id());
 
         // MODIFIED CONDITION FOR LOGGING:
@@ -287,6 +334,13 @@ macro_rules! define_category_enum {
                 }
             }
 
+            pub fn to_cozo_uuid(&self) -> DataValue {
+                match self.base_id() {
+                    NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                    NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                }
+            }
+
             /// Returns the corresponding ItemKind for this category ID variant.
             #[inline]
             pub fn kind(&self) -> $KindType {
@@ -313,6 +367,7 @@ macro_rules! define_category_enum {
                 }
             }
         }
+
 
         impl From<$EnumName> for AnyNodeId {
             #[inline]
@@ -342,8 +397,6 @@ macro_rules! define_category_enum {
 
         $(
 
-        
-
             impl From<$IdType> for $EnumName {
                 #[inline]
                 fn from(id: $IdType) -> Self {
@@ -363,7 +416,7 @@ macro_rules! define_category_enum {
                     }
                 }
             }
-        
+
         )*
     };
 
@@ -516,6 +569,26 @@ macro_rules! define_internal_node_id {
                 write!(f, "{}", self.0)
             }
         }
+
+        #[allow(clippy::from_over_into)]
+        impl Into<DataValue> for $NewTypeId {
+            fn into(self) -> DataValue {
+                match self.base_id() {
+                    NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                    NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                }
+            }
+        }
+        #[allow(clippy::from_over_into)]
+        impl Into<DataValue> for &$NewTypeId {
+            fn into(self) -> DataValue {
+                match self.base_id() {
+                    NodeId::Resolved(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                    NodeId::Synthetic(uuid) => DataValue::Uuid(UuidWrapper(uuid)),
+                }
+            }
+        }
+
 
         // These Borrow/AsRef impls might be useful for internal generic code
         // within the `ids` module that needs to operate on the base ID without
