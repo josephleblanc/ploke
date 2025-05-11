@@ -5,13 +5,12 @@ pub enum WarningError {
     #[error("Unlinked modules detected: {modules:?}")]
     UnlinkedModules {
         modules: Vec<String>,
+        // backtrace: std::backtrace::Backtrace,
     },
-    
+
     #[error("Orphaned file: {path}")]
-    OrphanFile {
-        path: PathBuf,
-    },
-    
+    OrphanFile { path: PathBuf },
+
     #[error("Unresolved reference to {name}")]
     UnresolvedRef {
         name: String,
