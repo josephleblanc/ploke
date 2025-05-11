@@ -40,7 +40,7 @@ impl IntoCozo for FunctionNode {
     fn into_cozo_map(self) -> BTreeMap<String, DataValue> {
         let mut map = BTreeMap::new();
         let (vis_kind, vis_path) = visibility_to_cozo(self.visibility);
-        map.insert("id".into(), DataValue::from(self.id as i64));
+        map.insert("id".into(), self.id.into());
         map.insert("name".into(), self.name.into());
         map.insert("visibility_kind".into(), vis_kind.into());
         map.insert(
@@ -49,8 +49,7 @@ impl IntoCozo for FunctionNode {
         );
         map.insert(
             "return_type_id".into(),
-            self.return_type
-                .map_or(DataValue::Null, |id| DataValue::from(id as i64)),
+            self.return_type.map_or(DataValue::Null, |id| id.into()),
         );
         map.insert(
             "docstring".into(),

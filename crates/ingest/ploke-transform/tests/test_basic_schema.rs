@@ -1,7 +1,7 @@
 //! Tests for basic schema functionality
 
 use cozo::{DataValue, ScriptMutability};
-use ploke_graph::schema::{insert_sample_data, verify_schema};
+use ploke_transform::schema::{insert_sample_data, verify_schema};
 use std::collections::BTreeMap;
 use test_helpers::setup_test_db;
 

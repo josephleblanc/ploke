@@ -3,10 +3,7 @@
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use std::collections::BTreeMap;
 use syn_parser::parser::{
-    graph::CodeGraph,
-    nodes::TypeDefNode,
-    relations::RelationKind,
-    types::{TypeKind, VisibilityKind},
+    graph::CodeGraph, nodes::TypeDefNode, relations::SyntacticRelation, types::VisibilityKind,
 };
 
 /// Transforms a CodeGraph into CozoDB relations
@@ -32,13 +29,18 @@ pub fn transform_code_graph(
     // Transform modules
     transform_modules(db, code_graph)?;
 
-    // Transform values
-    transform_values(db, code_graph)?;
+    // Transform consts
+    #[cfg(not(feature = "type_bearing_ids"))]
+    transform_consts(db, code_graph)?;
+    // Transoform statics
+    #[cfg(not(feature = "type_bearing_ids"))]
+    transform_statics(db, code_graph)?;
 
     // Transform macros
     transform_macros(db, code_graph)?;
 
     // Transform relations
+    #[cfg(not(feature = "type_bearing_ids"))]
     transform_relations(db, code_graph)?;
 
     Ok(())
@@ -48,11 +50,6 @@ pub fn transform_code_graph(
 fn transform_traits(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     // Process public traits
     for trait_node in &code_graph.traits {
-        transform_single_trait(db, trait_node)?;
-    }
-
-    // Process private traits
-    for trait_node in &code_graph.private_traits {
         transform_single_trait(db, trait_node)?;
     }
 
@@ -86,7 +83,7 @@ fn transform_single_trait(
 
     // Insert into traits table
     let trait_params = BTreeMap::from([
-        ("id".to_string(), DataValue::from(trait_node.id as i64)),
+        ("id".to_string(), trait_node.id.into()),
         (
             "name".to_string(),
             DataValue::from(trait_node.name.as_str()),
@@ -102,7 +99,7 @@ fn transform_single_trait(
 
     // Insert into visibility table
     let vis_params = BTreeMap::from([
-        ("node_id".to_string(), DataValue::from(trait_node.id as i64)),
+        ("node_id".to_string(), trait_node.id.into()),
         ("kind".to_string(), vis_kind),
         ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
     ]);
@@ -119,14 +116,8 @@ fn transform_single_trait(
     // Add super traits
     for super_trait_id in trait_node.super_traits.iter() {
         let relation_params = BTreeMap::from([
-            (
-                "source_id".to_string(),
-                DataValue::from(trait_node.id as i64),
-            ),
-            (
-                "target_id".to_string(),
-                DataValue::from(*super_trait_id as i64),
-            ),
+            ("source_id".to_string(), trait_node.id.into()),
+            ("target_id".to_string(), super_trait_id.into()),
             ("kind".to_string(), DataValue::from("Inherits")),
         ]);
 
@@ -145,15 +136,12 @@ fn transform_impls(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
     for impl_node in &code_graph.impls {
         let trait_type_id = impl_node
             .trait_type
-            .map(|id| DataValue::from(id as i64))
+            .map(|id| id.into())
             .unwrap_or(DataValue::Null);
 
-        let params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(impl_node.id as i64)),
-            (
-                "self_type_id".to_string(),
-                DataValue::from(impl_node.self_type as i64),
-            ),
+        let params: BTreeMap<String, DataValue> = BTreeMap::from([
+            ("id".to_string(), impl_node.id.into()),
+            ("self_type_id".to_string(), impl_node.self_type.into()),
             ("trait_type_id".to_string(), trait_type_id),
         ]);
 
@@ -195,7 +183,7 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 
         // Insert into modules table
         let module_params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(module.id as i64)),
+            ("id".to_string(), module.id.into()),
             ("name".to_string(), DataValue::from(module.name.as_str())),
             ("docstring".to_string(), docstring),
         ]);
@@ -208,7 +196,7 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 
         // Insert into visibility table
         let vis_params = BTreeMap::from([
-            ("node_id".to_string(), DataValue::from(module.id as i64)),
+            ("node_id".to_string(), module.id.into()),
             ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
@@ -220,43 +208,29 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
         )?;
 
         // Add submodule relationships
-        for submodule_id in &module.submodules {
-            let relation_params = BTreeMap::from([
-                ("module_id".to_string(), DataValue::from(module.id as i64)),
-                (
-                    "related_id".to_string(),
-                    DataValue::from(*submodule_id as i64),
-                ),
-                ("kind".to_string(), DataValue::from("Contains")),
-            ]);
-
-            db.run_script(
-                "?[module_id, related_id, kind] <- [[$module_id, $related_id, $kind]] :put module_relationships",
-                relation_params,
-                ScriptMutability::Mutable,
-            )?;
-        }
 
         // Add item relationships
-        for item_id in &module.items {
-            let relation_params = BTreeMap::from([
-                ("module_id".to_string(), DataValue::from(module.id as i64)),
-                ("related_id".to_string(), DataValue::from(*item_id as i64)),
-                ("kind".to_string(), DataValue::from("Contains")),
-            ]);
+        if let Some(module_items) = module.items() {
+            for item_id in module_items {
+                let relation_params = BTreeMap::from([
+                    ("module_id".to_string(), module.id.into()),
+                    ("related_id".to_string(), item_id.to_cozo_uuid()),
+                    ("kind".to_string(), DataValue::from("Contains")),
+                ]);
 
-            db.run_script(
+                db.run_script(
                 "?[module_id, related_id, kind] <- [[$module_id, $related_id, $kind]] :put module_relationships",
                 relation_params,
                 ScriptMutability::Mutable,
             )?;
+            }
         }
 
         // Add export relationships
         for export_id in &module.exports {
             let relation_params = BTreeMap::from([
-                ("module_id".to_string(), DataValue::from(module.id as i64)),
-                ("related_id".to_string(), DataValue::from(*export_id as i64)),
+                ("module_id".to_string(), module.id.into()),
+                ("related_id".to_string(), export_id.into()),
                 ("kind".to_string(), DataValue::from("Exports")),
             ]);
 
@@ -272,8 +246,9 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 }
 
 /// Transforms value nodes into the values relation
+#[cfg(not(feature = "type_bearing_ids"))]
 fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for value in &code_graph.values {
+    for value in &code_graph.consts {
         let (vis_kind, vis_path) = match &value.visibility {
             VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
@@ -313,9 +288,9 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 
         // Insert into values table
         let value_params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(value.id as i64)),
+            ("id".to_string(), value.id.into()),
             ("name".to_string(), DataValue::from(value.name.as_str())),
-            ("type_id".to_string(), DataValue::from(value.type_id as i64)),
+            ("type_id".to_string(), value.type_id.into()),
             ("kind".to_string(), DataValue::from(kind)),
             ("value".to_string(), value_str),
             ("docstring".to_string(), docstring),
@@ -329,7 +304,7 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 
         // Insert into visibility table
         let vis_params = BTreeMap::from([
-            ("node_id".to_string(), DataValue::from(value.id as i64)),
+            ("node_id".to_string(), value.id.into()),
             ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
@@ -376,7 +351,7 @@ fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
             .unwrap_or(DataValue::Null);
 
         let params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(macro_node.id as i64)),
+            ("id".to_string(), macro_node.id.into()),
             (
                 "name".to_string(),
                 DataValue::from(macro_node.name.as_str()),
@@ -401,31 +376,31 @@ fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for type_node in &code_graph.type_graph {
         let kind = match &type_node.kind {
-            TypeKind::Named { .. } => "Named",
-            TypeKind::Reference { .. } => "Reference",
-            TypeKind::Slice { .. } => "Slice",
-            TypeKind::Array { .. } => "Array",
-            TypeKind::Tuple { .. } => "Tuple",
-            TypeKind::Never => "Never",
-            TypeKind::Inferred => "Inferred",
-            TypeKind::RawPointer { .. } => "RawPointer",
-            TypeKind::ImplTrait { .. } => "ImplTrait",
-            TypeKind::TraitObject { .. } => "TraitObject",
-            TypeKind::Macro { .. } => "Macro",
-            TypeKind::Unknown { .. } => "Unknown",
-            TypeKind::Function {
+            ploke_core::TypeKind::Named { .. } => "Named",
+            ploke_core::TypeKind::Reference { .. } => "Reference",
+            ploke_core::TypeKind::Slice { .. } => "Slice",
+            ploke_core::TypeKind::Array { .. } => "Array",
+            ploke_core::TypeKind::Tuple { .. } => "Tuple",
+            ploke_core::TypeKind::Never => "Never",
+            ploke_core::TypeKind::Inferred => "Inferred",
+            ploke_core::TypeKind::RawPointer { .. } => "RawPointer",
+            ploke_core::TypeKind::ImplTrait { .. } => "ImplTrait",
+            ploke_core::TypeKind::TraitObject { .. } => "TraitObject",
+            ploke_core::TypeKind::Macro { .. } => "Macro",
+            ploke_core::TypeKind::Unknown { .. } => "Unknown",
+            ploke_core::TypeKind::Function {
                 is_unsafe: _,
                 is_extern: _,
                 abi: _,
             } => "Function",
-            TypeKind::Paren { .. } => "Paren",
+            ploke_core::TypeKind::Paren { .. } => "Paren",
         };
 
         // Create a simplified string representation of the type
         let type_str = format!("{:?}", type_node.kind);
 
         let params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(type_node.id as i64)),
+            ("id".to_string(), type_node.id.into()),
             ("kind".to_string(), DataValue::from(kind)),
             ("type_str".to_string(), DataValue::from(type_str)),
         ]);
@@ -439,12 +414,9 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
         // Add type relations for related types
         for (i, related_id) in type_node.related_types.iter().enumerate() {
             let relation_params = BTreeMap::from([
-                ("type_id".to_string(), DataValue::from(type_node.id as i64)),
+                ("type_id".to_string(), type_node.id.into()),
                 ("related_index".to_string(), DataValue::from(i as i64)),
-                (
-                    "related_type_id".to_string(),
-                    DataValue::from(*related_id as i64),
-                ),
+                ("related_type_id".to_string(), related_id.into()),
             ]);
 
             db.run_script(
@@ -456,7 +428,7 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 
         // Add type details
         match &type_node.kind {
-            TypeKind::Reference {
+            ploke_core::TypeKind::Reference {
                 lifetime,
                 is_mutable,
                 ..
@@ -467,7 +439,7 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
                     .unwrap_or(DataValue::Null);
 
                 let details_params = BTreeMap::from([
-                    ("type_id".to_string(), DataValue::from(type_node.id as i64)),
+                    ("type_id".to_string(), type_node.id.into()),
                     ("is_mutable".to_string(), DataValue::from(*is_mutable)),
                     ("lifetime".to_string(), lifetime_value),
                     ("abi".to_string(), DataValue::Null),
@@ -482,9 +454,9 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
                     ScriptMutability::Mutable,
                 )?;
             }
-            TypeKind::RawPointer { is_mutable, .. } => {
+            ploke_core::TypeKind::RawPointer { is_mutable, .. } => {
                 let details_params = BTreeMap::from([
-                    ("type_id".to_string(), DataValue::from(type_node.id as i64)),
+                    ("type_id".to_string(), type_node.id.into()),
                     ("is_mutable".to_string(), DataValue::from(*is_mutable)),
                     ("lifetime".to_string(), DataValue::Null),
                     ("abi".to_string(), DataValue::Null),
@@ -499,7 +471,7 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
                     ScriptMutability::Mutable,
                 )?;
             }
-            TypeKind::Function {
+            ploke_core::TypeKind::Function {
                 is_unsafe,
                 is_extern,
                 abi,
@@ -511,7 +483,7 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
                     .unwrap_or(DataValue::Null);
 
                 let details_params = BTreeMap::from([
-                    ("type_id".to_string(), DataValue::from(type_node.id as i64)),
+                    ("type_id".to_string(), type_node.id.into()),
                     ("is_mutable".to_string(), DataValue::from(false)),
                     ("lifetime".to_string(), DataValue::Null),
                     ("abi".to_string(), abi_value),
@@ -526,9 +498,9 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
                     ScriptMutability::Mutable,
                 )?;
             }
-            TypeKind::TraitObject { dyn_token, .. } => {
+            ploke_core::TypeKind::TraitObject { dyn_token, .. } => {
                 let details_params = BTreeMap::from([
-                    ("type_id".to_string(), DataValue::from(type_node.id as i64)),
+                    ("type_id".to_string(), type_node.id.into()),
                     ("is_mutable".to_string(), DataValue::from(false)),
                     ("lifetime".to_string(), DataValue::Null),
                     ("abi".to_string(), DataValue::Null),
@@ -569,7 +541,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
 
         let return_type_id = function
             .return_type
-            .map(|id| DataValue::from(id as i64))
+            .map(|id| id.into())
             .unwrap_or(DataValue::Null);
 
         let docstring = function
@@ -586,7 +558,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
 
         // Insert into functions table
         let func_params = BTreeMap::from([
-            ("id".to_string(), DataValue::from(function.id as i64)),
+            ("id".to_string(), function.id.into()),
             ("name".to_string(), DataValue::from(function.name.as_str())),
             ("return_type_id".to_string(), return_type_id),
             ("docstring".to_string(), docstring),
@@ -601,7 +573,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
 
         // Insert into visibility table
         let vis_params = BTreeMap::from([
-            ("node_id".to_string(), DataValue::from(function.id as i64)),
+            ("node_id".to_string(), function.id.into()),
             ("kind".to_string(), vis_kind),
             ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
         ]);
@@ -621,13 +593,10 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
                 .unwrap_or(DataValue::Null);
 
             let param_params = BTreeMap::from([
-                (
-                    "function_id".to_string(),
-                    DataValue::from(function.id as i64),
-                ),
+                ("function_id".to_string(), function.id.into()),
                 ("param_index".to_string(), DataValue::from(i as i64)),
                 ("param_name".to_string(), param_name),
-                ("type_id".to_string(), DataValue::from(param.type_id as i64)),
+                ("type_id".to_string(), param.type_id.into()),
                 ("is_mutable".to_string(), DataValue::from(param.is_mutable)),
                 ("is_self".to_string(), DataValue::from(param.is_self)),
             ]);
@@ -654,17 +623,17 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
             };
 
             let type_id = match &generic_param.kind {
-                syn_parser::parser::types::GenericParamKind::Type { default, .. } => default
-                    .map(|id| DataValue::from(id as i64))
-                    .unwrap_or(DataValue::Null),
+                syn_parser::parser::types::GenericParamKind::Type { default, .. } => {
+                    default.map(|id| id.into()).unwrap_or(DataValue::Null)
+                }
                 syn_parser::parser::types::GenericParamKind::Const { type_id, .. } => {
-                    DataValue::from(*type_id as i64)
+                    type_id.into()
                 }
                 _ => DataValue::Null,
             };
 
             let generic_params = BTreeMap::from([
-                ("owner_id".to_string(), DataValue::from(function.id as i64)),
+                ("owner_id".to_string(), function.id.into()),
                 ("param_index".to_string(), DataValue::from(i as i64)),
                 ("kind".to_string(), DataValue::from(kind)),
                 ("name".to_string(), DataValue::from(name.as_str())),
@@ -687,7 +656,7 @@ fn transform_functions(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<()
                 .unwrap_or(DataValue::Null);
 
             let attr_params = BTreeMap::from([
-                ("owner_id".to_string(), DataValue::from(function.id as i64)),
+                ("owner_id".to_string(), function.id.into()),
                 ("attr_index".to_string(), DataValue::from(i as i64)),
                 ("name".to_string(), DataValue::from(attr.name.as_str())),
                 ("value".to_string(), value),
@@ -723,7 +692,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     .unwrap_or(DataValue::Null);
 
                 let params = BTreeMap::from([
-                    ("id".to_string(), DataValue::from(struct_node.id as i64)),
+                    ("id".to_string(), struct_node.id.into()),
                     (
                         "name".to_string(),
                         DataValue::from(struct_node.name.as_str()),
@@ -754,13 +723,10 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     };
 
                     let field_params = BTreeMap::from([
-                        (
-                            "struct_id".to_string(),
-                            DataValue::from(struct_node.id as i64),
-                        ),
+                        ("struct_id".to_string(), struct_node.id.into()),
                         ("field_index".to_string(), DataValue::from(i as i64)),
                         ("field_name".to_string(), field_name),
-                        ("type_id".to_string(), DataValue::from(field.type_id as i64)),
+                        ("type_id".to_string(), field.type_id.into()),
                         ("visibility".to_string(), DataValue::from(field_visibility)),
                     ]);
 
@@ -786,7 +752,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     .unwrap_or(DataValue::Null);
 
                 let params = BTreeMap::from([
-                    ("id".to_string(), DataValue::from(enum_node.id as i64)),
+                    ("id".to_string(), enum_node.id.into()),
                     ("name".to_string(), DataValue::from(enum_node.name.as_str())),
                     ("visibility".to_string(), DataValue::from(visibility)),
                     ("docstring".to_string(), docstring),
@@ -807,7 +773,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                         .unwrap_or(DataValue::Null);
 
                     let variant_params = BTreeMap::from([
-                        ("enum_id".to_string(), DataValue::from(enum_node.id as i64)),
+                        ("enum_id".to_string(), enum_node.id.into()),
                         ("variant_index".to_string(), DataValue::from(i as i64)),
                         (
                             "variant_name".to_string(),
@@ -838,16 +804,13 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     .unwrap_or(DataValue::Null);
 
                 let params = BTreeMap::from([
-                    ("id".to_string(), DataValue::from(type_alias.id as i64)),
+                    ("id".to_string(), type_alias.id.into()),
                     (
                         "name".to_string(),
                         DataValue::from(type_alias.name.as_str()),
                     ),
                     ("visibility".to_string(), DataValue::from(visibility)),
-                    (
-                        "type_id".to_string(),
-                        DataValue::from(type_alias.type_id as i64),
-                    ),
+                    ("type_id".to_string(), type_alias.type_id.into()),
                     ("docstring".to_string(), docstring),
                 ]);
 
@@ -872,7 +835,7 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     .unwrap_or(DataValue::Null);
 
                 let params = BTreeMap::from([
-                    ("id".to_string(), DataValue::from(union_node.id as i64)),
+                    ("id".to_string(), union_node.id.into()),
                     (
                         "name".to_string(),
                         DataValue::from(union_node.name.as_str()),
@@ -903,13 +866,10 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
                     };
 
                     let field_params = BTreeMap::from([
-                        (
-                            "struct_id".to_string(),
-                            DataValue::from(union_node.id as i64),
-                        ),
+                        ("struct_id".to_string(), union_node.id.into()),
                         ("field_index".to_string(), DataValue::from(i as i64)),
                         ("field_name".to_string(), field_name),
-                        ("type_id".to_string(), DataValue::from(field.type_id as i64)),
+                        ("type_id".to_string(), field.type_id.into()),
                         ("visibility".to_string(), DataValue::from(field_visibility)),
                     ]);
 
@@ -927,23 +887,24 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 }
 
 /// Transforms relations into the relations relation
+#[cfg(not(feature = "type_bearing_ids"))]
 fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
     for relation in &code_graph.relations {
         let kind = match relation.kind {
-            RelationKind::FunctionParameter => "FunctionParameter",
-            RelationKind::FunctionReturn => "FunctionReturn",
-            RelationKind::StructField => "StructField",
-            RelationKind::EnumVariant => "EnumVariant",
-            RelationKind::ImplementsFor => "ImplementsFor",
-            RelationKind::ImplementsTrait => "ImplementsTrait",
-            RelationKind::Inherits => "Inherits",
-            RelationKind::References => "References",
-            RelationKind::Contains => "Contains",
-            RelationKind::Uses => "Uses",
-            RelationKind::ValueType => "ValueType",
-            RelationKind::MacroUse => "MacroUse",
-            RelationKind::Method => "Method",
-            RelationKind::ModuleImports => "ModuleImports",
+            SyntacticRelation::FunctionParameter => "FunctionParameter",
+            SyntacticRelation::FunctionReturn => "FunctionReturn",
+            SyntacticRelation::StructField => "StructField",
+            SyntacticRelation::EnumVariant => "EnumVariant",
+            SyntacticRelation::ImplementsFor => "ImplementsFor",
+            SyntacticRelation::ImplementsTrait => "ImplementsTrait",
+            SyntacticRelation::Inherits => "Inherits",
+            SyntacticRelation::References => "References",
+            SyntacticRelation::Contains => "Contains",
+            SyntacticRelation::Uses => "Uses",
+            SyntacticRelation::ValueType => "ValueType",
+            SyntacticRelation::MacroUse => "MacroUse",
+            SyntacticRelation::Method => "Method",
+            SyntacticRelation::ModuleImports => "ModuleImports",
         };
 
         let params = BTreeMap::from([

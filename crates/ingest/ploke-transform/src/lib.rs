@@ -1,3 +1,4 @@
+pub mod printable;
 pub mod schema;
 pub mod traits;
 pub mod transform;

@@ -1,6 +1,6 @@
 use crate::test_helpers::insert_visibility;
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use ploke_graph::schema::{create_schema, insert_sample_data, verify_schema};
+use ploke_transform::schema::{create_schema, insert_sample_data, verify_schema};
 use std::collections::BTreeMap;
 
 mod test_helpers;

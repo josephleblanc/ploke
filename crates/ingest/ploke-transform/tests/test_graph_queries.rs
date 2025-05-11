@@ -2,7 +2,7 @@
 
 use crate::test_helpers::setup_test_db;
 use cozo::{DataValue, ScriptMutability};
-use ploke_graph::schema::insert_sample_data;
+use ploke_transform::schema::insert_sample_data;
 use std::collections::BTreeMap;
 
 mod test_helpers;

@@ -2,10 +2,9 @@
 
 use cozo::NamedRows;
 use cozo::{DataValue, Db, MemStorage};
-use ploke_graph::schema::create_schema;
+use ploke_transform::schema::create_schema;
 use std::collections::BTreeMap;
 use std::path::Path;
-use syn_parser::analyze_code;
 use syn_parser::CodeGraph;
 
 /// Creates a new in-memory database with the schema initialized
@@ -83,7 +82,7 @@ pub fn print_debug(message: &str, result: &cozo::NamedRows) {
     println!("{:-<50}\n", "");
 }
 
-/// Parse a fixture file and return the resulting CodeGraph
+// //  Parse a fixture file and return the resulting CodeGraph
 // #[allow(dead_code)]
 // pub fn parse_fixture(fixture_name: &str) -> CodeGraph {
 //     #[cfg(feature = "debug")]

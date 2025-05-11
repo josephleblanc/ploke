@@ -7,10 +7,14 @@ edition = "2021"
 cozo = { workspace = true }
 syn_parser = { path = "../syn_parser" }
 serde = { workspace = true }
-itertools = "0.12"
+serde_json = { workspace = true }
+itertools = { workspace = true }
 ploke-test-utils = { path = "../../test-utils" }
+ploke-core = { path = "../../ploke-core" }
 
 [dev-dependencies]
 
 [features]
+default = ["type_bearing_ids"]
 debug = []
+type_bearing_ids = []
