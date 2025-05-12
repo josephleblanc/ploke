@@ -15,74 +15,9 @@ pub(super) fn transform_functions(
 ) -> Result<(), cozo::Error> {
     for mut function in functions.into_iter() {
         let schema = &FUNCTION_NODE_SCHEMA;
-        let (vis_kind, vis_path) = vis_to_dataval(&function);
+        let func_params = process_func(tree, &mut function, schema);
 
-        // return type optional
-        // Might want to change this to `()`
-        let return_type_id = function
-            .return_type
-            .map(|id| id.into())
-            .unwrap_or(DataValue::Null); // Can be empty, None->Null
-
-        // doc string might be empty
-        let docstring = function
-            .docstring
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null); // Can be empty, None->Null
-
-        // body can be empty
-        let body = function
-            .body
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null); // Can be empty, None->Null
-
-        let th_cozo = DataValue::Uuid(cozo::UuidWrapper(function.tracking_hash.take().unwrap_or_else(|| {
-                panic!("Invariant Violated: FunctionNode must have TrackingHash upon database insertion")
-            }).0));
-
-        let span_start = DataValue::Num(Num::Int(function.span.0 as i64));
-        let span_end = DataValue::Num(Num::Int(function.span.1 as i64));
-        let span = DataValue::List(Vec::from([span_start, span_end]));
-
-        // find containing module through relation in module tree
-        let module_id = tree
-            .get_iter_relations_to(&function.id.as_any())
-            .find_map(|r| r.rel().source_contains(function.id.to_pid()))
-            .unwrap_or_else(|| {
-                panic!("Invariant Violated: FunctionNode must have Contains relation with module")
-            });
-
-        let cfgs: Vec<DataValue> = function
-            .cfgs
-            .iter()
-            .map(|s| DataValue::from(s.as_str()))
-            .collect();
-
-        // Insert into functions table
-        let func_params = BTreeMap::from([
-            (schema.id().name.to_string(), function.id.into()),
-            (
-                schema.name().name.to_string(),
-                DataValue::from(function.name.as_str()),
-            ),
-            ("docstring".to_string(), docstring),
-            ("span".to_string(), span),
-            ("tracking_hash".to_string(), th_cozo),
-            ("cfgs".to_string(), DataValue::List(cfgs)),
-            ("return_type_id".to_string(), return_type_id),
-            ("body".to_string(), body),
-            // Kind of awkward, might want to visibility its own entity. Maybe just visibility
-            // path?
-            ("vis_kind".to_string(), vis_kind),
-            ("vis_path".to_string(), vis_path.unwrap_or(DataValue::Null)),
-            // May remove this. Might be useful for debugging, less sure about in queries vs. the
-            // `Contains` edge. Needs testing in `ploke-db`
-            ("module_id".to_string(), module_id.into()),
-        ]);
-
-        let script = create_script(&func_params, "function");
+        let script = script_put(&func_params, "function");
         db.run_script(
             // "?[id, name, return_type_id, docstring, body, tracking_hash] <- [[$id, $name, $return_type_id, $docstring, $body, $tracking_hash]] :put functions",
             &script,
@@ -114,7 +49,7 @@ pub(super) fn transform_functions(
                 ("is_self".to_string(), DataValue::from(param.is_self)),
             ]);
 
-            let script = create_script(&param_params, "function_params");
+            let script = script_put(&param_params, "function_params");
 
             db.run_script(
                 // "?[function_id, param_index, param_name, type_id, is_mutable, is_self] <- [[$function_id, $param_index, $param_name, $type_id, $is_mutable, $is_self]] :put function_params",
@@ -147,7 +82,7 @@ pub(super) fn transform_functions(
                 ("value".to_string(), value),
             ]);
 
-            let script = create_script(&attr_params, "attributes");
+            let script = script_put(&attr_params, "attributes");
             db.run_script(
                 // "?[owner_id, attr_index, name, value] <- [[$owner_id, $attr_index, $name, $value]] :put attributes",
                 &script,
@@ -158,6 +93,86 @@ pub(super) fn transform_functions(
     }
 
     Ok(())
+}
+
+fn process_func(
+    tree: &ModuleTree,
+    function: &mut FunctionNode,
+    schema: &FunctionNodeSchema,
+) -> BTreeMap<String, DataValue> {
+    let (vis_kind, vis_path) = vis_to_dataval(&*function);
+
+    // return type optional
+    // Might want to change this to `()`
+    let return_type_id = function
+        .return_type
+        .map(|id| id.into())
+        .unwrap_or(DataValue::Null);
+    // Can be empty, None->Null
+
+    // doc string might be empty
+    let docstring = function
+        .docstring
+        .as_ref()
+        .map(|s| DataValue::from(s.as_str()))
+        .unwrap_or(DataValue::Null);
+    // Can be empty, None->Null
+
+    // body can be empty
+    let body = function
+        .body
+        .as_ref()
+        .map(|s| DataValue::from(s.as_str()))
+        .unwrap_or(DataValue::Null);
+    // Can be empty, None->Null
+
+    let th_cozo = DataValue::Uuid(cozo::UuidWrapper(function.tracking_hash.take().unwrap_or_else(|| {
+            panic!("Invariant Violated: FunctionNode must have TrackingHash upon database insertion")
+        }).0));
+
+    let span_start = DataValue::Num(Num::Int(function.span.0 as i64));
+    let span_end = DataValue::Num(Num::Int(function.span.1 as i64));
+    let span = DataValue::List(Vec::from([span_start, span_end]));
+
+    // find containing module through relation in module tree
+    let module_id = tree
+        .get_iter_relations_to(&function.id.as_any())
+        .find_map(|r| r.rel().source_contains(function.id.to_pid()))
+        .unwrap_or_else(|| {
+            panic!("Invariant Violated: FunctionNode must have Contains relation with module")
+        });
+
+    let cfgs: Vec<DataValue> = function
+        .cfgs
+        .iter()
+        .map(|s| DataValue::from(s.as_str()))
+        .collect();
+
+    // Insert into functions table
+    let func_params = BTreeMap::from([
+        (schema.id().to_string(), function.id.into()),
+        (
+            schema.name().to_string(),
+            DataValue::from(function.name.as_str()),
+        ),
+        (schema.docstring().to_string(), docstring),
+        (schema.span().to_string(), span),
+        (schema.tracking_hash().to_string(), th_cozo),
+        (schema.cfgs().to_string(), DataValue::List(cfgs)),
+        (schema.return_type_id().to_string(), return_type_id),
+        (schema.body().to_string(), body),
+        // Kind of awkward, might want to visibility its own entity. Maybe just visibility
+        // path?
+        (schema.vis_kind().to_string(), vis_kind),
+        (
+            schema.vis_path().to_string(),
+            vis_path.unwrap_or(DataValue::Null),
+        ),
+        // May remove this. Might be useful for debugging, less sure about in queries vs. the
+        // `Contains` edge. Needs testing in `ploke-db`
+        (schema.module_id().to_string(), module_id.into()),
+    ]);
+    func_params
 }
 
 fn generic_param_script(
@@ -211,7 +226,7 @@ fn generic_param_script(
         }
     }
 
-    let script = create_script(&params, "generic_param");
+    let script = script_put(&params, "generic_param");
     trace!(target: LOG_TARGET_TRANSFORM,
         "{}: {} | {}",
         "Form Script".log_step(),
@@ -221,7 +236,7 @@ fn generic_param_script(
     (params, script)
 }
 
-fn create_script(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
+fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
     let entry_names = params.keys().join(", ");
     let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
     // Should come out looking like:
@@ -253,12 +268,11 @@ fn vis_to_dataval(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
 mod test {
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
-    use syn_parser::parser::{
-        graph::GraphAccess,
-        nodes::{FunctionNode, PrimaryNodeIdTrait},
-    };
+    use syn_parser::parser::{graph::GraphAccess, ParsedCodeGraph};
+    use syn_parser::utils::LogStyle;
 
-    use crate::printable::CozoSchema;
+    use crate::transform::functions::script_put;
+    use crate::transform::{functions::process_func, FUNCTION_NODE_SCHEMA};
 
     #[test]
     fn func_transform() -> Result<(), cozo::Error> {
@@ -269,15 +283,52 @@ mod test {
 
         // Setup printable nodes
         let successful_graphs = run_phases_and_collect("fixture_types");
-        let target_graph = successful_graphs
-            .iter()
-            .find(|pg| pg.crate_context.is_some())
-            .expect("root file not found"); // find root file
+        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+            log::error!(target: "transform_function",
+                "Error building tree: {}",
+                e
+            );
+            panic!()
+        });
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
 
-        let function_schema = FunctionNode::schema();
+        let func_schema = &FUNCTION_NODE_SCHEMA;
+        log::info!(target: "transform_function",
+            "{}: {:?}",
+            "Printing function schema".log_step(),
+            func_schema.schema_string()
+        );
+
+        let db_result = func_schema.schema_create(&db)?;
+        log::info!(target: "transform_function",
+            "{}: {:?}",
+            "function schema created".log_step(),
+            db_result
+        );
+        let mut func_node = merged
+            .graph
+            .functions
+            .iter()
+            .find(|f| f.name == "process_tuple")
+            .cloned()
+            .expect("Cannot find target function node");
+        let func_params = process_func(&tree, &mut func_node, func_schema);
+        log::info!(target: "transform_function",
+            "{}: {:#?}",
+            "Build func_params".log_step(),
+            func_params,
+        );
+        let script = script_put(&func_params, "function");
+        log::info!(target: "transform_function",
+            "{}: {:#?}",
+            "Build func script".log_step(),
+            script,
+        );
+
+        db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)?;
         Ok(())
     }
 }

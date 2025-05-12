@@ -1,7 +1,7 @@
 //! Transforms CodeGraph into CozoDB relations
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::ops::Deref;
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
@@ -123,22 +123,25 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
-        // Collect all fields in a BTreeMap to ensure consistent ordering
-        let mut fields = BTreeMap::new();
-        fields.insert(self.body(), format!("{}: {}", self.body(), self.body.dv()));
-        fields.insert(self.cfgs(), format!("{}: {}", self.cfgs(), self.cfgs.dv()));
-        fields.insert(self.docstring(), format!("{}: {}", self.docstring(), self.docstring.dv()));
-        fields.insert(self.id(), format!("{}: {}", self.id(), self.id.dv()));
-        fields.insert(self.module_id(), format!("{}: {}", self.module_id(), self.module_id.dv()));
-        fields.insert(self.name(), format!("{}: {}", self.name(), self.name.dv()));
-        fields.insert(self.return_type_id(), format!("{}: {}", self.return_type_id(), self.return_type_id.dv()));
-        fields.insert(self.span(), format!("{}: {}", self.span(), self.span.dv()));
-        fields.insert(self.tracking_hash(), format!("{}: {}", self.tracking_hash(), self.tracking_hash.dv()));
-        fields.insert(self.vis_kind(), format!("{}: {}", self.vis_kind(), self.vis_kind.dv()));
-        fields.insert(self.vis_path(), format!("{}: {}", self.vis_path(), self.vis_path.dv()));
-
-        let create = format!(":create function {{ {} }}", fields.values().join(", "));
+        let create = self.schema_string();
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
+    }
+    pub fn schema_string(&self) -> String {
+        let fields = [
+            format!("{}: {}", self.id(), self.id.dv()),
+            format!("{}: {}", self.name(), self.name.dv()),
+            format!("{}: {}", self.docstring(), self.docstring.dv()),
+            format!("{}: {}", self.span(), self.span.dv()),
+            format!("{}: {}", self.tracking_hash(), self.tracking_hash.dv()),
+            format!("{}: {}", self.cfgs(), self.cfgs.dv()),
+            format!("{}: {}", self.return_type_id(), self.return_type_id.dv()),
+            format!("{}: {}", self.body(), self.body.dv()),
+            format!("{}: {}", self.vis_kind(), self.vis_kind.dv()),
+            format!("{}: {}", self.vis_path(), self.vis_path.dv()),
+            format!("{}: {}", self.module_id(), self.module_id.dv()),
+        ];
+
+        format!(":create function {{ {} }}", fields.join(", "))
     }
 }
 
@@ -153,7 +156,7 @@ pub(crate) static FUNCTION_NODE_SCHEMA: FunctionNodeSchema = FunctionNodeSchema 
     },
     docstring: CozoField {
         st: "docstring",
-        dv: "String",
+        dv: "String?",
     },
     span: CozoField {
         st: "span",
