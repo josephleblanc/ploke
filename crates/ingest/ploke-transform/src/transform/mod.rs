@@ -1,36 +1,30 @@
 //! Transforms CodeGraph into CozoDB relations
 
-use cozo::{DataValue, Db, MemStorage, ScriptMutability};
-use std::collections::{BTreeMap, VecDeque};
-use std::ops::Deref;
+// -- external
+use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
+use std::collections::BTreeMap;
+// -- from workspace
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::module_tree::ModuleTree;
+use syn_parser::resolve::RelationIndexer;
+use syn_parser::utils::LogStyle;
 
 mod fields;
+mod secondary_nodes;
+// -- primary nodes --
 mod functions;
+mod structs;
+
+// -- primary node transforms
 use functions::transform_functions;
 
-// TODO: Once I have proof of concept, use this to build the scripts from lazy static strings of
-// the create/put/etc scripts for relations
-// - Possibly use type-specific versions or something, e.g. PutScript<FunctionNode>
-//
-// pub(crate) struct PutScript{
-//     lhs: &str,
-//     rhs: &str,
-//     params: BTreeMap<&'static str, DataValue>
-// };
-//
-// impl PutScript {}
-//
-// impl Deref for PutScript {
-//     type Target = BTreeMap<String, DataValue>;
-//
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
+// -- secondary node transformations
+use secondary_nodes::{process_attributes, process_generic_params, process_params};
+
+// -- schema
+use crate::schema::secondary_nodes::AttributeNodeSchema;
 
 /// Transforms a CodeGraph into CozoDB relations
 pub fn transform_code_graph(
@@ -40,27 +34,39 @@ pub fn transform_code_graph(
 ) -> Result<(), cozo::Error> {
     let relations = code_graph.relations;
     // Transform types
+    // [ ] Refactored
     transform_types(db, code_graph.type_graph)?;
 
     // Transform functions
+    // [✔] Refactored
     transform_functions(db, code_graph.functions, tree)?;
 
     // Transform defined types (structs, enums, etc.)
+    // [ ] Refactored
+    //  - [ ] Struct Refactored
+    //  - [ ] Enum Refactored
+    //  - [ ] Union Refactored
+    //  - [ ] TypeAlias Refactored
     transform_defined_types(db, code_graph.defined_types)?;
 
     // Transform traits
+    // [ ] Refactored
     transform_traits(db, code_graph.traits)?;
 
     // Transform impls
+    // [ ] Refactored
     transform_impls(db, code_graph.impls)?;
 
     // Transform modules
+    // [ ] Refactored
     transform_modules(db, code_graph.modules)?;
 
     // Transform consts
+    // [ ] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_consts(db, code_graph)?;
     // Transoform statics
+    // [ ] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_statics(db, code_graph)?;
 
@@ -68,10 +74,28 @@ pub fn transform_code_graph(
     transform_macros(db, code_graph.macros)?;
 
     // Transform relations
+    // [ ] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_relations(db, code_graph)?;
 
     Ok(())
+}
+
+fn vis_to_dataval_v2(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
+    let (vis_kind, vis_path) = match &function.visibility {
+        VisibilityKind::Public => (DataValue::from("public".to_string()), None),
+        VisibilityKind::Crate => ("crate".into(), None),
+        VisibilityKind::Restricted(path) => {
+            let list = DataValue::List(
+                path.iter()
+                    .map(|p_string| DataValue::from(p_string.to_string()))
+                    .collect(),
+            );
+            ("restricted".into(), Some(list))
+        }
+        VisibilityKind::Inherited => ("inherited".into(), None),
+    };
+    (vis_kind, vis_path)
 }
 
 /// Transforms trait nodes into the traits relation

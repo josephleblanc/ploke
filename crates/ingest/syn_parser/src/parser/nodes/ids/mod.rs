@@ -23,7 +23,7 @@ pub use internal::{
 // Re-export marker traits (adjust list as needed)
 pub use internal::{AssociatedItemNodeIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
 // Node trait for any node with an ID
-pub use internal::HasAnyNodeId;
+// pub use internal::HasAnyNodeId;
 // Re-exported convenience trait (same functionality as Into<AnyNodeId>)
 // Helps be more explicit about conversions to `AnyNodeId`
 pub use internal::AsAnyNodeId;

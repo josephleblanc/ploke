@@ -1,5 +1,10 @@
-use syn_parser::utils::LogStyle;
+pub mod assoc_nodes;
 pub mod primary_nodes;
+pub mod secondary_nodes;
+
+use itertools::Itertools;
+use std::collections::BTreeMap;
+use syn_parser::utils::LogStyle;
 
 // TODO: use lazy_static and SmartString
 // &str for now,
@@ -34,39 +39,53 @@ impl CozoField {
 #[macro_export]
 macro_rules! define_schema {
     ($schema_name:ident {
+        $relation:literal,
         $($field_name:ident: $dv:literal),+
         $(,)?
     }) => {
         pub struct $schema_name {
+            pub relation: &'static str,
             $($field_name: CozoField),+
         }
 
         impl $schema_name {
             pub const SCHEMA: Self = Self {
+                relation: $relation,
                 $($field_name: CozoField { st: stringify!($field_name), dv: $dv }),+
             };
 
             $(pub fn $field_name(&self) -> &str {
                 self.$field_name.st()
             })*
-
         }
 
         impl $schema_name {
-            pub fn schema_string(&self) -> String {
+            pub fn script_create(&self) -> String {
                 let fields = vec![
                     $(format!("{}: {}", self.$field_name.st(), self.$field_name.dv())),+
                 ];
-                let relation_name = stringify!($schema_name).strip_suffix("NodeSchema")
-                    .unwrap_or_else(|| {
-                        log::error!(
-                            "{} {}",
-                            "Macro Error".log_error(),
-                            "Name of Schema used in define_schema! must be [Name]NodeSchema"
-                        );
-                        panic!()
-                }).to_lowercase();
-                format!(":create {} {{ {} }}", relation_name, fields.join(", "))
+                format!(":create {} {{ {} }}", $relation, fields.join(", "))
+            }
+
+            pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
+                let entry_names = params.keys().join(", ");
+                let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+                // Should come out looking like:
+                // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
+                let script = format!(
+                    "?[{}] <- [[{}]] :put {}",
+                    entry_names, param_names, self.relation
+                );
+                script
+            }
+
+            pub fn log_create_script(&self) {
+                log::info!(target: "transform_function",
+                    "{} {}: {:?}",
+                    "Printing schema".log_step(),
+                    $relation.log_name(),
+                    self.script_create()
+                );
             }
         }
     };

@@ -4,24 +4,104 @@ use crate::define_schema;
 // ------------------------------------------------------------
 // ----------------- To Implement -----------------------------
 // ------------------------------------------------------------
+//
+// TODO: Change the define_schema attribute to change the name from Camel-case to snake-case
+//
 // Nodes:
 //  - [ ] Const
-//  - [ ] Struct
-//      - [ ] Field
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//  - [✔] Struct
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//      - [✔] Field
+//          - [✔] Define Schema (*NodeSchema)
+//          - [✔] Add edge (implicit in ParamData owner_id)
+//          - [✔] Define tranform
+//              - [✔] Basic testing
+//          - [ ] Add explicit edges Struct->Field
 //  - [ ] Enum
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //      - [ ] Variant
+//          - [✔] Define Schema (*NodeSchema)
+//          - [ ] Add edge
 //      - [ ] Field (if different from struct field)
+//          - [ ] Add edge
 //  - [✔] Function
-//      - [ ] ParamData
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] ParamData
+//          - [✔] Define tranform
+//              - [✔] Basic testing
+//          - [✔] Define Schema (*NodeSchema)
+//          - [✔] Add edge (implicit in ParamData owner_id)
+//          - [ ] Add explecit edge Function->ParamData
 //  - [ ] Impl
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //      - [ ] Method
+//          - [✔] Define Schema (*NodeSchema)
+//          - [ ] Define tranform
+//              - [ ] Basic testing
+//          - [ ] Add edge
 //  - [ ] Macro
-//  - [ ] Module
-//      - [ ] ModuleKind (?)
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
+//  - [ ] Module (split into FileModuleNode, InlineModuleNode, DeclModuleNode)
+//      - [✔] Define Schema (FileModuleNodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
+//      - [✔] Define Schema (InlineModuleNodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
+//      - [✔] Define Schema (DeclModuleNodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //  - [ ] Trait
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //      - [ ] Method (if different from impl method)
+//          - [ ] Define tranform
+//              - [ ] Basic testing
+//          - [✔] Define Schema (*NodeSchema)
+//          - [ ] Add edge
 //  - [ ] TypeAlias
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //  - [ ] Import
+//      - [✔] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
+//
+// Add Schema definitions for Associated Nodes:
+//  - [✔] MethodNodeSchema
+//  - [ ] AssociatedConstNode (not tracked yet)
+//  - [ ] AssociatedStaticNode (not tracked yet)
+//  - [ ] AssociatedFunctionNode (not tracked yet)
+//      - I think we don't track this yet? Check on this.
+//
+//  - [✔] ParamData
+//      - [✔] Add function to turn into BTree
+//  - [✔] VariantNode
+//      - [ ] Add function to turn into BTree
+//  - [✔] FieldNode
+//      - [ ] Add function to turn into BTree
+//  - [✔] GenericParamNode
+//      - [✔] GenericTypeNodeSchema
+//      - [✔] GenericLifetimeNodeSchema
+//      - [✔] GenericConstNodeSchema
+//      - [✔] Add function to turn into BTree
+//  - [✔] Attribute
+//      - [✔] Add function to turn into BTree
 //
 //  NOTE: Not exactly sure how to handle attributes and generic params here.
 //  Cozo doesn't seem to be very friendly to nested data types, but having an edge to for evey
@@ -33,6 +113,7 @@ use crate::define_schema;
 //  - param_data
 //  - return_type_id
 define_schema!(FunctionNodeSchema {
+    "function",
     id: "Uuid",
     name: "String",
     docstring: "String?",
@@ -49,6 +130,7 @@ define_schema!(FunctionNodeSchema {
 // TODO: Link to:
 // - attributes
 define_schema!(ConstNodeSchema {
+    "const",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -66,6 +148,7 @@ define_schema!(ConstNodeSchema {
 //  - generic_params
 //  - attributes
 define_schema!(EnumNodeSchema {
+    "enum",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -83,6 +166,7 @@ define_schema!(EnumNodeSchema {
 //  - self type (if applicable)
 //  - generic_params
 define_schema!(ImplNodeSchema {
+    "impl",
     id: "Uuid",
     self_type: "Uuid",
     span: "[Int; 2]",
@@ -95,6 +179,7 @@ define_schema!(ImplNodeSchema {
 //  - Re-export type
 // NOTE: Flattened `ImportKind` into `import_kind` and `vis_kind`, `vis_path`
 define_schema!(ImportNodeSchema {
+    "import",
     id: "Uuid",
     span: "[Int; 2]",
     source_path: "[String]",
@@ -111,6 +196,7 @@ define_schema!(ImportNodeSchema {
 //  - attributes
 //  - kind (MacroKind)
 define_schema!(MacroNodeSchema {
+    "macro",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -133,6 +219,7 @@ define_schema!(MacroNodeSchema {
 // and inline. Linking to another node that has the details on the module might be kind of awkward.
 // This is one case that will be significantly clarified with a "logical" layer to the graph.
 define_schema!(ModuleNodeSchema {
+    "module",
     id: "Uuid",
     name: "String",
     path: "[String]",
@@ -141,13 +228,14 @@ define_schema!(ModuleNodeSchema {
     docstring: "String?",
     span: "[Int; 2]",
     tracking_hash: "Uuid?",
-    module_def: "String"
+    module_kind: "String"
 });
 
 // TODO: Link to:
 //  - attributes
 // NOTE: Consider linking to type?
 define_schema!(StaticNodeSchema {
+    "static",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -166,6 +254,7 @@ define_schema!(StaticNodeSchema {
 //  - generic_params (GenericParamNode)
 //  - attributes (Attribute)
 define_schema!(StructNodeSchema {
+    "struct",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -182,6 +271,7 @@ define_schema!(StructNodeSchema {
 //  - attributes (Attribute)
 //  - methods (MethodNode)
 define_schema!(TraitNodeSchema {
+    "trait",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -196,6 +286,7 @@ define_schema!(TraitNodeSchema {
 //  - generic_params (GenericParamNode)
 //  - attributes (Attribute)
 define_schema!(TypeAliasNodeSchema {
+    "type_alias",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",
@@ -212,6 +303,7 @@ define_schema!(TypeAliasNodeSchema {
 //  - generic_params (GenericParamNode)
 //  - attributes (Attribute)
 define_schema!(UnionNodeSchema {
+    "union",
     id: "Uuid",
     name: "String",
     span: "[Int; 2]",

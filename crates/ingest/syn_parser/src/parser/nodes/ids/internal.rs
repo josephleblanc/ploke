@@ -21,15 +21,27 @@ use std::error::Error;
 use std::fmt::Display;
 
 // NOTE: WIP, turn this into macro for, e.g. FunctionNodeId, StructNodeId, etc
-pub trait HasAnyNodeId {
-    fn any_id(&self) -> AnyNodeId;
-}
+// pub trait HasAnyNodeId {
+//     fn any_id(&self) -> AnyNodeId;
+// }
+//
+// impl HasAnyNodeId for FunctionNode {
+//     fn any_id(&self) -> AnyNodeId {
+//         self.id.as_any()
+//     }
+// }
 
-impl HasAnyNodeId for FunctionNode {
-    fn any_id(&self) -> AnyNodeId {
-        self.id.as_any()
-    }
-}
+// macro_rules! has_any_id {
+//     ($node:path) => {
+//         impl HasAnyNodeId for $node {
+//             fn any_id(&self) -> AnyNodeId {
+//                 self.id.as_any()
+//             }
+//         }
+//     };
+// }
+
+// has_any_id!(StructNode);
 
 pub trait ToUuidString: TypedId {
     fn to_uuid_string(&self) -> String;

@@ -1,5 +1,7 @@
 use syn_parser::parser::nodes::*;
 
+use crate::traits::HasAnyNodeId;
+
 mod functions;
 
 pub(crate) trait PrintToCozo
