@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) trait RelationIndexer {
+pub trait RelationIndexer {
     fn relations_by_source(&self) -> &HashMap<AnyNodeId, Vec<usize>>;
     fn relations_by_source_mut(&mut self) -> &mut HashMap<AnyNodeId, Vec<usize>>;
     fn relations_by_target(&self) -> &HashMap<AnyNodeId, Vec<usize>>;
@@ -122,14 +122,28 @@ pub(super) trait RelationIndexer {
     fn get_iter_relations_to<'a>(
         &'a self,
         target_id: &AnyNodeId,
-    ) -> Option<impl Iterator<Item = &'a TreeRelation>> {
-        self.relations_by_target().get(target_id).map(|indices| {
-            // Use AnyNodeId key
-            // Map indices directly to relation references
-            indices
-                .iter()
-                .filter_map(|&index| self.tree_relations().get(index))
-        })
+    ) -> impl Iterator<Item = &'a TreeRelation> {
+        self.relations_by_target()
+            .get(target_id)
+            .map(|indices| {
+                // Use AnyNodeId key
+                // Map indices directly to relation references
+                indices
+                    .iter()
+                    .filter_map(|&index| self.tree_relations().get(index))
+            })
+            .unwrap_or_else(|| {
+                log::error!(target: LOG_TARGET_MOD_TREE_BUILD,
+                    "{}: {} | {} ({}) {} {:?}",
+                    "Invariant Violated".log_error(),
+                    "All nodes must have a relation.",
+                    "No relations found with target_id:",
+                    target_id,
+                    "Full ID:",
+                    target_id
+                );
+                panic!()
+            })
     }
 
     /// Adds a relation to the tree without checking if the source/target nodes exist.

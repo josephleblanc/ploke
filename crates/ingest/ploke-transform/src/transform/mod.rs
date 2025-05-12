@@ -2,35 +2,165 @@
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use syn_parser::parser::nodes::*;
+use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
+use syn_parser::resolve::module_tree::ModuleTree;
 
 mod fields;
 mod functions;
 use functions::transform_functions;
 
+// TODO: use lazy_static and SmartString
+// &str for now,
+// find a better solution using lazy_static and maybe SmartString, since that is what cozo uses
+// anyawys
+pub struct CozoField {
+    st: &'static str,
+    dv: &'static str,
+}
+impl CozoField {
+    fn schema_str(&self) -> String {
+        self.st
+            .chars()
+            .chain(": ".chars())
+            .chain(self.dv.chars())
+            .collect()
+    }
+}
+
+impl CozoField {
+    pub fn st(&self) -> &str {
+        self.st
+    }
+
+    pub fn dv(&self) -> &str {
+        self.dv
+    }
+}
+
+pub struct FunctionNodeSchema {
+    id: CozoField,
+    name: CozoField,
+    docstring: CozoField,
+    span: CozoField,
+    tracking_hash: CozoField,
+    cfgs: CozoField,
+    return_type_id: CozoField,
+    body: CozoField,
+    vis_kind: CozoField,
+    vis_path: CozoField,
+    module_id: CozoField,
+}
+
+impl FunctionNodeSchema {
+    pub fn id(&self) -> &str {
+        &self.id.st()
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name.st()
+    }
+    pub fn id_schema(&self) -> String {
+        self.id.schema_str()
+    }
+    pub fn name_schema(&self) -> String {
+        self.name.schema_str()
+    }
+}
+
+pub(crate) static FUNCTION_NODE_SCHEMA: FunctionNodeSchema = FunctionNodeSchema {
+    id: CozoField {
+        st: "id",
+        dv: "Uuid",
+    },
+    name: CozoField {
+        st: "name",
+        dv: "String",
+    },
+    docstring: CozoField {
+        st: "docstring",
+        dv: "String",
+    },
+    span: CozoField {
+        st: "span",
+        dv: "[Int]",
+    },
+    tracking_hash: CozoField {
+        st: "tracking_hash",
+        dv: "Uuid",
+    },
+    cfgs: CozoField {
+        st: "cfgs",
+        dv: "[String]?",
+    },
+    return_type_id: CozoField {
+        st: "return_type",
+        dv: "Uuid?",
+    },
+    body: CozoField {
+        st: "body",
+        dv: "String?",
+    },
+    vis_kind: CozoField {
+        st: "vis_kind",
+        dv: "String",
+    },
+    vis_path: CozoField {
+        st: "Vis_path",
+        dv: "[String]?",
+    },
+    module_id: CozoField {
+        st: "module_id",
+        dv: "Uuid",
+    },
+};
+
+// TODO: Once I have proof of concept, use this to build the scripts from lazy static strings of
+// the create/put/etc scripts for relations
+// - Possibly use type-specific versions or something, e.g. PutScript<FunctionNode>
+//
+// pub(crate) struct PutScript{
+//     lhs: &str,
+//     rhs: &str,
+//     params: BTreeMap<&'static str, DataValue>
+// };
+//
+// impl PutScript {}
+//
+// impl Deref for PutScript {
+//     type Target = BTreeMap<String, DataValue>;
+//
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
 /// Transforms a CodeGraph into CozoDB relations
 pub fn transform_code_graph(
     db: &Db<MemStorage>,
-    code_graph: &CodeGraph,
+    code_graph: CodeGraph,
+    tree: &ModuleTree,
 ) -> Result<(), cozo::Error> {
+    let relations = code_graph.relations;
     // Transform types
-    transform_types(db, code_graph)?;
+    transform_types(db, code_graph.type_graph)?;
 
     // Transform functions
-    transform_functions(db, code_graph)?;
+    transform_functions(db, code_graph.functions, tree)?;
 
     // Transform defined types (structs, enums, etc.)
-    transform_defined_types(db, code_graph)?;
+    transform_defined_types(db, code_graph.defined_types)?;
 
     // Transform traits
-    transform_traits(db, code_graph)?;
+    transform_traits(db, code_graph.traits)?;
 
     // Transform impls
-    transform_impls(db, code_graph)?;
+    transform_impls(db, code_graph.impls)?;
 
     // Transform modules
-    transform_modules(db, code_graph)?;
+    transform_modules(db, code_graph.modules)?;
 
     // Transform consts
     #[cfg(not(feature = "type_bearing_ids"))]
@@ -40,7 +170,7 @@ pub fn transform_code_graph(
     transform_statics(db, code_graph)?;
 
     // Transform macros
-    transform_macros(db, code_graph)?;
+    transform_macros(db, code_graph.macros)?;
 
     // Transform relations
     #[cfg(not(feature = "type_bearing_ids"))]
@@ -50,10 +180,10 @@ pub fn transform_code_graph(
 }
 
 /// Transforms trait nodes into the traits relation
-fn transform_traits(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
+fn transform_traits(db: &Db<MemStorage>, traits: Vec<TraitNode>) -> Result<(), cozo::Error> {
     // Process public traits
-    for trait_node in &code_graph.traits {
-        transform_single_trait(db, trait_node)?;
+    for trait_node in traits.into_iter() {
+        transform_single_trait(db, &trait_node)?;
     }
 
     Ok(())
@@ -135,8 +265,8 @@ fn transform_single_trait(
 }
 
 /// Transforms impl nodes into the impls relation
-fn transform_impls(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for impl_node in &code_graph.impls {
+fn transform_impls(db: &Db<MemStorage>, impls: Vec<ImplNode>) -> Result<(), cozo::Error> {
+    for impl_node in impls.into_iter() {
         let trait_type_id = impl_node
             .trait_type
             .map(|id| id.into())
@@ -162,8 +292,8 @@ fn transform_impls(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 }
 
 /// Transforms module nodes into the modules relation
-fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for module in &code_graph.modules {
+fn transform_modules(db: &Db<MemStorage>, modules: Vec<ModuleNode>) -> Result<(), cozo::Error> {
+    for module in modules {
         let (vis_kind, vis_path) = match &module.visibility {
             VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
@@ -250,8 +380,8 @@ fn transform_modules(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), 
 
 /// Transforms value nodes into the values relation
 #[cfg(not(feature = "type_bearing_ids"))]
-fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for value in &code_graph.consts {
+fn transform_values(db: &Db<MemStorage>, consts: Vec<ConstNode>) -> Result<(), cozo::Error> {
+    for value in consts.into_iter() {
         let (vis_kind, vis_path) = match &value.visibility {
             VisibilityKind::Public => (DataValue::from("public".to_string()), None),
             VisibilityKind::Crate => ("crate".into(), None),
@@ -323,8 +453,8 @@ fn transform_values(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 }
 
 /// Transforms macro nodes into the macros relation
-fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for macro_node in &code_graph.macros {
+fn transform_macros(db: &Db<MemStorage>, macros: Vec<MacroNode>) -> Result<(), cozo::Error> {
+    for macro_node in macros {
         let visibility = match macro_node.visibility {
             VisibilityKind::Public => "Public",
             VisibilityKind::Crate => "Crate",
@@ -376,8 +506,8 @@ fn transform_macros(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), c
 }
 
 /// Transforms type nodes into the types relation
-fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for type_node in &code_graph.type_graph {
+fn transform_types(db: &Db<MemStorage>, type_graph: Vec<TypeNode>) -> Result<(), cozo::Error> {
+    for type_node in type_graph {
         let kind = match &type_node.kind {
             ploke_core::TypeKind::Named { .. } => "Named",
             ploke_core::TypeKind::Reference { .. } => "Reference",
@@ -526,8 +656,11 @@ fn transform_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), co
 }
 
 /// Transforms defined types (structs, enums, etc.) into their respective relations
-fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
-    for type_def in &code_graph.defined_types {
+fn transform_defined_types(
+    db: &Db<MemStorage>,
+    defined_types: Vec<TypeDefNode>,
+) -> Result<(), cozo::Error> {
+    for type_def in defined_types.into_iter() {
         match type_def {
             TypeDefNode::Struct(struct_node) => {
                 let visibility = match struct_node.visibility {
@@ -740,7 +873,12 @@ fn transform_defined_types(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Resul
 
 /// Transforms relations into the relations relation
 #[cfg(not(feature = "type_bearing_ids"))]
-fn transform_relations(db: &Db<MemStorage>, code_graph: &CodeGraph) -> Result<(), cozo::Error> {
+fn transform_relations(
+    db: &Db<MemStorage>,
+    relations: Vec<SyntacticRelation>,
+) -> Result<(), cozo::Error> {
+    use syn_parser::parser::relations::SyntacticRelation;
+
     for relation in &code_graph.relations {
         let kind = match relation.kind {
             SyntacticRelation::FunctionParameter => "FunctionParameter",

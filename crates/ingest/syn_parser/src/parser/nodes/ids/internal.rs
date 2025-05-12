@@ -66,6 +66,18 @@ impl ToCozoUuid for PrimaryNodeId {
     }
 }
 
+impl ToCozoUuid for GenericParamNodeId {
+    fn to_cozo_uuid(self) -> DataValue {
+        DataValue::Uuid(UuidWrapper(self.base_id().uuid()))
+    }
+}
+
+impl ToCozoUuid for TypeId {
+    fn to_cozo_uuid(self) -> DataValue {
+        DataValue::Uuid(UuidWrapper(self.uuid()))
+    }
+}
+
 pub mod test_ids {
     use ploke_core::NodeId;
 

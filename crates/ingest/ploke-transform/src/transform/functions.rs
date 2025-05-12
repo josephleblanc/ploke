@@ -1,56 +1,101 @@
+use cozo::Num;
+use itertools::Itertools;
+use log::trace;
+use syn_parser::resolve::RelationIndexer;
+use syn_parser::{parser::types::GenericParamKind, utils::LogStyle};
+
+pub const LOG_TARGET_TRANSFORM: &str = "transform";
+
 use super::*;
 /// Transforms function nodes into the functions relation
 pub(super) fn transform_functions(
     db: &Db<MemStorage>,
-    code_graph: &CodeGraph,
+    functions: Vec<FunctionNode>,
+    tree: &ModuleTree,
 ) -> Result<(), cozo::Error> {
-    for function in &code_graph.functions {
-        let (vis_kind, vis_path) = vis_to_dataval(function);
+    for mut function in functions.into_iter() {
+        let schema = &FUNCTION_NODE_SCHEMA;
+        let (vis_kind, vis_path) = vis_to_dataval(&function);
 
+        // return type optional
+        // Might want to change this to `()`
         let return_type_id = function
             .return_type
             .map(|id| id.into())
-            .unwrap_or(DataValue::Null);
+            .unwrap_or(DataValue::Null); // Can be empty, None->Null
 
+        // doc string might be empty
         let docstring = function
             .docstring
             .as_ref()
             .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
+            .unwrap_or(DataValue::Null); // Can be empty, None->Null
 
+        // body can be empty
         let body = function
             .body
             .as_ref()
             .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
+            .unwrap_or(DataValue::Null); // Can be empty, None->Null
+
+        let th_cozo = DataValue::Uuid(cozo::UuidWrapper(function.tracking_hash.take().unwrap_or_else(|| {
+                panic!("Invariant Violated: FunctionNode must have TrackingHash upon database insertion")
+            }).0));
+
+        let span_start = DataValue::Num(Num::Int(function.span.0 as i64));
+        let span_end = DataValue::Num(Num::Int(function.span.1 as i64));
+        let span = DataValue::List(Vec::from([span_start, span_end]));
+
+        // find containing module through relation in module tree
+        let module_id = tree
+            .get_iter_relations_to(&function.id.as_any())
+            .find_map(|r| r.rel().source_contains(function.id.to_pid()))
+            .unwrap_or_else(|| {
+                panic!("Invariant Violated: FunctionNode must have Contains relation with module")
+            });
+
+        let cfgs: Vec<DataValue> = function
+            .cfgs
+            .iter()
+            .map(|s| DataValue::from(s.as_str()))
+            .collect();
 
         // Insert into functions table
         let func_params = BTreeMap::from([
-            ("id".to_string(), function.id.into()),
-            ("name".to_string(), DataValue::from(function.name.as_str())),
-            ("return_type_id".to_string(), return_type_id),
+            (schema.id().name.to_string(), function.id.into()),
+            (
+                schema.name().name.to_string(),
+                DataValue::from(function.name.as_str()),
+            ),
             ("docstring".to_string(), docstring),
+            ("span".to_string(), span),
+            ("tracking_hash".to_string(), th_cozo),
+            ("cfgs".to_string(), DataValue::List(cfgs)),
+            ("return_type_id".to_string(), return_type_id),
             ("body".to_string(), body),
+            // Kind of awkward, might want to visibility its own entity. Maybe just visibility
+            // path?
+            ("vis_kind".to_string(), vis_kind),
+            ("vis_path".to_string(), vis_path.unwrap_or(DataValue::Null)),
+            // May remove this. Might be useful for debugging, less sure about in queries vs. the
+            // `Contains` edge. Needs testing in `ploke-db`
+            ("module_id".to_string(), module_id.into()),
         ]);
 
+        let script = create_script(&func_params, "function");
         db.run_script(
-            "?[id, name, return_type_id, docstring, body] <- [[$id, $name, $return_type_id, $docstring, $body]] :put functions",
+            // "?[id, name, return_type_id, docstring, body, tracking_hash] <- [[$id, $name, $return_type_id, $docstring, $body, $tracking_hash]] :put functions",
+            &script,
             func_params,
             ScriptMutability::Mutable,
         )?;
 
-        // Insert into visibility table
-        let vis_params = BTreeMap::from([
-            ("node_id".to_string(), function.id.into()),
-            ("kind".to_string(), vis_kind),
-            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
-        ]);
-
-        db.run_script(
-            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
-            vis_params,
-            ScriptMutability::Mutable,
-        )?;
+        // Moved visibility direction into function node for now.
+        // db.run_script(
+        //     "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
+        //     vis_params,
+        //     ScriptMutability::Mutable,
+        // )?;
 
         // Add function parameters
         for (i, param) in function.parameters.iter().enumerate() {
@@ -69,50 +114,22 @@ pub(super) fn transform_functions(
                 ("is_self".to_string(), DataValue::from(param.is_self)),
             ]);
 
+            let script = create_script(&param_params, "function_params");
+
             db.run_script(
-                "?[function_id, param_index, param_name, type_id, is_mutable, is_self] <- [[$function_id, $param_index, $param_name, $type_id, $is_mutable, $is_self]] :put function_params",
+                // "?[function_id, param_index, param_name, type_id, is_mutable, is_self] <- [[$function_id, $param_index, $param_name, $type_id, $is_mutable, $is_self]] :put function_params",
+                &script,
                 param_params,
                 ScriptMutability::Mutable,
             )?;
         }
 
         // Add generic parameters
-        for (i, generic_param) in function.generic_params.iter().enumerate() {
-            let kind = match &generic_param.kind {
-                syn_parser::parser::types::GenericParamKind::Type { .. } => "Type",
-                syn_parser::parser::types::GenericParamKind::Lifetime { .. } => "Lifetime",
-                syn_parser::parser::types::GenericParamKind::Const { .. } => "Const",
-            };
+        for (i, generic_param) in function.generic_params.into_iter().enumerate() {
+            // let entries = ["owner_id", "param_index", "kind", "name", "type_id"];
 
-            let name = match &generic_param.kind {
-                syn_parser::parser::types::GenericParamKind::Type { name, .. } => name,
-                syn_parser::parser::types::GenericParamKind::Lifetime { name, .. } => name,
-                syn_parser::parser::types::GenericParamKind::Const { name, .. } => name,
-            };
-
-            let type_id = match &generic_param.kind {
-                syn_parser::parser::types::GenericParamKind::Type { default, .. } => {
-                    default.map(|id| id.into()).unwrap_or(DataValue::Null)
-                }
-                syn_parser::parser::types::GenericParamKind::Const { type_id, .. } => {
-                    type_id.into()
-                }
-                _ => DataValue::Null,
-            };
-
-            let generic_params = BTreeMap::from([
-                ("owner_id".to_string(), function.id.into()),
-                ("param_index".to_string(), DataValue::from(i as i64)),
-                ("kind".to_string(), DataValue::from(kind)),
-                ("name".to_string(), DataValue::from(name.as_str())),
-                ("type_id".to_string(), type_id),
-            ]);
-
-            db.run_script(
-                "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
-                generic_params,
-                ScriptMutability::Mutable,
-            )?;
+            let (params, script) = generic_param_script(function.id, i as i64, generic_param);
+            db.run_script(&script, params, ScriptMutability::Mutable)?;
         }
 
         // Add attributes
@@ -130,8 +147,10 @@ pub(super) fn transform_functions(
                 ("value".to_string(), value),
             ]);
 
+            let script = create_script(&attr_params, "attributes");
             db.run_script(
-                "?[owner_id, attr_index, name, value] <- [[$owner_id, $attr_index, $name, $value]] :put attributes",
+                // "?[owner_id, attr_index, name, value] <- [[$owner_id, $attr_index, $name, $value]] :put attributes",
+                &script,
                 attr_params,
                 ScriptMutability::Mutable,
             )?;
@@ -139,6 +158,79 @@ pub(super) fn transform_functions(
     }
 
     Ok(())
+}
+
+fn generic_param_script(
+    func_id: FunctionNodeId,
+    i: i64,
+    generic_param: syn_parser::parser::types::GenericParamNode,
+) -> (BTreeMap<String, DataValue>, String) {
+    let cozo_id: DataValue = generic_param.id.into();
+    let name: DataValue = generic_param
+        .kind
+        .name()
+        .map(DataValue::from)
+        .unwrap_or_else(|| {
+            log::error!(target: "transform", "{}: {} | {:?}", "Error".log_error(), "Invalid State, Generic Param without name", generic_param);
+            panic!("Invalid State")
+        });
+
+    // Common fields to all variants
+    let mut params = BTreeMap::from([
+        ("id".to_string(), cozo_id),
+        ("owner_id".to_string(), func_id.into()),
+        ("param_index".to_string(), DataValue::Num(cozo::Num::Int(i))),
+        ("kind".to_string(), DataValue::Str("Type".into())),
+        ("name".to_string(), name),
+    ]);
+
+    // Handle variant-unique fields differently
+    // (possibly change handling of "bounds" to be more general)
+    match generic_param.kind {
+        GenericParamKind::Type {
+            name: _,
+            bounds,
+            default,
+        } => {
+            let cozo_bounds: Vec<DataValue> =
+                bounds.into_iter().map(|t| t.to_cozo_uuid()).collect();
+            params.insert("bounds".to_string(), DataValue::List(cozo_bounds));
+
+            let cozo_default = default.map_or(DataValue::Null, |t| t.to_cozo_uuid());
+            params.insert("default".to_string(), cozo_default);
+        }
+        // NOTE: Lifetime bounds currently just a String. When we actually start handling
+        // lifetime bounds this will have to be improved.
+        GenericParamKind::Lifetime { name: _, bounds } => {
+            let cozo_lifetime_bounds: Vec<DataValue> =
+                bounds.into_iter().map(DataValue::from).collect();
+            params.insert("bounds".to_string(), DataValue::List(cozo_lifetime_bounds));
+        }
+        GenericParamKind::Const { name: _, type_id } => {
+            params.insert("type_id".to_string(), type_id.to_cozo_uuid());
+        }
+    }
+
+    let script = create_script(&params, "generic_param");
+    trace!(target: LOG_TARGET_TRANSFORM,
+        "{}: {} | {}",
+        "Form Script".log_step(),
+        "GenericParamKind".log_name(),
+        script.log_magenta()
+    );
+    (params, script)
+}
+
+fn create_script(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
+    let entry_names = params.keys().join(", ");
+    let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+    // Should come out looking like:
+    // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
+    let script = format!(
+        "?[{}] <- [[{}]] :put {}",
+        entry_names, param_names, relation_name
+    );
+    script
 }
 
 fn vis_to_dataval(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
@@ -156,4 +248,36 @@ fn vis_to_dataval(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
         VisibilityKind::Inherited => ("inherited".into(), None),
     };
     (vis_kind, vis_path)
+}
+#[cfg(test)]
+mod test {
+    use cozo::{Db, MemStorage};
+    use ploke_test_utils::run_phases_and_collect;
+    use syn_parser::parser::{
+        graph::GraphAccess,
+        nodes::{FunctionNode, PrimaryNodeIdTrait},
+    };
+
+    use crate::printable::CozoSchema;
+
+    #[test]
+    fn func_transform() -> Result<(), cozo::Error> {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
+
+        // Setup printable nodes
+        let successful_graphs = run_phases_and_collect("fixture_types");
+        let target_graph = successful_graphs
+            .iter()
+            .find(|pg| pg.crate_context.is_some())
+            .expect("root file not found"); // find root file
+
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+
+        let function_schema = FunctionNode::schema();
+        Ok(())
+    }
 }

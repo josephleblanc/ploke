@@ -29,7 +29,7 @@ pub use internal::HasAnyNodeId;
 pub use internal::AsAnyNodeId;
 // Helps with displaying raw Uuid (useful in ploke-transform)
 // Included here to prevent exposing underlying type for invalid comparisons.
-pub use internal::ToUuidString;
+pub use internal::{ToCozoUuid, ToUuidString};
 
 // Re-export the getter trait (make it crate-visible)
 // pub(crate) use internal::TypedNodeIdGet;

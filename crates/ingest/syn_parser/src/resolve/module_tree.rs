@@ -466,12 +466,15 @@ impl ModuleTree {
         //    We still need this initial lookup as the input is AnyNodeId.
         let initial_parent_mod_id = self
             .get_iter_relations_to(&typed_pid.as_any()) // Use iterator version
-            .ok_or(ModuleTreeError::NoRelationsFoundForId(typed_pid.as_any()))? // Use specific error
             .find_map(|tr| tr.rel().source_contains(typed_pid))
             .ok_or(ModuleTreeError::ContainingModuleNotFound(
                 typed_pid.as_any(),
             ))?; // Error if no Contains relation found
 
+        // removed from above iterator after changing `get_iter_relations_to` to panic on finding
+        // no relations, as this represents an invalid state (other than for root, which needs to
+        // be checked and specially handled)
+        // .ok_or(ModuleTreeError::NoRelationsFoundForId(typed_pid.as_any()))? // Use specific error
         let mut current_mod_id = initial_parent_mod_id;
         let mut recursion_limit = 100; // Safety break
 
@@ -1018,16 +1021,14 @@ impl ModuleTree {
         // This covers inline modules and declarations contained directly.
         let direct_parent = self
             .get_iter_relations_to(&module_id.as_any()) // Use as_any()
-            .and_then(|mut iter| {
-                iter.find_map(|tr| match tr.rel() {
-                    SyntacticRelation::Contains { source, target }
-                        if target.as_any() == module_id.as_any() =>
-                    // Use as_any()
-                    {
-                        Some(*source) // Source is already ModuleNodeId
-                    }
-                    _ => None,
-                })
+            .find_map(|tr| match tr.rel() {
+                SyntacticRelation::Contains { source, target }
+                    if target.as_any() == module_id.as_any() =>
+                // Use as_any()
+                {
+                    Some(*source) // Source is already ModuleNodeId
+                }
+                _ => None,
             });
 
         if direct_parent.is_some() {
@@ -1037,35 +1038,31 @@ impl ModuleTree {
         // If no direct parent found via Contains, check if `module_id` is a file-based definition.
         // If so, find its declaration and then the declaration's parent.
         self.get_iter_relations_to(&module_id.as_any()) // Use as_any()
-            .and_then(|mut iter| {
-                iter.find_map(|tr| match tr.rel() {
-                    // Find the relation linking a declaration *to* this definition
-                    SyntacticRelation::ResolvesToDefinition {
-                        source: decl_id,
-                        target,
-                    }
-                    | SyntacticRelation::CustomPath {
-                        source: decl_id,
-                        target,
-                    } if *target == module_id => {
-                        // Found the declaration ID (`decl_id`). Now find *its* parent.
-                        self.get_iter_relations_to(&decl_id.as_any()) // Use as_any()
-                            .and_then(|mut decl_iter| {
-                                decl_iter.find_map(|decl_tr| match decl_tr.rel() {
-                                    SyntacticRelation::Contains {
-                                        source: parent_id,
-                                        target: contains_target,
-                                    } if contains_target.as_any() == decl_id.as_any() =>
-                                    // Compare AnyNodeId representations
-                                    {
-                                        Some(*parent_id) // Parent is already ModuleNodeId
-                                    }
-                                    _ => None,
-                                })
-                            })
-                    }
-                    _ => None,
-                })
+            .find_map(|tr| match tr.rel() {
+                // Find the relation linking a declaration *to* this definition
+                SyntacticRelation::ResolvesToDefinition {
+                    source: decl_id,
+                    target,
+                }
+                | SyntacticRelation::CustomPath {
+                    source: decl_id,
+                    target,
+                } if *target == module_id => {
+                    // Found the declaration ID (`decl_id`). Now find *its* parent.
+                    self.get_iter_relations_to(&decl_id.as_any()) // Use as_any()
+                        .find_map(|decl_tr| match decl_tr.rel() {
+                            SyntacticRelation::Contains {
+                                source: parent_id,
+                                target: contains_target,
+                            } if contains_target.as_any() == decl_id.as_any() =>
+                            // Compare AnyNodeId representations
+                            {
+                                Some(*parent_id) // Parent is already ModuleNodeId
+                            }
+                            _ => None,
+                        })
+                }
+                _ => None,
             })
     }
 
@@ -1470,14 +1467,12 @@ impl ModuleTree {
             // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with AnyNodeId
             let is_linked = self
                 .get_iter_relations_to(&mod_id.as_any()) // Use AnyNodeId
-                .is_some_and(|mut iter| {
-                    iter.any(|tr| {
-                        matches!(
-                            tr.rel(), // Use rel() to get SyntacticRelation
-                            SyntacticRelation::ResolvesToDefinition { .. }
-                                | SyntacticRelation::CustomPath { .. }
-                        )
-                    })
+                .any(|tr| {
+                    matches!(
+                        tr.rel(), // Use rel() to get SyntacticRelation
+                        SyntacticRelation::ResolvesToDefinition { .. }
+                            | SyntacticRelation::CustomPath { .. }
+                    )
                 });
 
             if !is_linked {

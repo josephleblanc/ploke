@@ -36,16 +36,16 @@ impl CozoSchema for FunctionNode {
 :create function {
     id:             Uuid,
     name:           String,
-    module_id:      Uuid,
-    visibility:     String,
-    return_type:    String,
-    generic_params: Json,
-    attributes:     [String],
     docstring:      String?,
     span:           [Int],
+    visibility:     String,
+    return_type:    String?,
+    generic_params: Json,
+    attributes:     [String],
     body:           String?,
-    tracking_hash:  Uuid,
+    tracking_hash:  String,
     cfgs:           [String]?
+    module_id:      Uuid,
 }"#
     }
     /// Forms the right hand side of a query,
@@ -58,16 +58,16 @@ impl CozoSchema for FunctionNode {
 *function {
     id,
     name,
-    module_id,
+    docstring,
+    span,
     visibility,
     return_type,
     generic_params,
     attributes,
-    docstring,
-    span,
     body,
     tracking_hash,
     cfgs
+    module_id,
 }
 "#
     }
@@ -75,7 +75,6 @@ impl CozoSchema for FunctionNode {
         r#"
     id,
     name,
-    module_id,
     visibility,
     return_type,
     generic_params,
@@ -85,6 +84,7 @@ impl CozoSchema for FunctionNode {
     body,
     tracking_hash,
     cfgs
+    module_id,
 "#
     }
 }
