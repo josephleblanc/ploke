@@ -3,7 +3,7 @@
 
 use cozo::NamedRows;
 use cozo::{DataValue, Db, MemStorage};
-use ploke_transform::schema::create_schema;
+// use ploke_transform::schema::create_schema;
 use std::collections::BTreeMap;
 use std::path::Path;
 use syn_parser::CodeGraph;
@@ -15,7 +15,7 @@ pub fn setup_test_db() -> Db<MemStorage> {
     db.initialize().expect("Failed to initialize database");
 
     // Create the schema
-    create_schema(&db).expect("Failed to create schema");
+    // create_schema(&db).expect("Failed to create schema");
 
     db
 }

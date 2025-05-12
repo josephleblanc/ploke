@@ -1,4 +1,4 @@
-//! Schema definitions for the CozoDB database
+/! Schema definitions for the CozoDB database
 
 use cozo::DataValue;
 use std::collections::BTreeMap;

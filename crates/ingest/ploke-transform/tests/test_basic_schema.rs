@@ -2,7 +2,7 @@
 
 #![allow(unused_imports, dead_code)]
 use cozo::{DataValue, ScriptMutability};
-use ploke_transform::schema::{insert_sample_data, verify_schema};
+// use ploke_transform::schema::{insert_sample_data, verify_schema};
 use std::collections::BTreeMap;
 use test_helpers::setup_test_db;
 

@@ -12,26 +12,6 @@ mod fields;
 mod functions;
 use functions::transform_functions;
 
-pub struct CozoField {
-    st: &'static str,
-    dv: &'static str,
-}
-impl CozoField {
-    fn schema_str(&self) -> impl Iterator<Item = char> {
-        self.st.chars().chain(": ".chars()).chain(self.dv.chars())
-    }
-}
-
-impl CozoField {
-    pub fn st(&self) -> &str {
-        self.st
-    }
-
-    pub fn dv(&self) -> &str {
-        self.dv
-    }
-}
-
 // TODO: Once I have proof of concept, use this to build the scripts from lazy static strings of
 // the create/put/etc scripts for relations
 // - Possibly use type-specific versions or something, e.g. PutScript<FunctionNode>

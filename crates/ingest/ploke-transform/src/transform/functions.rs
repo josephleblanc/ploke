@@ -5,7 +5,7 @@ use log::trace;
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::{parser::types::GenericParamKind, utils::LogStyle};
 // crate-local imports
-use crate::schema::primary_nodes::{FunctionNodeSchema, FUNCTION_NODE_SCHEMA};
+use crate::schema::primary_nodes::FunctionNodeSchema;
 
 pub const LOG_TARGET_TRANSFORM: &str = "transform";
 
@@ -17,7 +17,8 @@ pub(super) fn transform_functions(
     tree: &ModuleTree,
 ) -> Result<(), cozo::Error> {
     for mut function in functions.into_iter() {
-        let schema = &FUNCTION_NODE_SCHEMA;
+        // let schema = &FUNCTION_NODE_SCHEMA;
+        let schema = &FunctionNodeSchema::SCHEMA;
         let func_params = process_func(tree, &mut function, schema);
 
         let script = script_put(&func_params, "function");
@@ -27,13 +28,6 @@ pub(super) fn transform_functions(
             func_params,
             ScriptMutability::Mutable,
         )?;
-
-        // Moved visibility direction into function node for now.
-        // db.run_script(
-        //     "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
-        //     vis_params,
-        //     ScriptMutability::Mutable,
-        // )?;
 
         // Add function parameters
         for (i, param) in function.parameters.iter().enumerate() {
@@ -269,12 +263,14 @@ fn vis_to_dataval(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
 }
 #[cfg(test)]
 mod test {
+    use std::collections::BTreeMap;
+
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::{graph::GraphAccess, ParsedCodeGraph};
     use syn_parser::utils::LogStyle;
 
-    use crate::schema::primary_nodes::FUNCTION_NODE_SCHEMA;
+    use crate::schema::primary_nodes::FunctionNodeSchema;
     use crate::transform::functions::process_func;
     use crate::transform::functions::script_put;
 
@@ -299,14 +295,15 @@ mod test {
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
 
-        let func_schema = &FUNCTION_NODE_SCHEMA;
+        let func_schema = &FunctionNodeSchema::SCHEMA;
         log::info!(target: "transform_function",
             "{}: {:?}",
-            "Printing function schema".log_step(),
+            "Printing function schema V2".log_step(),
             func_schema.schema_string()
         );
 
-        let db_result = func_schema.schema_create(&db)?;
+        let schema = func_schema.schema_string();
+        let db_result = db.run_script(&schema, BTreeMap::new(), cozo::ScriptMutability::Mutable);
         log::info!(target: "transform_function",
             "{}: {:?}",
             "function schema created".log_step(),
@@ -331,6 +328,8 @@ mod test {
             "Build func script".log_step(),
             script,
         );
+        let name = "FunctionNodeSchema";
+        let suff = name.strip_suffix("NodeSchema").unwrap();
 
         db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)?;
         Ok(())
