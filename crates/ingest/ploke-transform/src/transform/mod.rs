@@ -123,24 +123,21 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
-        let create: String = ":create"
-            .chars()
-            .chain(" function".chars())
-            .chain(" { ".chars())
-            .chain(self.id_schema())
-            .chain(self.name_schema())
-            .chain(self.docstring_schema())
-            .chain(self.span_schema())
-            .chain(self.tracking_hash_schema())
-            .chain(self.cfgs_schema())
-            .chain(self.return_type_id_schema())
-            .chain(self.body_schema())
-            .chain(self.vis_kind_schema())
-            .chain(self.vis_path_schema())
-            .chain(self.module_id_schema())
-            .chain(" }".chars())
-            .collect();
-
+        let fields = [
+            format!("{}: {}", self.id(), self.id.dv()),
+            format!("{}: {}", self.name(), self.name.dv()),
+            format!("{}: {}", self.docstring(), self.docstring.dv()),
+            format!("{}: {}", self.span(), self.span.dv()),
+            format!("{}: {}", self.tracking_hash(), self.tracking_hash.dv()),
+            format!("{}: {}", self.cfgs(), self.cfgs.dv()),
+            format!("{}: {}", self.return_type_id(), self.return_type_id.dv()),
+            format!("{}: {}", self.body(), self.body.dv()),
+            format!("{}: {}", self.vis_kind(), self.vis_kind.dv()),
+            format!("{}: {}", self.vis_path(), self.vis_path.dv()),
+            format!("{}: {}", self.module_id(), self.module_id.dv()),
+        ];
+        
+        let create = format!(":create function {{ {} }}", fields.join(", "));
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
     }
 }
