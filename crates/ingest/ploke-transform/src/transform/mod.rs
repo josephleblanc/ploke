@@ -21,12 +21,8 @@ pub struct CozoField {
     dv: &'static str,
 }
 impl CozoField {
-    fn schema_str(&self) -> String {
-        self.st
-            .chars()
-            .chain(": ".chars())
-            .chain(self.dv.chars())
-            .collect()
+    fn schema_str(&self) -> impl Iterator<Item = char> {
+        self.st.chars().chain(": ".chars()).chain(self.dv.chars())
     }
 }
 
@@ -55,73 +51,97 @@ pub struct FunctionNodeSchema {
 }
 
 impl FunctionNodeSchema {
-    // AI:
     pub fn id(&self) -> &str {
-        &self.id.st()
+        self.id.st()
     }
-
     pub fn name(&self) -> &str {
-        &self.name.st()
+        self.name.st()
     }
-    pub fn id_schema(&self) -> String {
+    pub fn id_schema(&self) -> impl Iterator<Item = char> {
         self.id.schema_str()
     }
-    pub fn name_schema(&self) -> String {
+    pub fn name_schema(&self) -> impl Iterator<Item = char> {
         self.name.schema_str()
     }
     pub fn docstring(&self) -> &str {
-        &self.docstring.st()
+        self.docstring.st()
     }
-    pub fn docstring_schema(&self) -> String {
+    pub fn docstring_schema(&self) -> impl Iterator<Item = char> {
         self.docstring.schema_str()
     }
     pub fn span(&self) -> &str {
-        &self.span.st()
+        self.span.st()
     }
-    pub fn span_schema(&self) -> String {
+    pub fn span_schema(&self) -> impl Iterator<Item = char> {
         self.span.schema_str()
     }
     pub fn tracking_hash(&self) -> &str {
-        &self.tracking_hash.st()
+        self.tracking_hash.st()
     }
-    pub fn tracking_hash_schema(&self) -> String {
+    pub fn tracking_hash_schema(&self) -> impl Iterator<Item = char> {
         self.tracking_hash.schema_str()
     }
     pub fn cfgs(&self) -> &str {
-        &self.cfgs.st()
+        self.cfgs.st()
     }
-    pub fn cfgs_schema(&self) -> String {
+    pub fn cfgs_schema(&self) -> impl Iterator<Item = char> {
         self.cfgs.schema_str()
     }
     pub fn return_type_id(&self) -> &str {
-        &self.return_type_id.st()
+        self.return_type_id.st()
     }
-    pub fn return_type_id_schema(&self) -> String {
+    pub fn return_type_id_schema(&self) -> impl Iterator<Item = char> {
         self.return_type_id.schema_str()
     }
     pub fn body(&self) -> &str {
-        &self.body.st()
+        self.body.st()
     }
-    pub fn body_schema(&self) -> String {
+    pub fn body_schema(&self) -> impl Iterator<Item = char> {
         self.body.schema_str()
     }
     pub fn vis_kind(&self) -> &str {
-        &self.vis_kind.st()
+        self.vis_kind.st()
     }
-    pub fn vis_kind_schema(&self) -> String {
+    pub fn vis_kind_schema(&self) -> impl Iterator<Item = char> {
         self.vis_kind.schema_str()
     }
     pub fn vis_path(&self) -> &str {
-        &self.vis_path.st()
+        self.vis_path.st()
     }
-    pub fn vis_path_schema(&self) -> String {
+    pub fn vis_path_schema(&self) -> impl Iterator<Item = char> {
         self.vis_path.schema_str()
     }
     pub fn module_id(&self) -> &str {
-        &self.module_id.st()
+        self.module_id.st()
     }
-    pub fn module_id_schema(&self) -> String {
+    pub fn module_id_schema(&self) -> impl Iterator<Item = char> {
         self.module_id.schema_str()
+    }
+}
+
+impl FunctionNodeSchema {
+    /// Creates the relation schema ready to be registered in the cozo::Db using ":create
+    /// <relation> { .. }"
+    pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+        let create: String = ":create"
+            .chars()
+            .chain(" function".chars())
+            .chain(" { ".chars())
+            .chain(self.id_schema())
+            .chain(self.name_schema())
+            .chain(self.docstring_schema())
+            .chain(self.span_schema())
+            .chain(self.tracking_hash_schema())
+            .chain(self.cfgs_schema())
+            .chain(self.return_type_id_schema())
+            .chain(self.body_schema())
+            .chain(self.vis_kind_schema())
+            .chain(self.vis_path_schema())
+            .chain(self.module_id_schema())
+            .chain(" }".chars())
+            .collect();
+
+        db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
     }
 }
 
