@@ -123,14 +123,28 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+        // AI: This function inserts the schema for cozo `relation`s that will be inserted into the
+        // database. When the items are inserted, `cozo` requires that the items are in the form of
+        // key-value pairs in a `BTreeMap`. When we insert the items, we use an interator over the
+        // BTreeMap keys to create the insertion script. That insertion script is automatically
+        // sorted due to the nature of a `BTreeMap`. The `:create ..` script generated below is not
+        // in order, and so we are getting problems with database insertion.
+        // AI: Change the generated `:create` string so the fields are sorted by the key name.
         let mut create = String::from(":create function { ");
         create.push_str(&format!("{}: {}, ", self.id(), self.id.dv()));
         create.push_str(&format!("{}: {}, ", self.name(), self.name.dv()));
-        create.push_str(&format!("{}: {}, ", self.visibility(), self.visibility.dv()));
-        create.push_str(&format!("{}: {}, ", self.return_type_id(), self.return_type_id.dv()));
+        create.push_str(&format!(
+            "{}: {}, ",
+            self.return_type_id(),
+            self.return_type_id.dv()
+        ));
         create.push_str(&format!("{}: {}, ", self.docstring(), self.docstring.dv()));
         create.push_str(&format!("{}: {}, ", self.span(), self.span.dv()));
-        create.push_str(&format!("{}: {}, ", self.tracking_hash(), self.tracking_hash.dv()));
+        create.push_str(&format!(
+            "{}: {}, ",
+            self.tracking_hash(),
+            self.tracking_hash.dv()
+        ));
         create.push_str(&format!("{}: {}, ", self.cfgs(), self.cfgs.dv()));
         create.push_str(&format!("{}: {}, ", self.body(), self.body.dv()));
         create.push_str(&format!("{}: {}, ", self.vis_kind(), self.vis_kind.dv()));
@@ -138,6 +152,7 @@ impl FunctionNodeSchema {
         create.push_str(" }");
 
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
+        // AI!
     }
 }
 
