@@ -69,7 +69,60 @@ impl FunctionNodeSchema {
     pub fn name_schema(&self) -> String {
         self.name.schema_str()
     }
-    // Fill out the rest of these methods, following the pattern above. AI!
+    pub fn docstring(&self) -> &str {
+        &self.docstring.st()
+    }
+    pub fn docstring_schema(&self) -> String {
+        self.docstring.schema_str()
+    }
+    pub fn span(&self) -> &str {
+        &self.span.st()
+    }
+    pub fn span_schema(&self) -> String {
+        self.span.schema_str()
+    }
+    pub fn tracking_hash(&self) -> &str {
+        &self.tracking_hash.st()
+    }
+    pub fn tracking_hash_schema(&self) -> String {
+        self.tracking_hash.schema_str()
+    }
+    pub fn cfgs(&self) -> &str {
+        &self.cfgs.st()
+    }
+    pub fn cfgs_schema(&self) -> String {
+        self.cfgs.schema_str()
+    }
+    pub fn return_type_id(&self) -> &str {
+        &self.return_type_id.st()
+    }
+    pub fn return_type_id_schema(&self) -> String {
+        self.return_type_id.schema_str()
+    }
+    pub fn body(&self) -> &str {
+        &self.body.st()
+    }
+    pub fn body_schema(&self) -> String {
+        self.body.schema_str()
+    }
+    pub fn vis_kind(&self) -> &str {
+        &self.vis_kind.st()
+    }
+    pub fn vis_kind_schema(&self) -> String {
+        self.vis_kind.schema_str()
+    }
+    pub fn vis_path(&self) -> &str {
+        &self.vis_path.st()
+    }
+    pub fn vis_path_schema(&self) -> String {
+        self.vis_path.schema_str()
+    }
+    pub fn module_id(&self) -> &str {
+        &self.module_id.st()
+    }
+    pub fn module_id_schema(&self) -> String {
+        self.module_id.schema_str()
+    }
 }
 
 pub(crate) static FUNCTION_NODE_SCHEMA: FunctionNodeSchema = FunctionNodeSchema {
