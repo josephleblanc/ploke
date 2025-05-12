@@ -123,6 +123,7 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
+        // AI:
         let fields = [
             format!("{}: {}", self.id(), self.id.dv()),
             format!("{}: {}", self.name(), self.name.dv()),
@@ -136,9 +137,12 @@ impl FunctionNodeSchema {
             format!("{}: {}", self.vis_path(), self.vis_path.dv()),
             format!("{}: {}", self.module_id(), self.module_id.dv()),
         ];
-        
+
         let create = format!(":create function {{ {} }}", fields.join(", "));
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
+        // This script order needs to match the order that will be used during insertion. The
+        // insertion will use a BTreeMap that has the `self.id()`, `self.name()`, etc as keys.
+        // AI!
     }
 }
 
@@ -180,7 +184,7 @@ pub(crate) static FUNCTION_NODE_SCHEMA: FunctionNodeSchema = FunctionNodeSchema 
         dv: "String",
     },
     vis_path: CozoField {
-        st: "Vis_path",
+        st: "vis_path",
         dv: "[String]?",
     },
     module_id: CozoField {
