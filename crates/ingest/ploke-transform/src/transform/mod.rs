@@ -123,26 +123,21 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
-        // AI:
-        let fields = [
-            format!("{}: {}", self.id(), self.id.dv()),
-            format!("{}: {}", self.name(), self.name.dv()),
-            format!("{}: {}", self.docstring(), self.docstring.dv()),
-            format!("{}: {}", self.span(), self.span.dv()),
-            format!("{}: {}", self.tracking_hash(), self.tracking_hash.dv()),
-            format!("{}: {}", self.cfgs(), self.cfgs.dv()),
-            format!("{}: {}", self.return_type_id(), self.return_type_id.dv()),
-            format!("{}: {}", self.body(), self.body.dv()),
-            format!("{}: {}", self.vis_kind(), self.vis_kind.dv()),
-            format!("{}: {}", self.vis_path(), self.vis_path.dv()),
-            format!("{}: {}", self.module_id(), self.module_id.dv()),
-        ];
+        let mut create = String::from(":create function { ");
+        create.push_str(&format!("{}: {}, ", self.id(), self.id.dv()));
+        create.push_str(&format!("{}: {}, ", self.name(), self.name.dv()));
+        create.push_str(&format!("{}: {}, ", self.visibility(), self.visibility.dv()));
+        create.push_str(&format!("{}: {}, ", self.return_type_id(), self.return_type_id.dv()));
+        create.push_str(&format!("{}: {}, ", self.docstring(), self.docstring.dv()));
+        create.push_str(&format!("{}: {}, ", self.span(), self.span.dv()));
+        create.push_str(&format!("{}: {}, ", self.tracking_hash(), self.tracking_hash.dv()));
+        create.push_str(&format!("{}: {}, ", self.cfgs(), self.cfgs.dv()));
+        create.push_str(&format!("{}: {}, ", self.body(), self.body.dv()));
+        create.push_str(&format!("{}: {}, ", self.vis_kind(), self.vis_kind.dv()));
+        create.push_str(&format!("{}: {}", self.vis_path(), self.vis_path.dv()));
+        create.push_str(" }");
 
-        let create = format!(":create function {{ {} }}", fields.join(", "));
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
-        // This script order needs to match the order that will be used during insertion. The
-        // insertion will use a BTreeMap that has the `self.id()`, `self.name()`, etc as keys.
-        // AI!
     }
 }
 
