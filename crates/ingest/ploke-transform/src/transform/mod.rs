@@ -55,6 +55,7 @@ pub struct FunctionNodeSchema {
 }
 
 impl FunctionNodeSchema {
+    // AI:
     pub fn id(&self) -> &str {
         &self.id.st()
     }
@@ -68,6 +69,7 @@ impl FunctionNodeSchema {
     pub fn name_schema(&self) -> String {
         self.name.schema_str()
     }
+    // Fill out the rest of these methods, following the pattern above. AI!
 }
 
 pub(crate) static FUNCTION_NODE_SCHEMA: FunctionNodeSchema = FunctionNodeSchema {
