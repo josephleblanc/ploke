@@ -1,8 +1,11 @@
 use cozo::Num;
 use itertools::Itertools;
 use log::trace;
+// workspace imports
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::{parser::types::GenericParamKind, utils::LogStyle};
+// crate-local imports
+use crate::schema::primary_nodes::{FunctionNodeSchema, FUNCTION_NODE_SCHEMA};
 
 pub const LOG_TARGET_TRANSFORM: &str = "transform";
 
@@ -271,8 +274,9 @@ mod test {
     use syn_parser::parser::{graph::GraphAccess, ParsedCodeGraph};
     use syn_parser::utils::LogStyle;
 
+    use crate::schema::primary_nodes::FUNCTION_NODE_SCHEMA;
+    use crate::transform::functions::process_func;
     use crate::transform::functions::script_put;
-    use crate::transform::{functions::process_func, FUNCTION_NODE_SCHEMA};
 
     #[test]
     fn func_transform() -> Result<(), cozo::Error> {
