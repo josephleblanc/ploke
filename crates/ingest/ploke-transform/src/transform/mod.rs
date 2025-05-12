@@ -123,36 +123,22 @@ impl FunctionNodeSchema {
     /// Creates the relation schema ready to be registered in the cozo::Db using ":create
     /// <relation> { .. }"
     pub fn schema_create(&self, db: &cozo::Db<MemStorage>) -> Result<cozo::NamedRows, cozo::Error> {
-        // AI: This function inserts the schema for cozo `relation`s that will be inserted into the
-        // database. When the items are inserted, `cozo` requires that the items are in the form of
-        // key-value pairs in a `BTreeMap`. When we insert the items, we use an interator over the
-        // BTreeMap keys to create the insertion script. That insertion script is automatically
-        // sorted due to the nature of a `BTreeMap`. The `:create ..` script generated below is not
-        // in order, and so we are getting problems with database insertion.
-        // AI: Change the generated `:create` string so the fields are sorted by the key name.
-        let mut create = String::from(":create function { ");
-        create.push_str(&format!("{}: {}, ", self.id(), self.id.dv()));
-        create.push_str(&format!("{}: {}, ", self.name(), self.name.dv()));
-        create.push_str(&format!(
-            "{}: {}, ",
-            self.return_type_id(),
-            self.return_type_id.dv()
-        ));
-        create.push_str(&format!("{}: {}, ", self.docstring(), self.docstring.dv()));
-        create.push_str(&format!("{}: {}, ", self.span(), self.span.dv()));
-        create.push_str(&format!(
-            "{}: {}, ",
-            self.tracking_hash(),
-            self.tracking_hash.dv()
-        ));
-        create.push_str(&format!("{}: {}, ", self.cfgs(), self.cfgs.dv()));
-        create.push_str(&format!("{}: {}, ", self.body(), self.body.dv()));
-        create.push_str(&format!("{}: {}, ", self.vis_kind(), self.vis_kind.dv()));
-        create.push_str(&format!("{}: {}", self.vis_path(), self.vis_path.dv()));
-        create.push_str(" }");
+        // Collect all fields in a BTreeMap to ensure consistent ordering
+        let mut fields = BTreeMap::new();
+        fields.insert(self.body(), format!("{}: {}", self.body(), self.body.dv()));
+        fields.insert(self.cfgs(), format!("{}: {}", self.cfgs(), self.cfgs.dv()));
+        fields.insert(self.docstring(), format!("{}: {}", self.docstring(), self.docstring.dv()));
+        fields.insert(self.id(), format!("{}: {}", self.id(), self.id.dv()));
+        fields.insert(self.module_id(), format!("{}: {}", self.module_id(), self.module_id.dv()));
+        fields.insert(self.name(), format!("{}: {}", self.name(), self.name.dv()));
+        fields.insert(self.return_type_id(), format!("{}: {}", self.return_type_id(), self.return_type_id.dv()));
+        fields.insert(self.span(), format!("{}: {}", self.span(), self.span.dv()));
+        fields.insert(self.tracking_hash(), format!("{}: {}", self.tracking_hash(), self.tracking_hash.dv()));
+        fields.insert(self.vis_kind(), format!("{}: {}", self.vis_kind(), self.vis_kind.dv()));
+        fields.insert(self.vis_path(), format!("{}: {}", self.vis_path(), self.vis_path.dv()));
 
+        let create = format!(":create function {{ {} }}", fields.values().join(", "));
         db.run_script(&create, BTreeMap::new(), ScriptMutability::Mutable)
-        // AI!
     }
 }
 
