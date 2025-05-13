@@ -5,6 +5,7 @@ use consts::transform_consts;
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 use enums::transform_enums;
 use impls::transform_impls;
+use macros::transform_macros;
 use statics::transform_statics;
 use std::collections::BTreeMap;
 use structs::transform_structs;
@@ -87,7 +88,7 @@ pub fn transform_code_graph(
     transform_statics(db, code_graph.statics)?;
 
     // Transform macros
-    // [ ] Refactored
+    // [✔] Refactored
     transform_macros(db, code_graph.macros)?;
 
     // Transform relations
@@ -204,59 +205,6 @@ fn transform_modules(db: &Db<MemStorage>, modules: Vec<ModuleNode>) -> Result<()
                 ScriptMutability::Mutable,
             )?;
         }
-    }
-
-    Ok(())
-}
-
-/// Transforms macro nodes into the macros relation
-fn transform_macros(db: &Db<MemStorage>, macros: Vec<MacroNode>) -> Result<(), cozo::Error> {
-    for macro_node in macros {
-        let visibility = match macro_node.visibility {
-            VisibilityKind::Public => "Public",
-            VisibilityKind::Crate => "Crate",
-            VisibilityKind::Restricted(_) => "Restricted",
-            VisibilityKind::Inherited => "Inherited",
-        };
-
-        let kind = match &macro_node.kind {
-            syn_parser::parser::nodes::MacroKind::DeclarativeMacro => "DeclarativeMacro",
-            syn_parser::parser::nodes::MacroKind::ProcedureMacro { kind } => match kind {
-                syn_parser::parser::nodes::ProcMacroKind::Derive => "DeriveProcMacro",
-                syn_parser::parser::nodes::ProcMacroKind::Attribute => "AttributeProcMacro",
-                syn_parser::parser::nodes::ProcMacroKind::Function => "FunctionProcMacro",
-            },
-        };
-
-        let docstring = macro_node
-            .docstring
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
-
-        let body = macro_node
-            .body
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
-
-        let params = BTreeMap::from([
-            ("id".to_string(), macro_node.id.into()),
-            (
-                "name".to_string(),
-                DataValue::from(macro_node.name.as_str()),
-            ),
-            ("visibility".to_string(), DataValue::from(visibility)),
-            ("kind".to_string(), DataValue::from(kind)),
-            ("docstring".to_string(), docstring),
-            ("body".to_string(), body),
-        ]);
-
-        db.run_script(
-            "?[id, name, visibility, kind, docstring, body] <- [[$id, $name, $visibility, $kind, $docstring, $body]] :put macros",
-            params,
-            ScriptMutability::Mutable,
-        )?;
     }
 
     Ok(())

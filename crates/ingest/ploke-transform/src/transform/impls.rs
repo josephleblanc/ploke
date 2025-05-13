@@ -99,7 +99,10 @@ fn process_impl(imple: &ImplNode) -> BTreeMap<String, DataValue> {
     ])
 }
 
-fn process_methods(imple_any_id: AnyNodeId, method: MethodNode) -> BTreeMap<String, DataValue> {
+pub(super) fn process_methods(
+    imple_any_id: AnyNodeId,
+    method: MethodNode,
+) -> BTreeMap<String, DataValue> {
     let schema = &MethodNodeSchema::SCHEMA;
     let mut params = method.cozo_btree();
     let cozo_body = method

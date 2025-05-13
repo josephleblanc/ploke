@@ -1,4 +1,8 @@
-use crate::{macro_traits::CommonFields, schema::primary_nodes::TraitNodeSchema};
+use crate::{
+    macro_traits::CommonFields,
+    schema::{assoc_nodes::MethodNodeSchema, primary_nodes::TraitNodeSchema},
+    transform::impls::process_methods,
+};
 
 use super::*;
 
@@ -10,10 +14,8 @@ pub(super) fn transform_traits(
     for trayt in traits.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &TraitNodeSchema::SCHEMA;
-        let trayt_params = trayt.cozo_btree();
-
-        let script = schema.script_put(&trayt_params);
-        db.run_script(&script, trayt_params, ScriptMutability::Mutable)?;
+        let trayt_any_id = trayt.id.as_any();
+        let mut trayt_params = trayt.cozo_btree();
 
         // Add attributes
         let attr_schema = AttributeNodeSchema::SCHEMA;
@@ -23,6 +25,30 @@ pub(super) fn transform_traits(
             let script = attr_schema.script_put(&attr_params);
             db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
         }
+
+        let method_schema = &MethodNodeSchema::SCHEMA;
+        let mut method_ids: Vec<DataValue> = Vec::new();
+        for method in trayt.methods.into_iter() {
+            method_ids.push(method.cozo_id());
+            let method_params = process_methods(trayt_any_id, method);
+            let script = method_schema.script_put(&method_params);
+
+            log::trace!(
+                "  {} {} {:?}",
+                "method put:".log_step(),
+                script,
+                method_params
+            );
+            db.run_script(&script, method_params, ScriptMutability::Mutable)?;
+        }
+        let cozo_methods = if method_ids.is_empty() {
+            DataValue::Null
+        } else {
+            DataValue::List(method_ids)
+        };
+        trayt_params.insert(schema.methods().to_string(), cozo_methods);
+        let script = schema.script_put(&trayt_params);
+        db.run_script(&script, trayt_params, ScriptMutability::Mutable)?;
     }
 
     Ok(())
@@ -35,7 +61,7 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::test_utils::{create_attribute_schema, create_trait_schema};
+    use crate::test_utils::{create_attribute_schema, create_method_schema, create_trait_schema};
 
     use super::transform_traits;
     #[test]
@@ -54,7 +80,9 @@ mod tests {
 
         // create and insert attribute schema
         create_attribute_schema(&db)?;
-
+        // create and insert method schema
+        create_method_schema(&db)?;
+        // create and insert trait schema
         create_trait_schema(&db)?;
 
         // transform and insert impls into cozo

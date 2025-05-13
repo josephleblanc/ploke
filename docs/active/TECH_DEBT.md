@@ -11,3 +11,5 @@ This is a list of known fixes that I will want to make but are not terribly urge
     * All `Union`s are unsafe.
  * [ ] Refactor `CodeGraph.defined_types` to be a vec of ids (possibly a new typed id), and move all nodes into their own fields. 
     * For `StructNode`, `UnionNode`, `EnumNode` and `TypeAliasNode`
+ * [ ] Add more logging to tests in ploke-transform
+ * [ ] Implement proper error handling in ploke-transform

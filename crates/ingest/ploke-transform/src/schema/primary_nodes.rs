@@ -62,14 +62,24 @@ use crate::define_schema;
 //      - [✔] Method
 //          - [✔] Define Schema (*NodeSchema)
 //          - [✔] Define tranform
-//              - [ ] Basic testing
+//              - [✔] Basic testing
+//              - [ ] Add own basic test
 //          - [✔] Add edge (implicit in method field: owner_id)
 //          - [✔] Add edge (implicit in impl field: methods)
 //          - [ ] Add explicit edge
-//  - [ ] Macro
+//  - [✔] Macro
 //      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
+//      - [✔] Define tranform
+//          - [✔   ] Basic testing
+//  - [✔] Trait
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//      - [✔] Method (if different from impl method)
+//          - [✔] Basic testing
+//          - [✔] Add edge (implicit in method field: owner_id)
+//          - [✔] Add edge (implicit in trait field: methods)
+//          - [ ] Add explicit edge
 //  - [ ] Module (split into FileModuleNode, InlineModuleNode, DeclModuleNode)
 //      - [✔] Define Schema (FileModuleNodeSchema)
 //      - [ ] Define tranform
@@ -80,15 +90,6 @@ use crate::define_schema;
 //      - [✔] Define Schema (DeclModuleNodeSchema)
 //      - [ ] Define tranform
 //          - [ ] Basic testing
-//  - [ ] Trait
-//      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
-//      - [ ] Method (if different from impl method)
-//          - [ ] Define tranform
-//              - [ ] Basic testing
-//          - [✔] Define Schema (*NodeSchema)
-//          - [ ] Add edge
 //  - [ ] Import
 //      - [✔] Define Schema (*NodeSchema)
 //      - [ ] Define tranform
@@ -98,7 +99,7 @@ use crate::define_schema;
 //  - [✔] MethodNodeSchema
 //  - [ ] AssociatedConstNode (not tracked yet)
 //  - [ ] AssociatedStaticNode (not tracked yet)
-//  - [ ] AssociatedFunctionNode (not tracked yet)
+//  - [ ] AssociatedFunctionNode (not tracked yet?)
 //      - I think we don't track this yet? Check on this.
 //
 //  - [✔] ParamData
@@ -296,7 +297,8 @@ define_schema!(TraitNodeSchema {
     vis_path: "[String]?",
     docstring: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]?"
+    cfgs: "[String]?",
+    methods: "[Uuid]?"
 });
 
 // TODO: Link to:
