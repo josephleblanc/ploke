@@ -1,6 +1,6 @@
 use crate::{
+    macro_traits::CommonFields,
     schema::{assoc_nodes::MethodNodeSchema, primary_nodes::ImplNodeSchema},
-    traits::CommonFields,
 };
 
 use super::*;

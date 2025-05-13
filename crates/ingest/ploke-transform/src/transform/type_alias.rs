@@ -1,4 +1,4 @@
-use crate::{schema::primary_nodes::TypeAliasNodeSchema, traits::CommonFields};
+use crate::{macro_traits::CommonFields, schema::primary_nodes::TypeAliasNodeSchema};
 
 use super::*;
 

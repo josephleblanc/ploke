@@ -1,32 +1,24 @@
-use crate::{macro_traits::CommonFields, schema::primary_nodes::ConstNodeSchema};
+use crate::{macro_traits::CommonFields, schema::primary_nodes::TraitNodeSchema};
 
 use super::*;
 
-/// Transforms value nodes into the values relation
-pub(super) fn transform_consts(
+pub(super) fn transform_traits(
     db: &Db<MemStorage>,
-    consts: Vec<ConstNode>,
+    traits: Vec<TraitNode>,
 ) -> Result<(), cozo::Error> {
-    for consta in consts.into_iter() {
+    // trait->trayt (rust keywords)
+    for trayt in traits.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
-        let schema = &ConstNodeSchema::SCHEMA;
-        let mut consta_params = consta.cozo_btree();
+        let schema = &TraitNodeSchema::SCHEMA;
+        let trayt_params = trayt.cozo_btree();
 
-        let value_cozo = consta
-            .value
-            .map_or(DataValue::Null, |v| DataValue::Str(v.into()));
-        let cozo_ty_id = consta.type_id.to_cozo_uuid();
-
-        consta_params.insert(schema.value().to_string(), value_cozo);
-        consta_params.insert(schema.ty_id().to_string(), cozo_ty_id);
-
-        let script = schema.script_put(&consta_params);
-        db.run_script(&script, consta_params, ScriptMutability::Mutable)?;
+        let script = schema.script_put(&trayt_params);
+        db.run_script(&script, trayt_params, ScriptMutability::Mutable)?;
 
         // Add attributes
         let attr_schema = AttributeNodeSchema::SCHEMA;
-        for (i, attr) in consta.attributes.iter().enumerate() {
-            let attr_params = process_attributes(consta.id.as_any(), i, attr);
+        for (i, attr) in trayt.attributes.iter().enumerate() {
+            let attr_params = process_attributes(trayt.id.as_any(), i, attr);
 
             let script = attr_schema.script_put(&attr_params);
             db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
@@ -46,13 +38,13 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        schema::primary_nodes::ConstNodeSchema,
+        schema::primary_nodes::TraitNodeSchema,
         test_utils::{create_attribute_schema, log_db_result},
     };
 
-    use super::transform_consts;
+    use super::transform_traits;
     #[test]
-    fn test_transform_consts() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_transform_traits() -> Result<(), Box<dyn std::error::Error>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
@@ -67,22 +59,22 @@ mod tests {
 
         // create and insert attribute schema
         create_attribute_schema(&db)?;
-        pub(crate) fn create_const_schema(
+        pub(crate) fn create_trait_schema(
             db: &Db<MemStorage>,
         ) -> Result<(), Box<dyn std::error::Error>> {
-            let const_schema = ConstNodeSchema::SCHEMA;
+            let trait_schema = TraitNodeSchema::SCHEMA;
             let db_result = db.run_script(
-                &const_schema.script_create(),
+                &trait_schema.script_create(),
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
             )?;
             log_db_result(db_result);
             Ok(())
         }
-        create_const_schema(&db)?;
+        create_trait_schema(&db)?;
 
         // transform and insert impls into cozo
-        transform_consts(&db, merged.graph.consts)?;
+        transform_traits(&db, merged.graph.traits)?;
 
         Ok(())
     }

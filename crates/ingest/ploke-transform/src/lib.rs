@@ -1,7 +1,7 @@
 #![allow(dead_code)]
+pub mod macro_traits;
 pub mod printable;
 pub mod schema;
-pub mod traits;
 pub mod transform;
 
 // -- crate-wide imports --

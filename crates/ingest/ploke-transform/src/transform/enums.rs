@@ -1,9 +1,9 @@
 use crate::{
+    macro_traits::CommonFields,
     schema::{
         primary_nodes::EnumNodeSchema,
         secondary_nodes::{FieldNodeSchema, VariantNodeSchema},
     },
-    traits::CommonFields,
 };
 
 use super::{secondary_nodes::process_fields, *};

@@ -1,6 +1,6 @@
 use crate::{
+    macro_traits::CommonFields,
     schema::{primary_nodes::StructNodeSchema, secondary_nodes::FieldNodeSchema},
-    traits::CommonFields,
 };
 
 use super::{secondary_nodes::process_fields, *};

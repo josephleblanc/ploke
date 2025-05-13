@@ -1,6 +1,6 @@
 use syn_parser::parser::nodes::*;
 
-use crate::traits::HasAnyNodeId;
+use crate::macro_traits::HasAnyNodeId;
 
 mod functions;
 

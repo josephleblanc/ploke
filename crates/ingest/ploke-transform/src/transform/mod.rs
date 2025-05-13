@@ -27,6 +27,7 @@ mod functions;
 mod impls;
 mod statics;
 mod structs;
+mod traits;
 mod type_alias;
 mod unions;
 

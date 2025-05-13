@@ -36,7 +36,7 @@ use crate::define_schema;
 //          - [ ] Add explicit edge (SyntacticRelation)
 //      - [✔] Field (if different from struct field)
 //          - [✔] Add edge (implicit in Field owner_id)
-//          - [ ] Add edge
+//          - [ ] Add explicit edge
 //  - [✔] TypeAlias
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
@@ -175,8 +175,9 @@ define_schema!(EnumNodeSchema {
 
 // TODO: Link to:
 //  - methods
-//  - self_type
+//  - self_type (trait or struct)
 //  - generic_params
+// TODO: add new field for type of impl (trait/struct)
 // NOTE: Should this have attributes?
 define_schema!(ImplNodeSchema {
     "impl",
