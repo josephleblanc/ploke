@@ -12,6 +12,10 @@ use crate::define_schema;
 //      - [✔] Define Schema (*NodeSchema)
 //      - [ ] Define tranform
 //          - [ ] Basic testing
+//  - [ ] Static
+//      - [ ] Define Schema (*NodeSchema)
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //  - [✔] Struct
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
@@ -43,15 +47,17 @@ use crate::define_schema;
 //          - [✔] Define Schema (*NodeSchema)
 //          - [✔] Add edge (implicit in ParamData owner_id)
 //          - [ ] Add explecit edge Function->ParamData
-//  - [ ] Impl
+//  - [✔] Impl
 //      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
-//      - [ ] Method
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//      - [✔] Method
 //          - [✔] Define Schema (*NodeSchema)
-//          - [ ] Define tranform
+//          - [✔] Define tranform
 //              - [ ] Basic testing
-//          - [ ] Add edge
+//          - [✔] Add edge (implicit in method field: owner_id)
+//          - [✔] Add edge (implicit in impl field: methods)
+//          - [ ] Add explicit edge
 //  - [ ] Macro
 //      - [✔] Define Schema (*NodeSchema)
 //      - [ ] Define tranform
@@ -166,7 +172,6 @@ define_schema!(EnumNodeSchema {
 // TODO: Link to:
 //  - methods
 //  - self_type
-//  - self type (if applicable)
 //  - generic_params
 define_schema!(ImplNodeSchema {
     "impl",
@@ -174,7 +179,7 @@ define_schema!(ImplNodeSchema {
     self_type: "Uuid",
     span: "[Int; 2]",
     trait_type: "Uuid?",
-    methods: "Uuid",
+    methods: "[Uuid]?",
     cfgs: "[String]"
 }); // needs methods, trait_type, generic_params linked by uuids
 

@@ -10,9 +10,9 @@ use super::{secondary_nodes::process_fields, *};
 
 pub(super) fn transform_enums(
     db: &Db<MemStorage>,
-    structs: Vec<EnumNode>,
+    enums: Vec<EnumNode>,
 ) -> Result<(), cozo::Error> {
-    for enm in structs.into_iter() {
+    for enm in enums.into_iter() {
         let enm_any_id = enm.any_id();
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &EnumNodeSchema::SCHEMA;

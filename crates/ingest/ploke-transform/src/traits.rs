@@ -4,10 +4,12 @@ use cozo::{DataValue, Num};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
-    AnyNodeId, AsAnyNodeId, Attribute, ConstNode, EnumNode, FunctionNode, StructNode, ToCozoUuid,
+    AnyNodeId, AsAnyNodeId, Attribute, ConstNode, EnumNode, FunctionNode, MethodNode, StructNode,
+    ToCozoUuid,
 };
 use syn_parser::parser::types::VisibilityKind;
 
+use crate::schema::assoc_nodes::MethodNodeSchema;
 use crate::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, StructNodeSchema,
 };
@@ -149,6 +151,7 @@ common_fields!(ConstNode, ConstNodeSchema::SCHEMA);
 common_fields!(FunctionNode, FunctionNodeSchema::SCHEMA);
 common_fields!(StructNode, StructNodeSchema::SCHEMA);
 common_fields!(EnumNode, EnumNodeSchema::SCHEMA);
+common_fields!(MethodNode, MethodNodeSchema::SCHEMA);
 
 /// Types that can be converted to/from CozoDB representation
 pub trait IntoCozo {

@@ -5,7 +5,9 @@ use crate::define_schema;
 //  - parameters (ParamData)
 //  - generic_params (GenericParamNode)
 //  - attributes (Attribute)
-define_schema!(MethodNodeInfo {
+// NOTE: Temporary field (probably remove later)
+//  - owner_id (impl id)
+define_schema!(MethodNodeSchema {
     "method",
     id: "Uuid",
     name: "String",
@@ -15,5 +17,6 @@ define_schema!(MethodNodeInfo {
     docstring: "String?",
     body: "String?",
     tracking_hash: "Uuid",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    owner_id: "Uuid",
 });
