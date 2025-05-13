@@ -7,3 +7,5 @@ This is a list of known fixes that I will want to make but are not terribly urge
     *  [ ] Change [node_definition](/crates/ingest/syn_parser/src/parser/nodes/enums.rs)
     *  [ ] Update change in [db transform](crates/ploke-transform/src/transform/variants.rs)
  * [ ] Add attribute tracking to impl (if applicable, look into it)
+ * [ ] Add `unsafe` toggle for all relevant nodes (probably most) but specifically:
+    * All `Union`s are unsafe.

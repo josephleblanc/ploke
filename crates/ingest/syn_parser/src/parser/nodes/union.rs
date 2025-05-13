@@ -13,6 +13,8 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 // Removed the macro invocation for UnionNodeInfo
 
 // Represents a union definition
+// TODO: Add an `unsafe` field to `UnionNode` that is always `true`, since unions are ineherently
+// unsafe.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, ExpectedData)] // Add derive
 pub struct UnionNode {
     pub id: UnionNodeId, // Use typed ID

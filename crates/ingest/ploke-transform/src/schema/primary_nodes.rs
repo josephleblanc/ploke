@@ -11,11 +11,11 @@ use crate::define_schema;
 //  - [✔] Const
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
-//          - [ ] Basic testing
-//  - [ ] Static
-//      - [ ] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
+//          - [✔] Basic testing
+//  - [✔] Static
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
 //  - [✔] Struct
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
@@ -173,6 +173,7 @@ define_schema!(EnumNodeSchema {
 //  - methods
 //  - self_type
 //  - generic_params
+// NOTE: Should this have attributes?
 define_schema!(ImplNodeSchema {
     "impl",
     id: "Uuid",
@@ -185,6 +186,7 @@ define_schema!(ImplNodeSchema {
 
 // TODO: Link to:
 //  - Re-export type
+// NOTE: Should this have attributes?
 // NOTE: Flattened `ImportKind` into `import_kind` and `vis_kind`, `vis_path`
 define_schema!(ImportNodeSchema {
     "import",

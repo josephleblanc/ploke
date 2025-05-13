@@ -20,6 +20,7 @@ mod functions;
 mod impls;
 mod statics;
 mod structs;
+mod unions;
 
 // -- primary node transforms
 use functions::transform_functions;
@@ -48,7 +49,7 @@ pub fn transform_code_graph(
     // Transform defined types (structs, enums, etc.)
     // [ ] Refactored
     //  - [✔] Struct Refactored
-    //  - [ ] Enum Refactored
+    //  - [✔] Enum Refactored
     //  - [ ] Union Refactored
     //  - [ ] TypeAlias Refactored
     transform_defined_types(db, code_graph.defined_types)?;
@@ -58,7 +59,7 @@ pub fn transform_code_graph(
     transform_traits(db, code_graph.traits)?;
 
     // Transform impls
-    // [ ] Refactored
+    // [✔] Refactored
     transform_impls(db, code_graph.impls)?;
 
     // Transform modules
@@ -66,11 +67,11 @@ pub fn transform_code_graph(
     transform_modules(db, code_graph.modules)?;
 
     // Transform consts
-    // [ ] Refactored
+    // [✔] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_consts(db, code_graph)?;
     // Transoform statics
-    // [ ] Refactored
+    // [✔] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_statics(db, code_graph)?;
 
