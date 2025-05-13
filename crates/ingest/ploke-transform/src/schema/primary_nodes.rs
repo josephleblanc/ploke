@@ -70,7 +70,7 @@ use crate::define_schema;
 //  - [✔] Macro
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
-//          - [✔   ] Basic testing
+//          - [✔] Basic testing
 //  - [✔] Trait
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
@@ -80,15 +80,12 @@ use crate::define_schema;
 //          - [✔] Add edge (implicit in method field: owner_id)
 //          - [✔] Add edge (implicit in trait field: methods)
 //          - [ ] Add explicit edge
-//  - [ ] Module (split into FileModuleNode, InlineModuleNode, DeclModuleNode)
-//      - [✔] Define Schema (FileModuleNodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
-//      - [✔] Define Schema (InlineModuleNodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
+//  - [✔] Module (Not split, rather using adjacent nodes for file/inline/decl for now)
 //      - [✔] Define Schema (DeclModuleNodeSchema)
-//      - [ ] Define tranform
+//      - [✔] Define tranform
+//      - [✔] FileModuleNode (if different from impl method)
+//          - [✔] Basic testing
+//          - [✔] Add edge (implicit in method field: owner_id)
 //          - [ ] Basic testing
 //  - [ ] Import
 //      - [✔] Define Schema (*NodeSchema)
@@ -232,10 +229,9 @@ define_schema!(MacroNodeSchema {
 //  - exports
 //  - module_def: This might need some thought
 //  - attributes
-// NOTE: Not exactly sure how to handle module_def here.
-// Might even just want to make different schema for the different module types here: decl, defn,
-// and inline. Linking to another node that has the details on the module might be kind of awkward.
-// This is one case that will be significantly clarified with a "logical" layer to the graph.
+//  - resolves to definition edge from module decl->file-level module
+//  NOTE: `items` field likely temporary. Just use it for debugging and don't rely on it in
+//  searches. Once I'm convinced we don't need it, we can get rid of it.
 define_schema!(ModuleNodeSchema {
     "module",
     id: "Uuid",
@@ -246,7 +242,8 @@ define_schema!(ModuleNodeSchema {
     docstring: "String?",
     span: "[Int; 2]",
     tracking_hash: "Uuid?",
-    module_kind: "String"
+    module_kind: "String",
+    cfgs: "[String]"
 });
 
 // TODO: Link to:

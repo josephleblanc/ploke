@@ -1,6 +1,7 @@
 pub mod assoc_nodes;
 pub mod primary_nodes;
 pub mod secondary_nodes;
+pub mod subnode_variants;
 
 use itertools::Itertools;
 use std::collections::BTreeMap;

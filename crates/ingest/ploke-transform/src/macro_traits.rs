@@ -5,14 +5,14 @@ use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
     AnyNodeId, AsAnyNodeId, Attribute, ConstNode, EnumNode, FunctionNode, MacroNode, MethodNode,
-    StaticNode, StructNode, ToCozoUuid, TraitNode, TypeAliasNode, UnionNode,
+    ModuleNode, StaticNode, StructNode, ToCozoUuid, TraitNode, TypeAliasNode, UnionNode,
 };
 use syn_parser::parser::types::VisibilityKind;
 
 use crate::schema::assoc_nodes::MethodNodeSchema;
 use crate::schema::primary_nodes::{
-    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, MacroNodeSchema, StaticNodeSchema,
-    StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema,
+    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, MacroNodeSchema, ModuleNodeSchema,
+    StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema,
 };
 use crate::schema::secondary_nodes::AttributeNodeSchema; // For join() functionality
                                                          //
@@ -91,16 +91,20 @@ macro_rules! common_fields {
             }
 
             fn cozo_tracking_hash(&self) -> DataValue {
-                DataValue::Uuid(cozo::UuidWrapper(
-                    self.tracking_hash
-                        .as_ref()
-                        .unwrap_or_else(|| {
+                match self.any_id() {
+                    AnyNodeId::Module(_) => DataValue::Null,
+                    _ => {
+                        DataValue::Uuid(cozo::UuidWrapper(
+                            self.tracking_hash
+                                .as_ref()
+                                .unwrap_or_else(|| {
                             panic!(
                                 "Invariant Violated: Node must have TrackingHash upon database insertion"
-                            )
-                        })
-                        .0,
-                ))
+                            )}).0,
+                        ))
+
+                    }
+                }
             }
 
             fn cozo_cfgs(&self) -> DataValue {
@@ -158,6 +162,7 @@ common_fields!(UnionNode, UnionNodeSchema::SCHEMA);
 common_fields!(TypeAliasNode, TypeAliasNodeSchema::SCHEMA);
 common_fields!(TraitNode, TraitNodeSchema::SCHEMA);
 common_fields!(MacroNode, MacroNodeSchema::SCHEMA);
+common_fields!(ModuleNode, ModuleNodeSchema::SCHEMA);
 
 /// Types that can be converted to/from CozoDB representation
 pub trait IntoCozo {

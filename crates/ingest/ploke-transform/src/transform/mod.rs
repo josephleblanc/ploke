@@ -6,6 +6,7 @@ use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 use enums::transform_enums;
 use impls::transform_impls;
 use macros::transform_macros;
+use module::transform_modules;
 use statics::transform_statics;
 use std::collections::BTreeMap;
 use structs::transform_structs;
@@ -28,6 +29,7 @@ mod enums;
 mod functions;
 mod impls;
 mod macros;
+mod module;
 mod statics;
 mod structs;
 mod traits;
@@ -77,12 +79,13 @@ pub fn transform_code_graph(
     transform_impls(db, code_graph.impls)?;
 
     // Transform modules
-    // [ ] Refactored
+    // [✔] Refactored
     transform_modules(db, code_graph.modules)?;
 
     // Transform consts
     // [✔] Refactored
     transform_consts(db, code_graph.consts)?;
+
     // Transoform statics
     // [✔] Refactored
     transform_statics(db, code_graph.statics)?;
@@ -90,6 +93,8 @@ pub fn transform_code_graph(
     // Transform macros
     // [✔] Refactored
     transform_macros(db, code_graph.macros)?;
+
+    // TODO: ImportNode
 
     // Transform relations
     // [ ] Refactored
@@ -120,93 +125,6 @@ fn transform_defined_types(
     transform_enums(db, enums)?;
     transform_type_aliases(db, type_aliases)?;
     transform_unions(db, unions)?;
-    Ok(())
-}
-
-/// Transforms module nodes into the modules relation
-fn transform_modules(db: &Db<MemStorage>, modules: Vec<ModuleNode>) -> Result<(), cozo::Error> {
-    for module in modules {
-        let (vis_kind, vis_path) = match &module.visibility {
-            VisibilityKind::Public => (DataValue::from("public".to_string()), None),
-            VisibilityKind::Crate => ("crate".into(), None),
-            VisibilityKind::Restricted(path) => {
-                let list = DataValue::List(
-                    path.iter()
-                        .map(|p_string| DataValue::from(p_string.to_string()))
-                        .collect(),
-                );
-                ("restricted".into(), Some(list))
-            }
-            VisibilityKind::Inherited => ("inherited".into(), None),
-        };
-
-        let docstring = module
-            .docstring
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
-
-        // Insert into modules table
-        let module_params = BTreeMap::from([
-            ("id".to_string(), module.id.into()),
-            ("name".to_string(), DataValue::from(module.name.as_str())),
-            ("docstring".to_string(), docstring),
-        ]);
-
-        db.run_script(
-            "?[id, name, docstring] <- [[$id, $name, $docstring]] :put modules",
-            module_params,
-            ScriptMutability::Mutable,
-        )?;
-
-        // Insert into visibility table
-        let vis_params = BTreeMap::from([
-            ("node_id".to_string(), module.id.into()),
-            ("kind".to_string(), vis_kind),
-            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
-        ]);
-
-        db.run_script(
-            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
-            vis_params,
-            ScriptMutability::Mutable,
-        )?;
-
-        // Add submodule relationships
-
-        // Add item relationships
-        if let Some(module_items) = module.items() {
-            for item_id in module_items {
-                let relation_params = BTreeMap::from([
-                    ("module_id".to_string(), module.id.into()),
-                    ("related_id".to_string(), item_id.to_cozo_uuid()),
-                    ("kind".to_string(), DataValue::from("Contains")),
-                ]);
-
-                db.run_script(
-                "?[module_id, related_id, kind] <- [[$module_id, $related_id, $kind]] :put module_relationships",
-                relation_params,
-                ScriptMutability::Mutable,
-            )?;
-            }
-        }
-
-        // Add export relationships
-        for export_id in &module.exports {
-            let relation_params = BTreeMap::from([
-                ("module_id".to_string(), module.id.into()),
-                ("related_id".to_string(), export_id.into()),
-                ("kind".to_string(), DataValue::from("Exports")),
-            ]);
-
-            db.run_script(
-                "?[module_id, related_id, kind] <- [[$module_id, $related_id, $kind]] :put module_relationships",
-                relation_params,
-                ScriptMutability::Mutable,
-            )?;
-        }
-    }
-
     Ok(())
 }
 

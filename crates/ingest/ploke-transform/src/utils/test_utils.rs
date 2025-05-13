@@ -6,12 +6,14 @@ use syn_parser::utils::LogStyle;
 use crate::schema::{
     assoc_nodes::MethodNodeSchema,
     primary_nodes::{
-        ConstNodeSchema, ImplNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
+        ConstNodeSchema, ImplNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema,
+        TraitNodeSchema,
     },
     secondary_nodes::{
         AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema,
         GenericTypeNodeSchema, VariantNodeSchema,
     },
+    subnode_variants::FileModuleNodeSchema,
 };
 
 pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
@@ -170,6 +172,30 @@ pub(crate) fn create_trait_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std
     let trait_schema = TraitNodeSchema::SCHEMA;
     let db_result = db.run_script(
         &trait_schema.script_create(),
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_module_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let module_schema = ModuleNodeSchema::SCHEMA;
+    let db_result = db.run_script(
+        &module_schema.script_create(),
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_file_module_schema(
+    db: &Db<MemStorage>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let file_module_schema = FileModuleNodeSchema::SCHEMA;
+    let db_result = db.run_script(
+        &file_module_schema.script_create(),
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;

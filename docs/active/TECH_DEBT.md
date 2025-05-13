@@ -13,3 +13,4 @@ This is a list of known fixes that I will want to make but are not terribly urge
     * For `StructNode`, `UnionNode`, `EnumNode` and `TypeAliasNode`
  * [ ] Add more logging to tests in ploke-transform
  * [ ] Implement proper error handling in ploke-transform
+ * [ ] Change `ModuleNode` to handle `imports` and `exports` through variant `ModuleKind`
