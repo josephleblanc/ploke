@@ -5,7 +5,7 @@ use syn_parser::utils::LogStyle;
 
 use crate::schema::{
     assoc_nodes::MethodNodeSchema,
-    primary_nodes::{ImplNodeSchema, StructNodeSchema},
+    primary_nodes::{ConstNodeSchema, ImplNodeSchema, StaticNodeSchema, StructNodeSchema},
     secondary_nodes::{
         AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema,
         GenericTypeNodeSchema, VariantNodeSchema,
@@ -135,6 +135,28 @@ pub(crate) fn create_method_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn st
     method_schema.log_create_script();
     let db_result = db.run_script(
         &script_create,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_const_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let const_schema = ConstNodeSchema::SCHEMA;
+    let db_result = db.run_script(
+        &const_schema.script_create(),
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_static_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let static_schema = StaticNodeSchema::SCHEMA;
+    let db_result = db.run_script(
+        &static_schema.script_create(),
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;

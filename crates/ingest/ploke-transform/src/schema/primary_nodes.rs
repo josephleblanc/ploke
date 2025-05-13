@@ -5,12 +5,12 @@ use crate::define_schema;
 // ----------------- To Implement -----------------------------
 // ------------------------------------------------------------
 //
-// TODO: Change the define_schema attribute to change the name from Camel-case to snake-case
+// NOTE: More notes in transform/edges.rs regarding explicit edges
 //
 // Nodes:
-//  - [ ] Const
+//  - [✔] Const
 //      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
+//      - [✔] Define tranform
 //          - [ ] Basic testing
 //  - [ ] Static
 //      - [ ] Define Schema (*NodeSchema)
@@ -249,7 +249,7 @@ define_schema!(StaticNodeSchema {
     span: "[Int; 2]",
     vis_kind: "String",
     vis_path: "[String]?",
-    type_id: "Uuid",
+    ty_id: "Uuid",
     is_mutable: "Bool",
     value: "String?",
     docstring: "String?",

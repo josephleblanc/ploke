@@ -18,6 +18,7 @@ mod consts;
 mod enums;
 mod functions;
 mod impls;
+mod statics;
 mod structs;
 
 // -- primary node transforms
