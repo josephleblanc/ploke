@@ -14,6 +14,7 @@ use syn_parser::utils::LogStyle;
 mod fields;
 mod secondary_nodes;
 // -- primary nodes --
+mod consts;
 mod enums;
 mod functions;
 mod impls;

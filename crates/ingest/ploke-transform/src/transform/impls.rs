@@ -183,33 +183,9 @@ mod tests {
         // create and insert impl schema
         create_impl_schema(&db)?;
 
-        // let mut impl_nodes: Vec<ImplNode> = Vec::new();
-        // for imple in merged.graph.impls.into_iter() {
-        // log::info!(target: "db",
-        //     "{} {}",
-        //     "Processing Node:".log_step(),
-        //     enm.name.log_name(),
-        // );
-        // let enm_params = enm.cozo_btree();
-        //
-        // let script = enum_schema.script_put(&enm_params);
-        // db.run_script(&script, enm_params, ScriptMutability::Mutable)
-        //     .inspect_err(|_| {
-        //         log::error!(target: "db",
-        //             "{} {}\n{:#?}\n{} {:#?}\n{} {:#?}",
-        //             "Error inserting enum".log_error(),
-        //             enm.name.log_name(),
-        //             enm,
-        //             "Enum Variants:".log_orange(),
-        //             enm.variants,
-        //             "Variant structs:".log_foreground_primary(),
-        //             enm.variants.iter().flat_map(|v| &v.fields).collect::<Vec<_>>()
-        //         );
-        //     })?;
-        //         impl_nodes.push(imple);
-        // }
+        // transform and insert impls into cozo
         transform_impls(&db, merged.graph.impls)?;
-        // transform_structs(&db, );
+
         Ok(())
     }
 }

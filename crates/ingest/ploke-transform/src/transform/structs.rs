@@ -94,7 +94,7 @@ mod test {
 
         let mut struct_nodes: Vec<StructNode> = Vec::new();
         for struct_node in merged.graph.defined_types.into_iter() {
-            // println!("{:#?}", struct_node);
+            println!("{:#?}", struct_node);
             if let TypeDefNode::Struct(strukt) = struct_node {
                 // let strukt_params = strukt.cozo_btree();
                 //

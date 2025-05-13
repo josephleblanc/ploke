@@ -4,7 +4,8 @@ use cozo::{Db, MemStorage};
 use syn_parser::utils::LogStyle;
 
 use crate::schema::{
-    primary_nodes::StructNodeSchema,
+    assoc_nodes::MethodNodeSchema,
+    primary_nodes::{ImplNodeSchema, StructNodeSchema},
     secondary_nodes::{
         AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema,
         GenericTypeNodeSchema, VariantNodeSchema,
@@ -106,6 +107,32 @@ pub(crate) fn create_variant_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn s
     let variant_schema = VariantNodeSchema::SCHEMA;
     let script_create = variant_schema.script_create();
     variant_schema.log_create_script();
+    let db_result = db.run_script(
+        &script_create,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_impl_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let impl_schema = ImplNodeSchema::SCHEMA;
+    let script_create = impl_schema.script_create();
+    impl_schema.log_create_script();
+    let db_result = db.run_script(
+        &script_create,
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_method_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let method_schema = MethodNodeSchema::SCHEMA;
+    let script_create = method_schema.script_create();
+    method_schema.log_create_script();
     let db_result = db.run_script(
         &script_create,
         BTreeMap::new(),

@@ -144,7 +144,7 @@ define_schema!(ConstNodeSchema {
     span: "[Int; 2]",
     vis_kind: "String",
     vis_path: "[String]?",
-    type_id: "Uuid",
+    ty_id: "Uuid",
     value: "String?",
     docstring: "String?",
     tracking_hash: "Uuid?",
