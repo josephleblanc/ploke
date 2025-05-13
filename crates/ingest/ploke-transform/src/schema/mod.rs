@@ -80,7 +80,7 @@ macro_rules! define_schema {
             }
 
             pub fn log_create_script(&self) {
-                log::info!(target: "transform_function",
+                log::info!(target: "db",
                     "{} {}: {:?}",
                     "Printing schema".log_step(),
                     $relation.log_name(),

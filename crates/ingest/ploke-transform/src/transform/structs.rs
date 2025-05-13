@@ -49,20 +49,15 @@ pub(super) fn transform_structs(
 #[cfg(test)]
 mod test {
 
-    use cozo::{Db, MemStorage, ScriptMutability};
+    use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::{
         nodes::{StructNode, TypeDefNode},
         ParsedCodeGraph,
     };
 
-    use crate::{
-        schema::primary_nodes::StructNodeSchema,
-        test_utils::{
-            create_attribute_schema, create_field_schema, create_generic_schema,
-            create_struct_schema,
-        },
-        traits::CommonFields,
+    use crate::test_utils::{
+        create_attribute_schema, create_field_schema, create_generic_schema, create_struct_schema,
     };
 
     use super::transform_structs;
@@ -88,11 +83,9 @@ mod test {
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
 
-        let struct_schema = &StructNodeSchema::SCHEMA;
-
-        // create and insert strukt schema
-        create_struct_schema(&db, struct_schema)?;
-        // craete attribute schema
+        // create and insert struct schema
+        create_struct_schema(&db)?;
+        // create and insert attribute schema
         create_attribute_schema(&db)?;
         // create and insert generic schema
         create_generic_schema(&db)?;
@@ -101,7 +94,7 @@ mod test {
 
         let mut struct_nodes: Vec<StructNode> = Vec::new();
         for struct_node in merged.graph.defined_types.into_iter() {
-            println!("{:#?}", struct_node);
+            // println!("{:#?}", struct_node);
             if let TypeDefNode::Struct(strukt) = struct_node {
                 // let strukt_params = strukt.cozo_btree();
                 //

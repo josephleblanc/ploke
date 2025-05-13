@@ -35,10 +35,13 @@ define_schema!(VariantNodeSchema {
 // Added:
 //  - owner_id
 //  - index
+// NOTE: Currently somewhat overloaded, due to having fields without names from enum variants,
+// but I might want to change this so the fields nave names assigned by index+variant parent in the
+// code_visitor
 define_schema!(FieldNodeSchema {
     "field",
     id: "Uuid",
-    name: "String",
+    name: "String?",
     owner_id: "Uuid",
     index: "Int",
     type_id: "Uuid",

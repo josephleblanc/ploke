@@ -1,4 +1,4 @@
-use syn_parser::parser::types::GenericParamKind;
+use syn_parser::{parser::types::GenericParamKind, utils::LogStyleDebug};
 
 use super::*;
 use crate::{
@@ -200,13 +200,27 @@ pub(super) fn process_fields(
 ) -> BTreeMap<String, DataValue> {
     let (vis_kind, vis_path) = vis_to_dataval(field);
 
-    let cozo_name = DataValue::from(
-        field
-            .name
-            .as_ref()
-            .expect("Invariant: Fields must have names.")
-            .as_str(),
-    );
+    let cozo_name = field
+        .name
+        .as_ref()
+        .map_or(DataValue::Null, |name| DataValue::Str(name.into()));
+    // NOTE: This might come back if I want to track enum variant field names in the visitor.
+    // Its a pretty good error log.
+    //
+    // .unwrap_or_else(|| {
+    //     log::error!(
+    //         "{} {}\n{} {}\n{} {}\n{:#?}",
+    //         "Error processing field".log_error(),
+    //         field.name.log_name_debug(),
+    //         "Parent Node ID (short)".log_foreground_primary(),
+    //         any_node_id.to_string().log_id(),
+    //         "Parent Node ID (long)".log_foreground_primary(),
+    //         any_node_id.log_id_debug(),
+    //         field,
+    //     );
+    //     panic!("Invariant: Fields must have names.")
+    // })
+    // .expect("Invariant: Fields must have names.")
     let cfgs: Vec<DataValue> = field
         .cfgs
         .iter()

@@ -22,14 +22,16 @@ use crate::define_schema;
 //          - [✔] Define tranform
 //              - [✔] Basic testing
 //          - [ ] Add explicit edges Struct->Field
-//  - [ ] Enum
+//  - [✔] Enum
 //      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
+//      - [✔] Define tranform
 //          - [ ] Basic testing
-//      - [ ] Variant
+//      - [✔] Variant
 //          - [✔] Define Schema (*NodeSchema)
-//          - [ ] Add edge
-//      - [ ] Field (if different from struct field)
+//          - [✔] Add edge (implicit in Variant owner_id)
+//          - [ ] Add explicit edge (SyntacticRelation)
+//      - [✔] Field (if different from struct field)
+//          - [✔] Add edge (implicit in Field owner_id)
 //          - [ ] Add edge
 //  - [✔] Function
 //      - [✔] Define tranform
@@ -147,7 +149,7 @@ define_schema!(ConstNodeSchema {
 //  - variants (VariantNode)
 //  - generic_params
 //  - attributes
-// NOTE: Keeping fields `varaints` for now. May remove in favor of explicit edges.
+// NOTE: Removed fields `varaints` for now. May return in favor of explicit edges.
 define_schema!(EnumNodeSchema {
     "enum",
     id: "Uuid",
@@ -157,8 +159,8 @@ define_schema!(EnumNodeSchema {
     vis_path: "[String]?",
     docstring: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]",
-    variants: "[Uuid]?",
+    cfgs: "[String]?",
+    variants: "[Uuid]",
 });
 
 // TODO: Link to:
