@@ -5,7 +5,9 @@ use syn_parser::utils::LogStyle;
 
 use crate::schema::{
     assoc_nodes::MethodNodeSchema,
-    primary_nodes::{ConstNodeSchema, ImplNodeSchema, StaticNodeSchema, StructNodeSchema},
+    primary_nodes::{
+        ConstNodeSchema, ImplNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
+    },
     secondary_nodes::{
         AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema,
         GenericTypeNodeSchema, VariantNodeSchema,
@@ -157,6 +159,17 @@ pub(crate) fn create_static_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn st
     let static_schema = StaticNodeSchema::SCHEMA;
     let db_result = db.run_script(
         &static_schema.script_create(),
+        BTreeMap::new(),
+        cozo::ScriptMutability::Mutable,
+    )?;
+    log_db_result(db_result);
+    Ok(())
+}
+
+pub(crate) fn create_trait_schema(db: &Db<MemStorage>) -> Result<(), Box<dyn std::error::Error>> {
+    let trait_schema = TraitNodeSchema::SCHEMA;
+    let db_result = db.run_script(
+        &trait_schema.script_create(),
         BTreeMap::new(),
         cozo::ScriptMutability::Mutable,
     )?;

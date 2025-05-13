@@ -1,4 +1,4 @@
-use syn_parser::{parser::types::GenericParamKind, utils::LogStyleDebug};
+use syn_parser::parser::types::GenericParamKind;
 
 use super::*;
 use crate::{

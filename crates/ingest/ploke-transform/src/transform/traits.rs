@@ -31,16 +31,11 @@ pub(super) fn transform_traits(
 #[cfg(test)]
 mod tests {
 
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::{
-        schema::primary_nodes::TraitNodeSchema,
-        test_utils::{create_attribute_schema, log_db_result},
-    };
+    use crate::test_utils::{create_attribute_schema, create_trait_schema};
 
     use super::transform_traits;
     #[test]
@@ -59,18 +54,7 @@ mod tests {
 
         // create and insert attribute schema
         create_attribute_schema(&db)?;
-        pub(crate) fn create_trait_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let trait_schema = TraitNodeSchema::SCHEMA;
-            let db_result = db.run_script(
-                &trait_schema.script_create(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
+
         create_trait_schema(&db)?;
 
         // transform and insert impls into cozo

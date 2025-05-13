@@ -220,7 +220,9 @@ define_schema!(MacroNodeSchema {
     docstring: "String?",
     body: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    kind: "String",
+    proc_kind: "String?"
 });
 
 // TODO: Link to:

@@ -8,6 +8,7 @@ use impls::transform_impls;
 use statics::transform_statics;
 use std::collections::BTreeMap;
 use structs::transform_structs;
+use traits::transform_traits;
 use type_alias::transform_type_aliases;
 use unions::transform_unions;
 // -- from workspace
@@ -25,6 +26,7 @@ mod consts;
 mod enums;
 mod functions;
 mod impls;
+mod macros;
 mod statics;
 mod structs;
 mod traits;
@@ -46,6 +48,7 @@ pub fn transform_code_graph(
     code_graph: CodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), cozo::Error> {
+    #[cfg(not(feature = "type_bearing_ids"))]
     let relations = code_graph.relations;
     // Transform types
     // [ ] Refactored
@@ -65,7 +68,7 @@ pub fn transform_code_graph(
     transform_defined_types(db, code_graph.defined_types)?;
 
     // Transform traits
-    // [ ] Refactored
+    // [✔] Refactored
     transform_traits(db, code_graph.traits)?;
 
     // Transform impls
@@ -116,91 +119,6 @@ fn transform_defined_types(
     transform_enums(db, enums)?;
     transform_type_aliases(db, type_aliases)?;
     transform_unions(db, unions)?;
-    Ok(())
-}
-
-/// Transforms trait nodes into the traits relation
-fn transform_traits(db: &Db<MemStorage>, traits: Vec<TraitNode>) -> Result<(), cozo::Error> {
-    // Process public traits
-    for trait_node in traits.into_iter() {
-        transform_single_trait(db, &trait_node)?;
-    }
-
-    Ok(())
-}
-
-/// Helper function to transform a single trait
-fn transform_single_trait(
-    db: &Db<MemStorage>,
-    trait_node: &syn_parser::parser::nodes::TraitNode,
-) -> Result<(), cozo::Error> {
-    let (vis_kind, vis_path) = match &trait_node.visibility {
-        VisibilityKind::Public => (DataValue::from("public".to_string()), None),
-        VisibilityKind::Crate => ("crate".into(), None),
-        VisibilityKind::Restricted(path) => {
-            let list = DataValue::List(
-                path.iter()
-                    .map(|p_string| DataValue::from(p_string.to_string()))
-                    .collect(),
-            );
-            ("restricted".into(), Some(list))
-        }
-        VisibilityKind::Inherited => ("inherited".into(), None),
-    };
-
-    let docstring = trait_node
-        .docstring
-        .as_ref()
-        .map(|s| DataValue::from(s.as_str()))
-        .unwrap_or(DataValue::Null);
-
-    // Insert into traits table
-    let trait_params = BTreeMap::from([
-        ("id".to_string(), trait_node.id.into()),
-        (
-            "name".to_string(),
-            DataValue::from(trait_node.name.as_str()),
-        ),
-        ("docstring".to_string(), docstring),
-    ]);
-
-    db.run_script(
-        "?[id, name, docstring] <- [[$id, $name, $docstring]] :put traits",
-        trait_params,
-        ScriptMutability::Mutable,
-    )?;
-
-    // Insert into visibility table
-    let vis_params = BTreeMap::from([
-        ("node_id".to_string(), trait_node.id.into()),
-        ("kind".to_string(), vis_kind),
-        ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
-    ]);
-
-    db.run_script(
-        "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
-        vis_params,
-        ScriptMutability::Mutable,
-    )?;
-
-    // Add trait methods (they're already in the functions table)
-    // We just need to add relations between the trait and its methods
-
-    // Add super traits
-    for super_trait_id in trait_node.super_traits.iter() {
-        let relation_params = BTreeMap::from([
-            ("source_id".to_string(), trait_node.id.into()),
-            ("target_id".to_string(), super_trait_id.into()),
-            ("kind".to_string(), DataValue::from("Inherits")),
-        ]);
-
-        db.run_script(
-            "?[source_id, target_id, kind] <- [[$source_id, $target_id, $kind]] :put relations",
-            relation_params,
-            ScriptMutability::Mutable,
-        )?;
-    }
-
     Ok(())
 }
 
