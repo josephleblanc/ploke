@@ -23,6 +23,8 @@ define_schema!(VariantNodeSchema {
     "variant",
     id: "Uuid",
     name: "String",
+    owner_id: "Uuid",
+    index: "Int",
     discriminant: "String?",
     cfgs: "[String]?"
 });

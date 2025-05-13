@@ -193,7 +193,7 @@ pub(super) fn process_generic_params(
 }
 
 pub(super) fn process_fields(
-    strukt: &StructNode,
+    any_node_id: AnyNodeId,
     schema: &FieldNodeSchema,
     i: usize,
     field: &FieldNode,
@@ -219,7 +219,7 @@ pub(super) fn process_fields(
     let field_params = BTreeMap::from([
         (schema.id().to_string(), cozo_id),
         (schema.name().to_string(), cozo_name),
-        (schema.owner_id().to_string(), strukt.id.into()),
+        (schema.owner_id().to_string(), any_node_id.to_cozo_uuid()),
         (schema.index().to_string(), DataValue::from(i as i64)),
         (schema.type_id().to_string(), type_id.into()),
         (schema.vis_kind().to_string(), vis_kind),

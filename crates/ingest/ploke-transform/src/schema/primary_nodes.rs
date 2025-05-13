@@ -10,8 +10,8 @@ use crate::define_schema;
 // Nodes:
 //  - [ ] Const
 //      - [✔] Define Schema (*NodeSchema)
-//      - [✔] Define tranform
-//          - [✔] Basic testing
+//      - [ ] Define tranform
+//          - [ ] Basic testing
 //  - [✔] Struct
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
@@ -147,6 +147,7 @@ define_schema!(ConstNodeSchema {
 //  - variants (VariantNode)
 //  - generic_params
 //  - attributes
+// NOTE: Keeping fields `varaints` for now. May remove in favor of explicit edges.
 define_schema!(EnumNodeSchema {
     "enum",
     id: "Uuid",

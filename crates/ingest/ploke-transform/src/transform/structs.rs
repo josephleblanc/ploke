@@ -21,7 +21,7 @@ pub(super) fn transform_structs(
         let field_schema = &FieldNodeSchema::SCHEMA;
         // Add function parameters
         for (i, field) in strukt.fields.iter().enumerate() {
-            let field_params = process_fields(&strukt, field_schema, i, field);
+            let field_params = process_fields(struct_any_id, field_schema, i, field);
             let script = field_schema.script_put(&field_params);
 
             db.run_script(&script, field_params, ScriptMutability::Mutable)?;

@@ -14,6 +14,7 @@ use syn_parser::utils::LogStyle;
 mod fields;
 mod secondary_nodes;
 // -- primary nodes --
+mod enums;
 mod functions;
 mod structs;
 
@@ -43,7 +44,7 @@ pub fn transform_code_graph(
 
     // Transform defined types (structs, enums, etc.)
     // [ ] Refactored
-    //  - [ ] Struct Refactored
+    //  - [✔] Struct Refactored
     //  - [ ] Enum Refactored
     //  - [ ] Union Refactored
     //  - [ ] TypeAlias Refactored
@@ -79,23 +80,6 @@ pub fn transform_code_graph(
     transform_relations(db, code_graph)?;
 
     Ok(())
-}
-
-fn vis_to_dataval_v2(function: &FunctionNode) -> (DataValue, Option<DataValue>) {
-    let (vis_kind, vis_path) = match &function.visibility {
-        VisibilityKind::Public => (DataValue::from("public".to_string()), None),
-        VisibilityKind::Crate => ("crate".into(), None),
-        VisibilityKind::Restricted(path) => {
-            let list = DataValue::List(
-                path.iter()
-                    .map(|p_string| DataValue::from(p_string.to_string()))
-                    .collect(),
-            );
-            ("restricted".into(), Some(list))
-        }
-        VisibilityKind::Inherited => ("inherited".into(), None),
-    };
-    (vis_kind, vis_path)
 }
 
 /// Transforms trait nodes into the traits relation
