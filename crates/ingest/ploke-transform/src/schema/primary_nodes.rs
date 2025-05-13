@@ -37,6 +37,14 @@ use crate::define_schema;
 //      - [✔] Field (if different from struct field)
 //          - [✔] Add edge (implicit in Field owner_id)
 //          - [ ] Add edge
+//  - [✔] TypeAlias
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
+//  - [✔] Union
+//      - [✔] Define Schema (*NodeSchema)
+//      - [✔] Define tranform
+//          - [✔] Basic testing
 //  - [✔] Function
 //      - [✔] Define tranform
 //          - [✔] Basic testing
@@ -81,10 +89,6 @@ use crate::define_schema;
 //              - [ ] Basic testing
 //          - [✔] Define Schema (*NodeSchema)
 //          - [ ] Add edge
-//  - [ ] TypeAlias
-//      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
 //  - [ ] Import
 //      - [✔] Define Schema (*NodeSchema)
 //      - [ ] Define tranform
@@ -305,7 +309,7 @@ define_schema!(TypeAliasNodeSchema {
     docstring: "String?",
     tracking_hash: "Uuid?",
     cfgs: "[String]?",
-    type_id: "Uuid",
+    ty_id: "Uuid",
 });
 
 // TODO: Link to:

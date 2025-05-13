@@ -5,6 +5,7 @@ use crate::{
 
 use super::*;
 
+/// Transforms impl nodes into the impls relation
 pub(super) fn transform_impls(
     db: &Db<MemStorage>,
     impls: Vec<ImplNode>,

@@ -1,8 +1,15 @@
 //! Transforms CodeGraph into CozoDB relations
 
+use consts::transform_consts;
 // -- external
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
+use enums::transform_enums;
+use impls::transform_impls;
+use statics::transform_statics;
 use std::collections::BTreeMap;
+use structs::transform_structs;
+use type_alias::transform_type_aliases;
+use unions::transform_unions;
 // -- from workspace
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
@@ -20,6 +27,7 @@ mod functions;
 mod impls;
 mod statics;
 mod structs;
+mod type_alias;
 mod unions;
 
 // -- primary node transforms
@@ -47,11 +55,12 @@ pub fn transform_code_graph(
     transform_functions(db, code_graph.functions, tree)?;
 
     // Transform defined types (structs, enums, etc.)
-    // [ ] Refactored
+    // [✔] Refactored
     //  - [✔] Struct Refactored
     //  - [✔] Enum Refactored
-    //  - [ ] Union Refactored
-    //  - [ ] TypeAlias Refactored
+    //  - [✔] Union Refactored
+    //  - [✔] TypeAlias Refactored
+    //  TODO: Refactor CodeGraph to split these nodes into their own collections.
     transform_defined_types(db, code_graph.defined_types)?;
 
     // Transform traits
@@ -68,14 +77,13 @@ pub fn transform_code_graph(
 
     // Transform consts
     // [✔] Refactored
-    #[cfg(not(feature = "type_bearing_ids"))]
-    transform_consts(db, code_graph)?;
+    transform_consts(db, code_graph.consts)?;
     // Transoform statics
     // [✔] Refactored
-    #[cfg(not(feature = "type_bearing_ids"))]
-    transform_statics(db, code_graph)?;
+    transform_statics(db, code_graph.statics)?;
 
     // Transform macros
+    // [ ] Refactored
     transform_macros(db, code_graph.macros)?;
 
     // Transform relations
@@ -83,6 +91,30 @@ pub fn transform_code_graph(
     #[cfg(not(feature = "type_bearing_ids"))]
     transform_relations(db, code_graph)?;
 
+    Ok(())
+}
+
+fn transform_defined_types(
+    db: &Db<MemStorage>,
+    defined_types: Vec<TypeDefNode>,
+) -> Result<(), cozo::Error> {
+    let mut structs = Vec::new();
+    let mut enums = Vec::new();
+    let mut type_aliases = Vec::new();
+    let mut unions = Vec::new();
+
+    for defined_type in defined_types.into_iter() {
+        match defined_type {
+            TypeDefNode::Struct(sn) => structs.push(sn),
+            TypeDefNode::Enum(en) => enums.push(en),
+            TypeDefNode::TypeAlias(tn) => type_aliases.push(tn),
+            TypeDefNode::Union(un) => unions.push(un),
+        }
+    }
+    transform_structs(db, structs)?;
+    transform_enums(db, enums)?;
+    transform_type_aliases(db, type_aliases)?;
+    transform_unions(db, unions)?;
     Ok(())
 }
 
@@ -171,33 +203,6 @@ fn transform_single_trait(
     Ok(())
 }
 
-/// Transforms impl nodes into the impls relation
-fn transform_impls(db: &Db<MemStorage>, impls: Vec<ImplNode>) -> Result<(), cozo::Error> {
-    for impl_node in impls.into_iter() {
-        let trait_type_id = impl_node
-            .trait_type
-            .map(|id| id.into())
-            .unwrap_or(DataValue::Null);
-
-        let params: BTreeMap<String, DataValue> = BTreeMap::from([
-            ("id".to_string(), impl_node.id.into()),
-            ("self_type_id".to_string(), impl_node.self_type.into()),
-            ("trait_type_id".to_string(), trait_type_id),
-        ]);
-
-        db.run_script(
-            "?[id, self_type_id, trait_type_id] <- [[$id, $self_type_id, $trait_type_id]] :put impls",
-            params,
-            ScriptMutability::Mutable,
-        )?;
-
-        // Add impl methods (they're already in the functions table)
-        // We just need to add relations between the impl and its methods
-    }
-
-    Ok(())
-}
-
 /// Transforms module nodes into the modules relation
 fn transform_modules(db: &Db<MemStorage>, modules: Vec<ModuleNode>) -> Result<(), cozo::Error> {
     for module in modules {
@@ -280,80 +285,6 @@ fn transform_modules(db: &Db<MemStorage>, modules: Vec<ModuleNode>) -> Result<()
                 ScriptMutability::Mutable,
             )?;
         }
-    }
-
-    Ok(())
-}
-
-/// Transforms value nodes into the values relation
-#[cfg(not(feature = "type_bearing_ids"))]
-fn transform_values(db: &Db<MemStorage>, consts: Vec<ConstNode>) -> Result<(), cozo::Error> {
-    for value in consts.into_iter() {
-        let (vis_kind, vis_path) = match &value.visibility {
-            VisibilityKind::Public => (DataValue::from("public".to_string()), None),
-            VisibilityKind::Crate => ("crate".into(), None),
-            VisibilityKind::Restricted(path) => {
-                let list = DataValue::List(
-                    path.iter()
-                        .map(|p_string| DataValue::from(p_string.to_string()))
-                        .collect(),
-                );
-                ("restricted".into(), Some(list))
-            }
-            VisibilityKind::Inherited => ("inherited".into(), None),
-        };
-
-        let kind = match value.kind {
-            syn_parser::parser::nodes::ValueKind::Constant => "Constant",
-            syn_parser::parser::nodes::ValueKind::Static { is_mutable } => {
-                if is_mutable {
-                    "MutableStatic"
-                } else {
-                    "Static"
-                }
-            }
-        };
-
-        let docstring = value
-            .docstring
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
-
-        let value_str = value
-            .value
-            .as_ref()
-            .map(|s| DataValue::from(s.as_str()))
-            .unwrap_or(DataValue::Null);
-
-        // Insert into values table
-        let value_params = BTreeMap::from([
-            ("id".to_string(), value.id.into()),
-            ("name".to_string(), DataValue::from(value.name.as_str())),
-            ("type_id".to_string(), value.type_id.into()),
-            ("kind".to_string(), DataValue::from(kind)),
-            ("value".to_string(), value_str),
-            ("docstring".to_string(), docstring),
-        ]);
-
-        db.run_script(
-            "?[id, name, type_id, kind, value, docstring] <- [[$id, $name, $type_id, $kind, $value, $docstring]] :put values",
-            value_params,
-            ScriptMutability::Mutable,
-        )?;
-
-        // Insert into visibility table
-        let vis_params = BTreeMap::from([
-            ("node_id".to_string(), value.id.into()),
-            ("kind".to_string(), vis_kind),
-            ("path".to_string(), vis_path.unwrap_or(DataValue::Null)),
-        ]);
-
-        db.run_script(
-            "?[node_id, kind, path] <- [[$node_id, $kind, $path]] :put visibility",
-            vis_params,
-            ScriptMutability::Mutable,
-        )?;
     }
 
     Ok(())
@@ -557,270 +488,6 @@ fn transform_types(db: &Db<MemStorage>, type_graph: Vec<TypeNode>) -> Result<(),
             }
             _ => {}
         }
-    }
-
-    Ok(())
-}
-
-/// Transforms defined types (structs, enums, etc.) into their respective relations
-fn transform_defined_types(
-    db: &Db<MemStorage>,
-    defined_types: Vec<TypeDefNode>,
-) -> Result<(), cozo::Error> {
-    for type_def in defined_types.into_iter() {
-        match type_def {
-            TypeDefNode::Struct(struct_node) => {
-                let visibility = match struct_node.visibility {
-                    VisibilityKind::Public => "Public",
-                    VisibilityKind::Crate => "Crate",
-                    VisibilityKind::Restricted(_) => "Restricted",
-                    VisibilityKind::Inherited => "Inherited",
-                };
-
-                let docstring = struct_node
-                    .docstring
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
-
-                let params = BTreeMap::from([
-                    ("id".to_string(), struct_node.id.into()),
-                    (
-                        "name".to_string(),
-                        DataValue::from(struct_node.name.as_str()),
-                    ),
-                    ("visibility".to_string(), DataValue::from(visibility)),
-                    ("docstring".to_string(), docstring),
-                ]);
-
-                db.run_script(
-                    "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put structs",
-                    params,
-                    ScriptMutability::Mutable,
-                )?;
-
-                // Add struct fields
-                for (i, field) in struct_node.fields.iter().enumerate() {
-                    let field_name = field
-                        .name
-                        .as_ref()
-                        .map(|s| DataValue::from(s.as_str()))
-                        .unwrap_or(DataValue::Null);
-
-                    let field_visibility = match field.visibility {
-                        VisibilityKind::Public => "Public",
-                        VisibilityKind::Crate => "Crate",
-                        VisibilityKind::Restricted(_) => "Restricted",
-                        VisibilityKind::Inherited => "Inherited",
-                    };
-
-                    let field_params = BTreeMap::from([
-                        ("struct_id".to_string(), struct_node.id.into()),
-                        ("field_index".to_string(), DataValue::from(i as i64)),
-                        ("field_name".to_string(), field_name),
-                        ("type_id".to_string(), field.type_id.into()),
-                        ("visibility".to_string(), DataValue::from(field_visibility)),
-                    ]);
-
-                    db.run_script(
-                        "?[struct_id, field_index, field_name, type_id, visibility] <- [[$struct_id, $field_index, $field_name, $type_id, $visibility]] :put struct_fields",
-                        field_params,
-                        ScriptMutability::Mutable,
-                    )?;
-                }
-            }
-            TypeDefNode::Enum(enum_node) => {
-                let visibility = match enum_node.visibility {
-                    VisibilityKind::Public => "Public",
-                    VisibilityKind::Crate => "Crate",
-                    VisibilityKind::Restricted(_) => "Restricted",
-                    VisibilityKind::Inherited => "Inherited",
-                };
-
-                let docstring = enum_node
-                    .docstring
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
-
-                let params = BTreeMap::from([
-                    ("id".to_string(), enum_node.id.into()),
-                    ("name".to_string(), DataValue::from(enum_node.name.as_str())),
-                    ("visibility".to_string(), DataValue::from(visibility)),
-                    ("docstring".to_string(), docstring),
-                ]);
-
-                db.run_script(
-                    "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put enums",
-                    params,
-                    ScriptMutability::Mutable,
-                )?;
-
-                // Add enum variants
-                for (i, variant) in enum_node.variants.iter().enumerate() {
-                    let discriminant = variant
-                        .discriminant
-                        .as_ref()
-                        .map(|s| DataValue::from(s.as_str()))
-                        .unwrap_or(DataValue::Null);
-
-                    let variant_params = BTreeMap::from([
-                        ("enum_id".to_string(), enum_node.id.into()),
-                        ("variant_index".to_string(), DataValue::from(i as i64)),
-                        (
-                            "variant_name".to_string(),
-                            DataValue::from(variant.name.as_str()),
-                        ),
-                        ("discriminant".to_string(), discriminant),
-                    ]);
-
-                    db.run_script(
-                        "?[enum_id, variant_index, variant_name, discriminant] <- [[$enum_id, $variant_index, $variant_name, $discriminant]] :put enum_variants",
-                        variant_params,
-                        ScriptMutability::Mutable,
-                    )?;
-                }
-            }
-            TypeDefNode::TypeAlias(type_alias) => {
-                let visibility = match type_alias.visibility {
-                    VisibilityKind::Public => "Public",
-                    VisibilityKind::Crate => "Crate",
-                    VisibilityKind::Restricted(_) => "Restricted",
-                    VisibilityKind::Inherited => "Inherited",
-                };
-
-                let docstring = type_alias
-                    .docstring
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
-
-                let params = BTreeMap::from([
-                    ("id".to_string(), type_alias.id.into()),
-                    (
-                        "name".to_string(),
-                        DataValue::from(type_alias.name.as_str()),
-                    ),
-                    ("visibility".to_string(), DataValue::from(visibility)),
-                    ("type_id".to_string(), type_alias.type_id.into()),
-                    ("docstring".to_string(), docstring),
-                ]);
-
-                db.run_script(
-                    "?[id, name, visibility, type_id, docstring] <- [[$id, $name, $visibility, $type_id, $docstring]] :put type_aliases",
-                    params,
-                    ScriptMutability::Mutable,
-                )?;
-            }
-            TypeDefNode::Union(union_node) => {
-                let visibility = match union_node.visibility {
-                    VisibilityKind::Public => "Public",
-                    VisibilityKind::Crate => "Crate",
-                    VisibilityKind::Restricted(_) => "Restricted",
-                    VisibilityKind::Inherited => "Inherited",
-                };
-
-                let docstring = union_node
-                    .docstring
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
-
-                let params = BTreeMap::from([
-                    ("id".to_string(), union_node.id.into()),
-                    (
-                        "name".to_string(),
-                        DataValue::from(union_node.name.as_str()),
-                    ),
-                    ("visibility".to_string(), DataValue::from(visibility)),
-                    ("docstring".to_string(), docstring),
-                ]);
-
-                db.run_script(
-                    "?[id, name, visibility, docstring] <- [[$id, $name, $visibility, $docstring]] :put unions",
-                    params,
-                    ScriptMutability::Mutable,
-                )?;
-
-                // Add union fields (similar to struct fields)
-                for (i, field) in union_node.fields.iter().enumerate() {
-                    let field_name = field
-                        .name
-                        .as_ref()
-                        .map(|s| DataValue::from(s.as_str()))
-                        .unwrap_or(DataValue::Null);
-
-                    let field_visibility = match field.visibility {
-                        VisibilityKind::Public => "Public",
-                        VisibilityKind::Crate => "Crate",
-                        VisibilityKind::Restricted(_) => "Restricted",
-                        VisibilityKind::Inherited => "Inherited",
-                    };
-
-                    let field_params = BTreeMap::from([
-                        ("struct_id".to_string(), union_node.id.into()),
-                        ("field_index".to_string(), DataValue::from(i as i64)),
-                        ("field_name".to_string(), field_name),
-                        ("type_id".to_string(), field.type_id.into()),
-                        ("visibility".to_string(), DataValue::from(field_visibility)),
-                    ]);
-
-                    db.run_script(
-                        "?[struct_id, field_index, field_name, type_id, visibility] <- [[$struct_id, $field_index, $field_name, $type_id, $visibility]] :put struct_fields",
-                        field_params,
-                        ScriptMutability::Mutable,
-                    )?;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Transforms relations into the relations relation
-#[cfg(not(feature = "type_bearing_ids"))]
-fn transform_relations(
-    db: &Db<MemStorage>,
-    relations: Vec<SyntacticRelation>,
-) -> Result<(), cozo::Error> {
-    use syn_parser::parser::relations::SyntacticRelation;
-
-    for relation in &code_graph.relations {
-        let kind = match relation.kind {
-            SyntacticRelation::FunctionParameter => "FunctionParameter",
-            SyntacticRelation::FunctionReturn => "FunctionReturn",
-            SyntacticRelation::StructField => "StructField",
-            SyntacticRelation::EnumVariant => "EnumVariant",
-            SyntacticRelation::ImplementsFor => "ImplementsFor",
-            SyntacticRelation::ImplementsTrait => "ImplementsTrait",
-            SyntacticRelation::Inherits => "Inherits",
-            SyntacticRelation::References => "References",
-            SyntacticRelation::Contains => "Contains",
-            SyntacticRelation::Uses => "Uses",
-            SyntacticRelation::ValueType => "ValueType",
-            SyntacticRelation::MacroUse => "MacroUse",
-            SyntacticRelation::Method => "Method",
-            SyntacticRelation::ModuleImports => "ModuleImports",
-        };
-
-        let params = BTreeMap::from([
-            (
-                "source_id".to_string(),
-                DataValue::from(relation.source as i64),
-            ),
-            (
-                "target_id".to_string(),
-                DataValue::from(relation.target as i64),
-            ),
-            ("kind".to_string(), DataValue::from(kind)),
-        ]);
-
-        db.run_script(
-            "?[source_id, target_id, kind] <- [[$source_id, $target_id, $kind]] :put relations",
-            params,
-            ScriptMutability::Mutable,
-        )?;
     }
 
     Ok(())

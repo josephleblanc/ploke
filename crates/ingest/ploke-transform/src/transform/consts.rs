@@ -2,6 +2,7 @@ use crate::{schema::primary_nodes::ConstNodeSchema, traits::CommonFields};
 
 use super::*;
 
+/// Transforms value nodes into the values relation
 pub(super) fn transform_consts(
     db: &Db<MemStorage>,
     consts: Vec<ConstNode>,
