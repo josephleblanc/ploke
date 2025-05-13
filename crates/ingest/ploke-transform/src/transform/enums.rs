@@ -122,22 +122,16 @@ mod tests {
     use crate::{
         schema::primary_nodes::EnumNodeSchema,
         test_utils::{create_variant_schema, log_db_result},
-        traits::CommonFields,
         transform::enums::transform_enums,
     };
-    use cozo::{Db, MemStorage, ScriptMutability};
+    use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
-    use syn_parser::{
-        parser::{
-            nodes::{EnumNode, GraphNode, StructNode, TypeDefNode},
-            ParsedCodeGraph,
-        },
-        utils::LogStyle,
+    use syn_parser::parser::{
+        nodes::{EnumNode, TypeDefNode},
+        ParsedCodeGraph,
     };
 
-    use crate::test_utils::{
-        create_attribute_schema, create_field_schema, create_generic_schema, create_struct_schema,
-    };
+    use crate::test_utils::{create_attribute_schema, create_field_schema, create_generic_schema};
     #[test]
     fn test_transform_enums() -> Result<(), Box<dyn std::error::Error>> {
         let _ = env_logger::builder()
@@ -184,7 +178,6 @@ mod tests {
         // create and insert field schema
         create_field_schema(&db)?;
 
-        let enum_schema = EnumNodeSchema::SCHEMA;
         let mut enum_nodes: Vec<EnumNode> = Vec::new();
         for type_def_node in merged.graph.defined_types.into_iter() {
             if let TypeDefNode::Enum(enm) = type_def_node {

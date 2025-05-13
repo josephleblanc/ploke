@@ -94,9 +94,9 @@ use crate::define_schema;
 //  - [✔] ParamData
 //      - [✔] Add function to turn into BTree
 //  - [✔] VariantNode
-//      - [ ] Add function to turn into BTree
+//      - [✔] Add function to turn into BTree
 //  - [✔] FieldNode
-//      - [ ] Add function to turn into BTree
+//      - [✔] Add function to turn into BTree
 //  - [✔] GenericParamNode
 //      - [✔] GenericTypeNodeSchema
 //      - [✔] GenericLifetimeNodeSchema
