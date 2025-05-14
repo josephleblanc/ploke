@@ -4,15 +4,17 @@ use cozo::{DataValue, Num};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
-    AnyNodeId, AsAnyNodeId, Attribute, ConstNode, EnumNode, FunctionNode, MacroNode, MethodNode,
-    ModuleNode, StaticNode, StructNode, ToCozoUuid, TraitNode, TypeAliasNode, UnionNode,
+    AnyNodeId, AsAnyNodeId, Attribute, ConstNode, EnumNode, FunctionNode, ImportNode, MacroNode,
+    MethodNode, ModuleNode, StaticNode, StructNode, ToCozoUuid, TraitNode, TypeAliasNode,
+    UnionNode,
 };
 use syn_parser::parser::types::VisibilityKind;
 
 use crate::schema::assoc_nodes::MethodNodeSchema;
 use crate::schema::primary_nodes::{
-    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, MacroNodeSchema, ModuleNodeSchema,
-    StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema,
+    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImportNodeSchema, MacroNodeSchema,
+    ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema,
+    UnionNodeSchema,
 };
 use crate::schema::secondary_nodes::AttributeNodeSchema; // For join() functionality
                                                          //

@@ -14,3 +14,6 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add more logging to tests in ploke-transform
  * [ ] Implement proper error handling in ploke-transform
  * [ ] Change `ModuleNode` to handle `imports` and `exports` through variant `ModuleKind`
+ * [ ] Add tracking_hash to `ImportNode`
+ * [ ] Add attribute tracking to `ImportNode`
+ * [ ] Change `CodeGraph.use_statements` to `CodeGraph.imports`

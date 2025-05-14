@@ -5,6 +5,7 @@ use consts::transform_consts;
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 use enums::transform_enums;
 use impls::transform_impls;
+use imports::transform_imports;
 use macros::transform_macros;
 use module::transform_modules;
 use statics::transform_statics;
@@ -28,6 +29,7 @@ mod consts;
 mod enums;
 mod functions;
 mod impls;
+mod imports;
 mod macros;
 mod module;
 mod statics;
@@ -94,7 +96,9 @@ pub fn transform_code_graph(
     // [✔] Refactored
     transform_macros(db, code_graph.macros)?;
 
-    // TODO: ImportNode
+    // Transform imports/reexports
+    // [✔] Refactored
+    transform_imports(db, code_graph.use_statements)?;
 
     // Transform relations
     // [ ] Refactored

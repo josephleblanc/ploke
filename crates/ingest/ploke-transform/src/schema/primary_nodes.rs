@@ -29,7 +29,7 @@ use crate::define_schema;
 //  - [✔] Enum
 //      - [✔] Define Schema (*NodeSchema)
 //      - [✔] Define tranform
-//          - [ ] Basic testing
+//          - [✔] Basic testing
 //      - [✔] Variant
 //          - [✔] Define Schema (*NodeSchema)
 //          - [✔] Add edge (implicit in Variant owner_id)
@@ -86,11 +86,11 @@ use crate::define_schema;
 //      - [✔] FileModuleNode (if different from impl method)
 //          - [✔] Basic testing
 //          - [✔] Add edge (implicit in method field: owner_id)
-//          - [ ] Basic testing
+//          - [✔] Basic testing
 //  - [ ] Import
 //      - [✔] Define Schema (*NodeSchema)
-//      - [ ] Define tranform
-//          - [ ] Basic testing
+//      - [✔] Define tranform
+//          - [✔] Basic testing
 //
 // Add Schema definitions for Associated Nodes:
 //  - [✔] MethodNodeSchema
@@ -189,20 +189,24 @@ define_schema!(ImplNodeSchema {
 
 // TODO: Link to:
 //  - Re-export type
-// NOTE: Should this have attributes?
+// NOTE: Should this have attributes? The answer is "Yes, yes it should"
 // NOTE: Flattened `ImportKind` into `import_kind` and `vis_kind`, `vis_path`
+// NOTE: Including redundant name and visible_name for now. They will always be the same but it
+// might help to not surprise me when I look for the name of the import.
 define_schema!(ImportNodeSchema {
     "import",
     id: "Uuid",
+    name: "String",
     span: "[Int; 2]",
+    vis_kind: "String?",
+    vis_path: "[String]?",
+    cfgs: "[String]",
     source_path: "[String]",
-    kind: "Uuid",
     visible_name: "String",
     original_name: "String?",
     is_glob: "Bool",
+    is_self_import: "Bool",
     import_kind: "String",
-    vis_kind: "String?",
-    vis_path: "[String]?"
 });
 
 // TODO: Link to:
