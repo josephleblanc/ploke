@@ -143,9 +143,7 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        test_utils::{
-            create_attribute_schema, create_file_module_schema, create_module_schema, log_db_result,
-        },
+        test_utils::{create_attribute_schema, create_file_module_schema, create_module_schema},
         transform::module::transform_modules,
     };
 

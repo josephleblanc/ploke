@@ -1,6 +1,8 @@
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "Under rapid development and refactoring, warnings annoying"
+)]
 pub mod macro_traits;
-pub mod printable;
 pub mod schema;
 pub mod transform;
 
