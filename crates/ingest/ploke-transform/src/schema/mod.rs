@@ -2,15 +2,15 @@
 //!
 //! Contains the schema for all relations created by transforming parsed entities into the cozo
 //! database. These are separated into categories:
-//! - primary nodes (primary_nodes): Nodes which may be direct children of a file-level or inline
-//! module.
-//! - secondary nodes (secondary_nodes): Nodes which may not be direct children of a file-level
-//! module, but must exist within a primary node's scope (e.g. field, function param)
-//! - associated nodes (assoc_nodes): Nodes which may be defined within an impl block (e.g.
-//! methods, associated constants, etc)
-//! - subnode_variants (subnode_variants): Different subnode fields that are treated as enum
-//! variants while parsed, but are split into separate relations during the transform into the
-//! database.
+//!     - primary nodes (primary_nodes): Nodes which may be direct children of a file-level or inline
+//!     module.
+//!     - secondary nodes (secondary_nodes): Nodes which may not be direct children of a file-level
+//!     module, but must exist within a primary node's scope (e.g. field, function param)
+//!     - associated nodes (assoc_nodes): Nodes which may be defined within an impl block (e.g.
+//!     methods, associated constants, etc)
+//!     - subnode_variants (subnode_variants): Different subnode fields that are treated as enum
+//!     variants while parsed, but are split into separate relations during the transform into the
+//!     database.
 // TODO: add to docs:
 // - types
 pub mod assoc_nodes;
@@ -19,9 +19,12 @@ pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
 
+use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::utils::LogStyle;
+
+use crate::utils::log_db_result;
 
 // TODO: use lazy_static and SmartString
 // &str for now,
@@ -47,12 +50,13 @@ impl CozoField {
     }
 }
 
-// define_schema!(FunctionNodeSchema {
-//     id: "Uuid",
-//     name: "String",
-//     docstring: "String?",
-//     tracking_hash: "Uuid"
-// });
+/// Example
+/// define_schema!(FunctionNodeSchema {
+///     id: "Uuid",
+///     name: "String",
+///     docstring: "String?",
+///     tracking_hash: "Uuid"
+/// });
 #[macro_export]
 macro_rules! define_schema {
     ($schema_name:ident {
@@ -103,6 +107,20 @@ macro_rules! define_schema {
                     $relation.log_name(),
                     self.script_create()
                 );
+            }
+
+            pub(crate) fn create_and_insert(
+                &self,
+                db: &Db<MemStorage>,
+            ) -> Result<(), Box<cozo::Error>> {
+                let const_schema = Self::SCHEMA;
+                let db_result = db.run_script(
+                    &const_schema.script_create(),
+                    BTreeMap::new(),
+                    cozo::ScriptMutability::Mutable,
+                )?;
+                log_db_result(db_result);
+                Ok(())
             }
         }
     };

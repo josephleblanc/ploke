@@ -267,6 +267,17 @@ pub(in crate::parser) trait GenerateTypeId {
     fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[ TypeId ]) -> TypeId;
 }
 impl GenerateTypeId for VisitorState {
+    /// Generates the `TypeId::Synthetic` for a parsed item. This `TypeId`, while not necessarily
+    /// unique (for example `ExampleStruct(usize, usize)`), it should prevent false positives and
+    /// false negatives. A false positive could arise in large part due to renaming of imported
+    /// types, or through the use of type aliases. As such, it is necessary to use the `NodeId` of
+    /// the parent context in the generation of the `TypeId` here.
+    ///
+    /// The parent_scope is included as a chain of all of the following:
+    ///     - primary scope definition: the immediate primary node (e.g. impl, function, struct,
+    ///     etc) parent's NodeId
+    ///     - associated scope definition: the immediate associated node parent (if present), e.g. a method
+    ///     - secondary scope definition: the immediate secondary node parent (if present), e.g. field
     fn generate_type_id(&self, type_kind: &TypeKind, related_types: &[TypeId]) -> TypeId {
         // 2. Get the current parent scope ID from the state.
         //    Assume it's always present because the root module ID is pushed first.
@@ -274,12 +285,12 @@ impl GenerateTypeId for VisitorState {
             .copied()
             .map(|pid| pid.as_any())
             .chain(
-                self.current_secondary_defn_scope.iter() 
-                    .map(|sid| sid.as_any())
-            )
-            .chain(
                 self.current_assoc_defn_scope.iter()
                     .map(|aid| aid.as_any())
+            )
+            .chain(
+                self.current_secondary_defn_scope.iter() 
+                    .map(|sid| sid.as_any())
             )
             .last().expect(
             "Invalid State: Visitor.self's current_primary_defn_scope should not be empty during type processing",
@@ -291,7 +302,7 @@ impl GenerateTypeId for VisitorState {
             &self.current_file_path,
             type_kind,                       // Pass the determined TypeKind
             related_types,                   // Pass the determined related TypeIds
-            Some(parent_scope_id.base_id()), // Pass the non-optional parent scope ID wrapped in Some
+            parent_scope_id.base_id(), // NOTE: This used to be an Option for no good reason
         )
     }
 }

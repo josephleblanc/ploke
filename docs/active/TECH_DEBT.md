@@ -17,3 +17,20 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add tracking_hash to `ImportNode`
  * [ ] Add attribute tracking to `ImportNode`
  * [ ] Change `CodeGraph.use_statements` to `CodeGraph.imports`
+ * [ ] Add the canonical path as a string to each `*Node` item for now, primarily as a debugging tool but also possibly just to make the results more human-readable.
+ * [ ] Add new relation between file-level module and all nodes within the file.
+ * [ ] Make `TypeNode` `related_types` an option
+ * [ ] Refactor `TypeKind`
+    - change `Array` size from `String` to `i64`
+
+
+## Longer term/larger refactor:
+* [ ] Expand tracked types to handle the following potentially missing types
+  Missing Rust types:
+  1. **Closure types** (e.g., `|| -> i32 { ... }`)
+  2. **Projection types** (e.g., `<T as Trait>::AssocType`)
+  3. **Bound variables** (for generic parameters)
+  4. **Inferred tuple structs** (e.g., `struct Foo(_)`)
+  5. **Type parameters** (generic placeholders like `T`)
+  6. **Const generics** (e.g., `[T; N]` where N is a const generic)
+  7. **Placeholder types** (like `_` in more contexts)

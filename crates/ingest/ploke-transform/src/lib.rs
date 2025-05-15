@@ -8,6 +8,6 @@ pub mod transform;
 
 // -- crate-wide imports --
 
-mod utils;
+pub mod utils;
 #[cfg(test)]
 pub(crate) use utils::test_utils;

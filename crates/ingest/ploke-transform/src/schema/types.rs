@@ -1,6 +1,24 @@
 use super::*;
 use crate::define_schema;
 
+pub fn create_and_insert_types(db: &Db<MemStorage>) -> Result<(), Box<cozo::Error>> {
+    NamedTypeSchema::SCHEMA.create_and_insert(db)?;
+    ReferenceTypeSchema::SCHEMA.create_and_insert(db)?;
+    SliceTypeSchema::SCHEMA.create_and_insert(db)?;
+    ArrayTypeSchema::SCHEMA.create_and_insert(db)?;
+    TupleTypeSchema::SCHEMA.create_and_insert(db)?;
+    FunctionTypeSchema::SCHEMA.create_and_insert(db)?;
+    NeverTypeSchema::SCHEMA.create_and_insert(db)?;
+    InferredTypeSchema::SCHEMA.create_and_insert(db)?;
+    RawPointerTypeSchema::SCHEMA.create_and_insert(db)?;
+    TraitObjectTypeSchema::SCHEMA.create_and_insert(db)?;
+    ImplTraitTypeSchema::SCHEMA.create_and_insert(db)?;
+    ParenTypeSchema::SCHEMA.create_and_insert(db)?;
+    MacroTypeSchema::SCHEMA.create_and_insert(db)?;
+    UnknownTypeSchema::SCHEMA.create_and_insert(db)?;
+    Ok(())
+}
+
 define_schema!(NamedTypeSchema {
     "named_type",
     type_id: "Uuid",
@@ -67,12 +85,14 @@ define_schema!(RawPointerTypeSchema {
 
 define_schema!(TraitObjectTypeSchema {
     "trait_object_type",
+    type_id: "Uuid",
     dyn_token: "Bool",
     trait_bounds: "[Uuid]?"
 });
 
 define_schema!(ImplTraitTypeSchema {
     "impl_trait_type",
+    type_id: "Uuid",
     trait_bounds: "[Uuid]?",
 });
 
