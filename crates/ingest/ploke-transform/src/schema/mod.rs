@@ -11,9 +11,11 @@
 //!     - subnode_variants (subnode_variants): Different subnode fields that are treated as enum
 //!     variants while parsed, but are split into separate relations during the transform into the
 //!     database.
+//!     - edges: Relations between nodes, with both syntactic (AST-based) and semantic (logical) layers
 // TODO: add to docs:
 // - types
 pub mod assoc_nodes;
+pub mod edges;
 pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;

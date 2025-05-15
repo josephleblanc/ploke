@@ -16,6 +16,7 @@ use type_alias::transform_type_aliases;
 use unions::transform_unions;
 // -- from workspace
 use syn_parser::parser::nodes::*;
+use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::module_tree::ModuleTree;
@@ -104,9 +105,9 @@ pub fn transform_code_graph(
     transform_imports(db, code_graph.use_statements)?;
 
     // Transform relations
-    // [ ] Refactored
+    // [✔] Refactored
     #[cfg(not(feature = "type_bearing_ids"))]
-    transform_relations(db, code_graph)?;
+    crate::schema::edges::transform_relations(db, code_graph.relations)?;
 
     Ok(())
 }
