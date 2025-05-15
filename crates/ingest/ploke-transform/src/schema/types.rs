@@ -1,48 +1,37 @@
 use super::*;
 use crate::define_schema;
 
+/// Helper function to insert all currnetly handled types' relations into the cozo database at
+/// once. Logs the created script inside the `create_and_insert` function using target: "db" on
+/// "info"
 pub fn create_and_insert_types(db: &Db<MemStorage>) -> Result<(), Box<cozo::Error>> {
     NamedTypeSchema::SCHEMA.create_and_insert(db)?;
-    NamedTypeSchema::SCHEMA.log_create_script();
 
     ReferenceTypeSchema::SCHEMA.create_and_insert(db)?;
-    ReferenceTypeSchema::SCHEMA.log_create_script();
 
     SliceTypeSchema::SCHEMA.create_and_insert(db)?;
-    SliceTypeSchema::SCHEMA.log_create_script();
 
     ArrayTypeSchema::SCHEMA.create_and_insert(db)?;
-    ArrayTypeSchema::SCHEMA.log_create_script();
 
     TupleTypeSchema::SCHEMA.create_and_insert(db)?;
-    TupleTypeSchema::SCHEMA.log_create_script();
 
     FunctionTypeSchema::SCHEMA.create_and_insert(db)?;
-    FunctionTypeSchema::SCHEMA.log_create_script();
 
     NeverTypeSchema::SCHEMA.create_and_insert(db)?;
-    NeverTypeSchema::SCHEMA.log_create_script();
 
     InferredTypeSchema::SCHEMA.create_and_insert(db)?;
-    InferredTypeSchema::SCHEMA.log_create_script();
 
     RawPointerTypeSchema::SCHEMA.create_and_insert(db)?;
-    RawPointerTypeSchema::SCHEMA.log_create_script();
 
     TraitObjectTypeSchema::SCHEMA.create_and_insert(db)?;
-    TraitObjectTypeSchema::SCHEMA.log_create_script();
 
     ImplTraitTypeSchema::SCHEMA.create_and_insert(db)?;
-    ImplTraitTypeSchema::SCHEMA.log_create_script();
 
     ParenTypeSchema::SCHEMA.create_and_insert(db)?;
-    ParenTypeSchema::SCHEMA.log_create_script();
 
     MacroTypeSchema::SCHEMA.create_and_insert(db)?;
-    MacroTypeSchema::SCHEMA.log_create_script();
 
     UnknownTypeSchema::SCHEMA.create_and_insert(db)?;
-    UnknownTypeSchema::SCHEMA.log_create_script();
     Ok(())
 }
 

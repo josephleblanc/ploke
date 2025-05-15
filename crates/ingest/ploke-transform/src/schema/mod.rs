@@ -119,6 +119,7 @@ macro_rules! define_schema {
                     BTreeMap::new(),
                     cozo::ScriptMutability::Mutable,
                 )?;
+                self.log_create_script();
                 log_db_result(db_result);
                 Ok(())
             }

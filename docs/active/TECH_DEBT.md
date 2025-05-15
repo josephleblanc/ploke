@@ -21,10 +21,12 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add new relation between file-level module and all nodes within the file.
  * [ ] Make `TypeNode` `related_types` an option
  * [ ] Refactor `TypeKind`
-    - change `Array` size from `String` to `i64`
+    * change `Array` size from `String` to `i64`
+ * [ ] Add tests for TrackingHash
+    * [ ] Remove Remove `?` from the database transforms for `TrackingHash`
 
 
-## Longer term/larger refactor:
+## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
   Missing Rust types:
   1. **Closure types** (e.g., `|| -> i32 { ... }`)

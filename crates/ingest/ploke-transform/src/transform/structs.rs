@@ -72,13 +72,6 @@ mod test {
         // Setup printable nodes
         let successful_graphs = run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-        // let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        //     log::error!(target: "transform_function",
-        //         "Error building tree: {}",
-        //         e
-        //     );
-        //     panic!()
-        // });
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
@@ -94,17 +87,11 @@ mod test {
 
         let mut struct_nodes: Vec<StructNode> = Vec::new();
         for struct_node in merged.graph.defined_types.into_iter() {
-            println!("{:#?}", struct_node);
             if let TypeDefNode::Struct(strukt) = struct_node {
-                // let strukt_params = strukt.cozo_btree();
-                //
-                // let script = struct_schema.script_put(&strukt_params);
-                // db.run_script(&script, strukt_params, ScriptMutability::Mutable)?;
                 struct_nodes.push(strukt);
             }
         }
         transform_structs(&db, struct_nodes)?;
-        // transform_structs(&db, );
         Ok(())
     }
 }

@@ -66,13 +66,7 @@ pub(super) fn transform_types(
                         DataValue::Bool(*is_mutable),
                     ),
                     (schema.references_type().to_string(), cozo_refs_type),
-                    // -- TEMPORARY DEBUG --
                 ]);
-                log::info!(target: "db", "{} {} {}",
-                    "Info Dump:".log_step(),
-                    "Reference params follow",
-                    format!("{:#?}", params).log_spring_green()
-                );
                 let script = schema.script_put(&params);
 
                 (script, params)
