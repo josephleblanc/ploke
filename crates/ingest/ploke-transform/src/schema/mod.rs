@@ -1,7 +1,23 @@
+//! Cozo Schema
+//!
+//! Contains the schema for all relations created by transforming parsed entities into the cozo
+//! database. These are separated into categories:
+//! - primary nodes (primary_nodes): Nodes which may be direct children of a file-level or inline
+//! module.
+//! - secondary nodes (secondary_nodes): Nodes which may not be direct children of a file-level
+//! module, but must exist within a primary node's scope (e.g. field, function param)
+//! - associated nodes (assoc_nodes): Nodes which may be defined within an impl block (e.g.
+//! methods, associated constants, etc)
+//! - subnode_variants (subnode_variants): Different subnode fields that are treated as enum
+//! variants while parsed, but are split into separate relations during the transform into the
+//! database.
+// TODO: add to docs:
+// - types
 pub mod assoc_nodes;
 pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;
+pub mod types;
 
 use itertools::Itertools;
 use std::collections::BTreeMap;
@@ -31,11 +47,11 @@ impl CozoField {
     }
 }
 
-// define_schema!(FunctionNodeSchemaV2 {
-//     id: "id" => "Uuid",
-//     name: "name" => "String",
-//     docstring: "docstring" => "String?",
-//     tracking_hash: "tracking_hash" => "Uuid"
+// define_schema!(FunctionNodeSchema {
+//     id: "Uuid",
+//     name: "String",
+//     docstring: "String?",
+//     tracking_hash: "Uuid"
 // });
 #[macro_export]
 macro_rules! define_schema {

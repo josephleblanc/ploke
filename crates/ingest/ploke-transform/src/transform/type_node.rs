@@ -1,3 +1,7 @@
+use ploke_core::TypeKind;
+
+use crate::schema::types::*;
+
 use super::*;
 
 pub(super) fn transform_unions(
@@ -5,48 +9,56 @@ pub(super) fn transform_unions(
     type_nodes: Vec<TypeNode>,
 ) -> Result<(), cozo::Error> {
     for type_node in type_nodes {
-        match &type_node.kind {
-            ploke_core::TypeKind::Named { .. } => {
-                todo!()
+        let cozo_type_id = type_node.id.to_cozo_uuid();
+        let params = match &type_node.kind {
+            TypeKind::Named { path, is_fully_qualified  } => {
+                let schema = NamedTypeSchema::SCHEMA;
+                let cozo_path = DataValue::List( path.into_iter().map(|s|  DataValue::Str(s.into()) ).collect() );
+
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.path().to_string(), cozo_path),
+                    (schema.is_fully_qualified().to_string(), DataValue::Bool(*is_fully_qualified))
+                ])
             }
-            ploke_core::TypeKind::Reference { .. } => {
-                todo!()
+            TypeKind::Reference { lifetime, is_mutable  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Slice { .. } => {
-                todo!()
+            TypeKind::Array { size  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Array { .. } => {
-                todo!()
+            TypeKind::RawPointer { is_mutable  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Tuple { .. } => {
-                todo!()
+            TypeKind::TraitObject { dyn_token  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Never => {
-                todo!()
+            TypeKind::Macro { name, tokens  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Inferred => {
-                todo!()
+            TypeKind::Unknown { type_str  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::RawPointer { .. } => {
-                todo!()
+            TypeKind::Function { is_unsafe, is_extern, abi  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::ImplTrait { .. } => {
-                todo!()
+            TypeKind::Tuple {  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::TraitObject { .. } => {
-                todo!()
+            TypeKind::Never => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Macro { .. } => {
-                todo!()
+            TypeKind::Inferred => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Unknown { .. } => {
-                todo!()
+            TypeKind::Paren {  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Function { .. } => {
-                todo!()
+            TypeKind::Slice {  } => {
+                BTreeMap::from([])
             }
-            ploke_core::TypeKind::Paren { .. } => {
-                todo!()
+            TypeKind::ImplTrait {  } => {
+                BTreeMap::from([])
             }
         }
     }

@@ -280,7 +280,7 @@ mod test {
     use super::process_attributes;
 
     #[test]
-    fn test_attribute_insertion() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_transform_attribute() -> Result<(), Box<dyn std::error::Error>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps

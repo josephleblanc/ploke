@@ -38,6 +38,9 @@ mod traits;
 mod type_alias;
 mod unions;
 
+// -- types --
+mod type_node;
+
 // -- primary node transforms
 use functions::transform_functions;
 
