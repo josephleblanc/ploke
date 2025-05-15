@@ -23,44 +23,97 @@ pub(super) fn transform_unions(
                     (schema.is_fully_qualified().to_string(), DataValue::Bool(*is_fully_qualified))
                 ])
             }
-            TypeKind::Reference { lifetime, is_mutable  } => {
-                BTreeMap::from([])
+            TypeKind::Reference { lifetime, is_mutable } => {
+                let schema = ReferenceTypeSchema::SCHEMA;
+                let cozo_lifetime = lifetime.as_ref().map(|s| DataValue::Str(s.into()));
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.lifetime().to_string(), cozo_lifetime.unwrap_or(DataValue::Null)),
+                    (schema.is_mutable().to_string(), DataValue::Bool(*is_mutable)),
+                ])
             }
-            TypeKind::Array { size  } => {
-                BTreeMap::from([])
+            TypeKind::Array { size } => {
+                let schema = ArrayTypeSchema::SCHEMA;
+                let cozo_size = size.as_ref().map(|s| DataValue::Int(*s as i64));
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.size().to_string(), cozo_size.unwrap_or(DataValue::Null)),
+                ])
             }
-            TypeKind::RawPointer { is_mutable  } => {
-                BTreeMap::from([])
+            TypeKind::RawPointer { is_mutable } => {
+                let schema = RawPointerTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.is_mutable().to_string(), DataValue::Bool(*is_mutable)),
+                ])
             }
-            TypeKind::TraitObject { dyn_token  } => {
-                BTreeMap::from([])
+            TypeKind::TraitObject { dyn_token } => {
+                let schema = TraitObjectTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.dyn_token().to_string(), DataValue::Bool(*dyn_token)),
+                ])
             }
-            TypeKind::Macro { name, tokens  } => {
-                BTreeMap::from([])
+            TypeKind::Macro { name, tokens } => {
+                let schema = MacroTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.name().to_string(), DataValue::Str(name.into())),
+                    (schema.tokens().to_string(), DataValue::Str(tokens.into())),
+                ])
             }
-            TypeKind::Unknown { type_str  } => {
-                BTreeMap::from([])
+            TypeKind::Unknown { type_str } => {
+                let schema = UnknownTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.type_str().to_string(), DataValue::Str(type_str.into())),
+                ])
             }
-            TypeKind::Function { is_unsafe, is_extern, abi  } => {
-                BTreeMap::from([])
+            TypeKind::Function { is_unsafe, is_extern, abi } => {
+                let schema = FunctionTypeSchema::SCHEMA;
+                let cozo_abi = abi.as_ref().map(|s| DataValue::Str(s.into()));
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.is_unsafe().to_string(), DataValue::Bool(*is_unsafe)),
+                    (schema.is_extern().to_string(), DataValue::Bool(*is_extern)),
+                    (schema.abi().to_string(), cozo_abi.unwrap_or(DataValue::Null)),
+                ])
             }
-            TypeKind::Tuple {  } => {
-                BTreeMap::from([])
+            TypeKind::Tuple { } => {
+                let schema = TupleTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
             TypeKind::Never => {
-                BTreeMap::from([])
+                let schema = NeverTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
             TypeKind::Inferred => {
-                BTreeMap::from([])
+                let schema = InferredTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
-            TypeKind::Paren {  } => {
-                BTreeMap::from([])
+            TypeKind::Paren { } => {
+                let schema = ParenTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
-            TypeKind::Slice {  } => {
-                BTreeMap::from([])
+            TypeKind::Slice { } => {
+                let schema = SliceTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
-            TypeKind::ImplTrait {  } => {
-                BTreeMap::from([])
+            TypeKind::ImplTrait { } => {
+                let schema = ImplTraitTypeSchema::SCHEMA;
+                BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                ])
             }
         }
         // AI: fill out the other match arms to provide the completed `BTreeMap` for the other
