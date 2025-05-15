@@ -56,14 +56,20 @@ mod test {
         ParsedCodeGraph,
     };
 
-    use crate::test_utils::{
-        create_attribute_schema, create_field_schema, create_generic_schema, create_struct_schema,
+    use crate::{
+        schema::{
+            primary_nodes::StructNodeSchema,
+            secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
+        },
+        // generics are special, need special handling for instantiating the three different kinds
+        // of generics. Easier to use helper function.
+        test_utils::create_generic_schema,
     };
 
     use super::transform_structs;
 
     #[test]
-    fn test_transform_structs() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_transform_structs() -> Result<(), Box<cozo::Error>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
@@ -77,13 +83,17 @@ mod test {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert struct schema
-        create_struct_schema(&db)?;
+        let struct_schema = StructNodeSchema::SCHEMA;
+        struct_schema.create_and_insert(&db)?;
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
-        // create and insert generic schema
-        create_generic_schema(&db)?;
-        // create and insert field schema
-        create_field_schema(&db)?;
+        let attribute_schema = AttributeNodeSchema::SCHEMA;
+        attribute_schema.create_and_insert(&db)?;
+        // create and insert generic schema (wants special handler for three-part split of gener
+        // types)
+        create_generic_schema(&db).unwrap(); // weird error handling here
+                                             // create and insert field schema
+        let field_schema = FieldNodeSchema::SCHEMA;
+        field_schema.create_and_insert(&db)?;
 
         let mut struct_nodes: Vec<StructNode> = Vec::new();
         for struct_node in merged.graph.defined_types.into_iter() {

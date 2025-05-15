@@ -24,6 +24,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
     * change `Array` size from `String` to `i64`
  * [ ] Add tests for TrackingHash
     * [ ] Remove Remove `?` from the database transforms for `TrackingHash`
+ * [ ] Consider adding an ID to `SyntacticRelation`s
 
 
 ## Longer term/larger refactor

@@ -16,7 +16,6 @@ use type_alias::transform_type_aliases;
 use unions::transform_unions;
 // -- from workspace
 use syn_parser::parser::nodes::*;
-use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::module_tree::ModuleTree;
@@ -27,6 +26,7 @@ mod fields;
 mod secondary_nodes;
 // -- primary nodes --
 mod consts;
+mod edges;
 mod enums;
 mod functions;
 mod impls;

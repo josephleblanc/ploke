@@ -8,7 +8,6 @@ pub(super) fn transform_consts(
     consts: Vec<ConstNode>,
 ) -> Result<(), cozo::Error> {
     for consta in consts.into_iter() {
-        // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &ConstNodeSchema::SCHEMA;
         let mut consta_params = consta.cozo_btree();
 
@@ -39,20 +38,15 @@ pub(super) fn transform_consts(
 #[cfg(test)]
 mod tests {
 
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::{
-        schema::primary_nodes::ConstNodeSchema,
-        test_utils::{create_attribute_schema, log_db_result},
-    };
+    use crate::schema::primary_nodes::ConstNodeSchema;
 
     use super::transform_consts;
     #[test]
-    fn test_transform_consts() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_transform_consts() -> Result<(), Box<cozo::Error>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
@@ -65,21 +59,9 @@ mod tests {
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
 
-        // create and insert attribute schema
-        create_attribute_schema(&db)?;
-        pub(crate) fn create_const_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let const_schema = ConstNodeSchema::SCHEMA;
-            let db_result = db.run_script(
-                &const_schema.script_create(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
-        create_const_schema(&db)?;
+        let const_schema = ConstNodeSchema::SCHEMA;
+
+        const_schema.create_and_insert(&db)?;
 
         // transform and insert impls into cozo
         transform_consts(&db, merged.graph.consts)?;

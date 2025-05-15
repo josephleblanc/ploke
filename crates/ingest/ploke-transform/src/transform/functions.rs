@@ -172,7 +172,7 @@ mod test {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::nodes::AsAnyNodeId;
     use syn_parser::parser::ParsedCodeGraph;
-    use syn_parser::utils::LogStyle;
+    use syn_parser::utils::{LogStyle, LogStyleDebug};
 
     use crate::schema::primary_nodes::FunctionNodeSchema;
     use crate::schema::secondary_nodes::ParamNodeSchema;
@@ -370,9 +370,9 @@ mod test {
 
     fn log_db_result(db_result: cozo::NamedRows) {
         log::info!(target: "transform_function",
-            "{} {:#?}",
+            "{} {}",
             "  Db return: ".log_step(),
-            db_result,
+            db_result.log_comment_debug(),
         );
     }
 }

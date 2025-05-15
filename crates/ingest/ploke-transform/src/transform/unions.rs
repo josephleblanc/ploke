@@ -78,13 +78,6 @@ mod test {
         // Setup printable nodes
         let successful_graphs = run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-        // let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        //     log::error!(target: "transform_function",
-        //         "Error building tree: {}",
-        //         e
-        //     );
-        //     panic!()
-        // });
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
@@ -112,17 +105,11 @@ mod test {
 
         let mut union_nodes: Vec<UnionNode> = Vec::new();
         for union_node in merged.graph.defined_types.into_iter() {
-            println!("{:#?}", union_node);
             if let TypeDefNode::Union(onion) = union_node {
-                // let onion_params = onion.cozo_btree();
-                //
-                // let script = union_schema.script_put(&onion_params);
-                // db.run_script(&script, onion_params, ScriptMutability::Mutable)?;
                 union_nodes.push(onion);
             }
         }
         transform_unions(&db, union_nodes)?;
-        // transform_unions(&db, );
         Ok(())
     }
 }

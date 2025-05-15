@@ -113,7 +113,7 @@ macro_rules! define_schema {
             pub(crate) fn create_and_insert(
                 &self,
                 db: &Db<MemStorage>,
-            ) -> Result<(), Box<cozo::Error>> {
+            ) -> Result<(), cozo::Error> {
                 let const_schema = Self::SCHEMA;
                 let db_result = db.run_script(
                     &const_schema.script_create(),
