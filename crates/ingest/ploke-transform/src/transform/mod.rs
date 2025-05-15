@@ -59,7 +59,7 @@ pub fn transform_code_graph(
     #[cfg(not(feature = "type_bearing_ids"))]
     let relations = code_graph.relations;
     // Transform types
-    // [ ] Refactored
+    // [✔] Refactored
     transform_types(db, code_graph.type_graph)?;
 
     // Transform functions

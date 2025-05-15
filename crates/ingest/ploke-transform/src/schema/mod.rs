@@ -49,7 +49,6 @@ impl CozoField {
         self.dv
     }
 }
-
 /// Example
 /// define_schema!(FunctionNodeSchema {
 ///     id: "Uuid",
@@ -103,7 +102,7 @@ macro_rules! define_schema {
             pub fn log_create_script(&self) {
                 log::info!(target: "db",
                     "{} {}: {:?}",
-                    "Printing schema".log_step(),
+                    "Printing schema".log_header(),
                     $relation.log_name(),
                     self.script_create()
                 );
