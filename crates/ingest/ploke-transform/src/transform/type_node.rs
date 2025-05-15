@@ -11,8 +11,6 @@ pub(super) fn transform_unions(
     for type_node in type_nodes {
         let cozo_type_id = type_node.id.to_cozo_uuid();
         let params = match &type_node.kind {
-            // AI: You can already see the completed example of what we want in the
-            // `TypeKind::Named`
             TypeKind::Named { path, is_fully_qualified  } => {
                 let schema = NamedTypeSchema::SCHEMA;
                 let cozo_path = DataValue::List( path.into_iter().map(|s|  DataValue::Str(s.into()) ).collect() );
@@ -116,8 +114,25 @@ pub(super) fn transform_unions(
                 ])
             }
         }
-        // AI: fill out the other match arms to provide the completed `BTreeMap` for the other
-        // variants AI!
+        let relation_name = match &type_node.kind {
+            TypeKind::Named { .. } => NamedTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Reference { .. } => ReferenceTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Array { .. } => ArrayTypeSchema::SCHEMA.relation_name(),
+            TypeKind::RawPointer { .. } => RawPointerTypeSchema::SCHEMA.relation_name(),
+            TypeKind::TraitObject { .. } => TraitObjectTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Macro { .. } => MacroTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Unknown { .. } => UnknownTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Function { .. } => FunctionTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Tuple { .. } => TupleTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Never => NeverTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Inferred => InferredTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Paren { .. } => ParenTypeSchema::SCHEMA.relation_name(),
+            TypeKind::Slice { .. } => SliceTypeSchema::SCHEMA.relation_name(),
+            TypeKind::ImplTrait { .. } => ImplTraitTypeSchema::SCHEMA.relation_name(),
+        };
+
+        let script = script_put(&params, relation_name);
+        db.run_script(&script, BTreeMap::new(), ScriptMutability::Mutable)?;
     }
-    todo!()
+    Ok(())
 }
