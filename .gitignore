@@ -44,3 +44,6 @@ crates/ingest/syn_parser/code_graph.ron
 
 # ai workflow documents
 ai_workflow
+
+# nvim degug log
+nvim_debug.log
