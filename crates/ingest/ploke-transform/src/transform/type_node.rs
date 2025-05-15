@@ -11,6 +11,8 @@ pub(super) fn transform_unions(
     for type_node in type_nodes {
         let cozo_type_id = type_node.id.to_cozo_uuid();
         let params = match &type_node.kind {
+            // AI: You can already see the completed example of what we want in the
+            // `TypeKind::Named`
             TypeKind::Named { path, is_fully_qualified  } => {
                 let schema = NamedTypeSchema::SCHEMA;
                 let cozo_path = DataValue::List( path.into_iter().map(|s|  DataValue::Str(s.into()) ).collect() );
@@ -61,6 +63,8 @@ pub(super) fn transform_unions(
                 BTreeMap::from([])
             }
         }
+        // AI: fill out the other match arms to provide the completed `BTreeMap` for the other
+        // variants AI!
     }
     todo!()
 }
