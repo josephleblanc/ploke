@@ -119,27 +119,6 @@ define_schema!(SyntacticRelationSchema {
     target_kind: "String"
 });
 
-/// Transforms syntactic relations into the database
-pub fn transform_relations(
-    db: &Db<MemStorage>,
-    relations: Vec<SyntacticRelation>,
-) -> Result<(), cozo::Error> {
-    let syntactic_schema = SyntacticRelationSchema::SCHEMA;
-
-    // Create the schema if it doesn't exist
-    syntactic_schema.create_and_insert(db)?;
-
-    // Insert all syntactic relations
-    for relation in &relations {
-        syntactic_schema.insert_relation(db, relation)?;
-    }
-
-    // Here we would derive semantic relations from syntactic ones
-    // This is a placeholder for future implementation
-
-    Ok(())
-}
-
 // NOTE: WIP
 // Example sketch
 // macro_rules! relation_transformer {

@@ -76,3 +76,56 @@
 //  dedicated set of relations that hold the mappings from node-id to their types/discriminants?
 //  I think that could work, but I'll want to consider more how to design this as I get more
 //  experience with queries.
+//
+
+use cozo::{Db, MemStorage};
+use syn_parser::parser::relations::SyntacticRelation;
+
+use crate::schema::edges::SyntacticRelationSchema;
+
+pub(super) fn transform_relations(
+    db: &Db<MemStorage>,
+    relations: Vec<SyntacticRelation>,
+) -> Result<(), cozo::Error> {
+    let schema = &SyntacticRelationSchema::SCHEMA;
+    for relation in relations {
+        schema.insert_relation(db, &relation)?;
+    }
+    Ok(())
+}
+// do stuff
+
+#[cfg(test)]
+mod tests {
+
+    use cozo::{Db, MemStorage};
+    use ploke_test_utils::run_phases_and_collect;
+    use syn_parser::parser::ParsedCodeGraph;
+
+    use crate::schema::edges::SyntacticRelationSchema;
+
+    use super::transform_relations;
+
+    #[test]
+    fn test_transform_edges() -> Result<(), Box<cozo::Error>> {
+        let _ = env_logger::builder()
+            .is_test(true)
+            .format_timestamp(None) // Disable timestamps
+            .try_init();
+
+        // Setup printable nodes
+        let successful_graphs = run_phases_and_collect("fixture_nodes");
+        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+
+        let rel_schema = &SyntacticRelationSchema::SCHEMA;
+        rel_schema.create_and_insert(&db)?;
+
+        // transform and insert impls into cozo
+        transform_relations(&db, merged.graph.relations)?;
+
+        Ok(())
+    }
+}

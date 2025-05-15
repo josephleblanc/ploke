@@ -42,7 +42,7 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::schema::primary_nodes::ConstNodeSchema;
+    use crate::schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema};
 
     use super::transform_consts;
     #[test]
@@ -60,8 +60,10 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         let const_schema = ConstNodeSchema::SCHEMA;
-
         const_schema.create_and_insert(&db)?;
+
+        let attribute_schema = &AttributeNodeSchema::SCHEMA;
+        attribute_schema.create_and_insert(&db)?;
 
         // transform and insert impls into cozo
         transform_consts(&db, merged.graph.consts)?;
