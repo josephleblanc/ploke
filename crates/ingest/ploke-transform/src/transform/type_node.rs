@@ -1,4 +1,5 @@
 use ploke_core::TypeKind;
+use syn_parser::{resolve::Colorize, utils::LogStyleDebug};
 
 use crate::schema::types::*;
 
@@ -8,6 +9,17 @@ pub(super) fn transform_types(
     db: &Db<MemStorage>,
     type_nodes: Vec<TypeNode>,
 ) -> Result<(), cozo::Error> {
+    fn process_trait_bounds(type_node: &TypeNode) -> DataValue {
+        let cozo_trait_bounds = DataValue::List(
+            type_node
+                .related_types
+                .iter()
+                .map(|t| t.to_cozo_uuid())
+                .collect(),
+        );
+        cozo_trait_bounds
+    }
+
     for type_node in type_nodes {
         let cozo_type_id = type_node.id.to_cozo_uuid();
         let (script, params) = match &type_node.kind {
@@ -37,6 +49,12 @@ pub(super) fn transform_types(
             } => {
                 let schema = ReferenceTypeSchema::SCHEMA;
                 let cozo_lifetime = lifetime.as_ref().map(|s| DataValue::Str(s.into()));
+                let mut cozo_refs_types = type_node.related_types.iter().map(|t| t.to_cozo_uuid());
+                let cozo_refs_type = cozo_refs_types.next().unwrap_or(DataValue::Null);
+                let _ = cozo_refs_types.next().is_none_or(|_| {
+                    // TODO: Better error handling
+                    panic!("Invariant Violated: More than one value found inside parentheses.")
+                });
                 let params = BTreeMap::from([
                     (schema.type_id().to_string(), cozo_type_id),
                     (
@@ -47,7 +65,14 @@ pub(super) fn transform_types(
                         schema.is_mutable().to_string(),
                         DataValue::Bool(*is_mutable),
                     ),
+                    (schema.references_type().to_string(), cozo_refs_type),
+                    // -- TEMPORARY DEBUG --
                 ]);
+                log::info!(target: "db", "{} {} {}",
+                    "Info Dump:".log_step(),
+                    "Reference params follow",
+                    format!("{:#?}", params).log_spring_green()
+                );
                 let script = schema.script_put(&params);
 
                 (script, params)
@@ -141,17 +166,38 @@ pub(super) fn transform_types(
             }
             TypeKind::TraitObject { dyn_token } => {
                 let schema = TraitObjectTypeSchema::SCHEMA;
-                let cozo_trait_bounds = DataValue::List(
-                    type_node
-                        .related_types
-                        .iter()
-                        .map(|t| t.to_cozo_uuid())
-                        .collect(),
-                );
+                let cozo_trait_bounds = process_trait_bounds(&type_node);
                 let params = BTreeMap::from([
                     (schema.type_id().to_string(), cozo_type_id),
                     (schema.dyn_token().to_string(), DataValue::Bool(*dyn_token)),
                     (schema.trait_bounds().to_string(), cozo_trait_bounds),
+                ]);
+                let script = schema.script_put(&params);
+
+                (script, params)
+            }
+            TypeKind::ImplTrait {} => {
+                let schema = ImplTraitTypeSchema::SCHEMA;
+                let cozo_trait_bounds = process_trait_bounds(&type_node);
+                let params = BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.trait_bounds().to_string(), cozo_trait_bounds),
+                ]);
+                let script = schema.script_put(&params);
+
+                (script, params)
+            }
+            TypeKind::Paren {} => {
+                let schema = ParenTypeSchema::SCHEMA;
+                let mut inner_types = type_node.related_types.iter().map(|t| t.to_cozo_uuid());
+                let inner_type = inner_types.next().unwrap_or(DataValue::Null);
+                let _ = inner_types.next().is_none_or(|_| {
+                    // TODO: Better error handling
+                    panic!("Invariant Violated: More than one value found inside parentheses.")
+                });
+                let params = BTreeMap::from([
+                    (schema.type_id().to_string(), cozo_type_id),
+                    (schema.inner_type().to_string(), inner_type),
                 ]);
                 let script = schema.script_put(&params);
 
@@ -181,23 +227,17 @@ pub(super) fn transform_types(
 
                 (script, params)
             }
-            TypeKind::Paren {} => {
-                let schema = ParenTypeSchema::SCHEMA;
-                let params = BTreeMap::from([(schema.type_id().to_string(), cozo_type_id)]);
-                let script = schema.script_put(&params);
-
-                (script, params)
-            }
-            TypeKind::ImplTrait {} => {
-                let schema = ImplTraitTypeSchema::SCHEMA;
-                let params = BTreeMap::from([(schema.type_id().to_string(), cozo_type_id)]);
-                let script = schema.script_put(&params);
-
-                (script, params)
-            }
         };
 
-        db.run_script(&script, params, ScriptMutability::Mutable)?;
+        db.run_script(&script, params, ScriptMutability::Mutable)
+            .inspect_err(|&_| {
+                log::error!(target: "db", "{} {}\n{} {}",
+                    "Error:".log_error().bold(),
+                    format_args!("running script {}", &script.log_path()),
+                    "type_node info:".log_foreground_primary_debug(),
+                    format!("{:#?}", type_node ).log_orange()
+                );
+            })?;
     }
     Ok(())
 }
@@ -214,18 +254,13 @@ fn process_element_type(type_node: &TypeNode) -> DataValue {
 #[cfg(test)]
 mod tests {
 
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::{
-        schema::{primary_nodes::ConstNodeSchema, types::create_and_insert_types},
-        test_utils::{create_attribute_schema, log_db_result},
-    };
+    use crate::schema::types::create_and_insert_types;
 
-    use super::{transform_consts, transform_types};
+    use super::transform_types;
     #[test]
     fn test_transform_types() -> Result<(), Box<cozo::Error>> {
         let _ = env_logger::builder()
