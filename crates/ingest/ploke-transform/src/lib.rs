@@ -1,15 +1,13 @@
-#![allow(dead_code)]
-pub mod printable;
+#![allow(
+    dead_code,
+    reason = "Under rapid development and refactoring, warnings annoying"
+)]
+pub mod error;
+pub mod macro_traits;
 pub mod schema;
-pub mod traits;
 pub mod transform;
 
 // -- crate-wide imports --
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+pub mod utils;
+// #[cfg(test)]
+// pub(crate) use utils::test_utils;

@@ -270,6 +270,7 @@ mod ids {
         /// * `file_path` - The absolute path to the file where the type usage occurs.
         /// * `type_kind` - The structural kind of the type (e.g., `TypeKind::Named`, `TypeKind::Reference`).
         /// * `related_type_ids` - A slice of `TypeId`s for nested types (e.g., generic arguments, tuple elements).
+        /// * `parent_scope_id` - The NodeId of the immediate parent.
         ///
         /// # Returns
         /// A `TypeId::Synthetic` variant containing a UUIDv5 hash derived from the inputs.
@@ -288,12 +289,54 @@ mod ids {
         /// This means `Self` used in `impl A` might temporarily get the same `Synthetic` `TypeId`
         /// as `Self` used in `impl B` during Phase 2. Full contextual disambiguation to distinguish
         /// these cases is deferred until Phase 3 (name resolution) or Step 3 (`Enhance VisitorState Context`).
+        /// NOTE: The `parent_scope_id` used here is temporary, and will likely be removed in most
+        /// cases. While it would be nice to use a `TypeId` that remains the same for all uses of
+        /// the same type in different files and module contexts, this is not feasible in parallel
+        /// parsing. The reason may be seen from the following example:
+        /// Suppose we are parsing the following files:
+        ///
+        /// ```ignore
+        /// // in src/main.rs
+        /// mod module_one;
+        /// use module_one::ExampleStruct;
+        /// pub fn some_func(ex_struct: ExampleStruct) {
+        ///  // do things...
+        /// }
+        /// // in src/module_one.rs
+        /// pub struct ExampleStruct {
+        ///     some_field: i32,
+        /// }
+        /// pub struct OtherExampleStruct(u32);
+        /// pub fn other_func(ex_struct: ExampleStruct) -> i32 {
+        ///     ex_struct.some_field
+        /// }
+        /// mod inner {
+        ///     use super::ExampleStruct as RenamedStruct;
+        ///     pub fn last_func(ex_struct: RenamedStruct) -> String {
+        ///         // do things
+        ///         format!("Renamed ExampleStruct holds value: {}", ex_struct.some_field);
+        ///     }
+        /// }
+        /// ```
+        /// While parsing the above files in parallel, we do not have access to the type of
+        /// `ExampleStruct` while parsing `main.rs`, as it is located in a different file.
+        /// Therefore the `TypeId` must be determined based only on the crate_namespace, file_path,
+        /// type_kind, and related_type_ids. In fact, we would not even need to use the file_path
+        /// here, and could simply use the other fields if we were trying to have the same `TypeId`
+        /// for all the same types.
+        ///
+        /// However, this is made more complex by the inclusion of `ImportNode`, which can rename
+        /// an item such as `ExampleStruct` being renamed to `RenamedStruct`. In that case, the two
+        /// underlying types, which are the same, will receive different `TypeId`s. Therefore it is
+        /// necessary to only assign a `TypeId` to an item after resolution, and *not* to attempt
+        /// to assign the same `TypeId` to different items which likely have the same underlying
+        /// type before resolution.
         pub fn generate_synthetic(
             crate_namespace: Uuid,
             file_path: &Path,
             type_kind: &TypeKind, // Use TypeKind from this crate
             related_type_ids: &[TypeId],
-            parent_scope_id: Option<NodeId>, // NEW: Add parent scope context
+            parent_scope_id: NodeId, // NEW: Add parent scope context
         ) -> Self {
             // Create our custom hasher
             let mut hasher = ByteHasher::default();
@@ -309,11 +352,7 @@ mod ids {
             type_kind.hash(&mut hasher);
             related_type_ids.hash(&mut hasher);
 
-            // // Conditionally hash the parent scope ID using the uuid() method
-            if let Some(parent_id) = parent_scope_id {
-                hasher.write(parent_id.uuid().as_bytes()); // Use the uuid() method
-            }
-            // else: hash nothing extra for the None case
+            hasher.write(parent_scope_id.uuid().as_bytes()); // Use the uuid() method
 
             // Retrieve the collected bytes
             let collected_bytes = hasher.finish_bytes();
@@ -794,14 +833,13 @@ pub enum ItemKind {
     ExternCrate, // Represents an `extern crate` declaration
 }
 
-// ANCHOR: TypeKind_defn
 /// Different kinds of types encountered during parsing.
 /// Moved from `syn_parser::parser::types`.
 /// Used as input for structural `TypeId::Synthetic` generation.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)] // Added Eq, Hash
 pub enum TypeKind {
-    // Corrected: Removed duplicate 'pub'
-    //ANCHOR_END: TypeKind_defn
+    /// Named types with definitions located at the stored `path`
+    // Is this the Canonical path?
     Named {
         path: Vec<String>, // Full path segments
         is_fully_qualified: bool,
@@ -816,6 +854,7 @@ pub enum TypeKind {
     },
     Array {
         // Element type is in related_types[0]
+        // TODO: Change this to an int64
         size: Option<String>, // Size expression as string
     },
     Tuple {

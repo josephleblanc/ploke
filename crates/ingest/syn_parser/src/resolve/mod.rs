@@ -11,12 +11,12 @@ pub mod traversal;
 use std::{collections::HashSet, path::PathBuf};
 
 pub use error::ModuleTreeError;
+pub use relation_indexer::RelationIndexer;
 
 // -- local re-exports for children
 use logging::LogTree;
 use module_tree::*;
 use path_resolver::*;
-use relation_indexer::*;
 use serde::{Deserialize, Serialize};
 
 use crate::parser::{

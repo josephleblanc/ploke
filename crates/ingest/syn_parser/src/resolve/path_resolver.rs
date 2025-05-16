@@ -580,16 +580,14 @@ pub(super) fn is_part_of_reexport_chain(
         // Look for a ReExports relation where the *target* is the current ImportNode.
         let next_import_in_chain = tree
             .get_iter_relations_to(&current_import_id.as_any()) // Relations TO the import node
-            .and_then(|mut iter| {
-                iter.find_map(|tr| match tr.rel() {
-                    // Find a relation where the current import is the TARGET
-                    SyntacticRelation::ReExports { source, target }
-                        if target.as_any() == current_import_id.as_any() =>
-                    {
-                        Some(*source) // The source of this relation is the next ImportNodeId
-                    }
-                    _ => None,
-                })
+            .find_map(|tr| match tr.rel() {
+                // Find a relation where the current import is the TARGET
+                SyntacticRelation::ReExports { source, target }
+                    if target.as_any() == current_import_id.as_any() =>
+                {
+                    Some(*source) // The source of this relation is the next ImportNodeId
+                }
+                _ => None,
             });
 
         if let Some(next_id) = next_import_in_chain {
@@ -626,25 +624,25 @@ pub(super) fn get_effective_visibility(
     // For file-based modules (not root), find the visibility of the declaration.
     // Find incoming ResolvesToDefinition or CustomPath relations.
     tree.get_iter_relations_to(&module_def_id.into())
-        .and_then(|mut iter| {
-            iter.find_map(|tr| match tr.rel() {
-                // Match relations pointing *to* this definition module
-                SyntacticRelation::ResolvesToDefinition {
-                    source: decl_id,
-                    target,
-                }
-                | SyntacticRelation::CustomPath {
-                    source: decl_id,
-                    target,
-                } if *target == module_def_id => {
-                    // Found the declaration ID (`decl_id`). Get the declaration node.
-                    tree.modules()
-                        .get(decl_id)
-                        .map(|decl_node| decl_node.visibility())
-                }
-                _ => None, // Ignore other relation kinds
-            })
+        // .and_then(|mut iter| {
+        .find_map(|tr| match tr.rel() {
+            // Match relations pointing *to* this definition module
+            SyntacticRelation::ResolvesToDefinition {
+                source: decl_id,
+                target,
+            }
+            | SyntacticRelation::CustomPath {
+                source: decl_id,
+                target,
+            } if *target == module_def_id => {
+                // Found the declaration ID (`decl_id`). Get the declaration node.
+                tree.modules()
+                    .get(decl_id)
+                    .map(|decl_node| decl_node.visibility())
+            }
+            _ => None, // Ignore other relation kinds
         })
+        // })
         .or_else(|| {
             // If no declaration relation was found (e.g., unlinked module file),
             // fall back to the visibility defined on the module file ittree.

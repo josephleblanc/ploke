@@ -160,6 +160,7 @@ pub(crate) fn process_type(state: &mut VisitorState, ty: &Type) -> (TypeKind, Ve
             // Handle other types or unknown types
             // Use the string representation we already have from the caller
             // (get_or_create_type) if possible, or re-generate if needed.
+            // TODO: Distinguish between "unknown" and "unsupported" types
             let fallback_str = ty.to_token_stream().to_string();
             (
                 TypeKind::Unknown {

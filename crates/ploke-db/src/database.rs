@@ -10,6 +10,14 @@ pub struct Database {
     db: Db<MemStorage>,
 }
 
+impl std::ops::Deref for Database {
+    type Target = Db<MemStorage>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
 impl Database {
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {

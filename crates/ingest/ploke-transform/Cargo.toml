@@ -14,6 +14,11 @@ ploke-core = { path = "../../ploke-core" }
 # debugging
 log = { workspace = true }
 
+#error handling
+ploke-error = { path = "../../ploke-error" }
+thiserror = { workspace = true }
+
+
 [dev-dependencies]
 env_logger = "0.11" # Add env_logger for test logging
 
@@ -21,3 +26,5 @@ env_logger = "0.11" # Add env_logger for test logging
 default = ["type_bearing_ids"]
 debug = []
 type_bearing_ids = []
+# get relations to have a mapping to higher level abstractions.
+level_up_relations = []
