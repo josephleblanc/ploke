@@ -22,6 +22,7 @@ struct PlokeApp {
     db: Arc<Database>,
     query: String,
     results: Option<Result<QueryResult, Error>>,
+    last_query_time: Option<std::time::Duration>,
     target_directory: String,
     is_processing: bool,
     processing_status: ProcessingStatus,
@@ -78,6 +79,7 @@ impl PlokeApp {
             db,
             query: String::from("?[name, id, body] := *function { name, id, body }"),
             results: None,
+            last_query_time: None,
             target_directory: String::from(
                 "/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes",
             ),
@@ -145,7 +147,12 @@ impl eframe::App for PlokeApp {
             }
 
             ui.separator();
-            ui.label("Results:");
+            ui.horizontal(|ui| {
+                ui.label("Results:");
+                if let Some(duration) = self.last_query_time {
+                    ui.label(format!("(Query took: {:.2?})", duration));
+                }
+            });
 
             // Try to parse as JSON first (common Cozo output format)
 
@@ -290,7 +297,9 @@ impl PlokeApp {
     }
 
     fn execute_query(&mut self) {
+        let start_time = std::time::Instant::now();
         self.results = Some(self.db.raw_query(&self.query).map_err(Error::from));
+        self.last_query_time = Some(start_time.elapsed());
         // match self.db.raw_query(&self.query) {
         //     Ok(result) => {
         //         self.results = Some(result);
