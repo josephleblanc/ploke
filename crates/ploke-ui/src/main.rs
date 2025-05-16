@@ -25,6 +25,7 @@ struct PlokeApp {
     target_directory: String,
     is_processing: bool,
     processing_status: ProcessingStatus,
+    last_processing_time: Option<std::time::Duration>,
     // Channel for receiving status updates
     #[cfg(feature = "multithreaded")]
     status_rx: flume::Receiver<ProcessingStatus>,
@@ -80,6 +81,7 @@ impl PlokeApp {
             target_directory: String::from("/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes"),
             is_processing: false,
             processing_status: ProcessingStatus::Ready,
+            last_processing_time: None,
             #[cfg(feature = "multithreaded")]
             status_rx,
             #[cfg(feature = "multithreaded")]
@@ -120,7 +122,12 @@ impl eframe::App for PlokeApp {
                         }
                     },
                 );
-                ui.label(self.processing_status.to_string());
+                ui.horizontal(|ui| {
+                    ui.label(self.processing_status.to_string());
+                    if let Some(duration) = self.last_processing_time {
+                        ui.label(format!("(Last run: {:.2?})", duration));
+                    }
+                });
             });
 
             // Query section
@@ -222,9 +229,15 @@ impl PlokeApp {
         if let Err(e) = self.do_processing(target_dir) {
             self.processing_status = ProcessingStatus::Error(e.to_string());
             self.is_processing = false;
+            self.last_processing_time = Some(start_time.elapsed());
         }
         #[cfg(feature = "multithreaded")]
-        if let Err(e) = self.do_processing(target_dir, db, status_tx) {
+        match self.do_processing(target_dir, db, status_tx) {
+            Ok(duration) => {
+                self.last_processing_time = Some(duration);
+                self.is_processing = false;
+            }
+            Err(e) => {
             self.processing_status = ProcessingStatus::Error(e.to_string());
             self.is_processing = false;
         }
