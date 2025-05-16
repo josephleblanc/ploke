@@ -1,7 +1,5 @@
 use cozo::MemStorage;
 use eframe::egui;
-use ploke_transform::transform::consts::transform_consts;
-use ploke_transform::transform::schemas::{AttributeNodeSchema, ConstNodeSchema};
 use syn_parser::ParsedCodeGraph;
 use std::sync::mpsc;
 use std::thread;

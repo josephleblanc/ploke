@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn transform_statics(
     db: &Db<MemStorage>,
     statics: Vec<StaticNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for stat in statics.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &StaticNodeSchema::SCHEMA;
@@ -39,15 +39,12 @@ pub(super) fn transform_statics(
 #[cfg(test)]
 mod tests {
 
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        schema::primary_nodes::StaticNodeSchema,
-        test_utils::{create_attribute_schema, log_db_result},
+        schema::{primary_nodes::StaticNodeSchema, secondary_nodes::AttributeNodeSchema},
         transform::statics::transform_statics,
     };
 
@@ -66,20 +63,8 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
-        pub(crate) fn create_static_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let static_schema = StaticNodeSchema::SCHEMA;
-            let db_result = db.run_script(
-                &static_schema.script_create(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
-        create_static_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
+        StaticNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
         transform_statics(&db, merged.graph.statics)?;

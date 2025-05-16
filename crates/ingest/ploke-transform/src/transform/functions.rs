@@ -12,7 +12,7 @@ pub(super) fn transform_functions(
     db: &Db<MemStorage>,
     functions: Vec<FunctionNode>,
     tree: &ModuleTree,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for mut function in functions.into_iter() {
         let function_any_id = function.id.as_any();
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -174,13 +174,14 @@ mod test {
     use syn_parser::parser::ParsedCodeGraph;
     use syn_parser::utils::{LogStyle, LogStyleDebug};
 
+    use crate::error::TransformError;
     use crate::schema::primary_nodes::FunctionNodeSchema;
     use crate::schema::secondary_nodes::ParamNodeSchema;
     use crate::transform::functions::script_put;
     use crate::transform::functions::{process_func, process_generic_params};
 
     #[test]
-    fn func_transform() -> Result<(), cozo::Error> {
+    fn func_transform() -> Result<(), TransformError> {
         // TODO: Make separate tests for each of these steps:
         //  - function processing
         //  - param processing

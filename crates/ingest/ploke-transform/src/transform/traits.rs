@@ -9,7 +9,7 @@ use super::*;
 pub(super) fn transform_traits(
     db: &Db<MemStorage>,
     traits: Vec<TraitNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     // trait->trayt (rust keywords)
     for trayt in traits.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -61,7 +61,10 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::test_utils::{create_attribute_schema, create_method_schema, create_trait_schema};
+    use crate::schema::{
+        assoc_nodes::MethodNodeSchema, primary_nodes::TraitNodeSchema,
+        secondary_nodes::AttributeNodeSchema,
+    };
 
     use super::transform_traits;
     #[test]
@@ -79,11 +82,11 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert method schema
-        create_method_schema(&db)?;
+        MethodNodeSchema::create_and_insert_schema(&db)?;
         // create and insert trait schema
-        create_trait_schema(&db)?;
+        TraitNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
         transform_traits(&db, merged.graph.traits)?;

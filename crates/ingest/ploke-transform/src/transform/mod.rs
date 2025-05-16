@@ -1,19 +1,8 @@
 //! Transforms CodeGraph into CozoDB relations
 
-use consts::transform_consts;
 // -- external
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
-use enums::transform_enums;
-use impls::transform_impls;
-use imports::transform_imports;
-use macros::transform_macros;
-use module::transform_modules;
-use statics::transform_statics;
-use std::collections::BTreeMap;
-use structs::transform_structs;
-use traits::transform_traits;
-use type_alias::transform_type_aliases;
-use unions::transform_unions;
+
 // -- from workspace
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
@@ -21,6 +10,30 @@ use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::Visibility
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::utils::LogStyle;
+
+// ---- local imports ----
+// -- error handling --
+use crate::error::TransformError;
+
+// -- script creations
+// use crate::schema::*;
+
+// -- transforms
+use consts::transform_consts;
+use edges::transform_relations;
+use enums::transform_enums;
+use impls::transform_impls;
+use imports::transform_imports;
+use macros::transform_macros;
+use module::transform_modules;
+use statics::transform_statics;
+use type_node::transform_types;
+use std::collections::BTreeMap;
+use structs::transform_structs;
+use traits::transform_traits;
+use type_alias::transform_type_aliases;
+use unions::transform_unions;
+
 
 mod fields;
 mod secondary_nodes;
@@ -51,14 +64,14 @@ use secondary_nodes::{process_attributes, process_generic_params, process_params
 // -- schema
 use crate::schema::secondary_nodes::AttributeNodeSchema;
 
+// -- edges
+
 /// Transforms a CodeGraph into CozoDB relations
 pub fn transform_code_graph(
     db: &Db<MemStorage>,
     code_graph: CodeGraph,
     tree: &ModuleTree,
-) -> Result<(), cozo::Error> {
-    #[cfg(not(feature = "type_bearing_ids"))]
-    let relations = code_graph.relations;
+) -> Result<(), TransformError> {
     // Transform types
     // [✔] Refactored
     transform_types(db, code_graph.type_graph)?;
@@ -106,8 +119,7 @@ pub fn transform_code_graph(
 
     // Transform relations
     // [✔] Refactored
-    #[cfg(not(feature = "type_bearing_ids"))]
-    crate::schema::edges::transform_relations(db, code_graph.relations)?;
+    transform_relations(db, code_graph.relations)?;
 
     Ok(())
 }
@@ -115,7 +127,7 @@ pub fn transform_code_graph(
 fn transform_defined_types(
     db: &Db<MemStorage>,
     defined_types: Vec<TypeDefNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut type_aliases = Vec::new();
@@ -136,152 +148,40 @@ fn transform_defined_types(
     Ok(())
 }
 
-/// Transforms type nodes into the types relation
-fn transform_types(db: &Db<MemStorage>, type_graph: Vec<TypeNode>) -> Result<(), cozo::Error> {
-    for type_node in type_graph {
-        let kind = match &type_node.kind {
-            ploke_core::TypeKind::Named { .. } => "Named",
-            ploke_core::TypeKind::Reference { .. } => "Reference",
-            ploke_core::TypeKind::Slice { .. } => "Slice",
-            ploke_core::TypeKind::Array { .. } => "Array",
-            ploke_core::TypeKind::Tuple { .. } => "Tuple",
-            ploke_core::TypeKind::Never => "Never",
-            ploke_core::TypeKind::Inferred => "Inferred",
-            ploke_core::TypeKind::RawPointer { .. } => "RawPointer",
-            ploke_core::TypeKind::ImplTrait { .. } => "ImplTrait",
-            ploke_core::TypeKind::TraitObject { .. } => "TraitObject",
-            ploke_core::TypeKind::Macro { .. } => "Macro",
-            ploke_core::TypeKind::Unknown { .. } => "Unknown",
-            ploke_core::TypeKind::Function {
-                is_unsafe: _,
-                is_extern: _,
-                abi: _,
-            } => "Function",
-            ploke_core::TypeKind::Paren { .. } => "Paren",
-        };
+#[cfg(test)]
+mod tests {
+    use cozo::{Db, MemStorage};
+    use ploke_test_utils::run_phases_and_collect;
+    use syn_parser::parser::ParsedCodeGraph;
 
-        // Create a simplified string representation of the type
-        let type_str = format!("{:?}", type_node.kind);
+    use crate::{error::TransformError, schema::create_schema_all};
 
-        let params = BTreeMap::from([
-            ("id".to_string(), type_node.id.into()),
-            ("kind".to_string(), DataValue::from(kind)),
-            ("type_str".to_string(), DataValue::from(type_str)),
-        ]);
+    use super::transform_code_graph;
 
-        db.run_script(
-            "?[id, kind, type_str] <- [[$id, $kind, $type_str]] :put types",
-            params,
-            ScriptMutability::Mutable,
-        )?;
+    #[test]
+    fn test_insert_all() -> Result<(), TransformError> { 
 
-        // Add type relations for related types
-        for (i, related_id) in type_node.related_types.iter().enumerate() {
-            let relation_params = BTreeMap::from([
-                ("type_id".to_string(), type_node.id.into()),
-                ("related_index".to_string(), DataValue::from(i as i64)),
-                ("related_type_id".to_string(), related_id.into()),
-            ]);
+        // initialize db
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        // create and insert schema for all nodes
+        create_schema_all(&db)?;
 
-            db.run_script(
-                "?[type_id, related_index, related_type_id] <- [[$type_id, $related_index, $related_type_id]] :put type_relations",
-                relation_params,
-                ScriptMutability::Mutable,
-            )?;
-        }
+        // run the parser
+        let successful_graphs = run_phases_and_collect("fixture_nodes");
+        // merge results from all files
+        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
-        // Add type details
-        match &type_node.kind {
-            ploke_core::TypeKind::Reference {
-                lifetime,
-                is_mutable,
-                ..
-            } => {
-                let lifetime_value = lifetime
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
+        // build module tree
+        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+            log::error!(target: "transform_function",
+                "Error building tree: {}",
+                e
+            );
+            panic!()
+        });
 
-                let details_params = BTreeMap::from([
-                    ("type_id".to_string(), type_node.id.into()),
-                    ("is_mutable".to_string(), DataValue::from(*is_mutable)),
-                    ("lifetime".to_string(), lifetime_value),
-                    ("abi".to_string(), DataValue::Null),
-                    ("is_unsafe".to_string(), DataValue::from(false)),
-                    ("is_extern".to_string(), DataValue::from(false)),
-                    ("dyn_token".to_string(), DataValue::from(false)),
-                ]);
-
-                db.run_script(
-                    "?[type_id, is_mutable, lifetime, abi, is_unsafe, is_extern, dyn_token] <- [[$type_id, $is_mutable, $lifetime, $abi, $is_unsafe, $is_extern, $dyn_token]] :put type_details",
-                    details_params,
-                    ScriptMutability::Mutable,
-                )?;
-            }
-            ploke_core::TypeKind::RawPointer { is_mutable, .. } => {
-                let details_params = BTreeMap::from([
-                    ("type_id".to_string(), type_node.id.into()),
-                    ("is_mutable".to_string(), DataValue::from(*is_mutable)),
-                    ("lifetime".to_string(), DataValue::Null),
-                    ("abi".to_string(), DataValue::Null),
-                    ("is_unsafe".to_string(), DataValue::from(false)),
-                    ("is_extern".to_string(), DataValue::from(false)),
-                    ("dyn_token".to_string(), DataValue::from(false)),
-                ]);
-
-                db.run_script(
-                    "?[type_id, is_mutable, lifetime, abi, is_unsafe, is_extern, dyn_token] <- [[$type_id, $is_mutable, $lifetime, $abi, $is_unsafe, $is_extern, $dyn_token]] :put type_details",
-                    details_params,
-                    ScriptMutability::Mutable,
-                )?;
-            }
-            ploke_core::TypeKind::Function {
-                is_unsafe,
-                is_extern,
-                abi,
-                ..
-            } => {
-                let abi_value = abi
-                    .as_ref()
-                    .map(|s| DataValue::from(s.as_str()))
-                    .unwrap_or(DataValue::Null);
-
-                let details_params = BTreeMap::from([
-                    ("type_id".to_string(), type_node.id.into()),
-                    ("is_mutable".to_string(), DataValue::from(false)),
-                    ("lifetime".to_string(), DataValue::Null),
-                    ("abi".to_string(), abi_value),
-                    ("is_unsafe".to_string(), DataValue::from(*is_unsafe)),
-                    ("is_extern".to_string(), DataValue::from(*is_extern)),
-                    ("dyn_token".to_string(), DataValue::from(false)),
-                ]);
-
-                db.run_script(
-                    "?[type_id, is_mutable, lifetime, abi, is_unsafe, is_extern, dyn_token] <- [[$type_id, $is_mutable, $lifetime, $abi, $is_unsafe, $is_extern, $dyn_token]] :put type_details",
-                    details_params,
-                    ScriptMutability::Mutable,
-                )?;
-            }
-            ploke_core::TypeKind::TraitObject { dyn_token, .. } => {
-                let details_params = BTreeMap::from([
-                    ("type_id".to_string(), type_node.id.into()),
-                    ("is_mutable".to_string(), DataValue::from(false)),
-                    ("lifetime".to_string(), DataValue::Null),
-                    ("abi".to_string(), DataValue::Null),
-                    ("is_unsafe".to_string(), DataValue::from(false)),
-                    ("is_extern".to_string(), DataValue::from(false)),
-                    ("dyn_token".to_string(), DataValue::from(*dyn_token)),
-                ]);
-
-                db.run_script(
-                    "?[type_id, is_mutable, lifetime, abi, is_unsafe, is_extern, dyn_token] <- [[$type_id, $is_mutable, $lifetime, $abi, $is_unsafe, $is_extern, $dyn_token]] :put type_details",
-                    details_params,
-                    ScriptMutability::Mutable,
-                )?;
-            }
-            _ => {}
-        }
+        transform_code_graph(&db, merged.graph, &tree)?;
+        Ok(())
     }
-
-    Ok(())
 }

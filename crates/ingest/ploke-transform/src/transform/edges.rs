@@ -82,11 +82,12 @@ use cozo::{Db, MemStorage};
 use syn_parser::parser::relations::SyntacticRelation;
 
 use crate::schema::edges::SyntacticRelationSchema;
+use super::*;
 
 pub(super) fn transform_relations(
     db: &Db<MemStorage>,
     relations: Vec<SyntacticRelation>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     let schema = &SyntacticRelationSchema::SCHEMA;
     for relation in relations {
         schema.insert_relation(db, &relation)?;
@@ -102,12 +103,12 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::schema::edges::SyntacticRelationSchema;
+    use crate::{error::TransformError, schema::edges::SyntacticRelationSchema};
 
     use super::transform_relations;
 
     #[test]
-    fn test_transform_edges() -> Result<(), Box<cozo::Error>> {
+    fn test_transform_edges() -> Result<(), Box<TransformError>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps

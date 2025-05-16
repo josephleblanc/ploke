@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn transform_type_aliases(
     db: &Db<MemStorage>,
     type_aliases: Vec<TypeAliasNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for type_alias in type_aliases.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &TypeAliasNodeSchema::SCHEMA;
@@ -34,8 +34,6 @@ pub(super) fn transform_type_aliases(
 #[cfg(test)]
 mod tests {
 
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::{
@@ -43,10 +41,7 @@ mod tests {
         ParsedCodeGraph,
     };
 
-    use crate::{
-        schema::primary_nodes::TypeAliasNodeSchema,
-        test_utils::{create_attribute_schema, log_db_result},
-    };
+    use crate::schema::{primary_nodes::TypeAliasNodeSchema, secondary_nodes::AttributeNodeSchema};
 
     use super::transform_type_aliases;
     #[test]
@@ -64,20 +59,8 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
-        pub(crate) fn create_type_alias_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let type_alias_schema = TypeAliasNodeSchema::SCHEMA;
-            let db_result = db.run_script(
-                &type_alias_schema.script_create(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
-        create_type_alias_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
+        TypeAliasNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
         let graph = merged.graph;

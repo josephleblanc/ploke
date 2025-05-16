@@ -8,7 +8,7 @@ use super::{secondary_nodes::process_fields, *};
 pub(super) fn transform_unions(
     db: &Db<MemStorage>,
     unions: Vec<UnionNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     // union->onion (rust keywords)
     for onion in unions.into_iter() {
         let union_any_id = onion.any_id();
@@ -49,9 +49,6 @@ pub(super) fn transform_unions(
 
 #[cfg(test)]
 mod test {
-
-    use std::collections::BTreeMap;
-
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::{
@@ -59,11 +56,10 @@ mod test {
         ParsedCodeGraph,
     };
 
-    use crate::{
-        schema::primary_nodes::UnionNodeSchema,
-        test_utils::{
-            create_attribute_schema, create_field_schema, create_generic_schema, log_db_result,
-        },
+    use crate::schema::{
+        create_and_insert_generic_schema,
+        primary_nodes::UnionNodeSchema,
+        secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
     };
 
     use super::transform_unions;
@@ -81,27 +77,15 @@ mod test {
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
-        pub(crate) fn create_union_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let union_schema = UnionNodeSchema::SCHEMA;
-            let db_result = db.run_script(
-                &union_schema.script_create(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
 
         // create and insert union schema
-        create_union_schema(&db)?;
+        UnionNodeSchema::create_and_insert_schema(&db)?;
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert generic schema
-        create_generic_schema(&db)?;
+        create_and_insert_generic_schema(&db)?;
         // create and insert field schema
-        create_field_schema(&db)?;
+        FieldNodeSchema::create_and_insert_schema(&db)?;
 
         let mut union_nodes: Vec<UnionNode> = Vec::new();
         for union_node in merged.graph.defined_types.into_iter() {

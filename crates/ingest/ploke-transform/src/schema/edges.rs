@@ -10,7 +10,7 @@ use super::*;
 use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
-use syn_parser::parser::nodes::{AnyNodeId, AsAnyNodeId, ToCozoUuid, TypedId};
+use syn_parser::parser::nodes::ToCozoUuid;
 use syn_parser::parser::relations::SyntacticRelation;
 use syn_parser::resolve::Colorize;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
@@ -77,7 +77,7 @@ use syn_parser::utils::{LogStyle, LogStyleDebug};
 //             pub(crate) fn create_and_insert(
 //                 &self,
 //                 db: &Db<MemStorage>,
-//             ) -> Result<(), Box<cozo::Error>> {
+//             ) -> Result<(), Box<TransformError>> {
 //                 let const_schema = Self::SCHEMA;
 //                 let db_result = db.run_script(
 //                     &const_schema.script_create(),
@@ -190,7 +190,7 @@ impl SyntacticRelationSchema {
         &self,
         db: &Db<MemStorage>,
         relation: &SyntacticRelation,
-    ) -> Result<(), cozo::Error> {
+    ) -> Result<(), TransformError> {
         let params = self.relation_to_params(relation);
         let script = &self.script_put(&params);
         db.run_script(script, params, cozo::ScriptMutability::Mutable)
@@ -228,7 +228,7 @@ impl SemanticRelationSchema {
         // `cozo` that makes sense.
         // Need to think this over.
         syntactic_ids: Vec<SyntacticRelation>,
-    ) -> Result<(), cozo::Error>
+    ) -> Result<(), TransformError>
     where
         T: AsAnyNodeId + TypedId,
         S: AsAnyNodeId + TypedId,
@@ -272,7 +272,7 @@ impl SemanticRelationSchema {
         source_id: uuid::Uuid,
         target_id: uuid::Uuid,
         syntactic_ids: Vec<uuid::Uuid>,
-    ) -> Result<(), cozo::Error> {
+    ) -> Result<(), TransformError> {
         let params = BTreeMap::from([
             (
                 "source_id".to_string(),
@@ -312,7 +312,7 @@ impl SemanticRelationSchema {
         source_id: uuid::Uuid,
         target_id: uuid::Uuid,
         syntactic_ids: Vec<uuid::Uuid>,
-    ) -> Result<(), cozo::Error> {
+    ) -> Result<(), TransformError> {
         let params = BTreeMap::from([
             (
                 "source_id".to_string(),

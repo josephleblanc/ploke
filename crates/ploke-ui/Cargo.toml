@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = "0.31"
 egui = "0.31"
-cozo = { workspace = true, features = ["embedded"] }
+cozo = { workspace = true }
 ploke-core = { path = "../ploke-core" }
 ploke-transform = { path = "../ingest/ploke-transform" }
 thiserror = { workspace = true }

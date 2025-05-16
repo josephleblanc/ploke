@@ -8,7 +8,7 @@ use super::*;
 pub(super) fn transform_types(
     db: &Db<MemStorage>,
     type_nodes: Vec<TypeNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     fn process_trait_bounds(type_node: &TypeNode) -> DataValue {
         let cozo_trait_bounds = DataValue::List(
             type_node
@@ -252,11 +252,11 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::schema::types::create_and_insert_types;
+    use crate::{error::TransformError, schema::types::create_and_insert_types};
 
     use super::transform_types;
     #[test]
-    fn test_transform_types() -> Result<(), Box<cozo::Error>> {
+    fn test_transform_types() -> Result<(), Box<TransformError>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps

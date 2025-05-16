@@ -11,7 +11,7 @@ use super::{secondary_nodes::process_fields, *};
 pub(super) fn transform_enums(
     db: &Db<MemStorage>,
     enums: Vec<EnumNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for enm in enums.into_iter() {
         let enm_any_id = enm.any_id();
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -120,8 +120,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::{
-        schema::primary_nodes::EnumNodeSchema,
-        test_utils::{create_variant_schema, log_db_result},
+        schema::{
+            create_and_insert_generic_schema, log_db_result,
+            primary_nodes::EnumNodeSchema,
+            secondary_nodes::{AttributeNodeSchema, FieldNodeSchema, VariantNodeSchema},
+        },
         transform::enums::transform_enums,
     };
     use cozo::{Db, MemStorage};
@@ -131,7 +134,6 @@ mod tests {
         ParsedCodeGraph,
     };
 
-    use crate::test_utils::{create_attribute_schema, create_field_schema, create_generic_schema};
     #[test]
     fn test_transform_enums() -> Result<(), Box<dyn std::error::Error>> {
         let _ = env_logger::builder()
@@ -168,15 +170,15 @@ mod tests {
             Ok(())
         }
         // create and insert enum schema
-        create_enum_schema(&db)?;
+        EnumNodeSchema::create_and_insert_schema(&db)?;
         // create and insert enum schema
-        create_variant_schema(&db)?;
+        VariantNodeSchema::create_and_insert_schema(&db)?;
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
-        // create and insert generic schema
-        create_generic_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert field schema
-        create_field_schema(&db)?;
+        FieldNodeSchema::create_and_insert_schema(&db)?;
+        // create and insert generic schema
+        create_and_insert_generic_schema(&db)?;
 
         let mut enum_nodes: Vec<EnumNode> = Vec::new();
         for type_def_node in merged.graph.defined_types.into_iter() {

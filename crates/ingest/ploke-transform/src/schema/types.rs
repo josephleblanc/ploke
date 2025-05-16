@@ -4,34 +4,22 @@ use crate::define_schema;
 /// Helper function to insert all currnetly handled types' relations into the cozo database at
 /// once. Logs the created script inside the `create_and_insert` function using target: "db" on
 /// "info"
-pub fn create_and_insert_types(db: &Db<MemStorage>) -> Result<(), Box<cozo::Error>> {
+pub fn create_and_insert_types(db: &Db<MemStorage>) -> Result<(), TransformError> {
     NamedTypeSchema::SCHEMA.create_and_insert(db)?;
-
     ReferenceTypeSchema::SCHEMA.create_and_insert(db)?;
-
     SliceTypeSchema::SCHEMA.create_and_insert(db)?;
-
     ArrayTypeSchema::SCHEMA.create_and_insert(db)?;
-
     TupleTypeSchema::SCHEMA.create_and_insert(db)?;
-
     FunctionTypeSchema::SCHEMA.create_and_insert(db)?;
-
     NeverTypeSchema::SCHEMA.create_and_insert(db)?;
-
     InferredTypeSchema::SCHEMA.create_and_insert(db)?;
-
     RawPointerTypeSchema::SCHEMA.create_and_insert(db)?;
-
     TraitObjectTypeSchema::SCHEMA.create_and_insert(db)?;
-
     ImplTraitTypeSchema::SCHEMA.create_and_insert(db)?;
-
     ParenTypeSchema::SCHEMA.create_and_insert(db)?;
-
     MacroTypeSchema::SCHEMA.create_and_insert(db)?;
-
     UnknownTypeSchema::SCHEMA.create_and_insert(db)?;
+
     Ok(())
 }
 

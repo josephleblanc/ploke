@@ -27,7 +27,7 @@ pub struct FileModuleNode {
 pub(super) fn transform_modules(
     db: &Db<MemStorage>,
     modules: Vec<ModuleNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for module in modules.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &ModuleNodeSchema::SCHEMA;
@@ -80,7 +80,7 @@ fn process_module_def(
     db: &Db<MemStorage>,
     module_def: ModuleKind,
     module_id: ModuleNodeId,
-) -> Result<String, cozo::Error> {
+) -> Result<String, TransformError> {
     let schema = &FileModuleNodeSchema::SCHEMA;
 
     match module_def {
@@ -143,7 +143,10 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        test_utils::{create_attribute_schema, create_file_module_schema, create_module_schema},
+        schema::{
+            primary_nodes::ModuleNodeSchema, secondary_nodes::AttributeNodeSchema,
+            subnode_variants::FileModuleNodeSchema,
+        },
         transform::module::transform_modules,
     };
 
@@ -162,11 +165,11 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
 
-        create_module_schema(&db)?;
+        ModuleNodeSchema::create_and_insert_schema(&db)?;
 
-        create_file_module_schema(&db)?;
+        FileModuleNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
         transform_modules(&db, merged.graph.modules)?;

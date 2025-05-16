@@ -21,12 +21,17 @@ pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
 
+use crate::error::TransformError;
+use assoc_nodes::MethodNodeSchema;
 use cozo::{Db, MemStorage};
+use edges::SyntacticRelationSchema;
 use itertools::Itertools;
+use primary_nodes::*;
+use secondary_nodes::*;
+use types::create_and_insert_types;
 use std::collections::BTreeMap;
+use subnode_variants::FileModuleNodeSchema;
 use syn_parser::utils::LogStyle;
-
-use crate::utils::log_db_result;
 
 // TODO: use lazy_static and SmartString
 // &str for now,
@@ -51,6 +56,47 @@ impl CozoField {
         self.dv
     }
 }
+
+/// Create schema for all nodes and enter them into the database.
+/// This step must only be run once to avoid errors from the database.
+pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::TransformError> {
+    // ---- primary nodes ----
+    ConstNodeSchema::create_and_insert_schema(db)?;
+    EnumNodeSchema::create_and_insert_schema(db)?;
+    FunctionNodeSchema::create_and_insert_schema(db)?;
+    ImplNodeSchema::create_and_insert_schema(db)?;
+    ImportNodeSchema::create_and_insert_schema(db)?;
+    MacroNodeSchema::create_and_insert_schema(db)?;
+    ModuleNodeSchema::create_and_insert_schema(db)?;
+    StaticNodeSchema::create_and_insert_schema(db)?;
+    StructNodeSchema::create_and_insert_schema(db)?;
+    TraitNodeSchema::create_and_insert_schema(db)?;
+    TypeAliasNodeSchema::create_and_insert_schema(db)?;
+    UnionNodeSchema::create_and_insert_schema(db)?;
+    // -- special handling --
+    FileModuleNodeSchema::create_and_insert_schema(db)?;
+
+
+    // -- secondary nodes --
+    AttributeNodeSchema::create_and_insert_schema(db)?;
+
+    create_and_insert_generic_schema(db)?;
+
+    VariantNodeSchema::create_and_insert_schema(db)?;
+    FieldNodeSchema::create_and_insert_schema(db)?;
+
+
+    // -- associated nodes --
+    MethodNodeSchema::create_and_insert_schema(db)?;
+
+    // -- type_nodes --
+    create_and_insert_types(db)?;
+
+    // -- edges --
+    SyntacticRelationSchema::create_and_insert_schema(db)?;
+    Ok(())
+}
+
 /// Example
 /// define_schema!(FunctionNodeSchema {
 ///     id: "Uuid",
@@ -113,7 +159,7 @@ macro_rules! define_schema {
             pub(crate) fn create_and_insert(
                 &self,
                 db: &Db<MemStorage>,
-            ) -> Result<(), cozo::Error> {
+            ) -> Result<(), TransformError> {
                 let const_schema = Self::SCHEMA;
                 let db_result = db.run_script(
                     &const_schema.script_create(),
@@ -124,6 +170,39 @@ macro_rules! define_schema {
                 log_db_result(db_result);
                 Ok(())
             }
+            
+            pub(crate) fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+                let schema = &Self::SCHEMA;
+                let script_create = &schema.script_create();
+                schema.log_create_script();
+                let db_result = db.run_script(
+                    script_create,
+                    BTreeMap::new(),
+                    cozo::ScriptMutability::Mutable,
+                )?;
+                log_db_result(db_result);
+                Ok(())
+            }
         }
     };
 }
+
+/// Helper function to create and insert the three types of generics at once.
+pub(crate) fn create_and_insert_generic_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+    GenericTypeNodeSchema::create_and_insert_schema(db)?;
+    GenericConstNodeSchema::create_and_insert_schema(db)?;
+    GenericLifetimeNodeSchema::create_and_insert_schema(db)?;
+    Ok(())
+}
+
+pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
+    log::info!(target: "db",
+        "{} {:?}",
+        "  Db return: ".log_step(),
+        db_result,
+    );
+}
+
+
+
+

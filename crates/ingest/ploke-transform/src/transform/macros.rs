@@ -5,7 +5,7 @@ use super::*;
 pub(super) fn transform_macros(
     db: &Db<MemStorage>,
     macros: Vec<MacroNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for macro_node in macros.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &MacroNodeSchema::SCHEMA;
@@ -55,9 +55,8 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::{
-        schema::primary_nodes::MacroNodeSchema,
-        test_utils::{create_attribute_schema, log_db_result},
+    use crate::schema::{
+        log_db_result, primary_nodes::MacroNodeSchema, secondary_nodes::AttributeNodeSchema,
     };
 
     use super::transform_macros;
@@ -88,7 +87,7 @@ mod tests {
             Ok(())
         }
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert macro schema
         create_macro_schema(&db)?;
 

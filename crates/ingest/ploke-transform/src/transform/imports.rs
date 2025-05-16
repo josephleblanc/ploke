@@ -8,7 +8,7 @@ use super::*;
 pub(super) fn transform_imports(
     db: &Db<MemStorage>,
     imports: Vec<ImportNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for import in imports.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
         let schema = &ImportNodeSchema::SCHEMA;
@@ -159,7 +159,7 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        schema::primary_nodes::ImportNodeSchema, test_utils::log_db_result,
+        schema::{log_db_result, primary_nodes::ImportNodeSchema}, 
         transform::imports::transform_imports,
     };
 

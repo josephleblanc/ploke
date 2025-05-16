@@ -8,7 +8,7 @@ use super::{secondary_nodes::process_fields, *};
 pub(super) fn transform_structs(
     db: &Db<MemStorage>,
     structs: Vec<StructNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for strukt in structs.into_iter() {
         let struct_any_id = strukt.any_id();
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -56,20 +56,16 @@ mod test {
         ParsedCodeGraph,
     };
 
-    use crate::{
-        schema::{
-            primary_nodes::StructNodeSchema,
-            secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
-        },
-        // generics are special, need special handling for instantiating the three different kinds
-        // of generics. Easier to use helper function.
-        test_utils::create_generic_schema,
-    };
+    use crate::{error::TransformError, schema::{
+        create_and_insert_generic_schema,
+        primary_nodes::StructNodeSchema,
+        secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
+    }};
 
     use super::transform_structs;
 
     #[test]
-    fn test_transform_structs() -> Result<(), Box<cozo::Error>> {
+    fn test_transform_structs() -> Result<(), Box<TransformError>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
@@ -83,15 +79,13 @@ mod test {
         db.initialize().expect("Failed to initialize database");
 
         // create and insert struct schema
-        let struct_schema = StructNodeSchema::SCHEMA;
-        struct_schema.create_and_insert(&db)?;
+        StructNodeSchema::create_and_insert_schema(&db)?;
         // create and insert attribute schema
-        let attribute_schema = AttributeNodeSchema::SCHEMA;
-        attribute_schema.create_and_insert(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert generic schema (wants special handler for three-part split of gener
         // types)
-        create_generic_schema(&db).unwrap(); // weird error handling here
-                                             // create and insert field schema
+        create_and_insert_generic_schema(&db)?;
+        // create and insert field schema
         let field_schema = FieldNodeSchema::SCHEMA;
         field_schema.create_and_insert(&db)?;
 

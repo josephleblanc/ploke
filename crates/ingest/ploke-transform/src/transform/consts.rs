@@ -6,7 +6,7 @@ use super::*;
 pub(super) fn transform_consts(
     db: &Db<MemStorage>,
     consts: Vec<ConstNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for consta in consts.into_iter() {
         let schema = &ConstNodeSchema::SCHEMA;
         let mut consta_params = consta.cozo_btree();
@@ -42,11 +42,11 @@ mod tests {
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema};
+    use crate::{error::TransformError, schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema}};
 
     use super::transform_consts;
     #[test]
-    fn test_transform_consts() -> Result<(), Box<cozo::Error>> {
+    fn test_transform_consts() -> Result<(), Box<TransformError>> {
         let _ = env_logger::builder()
             .is_test(true)
             .format_timestamp(None) // Disable timestamps

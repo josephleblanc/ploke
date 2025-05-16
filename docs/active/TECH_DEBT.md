@@ -25,6 +25,7 @@ This is a list of known fixes that I will want to make but are not terribly urge
  * [ ] Add tests for TrackingHash
     * [ ] Remove Remove `?` from the database transforms for `TrackingHash`
  * [ ] Consider adding an ID to `SyntacticRelation`s
+ * [ ] Implement a `Database` type to wrap the cozo database, probably in `ploke-core`
 
 
 ## Longer term/larger refactor

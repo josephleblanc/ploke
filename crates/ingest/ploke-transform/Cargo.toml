@@ -14,6 +14,11 @@ ploke-core = { path = "../../ploke-core" }
 # debugging
 log = { workspace = true }
 
+#error handling
+ploke-error = { path = "../../ploke-error" }
+thiserror = { workspace = true }
+
+
 [dev-dependencies]
 env_logger = "0.11" # Add env_logger for test logging
 

@@ -9,7 +9,7 @@ use super::*;
 pub(super) fn transform_impls(
     db: &Db<MemStorage>,
     impls: Vec<ImplNode>,
-) -> Result<(), cozo::Error> {
+) -> Result<(), TransformError> {
     for imple in impls.into_iter() {
         let imple_any_id = imple.any_id();
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -117,18 +117,17 @@ pub(super) fn process_methods(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use crate::{
-        schema::{assoc_nodes::MethodNodeSchema, primary_nodes::ImplNodeSchema},
-        test_utils::log_db_result,
+        schema::{
+            assoc_nodes::MethodNodeSchema, create_and_insert_generic_schema,
+            primary_nodes::ImplNodeSchema, secondary_nodes::AttributeNodeSchema,
+        },
         transform::impls::transform_impls,
     };
     use cozo::{Db, MemStorage};
     use ploke_test_utils::run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::test_utils::{create_attribute_schema, create_generic_schema};
     #[test]
     fn test_transform_impls() -> Result<(), Box<dyn std::error::Error>> {
         let _ = env_logger::builder()
@@ -150,42 +149,14 @@ mod tests {
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
 
-        pub(crate) fn create_impl_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let impl_schema = ImplNodeSchema::SCHEMA;
-            let script_create = impl_schema.script_create();
-            impl_schema.log_create_script();
-            let db_result = db.run_script(
-                &script_create,
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
-        pub(crate) fn create_method_schema(
-            db: &Db<MemStorage>,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            let method_schema = MethodNodeSchema::SCHEMA;
-            let script_create = method_schema.script_create();
-            method_schema.log_create_script();
-            let db_result = db.run_script(
-                &script_create,
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )?;
-            log_db_result(db_result);
-            Ok(())
-        }
         // create and insert attribute schema
-        create_attribute_schema(&db)?;
+        AttributeNodeSchema::create_and_insert_schema(&db)?;
         // create and insert generic schema
-        create_generic_schema(&db)?;
+        create_and_insert_generic_schema(&db)?;
         // create and insert method schema
-        create_method_schema(&db)?;
+        MethodNodeSchema::create_and_insert_schema(&db)?;
         // create and insert impl schema
-        create_impl_schema(&db)?;
+        ImplNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
         transform_impls(&db, merged.graph.impls)?;
