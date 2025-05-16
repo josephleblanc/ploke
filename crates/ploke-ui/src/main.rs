@@ -10,8 +10,10 @@ use ploke_transform::schema::create_schema_all;
 use ploke_transform::transform::transform_code_graph;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
+#[cfg(feature = "multithreaded")]
 use flume::{Sender, bounded};
 use std::sync::Arc;
+#[cfg(feature = "multithreaded")]
 use std::thread;
 
 mod error;
@@ -24,15 +26,22 @@ struct PlokeApp {
     is_processing: bool,
     processing_status: ProcessingStatus,
     // Channel for receiving status updates
+    #[cfg(feature = "multithreaded")]
     status_rx: flume::Receiver<ProcessingStatus>,
+    #[cfg(feature = "multithreaded")]
     status_tx: Sender<ProcessingStatus>,
 }
 
 #[derive(Clone)]
 pub(crate) enum ProcessingStatus {
     Ready,
+    #[cfg(feature = "multithreaded")]
     Processing(String),
+    #[cfg(not(feature = "multithreaded"))]
+    Processing(&'static str),
     Complete,
+    #[cfg(feature = "multithreaded")]
+    Error(String),
     Error(String),
 }
 
@@ -61,16 +70,19 @@ impl PlokeApp {
         create_schema_all(&db).expect("Failed to create schemas");
 
         // Create channel with backpressure (100 message buffer)
+        #[cfg(feature = "multithreaded")]
         let (status_tx, status_rx) = bounded(100);
 
         Self {
             db,
-            query: String::new(),
+            query: String::from("?[name, id, body] := *function { name, id, body }"),
             results: None,
-            target_directory: String::new(),
+            target_directory: String::from("/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes"),
             is_processing: false,
             processing_status: ProcessingStatus::Ready,
+            #[cfg(feature = "multithreaded")]
             status_rx,
+            #[cfg(feature = "multithreaded")]
             status_tx,
         }
     }
@@ -79,22 +91,9 @@ impl PlokeApp {
 impl eframe::App for PlokeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Check for async status updates
-        while let Ok(status) = self.status_rx.try_recv() {
+        #[cfg(feature = "multithreaded")]
+        if let Ok(status) = self.status_rx.try_recv() {
             self.processing_status = status;
-            // match status {
-            //     ProcessingStatus::Complete => {
-            //         self.is_processing = false;
-            //         self.processing_status = "Complete".to_string();
-            //     }
-            //     ProcessingStatus::Error(err) => {
-            //         self.is_processing = false;
-            //         self.processing_status = format!("Error: {}", err);
-            //     }
-            //     ProcessingStatus::Processing(msg) => {
-            //         self.processing_status = msg;
-            //     }
-            //     _ => {}
-            // }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -158,7 +157,8 @@ impl eframe::App for PlokeApp {
 }
 
 impl PlokeApp {
-    fn process_target(&mut self) {
+    #[cfg(feature = "multithreaded")]
+    fn process_target_parallel(&mut self) {
         self.is_processing = true;
         self.processing_status = ProcessingStatus::Processing("Starting up...".to_string());
 
@@ -206,6 +206,61 @@ impl PlokeApp {
                 .map_err(UiError::from)?;
             Ok(ProcessingStatus::Complete)
         });
+    }
+    fn process_target(&mut self) {
+        self.is_processing = true;
+        self.processing_status = ProcessingStatus::Processing("Starting up...");
+
+
+        let target_dir = self.target_directory.clone();
+        #[cfg(feature = "multithreaded")]
+        let db = Arc::clone(&self.db);
+        #[cfg(feature = "multithreaded")]
+        let status_tx = self.status_tx.clone();
+
+        // Use a single-threaded approach with immediate processing
+        if let Err(e) = self.do_processing(target_dir) {
+            self.processing_status = ProcessingStatus::Error(e.to_string());
+            self.is_processing = false;
+        }
+        #[cfg(feature = "multithreaded")]
+        if let Err(e) = self.do_processing(target_dir, db, status_tx) {
+            self.processing_status = ProcessingStatus::Error(e.to_string());
+            self.is_processing = false;
+        }
+    }
+
+    fn do_processing(
+        &mut self,
+        target_dir: String,
+        #[cfg(feature = "multithreaded")]
+        db: Arc<Database>,
+        #[cfg(feature = "multithreaded")]
+        status_tx: Sender<ProcessingStatus>,
+    ) -> Result<(), Error> {
+        self.processing_status = ProcessingStatus::Processing("Starting Up");
+
+        let successful_graphs = run_phases_and_collect(&target_dir)?;
+
+        #[cfg(feature = "multithreaded")]
+        status_tx.send(ProcessingStatus::Processing("Merging graphs...".to_string())).map_err(UiError::from)?;
+        self.processing_status = ProcessingStatus::Processing("Merging Graphs...");
+        let merged = ParsedCodeGraph::merge_new(successful_graphs)?;
+
+        #[cfg(feature = "multithreaded")]
+        status_tx.send(ProcessingStatus::Processing("Creating module tree...".to_string())).map_err(UiError::from)?;
+        self.processing_status = ProcessingStatus::Processing("Creating module tree...");
+        let tree = merged.build_module_tree()?;
+
+        #[cfg(feature = "multithreaded")]
+        status_tx.send(ProcessingStatus::Processing("Transforming data...".to_string())).map_err(UiError::from)?;
+        self.processing_status = ProcessingStatus::Processing("Transforming data...");
+        transform_code_graph(&self.db, merged.graph, &tree)?;
+
+        #[cfg(feature = "multithreaded")]
+        status_tx.send(ProcessingStatus::Complete).map_err(UiError::from)?;
+        self.processing_status = ProcessingStatus::Complete;
+        Ok(())
     }
 
     fn execute_query(&mut self) {
