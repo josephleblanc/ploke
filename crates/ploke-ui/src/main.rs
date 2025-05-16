@@ -1,19 +1,24 @@
 // -- external --
 use cozo::MemStorage;
 use eframe::egui;
-// -- local imports --
+use egui_extras::Column;
+use error::UiError;
+use ploke_error::Error;
+// -- workspace local imports --
+use ploke_db::{Database, QueryResult};
 use ploke_transform::schema::create_schema_all;
 use ploke_transform::transform::transform_code_graph;
-use syn_parser::{run_phases_and_collect, ParsedCodeGraph};
-use ploke_db::Database;
+use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
+
+mod error;
 
 struct PlokeApp {
     db: Arc<Database>,
     query: String,
-    results: String,
+    results: Option<Result<QueryResult, Error>>,
     target_directory: String,
     is_processing: bool,
     processing_status: String,
@@ -29,12 +34,11 @@ impl Default for PlokeApp {
 
         let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
-        
 
         Self {
             db: Arc::new(Database::new(db)),
             query: String::new(),
-            results: String::new(),
+            results: None,
             target_directory: String::new(),
             is_processing: false,
             processing_status: String::from("Ready"),
@@ -49,7 +53,9 @@ impl eframe::App for PlokeApp {
         if let Some(receiver) = &self.status_receiver {
             if let Ok(status) = receiver.try_recv() {
                 self.processing_status = status;
-                if self.processing_status.contains("complete") || self.processing_status.contains("error") {
+                if self.processing_status.contains("complete")
+                    || self.processing_status.contains("error")
+                {
                     self.is_processing = false;
                 }
             }
@@ -71,11 +77,14 @@ impl eframe::App for PlokeApp {
 
             // Process button
             ui.horizontal(|ui| {
-                ui.add_enabled_ui(!self.is_processing && !self.target_directory.is_empty(), |ui| {
-                    if ui.button("Process Target").clicked() {
-                        self.process_target();
-                    }
-                });
+                ui.add_enabled_ui(
+                    !self.is_processing && !self.target_directory.is_empty(),
+                    |ui| {
+                        if ui.button("Process Target").clicked() {
+                            self.process_target();
+                        }
+                    },
+                );
                 ui.label(&self.processing_status);
             });
 
@@ -84,7 +93,7 @@ impl eframe::App for PlokeApp {
             ui.heading("Query Database");
             ui.horizontal(|ui| {
                 ui.label("Query:");
-                ui.text_edit_multiline(&mut self.query);
+                ui.code_editor(&mut self.query);
             });
 
             if ui.button("Execute").clicked() {
@@ -93,13 +102,25 @@ impl eframe::App for PlokeApp {
 
             ui.separator();
             ui.label("Results:");
-            ui.text_edit_multiline(&mut self.results);
+
+            // Try to parse as JSON first (common Cozo output format)
+
+            if let Some(query_result) = &self.results {
+                match query_result {
+                    Ok(q_header_rows) => {
+                        self.render_cozo_table(ui, q_header_rows);
+                    }
+                    Err(e) => { ui.label(format!("{:#?}", e)); },
+                }
+            } else {
+                ui.label("No results to show yet.");
+            }
         });
     }
 }
 
 impl PlokeApp {
-    fn process_target(&mut self) {
+    fn process_target(&mut self) -> Result<(), Error> {
         self.is_processing = true;
         self.processing_status = String::from("Processing...");
 
@@ -110,65 +131,129 @@ impl PlokeApp {
         let (sender, receiver) = mpsc::channel();
         self.status_receiver = Some(receiver);
 
-        thread::spawn(move || {
-            sender.send("Initializing...".to_string()).ok();
+        thread::spawn(move || -> Result<(), Error> {
+            sender.send("Initializing...".to_string()).map_err(UiError::from)?;
 
             // Run the parser phases
-            let successful_graphs = match run_phases_and_collect(&target_dir) {
-                Ok(graphs) => graphs,
-                Err(e) => {
-                    sender.send(format!("Error: {}", e)).ok();
-                    return;
-                }
-            };
+            // let successful_graphs = match run_phases_and_collect(&target_dir) {
+                // Ok(graphs) => graphs,
+                // Err(e) => {
+                //     sender.send(format!("Error: {}", e)).map_err(UiError::from)?;
+                //     // return Ok(());
+                // }
+            // };
+            let successful_graphs = run_phases_and_collect(&target_dir)?;
 
-            sender.send("Merging graphs...".to_string()).ok();
+            sender.send("Merging graphs...".to_string()).map_err(UiError::from)?;
             let merged = match ParsedCodeGraph::merge_new(successful_graphs) {
                 Ok(m) => m,
                 Err(e) => {
-                    sender.send(format!("Merge error: {}", e)).ok();
-                    return;
+                    sender.send(format!("Merge error: {}", e)).map_err(UiError::from)?;
+                    return Ok(());
                 }
             };
 
-            sender.send("Creating module tree...".to_string()).ok();
+            sender.send("Creating module tree...".to_string()).map_err(UiError::from)?;
             let tree = match merged.build_module_tree() {
                 Ok(t) => t,
                 Err(e) => {
-                    sender.send(format!("Module tree error: {}", e)).ok();
-                    return;
+                    sender.send(format!("Module tree error: {}", e)).map_err(UiError::from)?;
+                    return Ok(());
                 }
             };
 
             // Create schemas and transform data
-            sender.send("Creating schemas...".to_string()).ok();
+            sender.send("Creating schemas...".to_string()).map_err(UiError::from)?;
             if let Err(e) = create_schema_all(&db) {
-                sender.send(format!("Schema error: {}", e)).ok();
-                return;
+                sender.send(format!("Schema error: {}", e)).map_err(UiError::from)?;
+                return Ok(());
             }
 
             // TODO: Change transform_code_graph to take `ParsedCodeGraph` instead, once we have
             // added a transform of the crate info.
-            sender.send("Transforming data...".to_string()).ok();
+            sender.send("Transforming data...".to_string()).map_err(UiError::from)?;
             if let Err(e) = transform_code_graph(&db, merged.graph, &tree) {
-                sender.send(format!("Transform error: {}", e)).ok();
-                return;
+                sender.send(format!("Transform error: {}", e)).map_err(UiError::from)?;
+                return Ok(());
             }
 
             // TODO: don't rely on strings like this
-            sender.send("Processing complete!".to_string()).ok();
-        });
+            sender.send("Processing complete!".to_string()).map_err(UiError::from)?;
+            Ok(())
+        })
     }
 
     fn execute_query(&mut self) {
-        match self.db.raw_query(&self.query) {
-            Ok(result) => {
-                self.results = format!("{:#?}", result);
-            }
-            Err(e) => {
-                self.results = format!("Query error: {}", e);
-            }
-        }
+        self.results = Some(self.db.raw_query(&self.query).map_err(Error::from));
+        // match self.db.raw_query(&self.query) {
+        //     Ok(result) => {
+        //         self.results = Some(result);
+        //     }
+        //     Err(e) => {
+        //         self.results = {
+        //             format!("Query error: {}", e)
+        //         };
+        //     }
+        // }
+    }
+
+    fn render_cozo_table(&self, ui: &mut egui::Ui, q: &QueryResult) {
+        let num_rows = q.rows.len();
+        let num_cols = q.headers.len();
+        // Give the table a unique ID if you have multiple tables in the same UI
+        // let table_id = egui::Id::new("cozo_table");
+
+        egui::ScrollArea::both().show(ui, |ui| {
+            let table = egui_extras::TableBuilder::new(ui)
+                .striped(true)
+                .resizable(true)
+            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+            .columns(Column::auto().resizable(true).clip(true), num_cols) // Define number of columns
+            // Or, for more control over individual columns:
+            // .columns(Column::initial(100.0).resizable(true), num_cols -1)
+            // .column(Column::remainder().resizable(false)) // Last column takes remaining space
+            .min_scrolled_height(0.0); // Optional: useful for small tables
+            table
+                .header(20.0, |mut header| { // Define header row
+                    for col_name in &q.headers {
+                        header.col(|ui| {
+                            ui.strong(col_name);
+                        });
+                    }
+                })
+                .body(|mut body| { // Define body of the table
+                    if num_rows > 0 {
+                        body.rows(
+                            18.0, // Row height
+                            num_rows,
+                            |mut row| {
+                                let row_index = row.index();
+                                if let Some(data_row) = q.rows.get(row_index) {
+                                    for cell_value in data_row {
+                                        row.col(|ui| {
+                                            // Convert DataValue to a string for display
+                                            // You might want more sophisticated rendering
+                                            // for different DataValue types here.
+                                            ui.label(cell_value.to_string());
+                                        });
+                                    }
+                                }
+                            },
+                        );
+                    } else {
+                        // Handle case with headers but no data rows
+                        body.row(18.0, |mut row| {
+                            row.col(|ui| {
+                                ui.label("No data.");
+                            });
+                            // Add empty cells for other columns if desired
+                            for _ in 1..num_cols {
+                                row.col(|_ui| {});
+                            }
+                        });
+                    }
+                });
+        });
     }
 }
 
