@@ -11,8 +11,8 @@ use ploke_transform::transform::transform_code_graph;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
 use flume::{Sender, bounded};
+use std::sync::Arc;
 use std::thread;
-use std::{sync::Arc, thread::JoinHandle};
 
 mod error;
 
@@ -117,7 +117,7 @@ impl eframe::App for PlokeApp {
                         }
                     },
                 );
-                ui.label( &self.processing_status );
+                ui.label(self.processing_status.to_string());
             });
 
             // Query section
@@ -156,7 +156,7 @@ impl eframe::App for PlokeApp {
 impl PlokeApp {
     fn process_target(&mut self) {
         self.is_processing = true;
-        self.processing_status = String::from("Processing...");
+        self.processing_status = ProcessingStatus::Processing("Starting up...".to_string());
 
         let target_dir = self.target_directory.clone();
         let db = Arc::clone(&self.db);
