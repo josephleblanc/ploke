@@ -10,9 +10,9 @@ use ploke_transform::schema::create_schema_all;
 use ploke_transform::transform::transform_code_graph;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
-use std::sync::Arc;
-use flume::{bounded, Sender};
+use flume::{Sender, bounded};
 use std::thread;
+use std::{sync::Arc, thread::JoinHandle};
 
 mod error;
 
@@ -22,11 +22,20 @@ struct PlokeApp {
     results: Option<Result<QueryResult, Error>>,
     target_directory: String,
     is_processing: bool,
-    processing_status: String,
+    processing_status: ProcessingStatus,
     // Channel for receiving status updates
-    status_rx: flume::Receiver<String>,
-    status_tx: Sender<String>,
+    status_rx: flume::Receiver<ProcessingStatus>,
+    status_tx: Sender<ProcessingStatus>,
 }
+
+#[derive(Clone)]
+pub(crate) enum ProcessingStatus {
+    Ready,
+    Processing(String),
+    Complete,
+    Error(String),
+}
+// implement `Display for `ProcessingStatus` AI!
 
 impl PlokeApp {
     fn new() -> Self {
@@ -46,7 +55,7 @@ impl PlokeApp {
             results: None,
             target_directory: String::new(),
             is_processing: false,
-            processing_status: String::from("Ready"),
+            processing_status: ProcessingStatus::Ready,
             status_rx,
             status_tx,
         }
@@ -58,11 +67,20 @@ impl eframe::App for PlokeApp {
         // Check for async status updates
         while let Ok(status) = self.status_rx.try_recv() {
             self.processing_status = status;
-            if self.processing_status.contains("complete") 
-                || self.processing_status.contains("error") 
-            {
-                self.is_processing = false;
-            }
+            // match status {
+            //     ProcessingStatus::Complete => {
+            //         self.is_processing = false;
+            //         self.processing_status = "Complete".to_string();
+            //     }
+            //     ProcessingStatus::Error(err) => {
+            //         self.is_processing = false;
+            //         self.processing_status = format!("Error: {}", err);
+            //     }
+            //     ProcessingStatus::Processing(msg) => {
+            //         self.processing_status = msg;
+            //     }
+            //     _ => {}
+            // }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -89,7 +107,7 @@ impl eframe::App for PlokeApp {
                         }
                     },
                 );
-                ui.label(&self.processing_status);
+                ui.label( &self.processing_status );
             });
 
             // Query section
@@ -114,7 +132,9 @@ impl eframe::App for PlokeApp {
                     Ok(q_header_rows) => {
                         self.render_cozo_table(ui, q_header_rows);
                     }
-                    Err(e) => { ui.label(format!("{:#?}", e)); },
+                    Err(e) => {
+                        ui.label(format!("{:#?}", e));
+                    }
                 }
             } else {
                 ui.label("No results to show yet.");
@@ -132,56 +152,53 @@ impl PlokeApp {
         let db = Arc::clone(&self.db);
         let status_tx = self.status_tx.clone();
 
-        thread::spawn(move || {
-            status_tx.send("Initializing...").unwrap();
+        thread::spawn(move || -> Result<ProcessingStatus, Error> {
+            status_tx
+                .send(ProcessingStatus::Processing("Initializing...".to_string()))
+                .map_err(UiError::from)?;
 
-            // Run the parser phases
-            // let successful_graphs = match run_phases_and_collect(&target_dir) {
-                // Ok(graphs) => graphs,
-                // Err(e) => {
-                //     sender.send(format!("Error: {}", e)).map_err(UiError::from)?;
-                //     // return Ok(());
-                // }
-            // };
             let successful_graphs = run_phases_and_collect(&target_dir)?;
 
-            sender.send("Merging graphs...".to_string()).map_err(UiError::from)?;
-            let merged = match ParsedCodeGraph::merge_new(successful_graphs) {
-                Ok(m) => m,
-                Err(e) => {
-                    sender.send(format!("Merge error: {}", e)).map_err(UiError::from)?;
-                    return Ok(());
-                }
-            };
+            status_tx
+                .send(ProcessingStatus::Processing(
+                    "Merging graphs...".to_string(),
+                ))
+                .map_err(UiError::from)?;
+            let merged = ParsedCodeGraph::merge_new(successful_graphs)?;
 
-            sender.send("Creating module tree...".to_string()).map_err(UiError::from)?;
-            let tree = match merged.build_module_tree() {
-                Ok(t) => t,
-                Err(e) => {
-                    sender.send(format!("Module tree error: {}", e)).map_err(UiError::from)?;
-                    return Ok(());
-                }
-            };
+            status_tx
+                .send(ProcessingStatus::Processing(
+                    "Creating module tree...".to_string(),
+                ))
+                .map_err(UiError::from)?;
+            let tree = merged.build_module_tree()?;
 
             // Create schemas and transform data
-            sender.send("Creating schemas...".to_string()).map_err(UiError::from)?;
-            if let Err(e) = create_schema_all(&db) {
-                sender.send(format!("Schema error: {}", e)).map_err(UiError::from)?;
-                return Ok(());
-            }
+            status_tx
+                .send(ProcessingStatus::Processing(
+                    "Creating schemas...".to_string(),
+                ))
+                .map_err(UiError::from)?;
+            create_schema_all(&db)?;
 
             // TODO: Change transform_code_graph to take `ParsedCodeGraph` instead, once we have
             // added a transform of the crate info.
-            sender.send("Transforming data...".to_string()).map_err(UiError::from)?;
+            status_tx
+                .send(ProcessingStatus::Processing(
+                    "Transforming data...".to_string(),
+                ))
+                .map_err(UiError::from)?;
             if let Err(e) = transform_code_graph(&db, merged.graph, &tree) {
-                sender.send(format!("Transform error: {}", e)).map_err(UiError::from)?;
-                return Ok(());
+                status_tx
+                    .send(ProcessingStatus::Error(format!("Transform error: {}", e)))
+                    .unwrap();
             }
 
-            // TODO: don't rely on strings like this
-            sender.send("Processing complete!".to_string()).map_err(UiError::from)?;
-            Ok(())
-        })
+            status_tx
+                .send(ProcessingStatus::Complete)
+                .map_err(UiError::from)?;
+            Ok(ProcessingStatus::Complete)
+        });
     }
 
     fn execute_query(&mut self) {
@@ -208,21 +225,23 @@ impl PlokeApp {
             let table = egui_extras::TableBuilder::new(ui)
                 .striped(true)
                 .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .columns(Column::auto().resizable(true).clip(true), num_cols) // Define number of columns
-            // Or, for more control over individual columns:
-            // .columns(Column::initial(100.0).resizable(true), num_cols -1)
-            // .column(Column::remainder().resizable(false)) // Last column takes remaining space
-            .min_scrolled_height(0.0); // Optional: useful for small tables
+                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                .columns(Column::auto().resizable(true).clip(true), num_cols) // Define number of columns
+                // Or, for more control over individual columns:
+                // .columns(Column::initial(100.0).resizable(true), num_cols -1)
+                // .column(Column::remainder().resizable(false)) // Last column takes remaining space
+                .min_scrolled_height(0.0); // Optional: useful for small tables
             table
-                .header(20.0, |mut header| { // Define header row
+                .header(20.0, |mut header| {
+                    // Define header row
                     for col_name in &q.headers {
                         header.col(|ui| {
                             ui.strong(col_name);
                         });
                     }
                 })
-                .body(|mut body| { // Define body of the table
+                .body(|mut body| {
+                    // Define body of the table
                     if num_rows > 0 {
                         body.rows(
                             18.0, // Row height
