@@ -11,6 +11,7 @@ path = "src/main.rs"
 # core ui elements
 eframe = "0.31"
 egui = "0.31"
+egui_extras = "0.31"
 
 # database integration
 cozo = { workspace = true }
@@ -38,4 +39,7 @@ env_logger = "0.11"
 log = { workspace = true }
 colored = { workspace = true }
 
-crossbeam = "0.8" # For thread communication
+flume = "0.11"
+
+[features]
+multithreaded = []

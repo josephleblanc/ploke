@@ -16,4 +16,7 @@ pub enum WarningError {
         name: String,
         location: Option<String>,
     },
+
+    #[error("ploke-db error: {0}")]
+    PlokeDb(String)
 }

@@ -499,5 +499,5 @@ fn main() {
 ## 13. Examples
 <!-- TODO: Add concrete examples of how the system would process typical user requests from end to end -->
 
-[`flume` across boundaries]:/home/brasides/code/second_aider_dir/ploke/docs/design/concurrency/boundary_flume_example.m
+[`flume` across boundaries]:ploke/docs/design/concurrency/boundary_flume_example.md
  Flume example: [`flume` across boundaries]

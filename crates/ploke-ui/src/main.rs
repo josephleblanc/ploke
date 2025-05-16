@@ -34,7 +34,7 @@ struct PlokeApp {
     status_tx: Sender<ProcessingStatus>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub(crate) enum ProcessingStatus {
     Ready,
     #[cfg(feature = "multithreaded")]
@@ -100,6 +100,9 @@ impl eframe::App for PlokeApp {
         #[cfg(feature = "multithreaded")]
         if let Ok(status) = self.status_rx.try_recv() {
             self.processing_status = status;
+        }
+        if self.processing_status == ProcessingStatus::Complete {
+            self.is_processing = false;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
