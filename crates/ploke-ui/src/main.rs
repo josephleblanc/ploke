@@ -71,10 +71,11 @@ impl eframe::App for PlokeApp {
 
             // Process button
             ui.horizontal(|ui| {
-                ui.set_enabled(!self.is_processing && !self.target_directory.is_empty());
-                if ui.button("Process Target").clicked() {
-                    self.process_target();
-                }
+                ui.add_enabled_ui(!self.is_processing && !self.target_directory.is_empty(), |ui| {
+                    if ui.button("Process Target").clicked() {
+                        self.process_target();
+                    }
+                });
                 ui.label(&self.processing_status);
             });
 
