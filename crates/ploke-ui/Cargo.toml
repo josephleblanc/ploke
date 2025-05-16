@@ -3,6 +3,10 @@ name = "ploke-ui"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "ploke-ui"
+path = "src/main.rs"
+
 [dependencies]
 eframe = "0.31"
 egui = "0.31"
