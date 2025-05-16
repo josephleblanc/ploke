@@ -22,7 +22,7 @@ impl Default for PlokeApp {
 
         let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
-        
+
         Self {
             db,
             query: String::new(),
@@ -49,7 +49,7 @@ impl eframe::App for PlokeApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Ploke Codegraph Processor");
-            
+
             // Target directory section
             ui.horizontal(|ui| {
                 ui.label("Target Directory:");
@@ -60,7 +60,7 @@ impl eframe::App for PlokeApp {
                     }
                 }
             });
-            
+
             // Process button
             ui.horizontal(|ui| {
                 ui.set_enabled(!self.is_processing && !self.target_directory.is_empty());
@@ -69,7 +69,7 @@ impl eframe::App for PlokeApp {
                 }
                 ui.label(&self.processing_status);
             });
-            
+
             // Query section
             ui.separator();
             ui.heading("Query Database");
@@ -77,11 +77,11 @@ impl eframe::App for PlokeApp {
                 ui.label("Query:");
                 ui.text_edit_multiline(&mut self.query);
             });
-            
+
             if ui.button("Execute").clicked() {
                 self.execute_query();
             }
-            
+
             ui.separator();
             ui.label("Results:");
             ui.text_edit_multiline(&mut self.results).lock_focus(true);
@@ -93,17 +93,17 @@ impl PlokeApp {
     fn process_target(&mut self) {
         self.is_processing = true;
         self.processing_status = String::from("Processing...");
-        
+
         let target_dir = self.target_directory.clone();
         let db = self.db.clone();
-        
+
         // Create channel for status updates
         let (sender, receiver) = mpsc::channel();
         self.status_receiver = Some(receiver);
-        
+
         thread::spawn(move || {
             sender.send("Initializing...".to_string()).ok();
-            
+
             // Run the parser phases
             let successful_graphs = match run_phases_and_collect(&target_dir) {
                 Ok(graphs) => graphs,
@@ -112,7 +112,7 @@ impl PlokeApp {
                     return;
                 }
             };
-            
+
             sender.send("Merging graphs...".to_string()).ok();
             let merged = match ParsedCodeGraph::merge_new(successful_graphs) {
                 Ok(m) => m,
@@ -121,29 +121,29 @@ impl PlokeApp {
                     return;
                 }
             };
-            
+
             // Create schemas and transform data
             sender.send("Creating schemas...".to_string()).ok();
             if let Err(e) = ConstNodeSchema::SCHEMA.create_and_insert(&db) {
                 sender.send(format!("Schema error: {}", e)).ok();
                 return;
             }
-            
+
             if let Err(e) = AttributeNodeSchema::SCHEMA.create_and_insert(&db) {
                 sender.send(format!("Schema error: {}", e)).ok();
                 return;
             }
-            
+
             sender.send("Transforming data...".to_string()).ok();
             if let Err(e) = transform_consts(&db, merged.graph.consts) {
                 sender.send(format!("Transform error: {}", e)).ok();
                 return;
             }
-            
+
             sender.send("Processing complete!".to_string()).ok();
         });
     }
-    
+
     fn execute_query(&mut self) {
         match self.db.run_script(&self.query, Default::default()) {
             Ok(result) => {

@@ -8,8 +8,12 @@ eframe = "0.31"
 egui = "0.31"
 cozo = { workspace = true, features = ["embedded"] }
 ploke-core = { path = "../ploke-core" }
+ploke-transform = { path = "../ingest/ploke-transform" }
 thiserror = { workspace = true }
-rfd = "0.12"  # For file dialogs
-log = "0.4"
+rfd = "0.12"                                             # For file dialogs
+# logging
 env_logger = "0.11"
-crossbeam = "0.8"  # For thread communication
+log = { workspace = true }
+colored = { workspace = true }
+
+crossbeam = "0.8" # For thread communication
