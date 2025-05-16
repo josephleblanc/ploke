@@ -155,7 +155,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use cozo::{Db, MemStorage};
-    use ploke_test_utils::run_phases_and_collect;
+    use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
@@ -171,7 +171,7 @@ mod tests {
             .try_init();
 
         // Setup printable nodes
-        let successful_graphs = run_phases_and_collect("fixture_nodes");
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");

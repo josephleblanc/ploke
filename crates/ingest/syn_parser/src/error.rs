@@ -36,6 +36,11 @@ use crate::parser::graph::ParsedGraphError;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
+    /// Multiple errors grouped together, for example for all the results of the complete parsing
+    /// of all target files in a given crate.
+    #[error("Multiple errors occurred:\n{}", .0.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n"))]
+    MultipleErrors(Vec<SynParserError>),
+
     /// Error originating from test helper logic (wrapped as string).
     #[error("Test helper error: {0}")]
     TestHelperError(String), // Wrap the error message

@@ -1,11 +1,17 @@
+// -- external --
 use cozo::MemStorage;
 use eframe::egui;
-use syn_parser::ParsedCodeGraph;
-use std::sync::mpsc;
+// -- local imports --
+use ploke_transform::schema::create_schema_all;
+use ploke_transform::transform::transform_code_graph;
+use syn_parser::{run_phases_and_collect, ParsedCodeGraph};
+use ploke_db::Database;
+// -- std --
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 struct PlokeApp {
-    db: cozo::Db<MemStorage>,
+    db: Arc<Database>,
     query: String,
     results: String,
     target_directory: String,
@@ -23,9 +29,10 @@ impl Default for PlokeApp {
 
         let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
+        
 
         Self {
-            db,
+            db: Arc::new(Database::new(db)),
             query: String::new(),
             results: String::new(),
             target_directory: String::new(),
@@ -42,7 +49,7 @@ impl eframe::App for PlokeApp {
         if let Some(receiver) = &self.status_receiver {
             if let Ok(status) = receiver.try_recv() {
                 self.processing_status = status;
-                if status.contains("complete") || status.contains("error") {
+                if self.processing_status.contains("complete") || self.processing_status.contains("error") {
                     self.is_processing = false;
                 }
             }
@@ -85,7 +92,7 @@ impl eframe::App for PlokeApp {
 
             ui.separator();
             ui.label("Results:");
-            ui.text_edit_multiline(&mut self.results).lock_focus(true);
+            ui.text_edit_multiline(&mut self.results);
         });
     }
 }
@@ -96,7 +103,7 @@ impl PlokeApp {
         self.processing_status = String::from("Processing...");
 
         let target_dir = self.target_directory.clone();
-        let db = self.db.clone();
+        let db = Arc::clone(&self.db);
 
         // Create channel for status updates
         let (sender, receiver) = mpsc::channel();
@@ -123,30 +130,37 @@ impl PlokeApp {
                 }
             };
 
+            sender.send("Creating module tree...".to_string()).ok();
+            let tree = match merged.build_module_tree() {
+                Ok(t) => t,
+                Err(e) => {
+                    sender.send(format!("Module tree error: {}", e)).ok();
+                    return;
+                }
+            };
+
             // Create schemas and transform data
             sender.send("Creating schemas...".to_string()).ok();
-            if let Err(e) = ConstNodeSchema::SCHEMA.create_and_insert(&db) {
+            if let Err(e) = create_schema_all(&db) {
                 sender.send(format!("Schema error: {}", e)).ok();
                 return;
             }
 
-            if let Err(e) = AttributeNodeSchema::SCHEMA.create_and_insert(&db) {
-                sender.send(format!("Schema error: {}", e)).ok();
-                return;
-            }
-
+            // TODO: Change transform_code_graph to take `ParsedCodeGraph` instead, once we have
+            // added a transform of the crate info.
             sender.send("Transforming data...".to_string()).ok();
-            if let Err(e) = transform_consts(&db, merged.graph.consts) {
+            if let Err(e) = transform_code_graph(&db, merged.graph, &tree) {
                 sender.send(format!("Transform error: {}", e)).ok();
                 return;
             }
 
+            // TODO: don't rely on strings like this
             sender.send("Processing complete!".to_string()).ok();
         });
     }
 
     fn execute_query(&mut self) {
-        match self.db.run_script(&self.query, Default::default()) {
+        match self.db.raw_query(&self.query) {
             Ok(result) => {
                 self.results = format!("{:#?}", result);
             }
@@ -162,6 +176,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Ploke UI",
         options,
-        Box::new(|_cc| Box::<PlokeApp>::default()),
+        Box::new(|_cc| Ok(Box::<PlokeApp>::default())),
     )
 }

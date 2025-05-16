@@ -2,7 +2,7 @@
 
 use cozo::Db;
 use cozo::MemStorage;
-use ploke_transform::schema::create_schema;
+use ploke_transform::schema::create_schema_all;
 
 /// Creates a new in-memory database with the schema initialized
 pub fn setup_test_db() -> Db<MemStorage> {
@@ -10,7 +10,7 @@ pub fn setup_test_db() -> Db<MemStorage> {
     db.initialize().expect("Failed to initialize database");
 
     // Create the schema
-    create_schema(&db).expect("Failed to create schema");
+    create_schema_all(&db).expect("Failed to create schema");
 
     db
 }

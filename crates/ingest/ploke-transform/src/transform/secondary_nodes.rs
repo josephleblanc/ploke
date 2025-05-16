@@ -269,7 +269,7 @@ mod test {
     use std::collections::BTreeMap;
 
     use cozo::{Db, MemStorage, ScriptMutability};
-    use ploke_test_utils::run_phases_and_collect;
+    use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::{
         parser::{nodes::AsAnyNodeId, ParsedCodeGraph},
         utils::LogStyle,
@@ -288,7 +288,7 @@ mod test {
 
         // Setup printable nodes
         // Choose target with generic functions old_function
-        let successful_graphs = run_phases_and_collect("fixture_attributes");
+        let successful_graphs = test_run_phases_and_collect("fixture_attributes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
         let db = Db::new(MemStorage::default()).expect("Failed to create database");

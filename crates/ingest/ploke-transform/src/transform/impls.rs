@@ -125,7 +125,7 @@ mod tests {
         transform::impls::transform_impls,
     };
     use cozo::{Db, MemStorage};
-    use ploke_test_utils::run_phases_and_collect;
+    use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
             .try_init();
 
         // Setup printable nodes
-        let successful_graphs = run_phases_and_collect("fixture_nodes");
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
         // let tree = merged.build_module_tree().unwrap_or_else(|e| {
         //     log::error!(target: "transform_function",

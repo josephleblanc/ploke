@@ -151,7 +151,7 @@ fn transform_defined_types(
 #[cfg(test)]
 mod tests {
     use cozo::{Db, MemStorage};
-    use ploke_test_utils::run_phases_and_collect;
+    use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{error::TransformError, schema::create_schema_all};
@@ -168,7 +168,7 @@ mod tests {
         create_schema_all(&db)?;
 
         // run the parser
-        let successful_graphs = run_phases_and_collect("fixture_nodes");
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         // merge results from all files
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 

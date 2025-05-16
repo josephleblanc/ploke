@@ -17,7 +17,6 @@ pub use relation_indexer::RelationIndexer;
 use logging::LogTree;
 use module_tree::*;
 use path_resolver::*;
-use relation_indexer::*;
 use serde::{Deserialize, Serialize};
 
 use crate::parser::{

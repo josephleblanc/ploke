@@ -17,7 +17,7 @@ use syn_parser::parser::{analyze_files_parallel, ParsedCodeGraph};
 use syn_parser::CodeGraph;
 
 // Should return result
-pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
+pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
     let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])

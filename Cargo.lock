@@ -3530,8 +3530,11 @@ dependencies = [
  "env_logger 0.11.8",
  "log",
  "ploke-core",
+ "ploke-db",
+ "ploke-error",
  "ploke-transform",
  "rfd",
+ "syn_parser",
  "thiserror 2.0.12",
 ]
 
