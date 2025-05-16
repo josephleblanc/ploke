@@ -215,9 +215,9 @@ impl PlokeApp {
         });
     }
     fn process_target(&mut self) {
+        let start_time = std::time::Instant::now();
         self.is_processing = true;
         self.processing_status = ProcessingStatus::Processing("Starting up...");
-
 
         let target_dir = self.target_directory.clone();
         #[cfg(feature = "multithreaded")]
@@ -273,7 +273,7 @@ impl PlokeApp {
         #[cfg(feature = "multithreaded")]
         status_tx.send(ProcessingStatus::Complete).map_err(UiError::from)?;
         self.processing_status = ProcessingStatus::Complete;
-        Ok(())
+        Ok(start_time.elapsed())
     }
 
     fn execute_query(&mut self) {
