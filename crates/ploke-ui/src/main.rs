@@ -10,7 +10,8 @@ use ploke_transform::schema::create_schema_all;
 use ploke_transform::transform::transform_code_graph;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
+use flume::{bounded, Sender};
 use std::thread;
 
 mod error;
@@ -23,17 +24,21 @@ struct PlokeApp {
     is_processing: bool,
     processing_status: String,
     // Channel for receiving status updates
-    status_receiver: Option<mpsc::Receiver<String>>,
+    status_rx: flume::Receiver<String>,
+    status_tx: Sender<String>,
 }
 
-impl Default for PlokeApp {
-    fn default() -> Self {
+impl PlokeApp {
+    fn new() -> Self {
         let _ = env_logger::builder()
             .filter_level(log::LevelFilter::Info)
             .try_init();
 
         let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
+
+        // Create channel with backpressure (100 message buffer)
+        let (status_tx, status_rx) = bounded(100);
 
         Self {
             db: Arc::new(Database::new(db)),
@@ -42,22 +47,21 @@ impl Default for PlokeApp {
             target_directory: String::new(),
             is_processing: false,
             processing_status: String::from("Ready"),
-            status_receiver: None,
+            status_rx,
+            status_tx,
         }
     }
 }
 
 impl eframe::App for PlokeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Check for status updates from processing thread
-        if let Some(receiver) = &self.status_receiver {
-            if let Ok(status) = receiver.try_recv() {
-                self.processing_status = status;
-                if self.processing_status.contains("complete")
-                    || self.processing_status.contains("error")
-                {
-                    self.is_processing = false;
-                }
+        // Check for async status updates
+        while let Ok(status) = self.status_rx.try_recv() {
+            self.processing_status = status;
+            if self.processing_status.contains("complete") 
+                || self.processing_status.contains("error") 
+            {
+                self.is_processing = false;
             }
         }
 
@@ -120,19 +124,16 @@ impl eframe::App for PlokeApp {
 }
 
 impl PlokeApp {
-    fn process_target(&mut self) -> Result<(), Error> {
+    fn process_target(&mut self) {
         self.is_processing = true;
         self.processing_status = String::from("Processing...");
 
         let target_dir = self.target_directory.clone();
         let db = Arc::clone(&self.db);
+        let status_tx = self.status_tx.clone();
 
-        // Create channel for status updates
-        let (sender, receiver) = mpsc::channel();
-        self.status_receiver = Some(receiver);
-
-        thread::spawn(move || -> Result<(), Error> {
-            sender.send("Initializing...".to_string()).map_err(UiError::from)?;
+        thread::spawn(move || {
+            status_tx.send("Initializing...").unwrap();
 
             // Run the parser phases
             // let successful_graphs = match run_phases_and_collect(&target_dir) {
@@ -262,6 +263,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Ploke UI",
         options,
-        Box::new(|_cc| Ok(Box::<PlokeApp>::default())),
+        Box::new(|_cc| Ok(Box::new(PlokeApp::new()))),
     )
 }
