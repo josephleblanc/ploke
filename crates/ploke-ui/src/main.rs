@@ -35,7 +35,17 @@ pub(crate) enum ProcessingStatus {
     Complete,
     Error(String),
 }
-// implement `Display for `ProcessingStatus` AI!
+
+impl std::fmt::Display for ProcessingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessingStatus::Ready => write!(f, "Ready"),
+            ProcessingStatus::Processing(msg) => write!(f, "Processing: {}", msg),
+            ProcessingStatus::Complete => write!(f, "Complete"),
+            ProcessingStatus::Error(err) => write!(f, "Error: {}", err),
+        }
+    }
+}
 
 impl PlokeApp {
     fn new() -> Self {
