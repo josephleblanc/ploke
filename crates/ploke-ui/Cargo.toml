@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.31"                         # For the egui framework
+eframe = "0.31"
 egui = "0.31"
-cozo = { workspace = true }
-ploke-core = { path = "../ploke-core" } # For database access
-thiserror = { workspace = true }        # Error handling
+cozo = { workspace = true, features = ["embedded"] }
+ploke-core = { path = "../ploke-core" }
+thiserror = { workspace = true }
+rfd = "0.12"  # For file dialogs
+log = "0.4"
+env_logger = "0.11"
+crossbeam = "0.8"  # For thread communication
