@@ -78,7 +78,9 @@ impl PlokeApp {
             db,
             query: String::from("?[name, id, body] := *function { name, id, body }"),
             results: None,
-            target_directory: String::from("/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes"),
+            target_directory: String::from(
+                "/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes",
+            ),
             is_processing: false,
             processing_status: ProcessingStatus::Ready,
             last_processing_time: None,
@@ -122,12 +124,12 @@ impl eframe::App for PlokeApp {
                         }
                     },
                 );
-                ui.horizontal(|ui| {
-                    ui.label(self.processing_status.to_string());
-                    if let Some(duration) = self.last_processing_time {
-                        ui.label(format!("(Last run: {:.2?})", duration));
-                    }
-                });
+            });
+            ui.horizontal(|ui| {
+                ui.label(self.processing_status.to_string());
+                if let Some(duration) = self.last_processing_time {
+                    ui.label(format!("(Last run: {:.2?})", duration));
+                }
             });
 
             // Query section
@@ -229,8 +231,8 @@ impl PlokeApp {
         if let Err(e) = self.do_processing(target_dir) {
             self.processing_status = ProcessingStatus::Error(e.to_string());
             self.is_processing = false;
-            self.last_processing_time = Some(start_time.elapsed());
         }
+        self.last_processing_time = Some(start_time.elapsed());
         #[cfg(feature = "multithreaded")]
         match self.do_processing(target_dir, db, status_tx) {
             Ok(duration) => {
@@ -238,42 +240,53 @@ impl PlokeApp {
                 self.is_processing = false;
             }
             Err(e) => {
-            self.processing_status = ProcessingStatus::Error(e.to_string());
-            self.is_processing = false;
+                self.processing_status = ProcessingStatus::Error(e.to_string());
+                self.is_processing = false;
+            }
         }
     }
 
     fn do_processing(
         &mut self,
         target_dir: String,
-        #[cfg(feature = "multithreaded")]
-        db: Arc<Database>,
-        #[cfg(feature = "multithreaded")]
-        status_tx: Sender<ProcessingStatus>,
+        #[cfg(feature = "multithreaded")] db: Arc<Database>,
+        #[cfg(feature = "multithreaded")] status_tx: Sender<ProcessingStatus>,
     ) -> Result<(), Error> {
-        self.processing_status = ProcessingStatus::Processing("Starting Up");
-
         let successful_graphs = run_phases_and_collect(&target_dir)?;
 
         #[cfg(feature = "multithreaded")]
-        status_tx.send(ProcessingStatus::Processing("Merging graphs...".to_string())).map_err(UiError::from)?;
+        status_tx
+            .send(ProcessingStatus::Processing(
+                "Merging graphs...".to_string(),
+            ))
+            .map_err(UiError::from)?;
         self.processing_status = ProcessingStatus::Processing("Merging Graphs...");
         let merged = ParsedCodeGraph::merge_new(successful_graphs)?;
 
         #[cfg(feature = "multithreaded")]
-        status_tx.send(ProcessingStatus::Processing("Creating module tree...".to_string())).map_err(UiError::from)?;
+        status_tx
+            .send(ProcessingStatus::Processing(
+                "Creating module tree...".to_string(),
+            ))
+            .map_err(UiError::from)?;
         self.processing_status = ProcessingStatus::Processing("Creating module tree...");
         let tree = merged.build_module_tree()?;
 
         #[cfg(feature = "multithreaded")]
-        status_tx.send(ProcessingStatus::Processing("Transforming data...".to_string())).map_err(UiError::from)?;
+        status_tx
+            .send(ProcessingStatus::Processing(
+                "Transforming data...".to_string(),
+            ))
+            .map_err(UiError::from)?;
         self.processing_status = ProcessingStatus::Processing("Transforming data...");
         transform_code_graph(&self.db, merged.graph, &tree)?;
 
         #[cfg(feature = "multithreaded")]
-        status_tx.send(ProcessingStatus::Complete).map_err(UiError::from)?;
+        status_tx
+            .send(ProcessingStatus::Complete)
+            .map_err(UiError::from)?;
         self.processing_status = ProcessingStatus::Complete;
-        Ok(start_time.elapsed())
+        Ok(())
     }
 
     fn execute_query(&mut self) {
