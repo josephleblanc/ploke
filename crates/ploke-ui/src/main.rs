@@ -55,12 +55,16 @@ impl PlokeApp {
 
         let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
+        let db = Arc::new(Database::new(db));
+
+        // Initialize schemas
+        create_schema_all(&db).expect("Failed to create schemas");
 
         // Create channel with backpressure (100 message buffer)
         let (status_tx, status_rx) = bounded(100);
 
         Self {
-            db: Arc::new(Database::new(db)),
+            db,
             query: String::new(),
             results: None,
             target_directory: String::new(),
@@ -184,13 +188,6 @@ impl PlokeApp {
             let tree = merged.build_module_tree()?;
 
             // Create schemas and transform data
-            status_tx
-                .send(ProcessingStatus::Processing(
-                    "Creating schemas...".to_string(),
-                ))
-                .map_err(UiError::from)?;
-            create_schema_all(&db)?;
-
             // TODO: Change transform_code_graph to take `ParsedCodeGraph` instead, once we have
             // added a transform of the crate info.
             status_tx
