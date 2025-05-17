@@ -39,6 +39,6 @@ impl Database {
 
     /// Create a new query builder
     pub fn query(&self) -> QueryBuilder {
-        QueryBuilder::new(self.db.clone())
+        QueryBuilder::new(&self.db)
     }
 }

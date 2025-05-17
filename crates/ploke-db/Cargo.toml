@@ -14,6 +14,9 @@ serde_json = { workspace = true }
 ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
 
+# pre-caching the schema fields for queries
+lazy_static = "1.4.0" # Added lazy_static
+
 [dev-dependencies]
 tokio = { workspace = true }
 ploke-transform = { path = "../ingest/ploke-transform" }

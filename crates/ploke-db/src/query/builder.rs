@@ -1,19 +1,23 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
+use ploke_transform::schema::primary_nodes::{
+    EnumNodeSchema, FunctionNodeSchema, ModuleNodeSchema, StructNodeSchema, TraitNodeSchema,
+};
+
 use crate::error::Error;
 use crate::QueryResult;
 use std::collections::BTreeMap;
 
 /// Main query builder struct
-pub struct QueryBuilder {
-    db: cozo::Db<cozo::MemStorage>,
+pub struct QueryBuilder<'a> {
+    db: &'a cozo::Db<cozo::MemStorage>,
     selected_node: Option<NodeType>,
     filters: Vec<String>,
     limit: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum NodeType {
     Function,
     Struct,
@@ -22,9 +26,9 @@ enum NodeType {
     Module,
 }
 
-impl QueryBuilder {
+impl<'a> QueryBuilder<'a> {
     /// Create a new query builder
-    pub fn new(db: cozo::Db<cozo::MemStorage>) -> Self {
+    pub fn new(db: &'a cozo::Db<cozo::MemStorage>) -> Self {
         Self {
             db,
             selected_node: None,
@@ -60,8 +64,8 @@ impl QueryBuilder {
     /// Execute the constructed query
     pub fn execute(self) -> Result<QueryResult, Error> {
         let relation = match self.selected_node {
-            Some(NodeType::Function) => "functions",
-            Some(NodeType::Struct) => "structs",
+            Some(NodeType::Function) => FunctionNodeSchema::SCHEMA.relation,
+            Some(NodeType::Struct) => StructNodeSchema::SCHEMA.relation,
             _ => return Err(Error::QueryConstruction("No node type selected".into())),
         };
 
@@ -92,3 +96,46 @@ impl QueryBuilder {
             .map_err(|e| Error::Cozo(e.to_string()))
     }
 }
+
+macro_rules! define_static_fields {
+    (
+        $(($name:ident, $schema:ty, $node_type:ident)),+
+    ) => {
+        lazy_static::lazy_static! {
+            $(
+                static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(", "));
+            )+
+        }
+        impl NodeType {
+            pub fn to_base_query(self) -> &'static str{
+                match self {
+                    $(
+                        NodeType::$node_type => &$name
+                    ),+
+                }
+            }
+        }
+    };
+}
+
+define_static_fields!(
+    (FUNCTION_FIELDS, FunctionNodeSchema, Function),
+    (STRUCT_FIELDS, StructNodeSchema, Struct),
+    (ENUM_FIELDS, EnumNodeSchema, Enum),
+    (TRAIT_FIELDS, TraitNodeSchema, Trait),
+    (MODULE_FIELDS, ModuleNodeSchema, Module)
+);
+
+// impl NodeType {
+//     pub fn to_base_query(self) -> String {
+//         match self {
+//             NodeType::Function => ,
+//             NodeType::Struct => todo!(),
+//             NodeType::Enum => todo!(),
+//             NodeType::Trait => todo!(),
+//             NodeType::Module => todo!(),
+//         }
+// }
+// }
+
+

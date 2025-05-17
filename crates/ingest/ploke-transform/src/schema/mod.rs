@@ -125,6 +125,10 @@ macro_rules! define_schema {
             $(pub fn $field_name(&self) -> &str {
                 self.$field_name.st()
             })*
+
+            pub const SCHEMA_FIELDS: &'static [&'static str] = &[
+                $( stringify!($field_name) ),+
+            ];
         }
 
         impl $schema_name {

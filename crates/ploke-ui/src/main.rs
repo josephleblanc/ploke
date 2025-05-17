@@ -7,7 +7,7 @@ use error::UiError;
 use ploke_error::Error;
 // -- workspace local imports --
 use ploke_db::{Database, QueryResult};
-use ploke_transform::schema::create_schema_all;
+use ploke_transform::schema::{create_schema_all, primary_nodes::FunctionNodeSchema};
 use ploke_transform::transform::transform_code_graph;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
@@ -101,6 +101,20 @@ impl PlokeApp {
             control_groups: HashMap::new(),
         }
     }
+
+    fn processed_rows(&self) -> Option< impl Iterator<Item = String> > {
+        // let iter_strs = self.results.map(|r| {r.map(|q| {
+        //     self.selected_cells.iter().map(|(i, j)| {
+        //         format_args!("{}", q.rows[*i][*j])
+        //     })
+        // })});
+        if let Some(Ok( q )) = &self.results {
+                return Some( self.selected_cells
+                    .iter()
+                    .map(|(i, j)| format!("{}", q.rows[*i][*j])) );
+        }
+        None
+    }
 }
 
 impl eframe::App for PlokeApp {
@@ -152,11 +166,32 @@ impl eframe::App for PlokeApp {
             ui.horizontal(|ui| {
                 ui.label("Query:");
                 ui.code_editor(&mut self.query);
+                ui.vertical(|ui| {
+                    ui.label("Selected Items:");
+                    ui.horizontal_top(|ui| {
+                        if let Some(iter_selected) = self.processed_rows() {
+                            for item in iter_selected {
+                                if ui.button("Add Filter").clicked() {
+                                    println!("Do something!!!");
+                                }
+                                ui.label(item);
+                            }
+                        }
+                    })
+                    // for item in self.processed_rows() {
+                    //     ui.label(item);
+                    // }
+                })
             });
 
             if ui.button("Execute").clicked() {
+                self.reset_selected_cells();
                 self.execute_query();
             }
+            // ui.collapsing("Schema", |ui| {
+            //     ui.collapsing("function", |ui| {
+            //     })
+            // })
 
             ui.separator();
             ui.horizontal(|ui| {
@@ -168,7 +203,7 @@ impl eframe::App for PlokeApp {
 
             // Try to parse as JSON first (common Cozo output format)
 
-            if let Some(query_result) =  &self.results  {
+            if let Some(query_result) = &self.results {
                 match query_result {
                     Ok(q_header_rows) => {
                         let q_clone = q_header_rows.clone();
@@ -368,7 +403,7 @@ impl PlokeApp {
 
                                             // Create a frame with background color if selected
                                             let frame = if is_selected {
-                                                egui::Frame::none()
+                                                egui::Frame::NONE
                                                     .fill(egui::Color32::from_rgb(70, 130, 180))
                                                     .inner_margin(egui::Margin::same(2))
                                             } else {
@@ -458,6 +493,12 @@ impl PlokeApp {
                 }
             }
         }
+    }
+
+    pub(crate) fn reset_selected_cells(&mut self) {
+        self.selected_cells.clear();
+        self.selection_in_progress = None;
+        self.control_groups.clear();
     }
 }
 

@@ -3511,6 +3511,7 @@ name = "ploke-db"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "lazy_static",
  "ploke-error",
  "ploke-transform",
  "serde",

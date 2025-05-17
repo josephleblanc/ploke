@@ -6,14 +6,23 @@ This is the UI crate for the `ploke` project, and provides an `egui` UI to inter
 
 ### Short-term
 
-- [ ] Implement table of returned results from the `cozo` query.
+- [✔] Implement table of returned results from the `cozo` query.
+
+#### Query Box
+- [ ] Execute query on `<Shift-Enter>`
 - [ ] Add default queries in a dropdown menu.
   - [ ] Add tabs for different kinds of common queries, tbd.
 - [ ] Add syntax highlighting for datalog queries
   - [ ] Look into the [syntect] crate for syntax highlighting through [egui_extras].
+
+**Fix**
+
+- [ ] Stutter in `Selected Items:` on presseing `<Enter>` within `Query` code box.
+
+#### Table area
 - [ ] Make the table interactions awesome
   - [ ] Add visual responsiveness to table, such as:
-    - [ ] highlight cell on click
+    - [✔] highlight cell on click
     - [ ] click-drag to select cells
   - [ ] Add functional responsiveness to table
     - [ ] right click on cell with popup options
@@ -24,7 +33,7 @@ This is the UI crate for the `ploke` project, and provides an `egui` UI to inter
     - [ ] click-drag to select multiple cells
       - [ ] do cool things with multiple cells?
     - [ ] implement control groups for cell selection,
-      - [ ] select cell(s) and press <Ctrl-1> or other num to highlight all selected cells in color
+      - [ ] select cell(s) and press `<Ctrl-1>` or other num to highlight all selected cells in color
       - [ ] allow right-click options to apply to all cells in the same control group.
       - [ ] click-drag on cell item in control group to extend control group selection (controversial?)
       - [ ] (maybe) for any selected cells from a control group in the query, auto-update query text
