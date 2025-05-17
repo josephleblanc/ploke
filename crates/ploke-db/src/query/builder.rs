@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use ploke_transform::schema::primary_nodes::{
-    EnumNodeSchema, FunctionNodeSchema, ModuleNodeSchema, StructNodeSchema, TraitNodeSchema,
+    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema, MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema
 };
 
 use crate::error::Error;
