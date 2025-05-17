@@ -39,7 +39,20 @@ enum NodeType {
     GenericType,
     GenericLifetime,
     GenericConst,
-    // AI: Fill out the node types from `schema/types.rs` as well
+    NamedType,
+    ReferenceType,
+    SliceType,
+    ArrayType,
+    TupleType,
+    FunctionType,
+    NeverType,
+    InferredType,
+    RawPointerType,
+    TraitObjectType,
+    ImplTraitType,
+    ParenType,
+    MacroType,
+    UnknownType,
 }
 
 impl<'a> QueryBuilder<'a> {
@@ -153,8 +166,21 @@ define_static_fields!(
     (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
     (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
     (GENERIC_LIFETIME_FIELDS, GenericLifetimeNodeSchema, GenericLifetime),
-    (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst)
-    // AI: Fill out the node types from `schema/types.rs` AI!
+    (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst),
+    (NAMED_TYPE_FIELDS, NamedTypeSchema, NamedType),
+    (REFERENCE_TYPE_FIELDS, ReferenceTypeSchema, ReferenceType),
+    (SLICE_TYPE_FIELDS, SliceTypeSchema, SliceType),
+    (ARRAY_TYPE_FIELDS, ArrayTypeSchema, ArrayType),
+    (TUPLE_TYPE_FIELDS, TupleTypeSchema, TupleType),
+    (FUNCTION_TYPE_FIELDS, FunctionTypeSchema, FunctionType),
+    (NEVER_TYPE_FIELDS, NeverTypeSchema, NeverType),
+    (INFERRED_TYPE_FIELDS, InferredTypeSchema, InferredType),
+    (RAW_POINTER_TYPE_FIELDS, RawPointerTypeSchema, RawPointerType),
+    (TRAIT_OBJECT_TYPE_FIELDS, TraitObjectTypeSchema, TraitObjectType),
+    (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
+    (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
+    (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
+    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
 );
 
 // impl NodeType {
