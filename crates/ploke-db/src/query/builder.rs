@@ -24,6 +24,8 @@ enum NodeType {
     Enum,
     Trait,
     Module,
+    // AI: Fill out the rest of these `NodeType`s with the remaining types from the
+    // `primary_nodes.rs` file
 }
 
 impl<'a> QueryBuilder<'a> {
@@ -124,6 +126,8 @@ define_static_fields!(
     (ENUM_FIELDS, EnumNodeSchema, Enum),
     (TRAIT_FIELDS, TraitNodeSchema, Trait),
     (MODULE_FIELDS, ModuleNodeSchema, Module)
+    // AI: Fill out the remaining macro fields here with the rest of the items from
+    // `primary_nodes.rs` AI!
 );
 
 // impl NodeType {
