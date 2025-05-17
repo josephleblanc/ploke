@@ -31,6 +31,7 @@ enum NodeType {
     Static,
     TypeAlias,
     Union,
+    // AI: Fill out fields from `secondary_nodes.rs` as well
 }
 
 impl<'a> QueryBuilder<'a> {
@@ -138,6 +139,7 @@ define_static_fields!(
     (STATIC_FIELDS, StaticNodeSchema, Static),
     (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
     (UNION_FIELDS, UnionNodeSchema, Union)
+    // AI: Add entries for the items from `secondary_nodes` as well AI!
 );
 
 // impl NodeType {
