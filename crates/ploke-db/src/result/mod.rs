@@ -10,7 +10,7 @@ use crate::error::Error;
 use cozo::NamedRows;
 
 /// Result of a database query
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryResult {
     pub rows: Vec<Vec<cozo::DataValue>>,
     pub headers: Vec<String>,

@@ -1,6 +1,7 @@
 // -- external --
 use cozo::MemStorage;
 use eframe::egui;
+use egui::ahash::{HashMap, HashMapExt};
 use egui_extras::Column;
 use error::UiError;
 use ploke_error::Error;
@@ -32,6 +33,11 @@ struct PlokeApp {
     status_rx: flume::Receiver<ProcessingStatus>,
     #[cfg(feature = "multithreaded")]
     status_tx: Sender<ProcessingStatus>,
+
+    // Table interaction state
+    selected_cells: Vec<(usize, usize)>, // (row, column) indices
+    selection_in_progress: Option<(usize, usize)>, // Starting cell for drag selection
+    control_groups: HashMap<usize, Vec<(usize, usize)>>, // Control group number -> cells
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -90,6 +96,9 @@ impl PlokeApp {
             status_rx,
             #[cfg(feature = "multithreaded")]
             status_tx,
+            selected_cells: Vec::new(),
+            selection_in_progress: None,
+            control_groups: HashMap::new(),
         }
     }
 }
@@ -159,10 +168,11 @@ impl eframe::App for PlokeApp {
 
             // Try to parse as JSON first (common Cozo output format)
 
-            if let Some(query_result) = &self.results {
+            if let Some(query_result) =  &self.results  {
                 match query_result {
                     Ok(q_header_rows) => {
-                        self.render_cozo_table(ui, q_header_rows);
+                        let q_clone = q_header_rows.clone();
+                        self.render_cozo_table(ui, &q_clone);
                     }
                     Err(e) => {
                         ui.label(format!("{:#?}", e));
@@ -315,7 +325,7 @@ impl PlokeApp {
         // }
     }
 
-    fn render_cozo_table(&self, ui: &mut egui::Ui, q: &QueryResult) {
+    fn render_cozo_table(&mut self, ui: &mut egui::Ui, q: &QueryResult) {
         let num_rows = q.rows.len();
         let num_cols = q.headers.len();
         // Give the table a unique ID if you have multiple tables in the same UI
@@ -349,12 +359,56 @@ impl PlokeApp {
                             |mut row| {
                                 let row_index = row.index();
                                 if let Some(data_row) = q.rows.get(row_index) {
-                                    for cell_value in data_row {
+                                    for (col_index, cell_value) in data_row.iter().enumerate() {
                                         row.col(|ui| {
-                                            // Convert DataValue to a string for display
-                                            // You might want more sophisticated rendering
-                                            // for different DataValue types here.
-                                            ui.label(cell_value.to_string());
+                                            // Check if this cell is selected
+                                            let is_selected = self
+                                                .selected_cells
+                                                .contains(&(row_index, col_index));
+
+                                            // Create a frame with background color if selected
+                                            let frame = if is_selected {
+                                                egui::Frame::none()
+                                                    .fill(egui::Color32::from_rgb(70, 130, 180))
+                                                    .inner_margin(egui::Margin::same(2))
+                                            } else {
+                                                egui::Frame::none()
+                                                    .inner_margin(egui::Margin::same(2))
+                                            };
+
+                                            // Render the cell with the frame
+                                            frame.show(ui, |ui| {
+                                                // Use selectable label for better interaction
+                                                let response = ui.selectable_label(
+                                                    is_selected,
+                                                    cell_value.to_string(),
+                                                );
+
+                                                // Handle click to select/deselect
+                                                if response.clicked() {
+                                                    self.handle_cell_click(row_index, col_index);
+                                                }
+
+                                                // Handle drag start
+                                                if response.drag_started() {
+                                                    self.selection_in_progress =
+                                                        Some((row_index, col_index));
+                                                }
+
+                                                // Handle ongoing drag
+                                                if response.dragged()
+                                                    && self.selection_in_progress.is_some()
+                                                {
+                                                    self.update_drag_selection(
+                                                        row_index, col_index,
+                                                    );
+                                                }
+
+                                                // Handle drag release
+                                                if response.drag_released() {
+                                                    self.selection_in_progress = None;
+                                                }
+                                            });
                                         });
                                     }
                                 }
@@ -374,6 +428,36 @@ impl PlokeApp {
                     }
                 });
         });
+    }
+    fn handle_cell_click(&mut self, row: usize, col: usize) {
+        let cell = (row, col);
+
+        // Toggle selection state
+        if self.selected_cells.contains(&cell) {
+            self.selected_cells.retain(|&c| c != cell);
+        } else {
+            self.selected_cells.push(cell);
+        }
+    }
+
+    fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
+        if let Some((start_row, start_col)) = self.selection_in_progress {
+            // Clear previous selection
+            self.selected_cells.clear();
+
+            // Calculate the rectangle of selected cells
+            let min_row = start_row.min(current_row);
+            let max_row = start_row.max(current_row);
+            let min_col = start_col.min(current_col);
+            let max_col = start_col.max(current_col);
+
+            // Add all cells in the rectangle to selection
+            for row in min_row..=max_row {
+                for col in min_col..=max_col {
+                    self.selected_cells.push((row, col));
+                }
+            }
+        }
     }
 }
 
