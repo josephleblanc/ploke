@@ -31,7 +31,13 @@ enum NodeType {
     Static,
     TypeAlias,
     Union,
-    // AI: Fill out fields from `secondary_nodes.rs` as well
+    Param,
+    Variant,
+    Field,
+    Attribute,
+    GenericType,
+    GenericLifetime,
+    GenericConst,
 }
 
 impl<'a> QueryBuilder<'a> {
@@ -138,8 +144,14 @@ define_static_fields!(
     (MACRO_FIELDS, MacroNodeSchema, Macro),
     (STATIC_FIELDS, StaticNodeSchema, Static),
     (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
-    (UNION_FIELDS, UnionNodeSchema, Union)
-    // AI: Add entries for the items from `secondary_nodes` as well AI!
+    (UNION_FIELDS, UnionNodeSchema, Union),
+    (PARAM_FIELDS, ParamNodeSchema, Param),
+    (VARIANT_FIELDS, VariantNodeSchema, Variant),
+    (FIELD_FIELDS, FieldNodeSchema, Field),
+    (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
+    (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
+    (GENERIC_LIFETIME_FIELDS, GenericLifetimeNodeSchema, GenericLifetime),
+    (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst)
 );
 
 // impl NodeType {
