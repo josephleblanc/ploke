@@ -4,6 +4,7 @@
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema, MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema
 };
+use ploke_transform::schema::secondary_nodes::{AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema, GenericTypeNodeSchema, ParamNodeSchema, VariantNodeSchema};
 
 use crate::error::Error;
 use crate::QueryResult;
@@ -38,6 +39,7 @@ enum NodeType {
     GenericType,
     GenericLifetime,
     GenericConst,
+    // AI: Fill out the node types from `schema/types.rs` as well
 }
 
 impl<'a> QueryBuilder<'a> {
@@ -152,6 +154,7 @@ define_static_fields!(
     (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
     (GENERIC_LIFETIME_FIELDS, GenericLifetimeNodeSchema, GenericLifetime),
     (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst)
+    // AI: Fill out the node types from `schema/types.rs` AI!
 );
 
 // impl NodeType {
