@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::error::DbError;
 use crate::QueryBuilder;
 use crate::QueryResult;
 use cozo::Db;
@@ -25,7 +25,7 @@ impl Database {
     }
 
     /// Execute a raw CozoScript query
-    pub fn raw_query(&self, script: &str) -> Result<QueryResult, Error> {
+    pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
             .db
             .run_script(
@@ -33,7 +33,7 @@ impl Database {
                 std::collections::BTreeMap::new(),
                 cozo::ScriptMutability::Immutable,
             )
-            .map_err(|e| Error::Cozo(e.to_string()))?;
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))
     }
 

@@ -1,19 +1,31 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
+use ploke_error::{Error, WarningError};
 use ploke_transform::schema::primary_nodes::{
-    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema, MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema, TypeAliasNodeSchema, UnionNodeSchema
+    ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
+    MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
+    TypeAliasNodeSchema, UnionNodeSchema,
 };
-use ploke_transform::schema::secondary_nodes::{AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema, GenericTypeNodeSchema, ParamNodeSchema, VariantNodeSchema};
+use ploke_transform::schema::secondary_nodes::{
+    AttributeNodeSchema, FieldNodeSchema, GenericConstNodeSchema, GenericLifetimeNodeSchema,
+    GenericTypeNodeSchema, ParamNodeSchema, VariantNodeSchema,
+};
+use ploke_transform::schema::types::{
+    ArrayTypeSchema, FunctionTypeSchema, ImplTraitTypeSchema, InferredTypeSchema, MacroTypeSchema,
+    NamedTypeSchema, NeverTypeSchema, ParenTypeSchema, RawPointerTypeSchema, ReferenceTypeSchema,
+    SliceTypeSchema, TraitObjectTypeSchema, TupleTypeSchema, UnknownTypeSchema,
+};
 
-use crate::error::Error;
-use crate::QueryResult;
+use crate::error::DbWarning;
+use crate::{DbError, QueryResult};
 use std::collections::BTreeMap;
 
 /// Main query builder struct
 pub struct QueryBuilder<'a> {
     db: &'a cozo::Db<cozo::MemStorage>,
     selected_node: Option<NodeType>,
+    lhs: Vec<&'static str>,
     filters: Vec<String>,
     limit: Option<usize>,
 }
@@ -61,6 +73,7 @@ impl<'a> QueryBuilder<'a> {
         Self {
             db,
             selected_node: None,
+            lhs: Vec::new(),
             filters: Vec::new(),
             limit: None,
         }
@@ -90,12 +103,34 @@ impl<'a> QueryBuilder<'a> {
         self
     }
 
+    pub fn add_lhs(&mut self, field: &'static str) -> Result<(), Error> {
+        if let Some(node_ty) = self.selected_node {
+            if node_ty.fields().contains(&field) {
+                self.lhs.push(field);
+                Ok(())
+            } else {
+                Err(Error::Warning(WarningError::from(DbWarning::QueryBuild(
+                    format!("Cannot add field {} to {:?}", field, node_ty),
+                ))))
+            }
+        } else {
+            Err(Error::Warning(WarningError::from(DbWarning::QueryBuild(
+                format!("Calling add_lhs on None: {}", field),
+            ))))
+        }
+    }
+
     /// Execute the constructed query
     pub fn execute(self) -> Result<QueryResult, Error> {
         let relation = match self.selected_node {
             Some(NodeType::Function) => FunctionNodeSchema::SCHEMA.relation,
             Some(NodeType::Struct) => StructNodeSchema::SCHEMA.relation,
-            _ => return Err(Error::QueryConstruction("No node type selected".into())),
+            None => {
+                return Err(Error::from(DbError::QueryConstruction("No node type selected".into())))
+            }
+            _ => {
+                return Err(Error::from(DbError::QueryConstruction("Warning! Node type not yet supported".into())))
+            }
         };
 
         let mut query = match relation {
@@ -107,7 +142,7 @@ impl<'a> QueryBuilder<'a> {
                 "?[id, name, visibility, docstring] := *{}[id, name, visibility, docstring]",
                 relation
             ),
-            _ => return Err(Error::QueryConstruction(format!("Unsupported relation: {}", relation))),
+            _ => return Err(Error::from(DbError::QueryConstruction(format!("Unsupported relation: {}", relation)))),
         };
 
         if !self.filters.is_empty() {
@@ -122,7 +157,8 @@ impl<'a> QueryBuilder<'a> {
         self.db
             .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
             .map(QueryResult::from)
-            .map_err(|e| Error::Cozo(e.to_string()))
+            .map_err(|e| DbError::Cozo(e.to_string()))
+            .map_err(Error::from)
     }
 }
 
@@ -132,7 +168,7 @@ macro_rules! define_static_fields {
     ) => {
         lazy_static::lazy_static! {
             $(
-                static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(", "));
+                static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(",\n\t "));
             )+
         }
         impl NodeType {
@@ -140,6 +176,13 @@ macro_rules! define_static_fields {
                 match self {
                     $(
                         NodeType::$node_type => &$name
+                    ),+
+                }
+            }
+            pub fn fields(self) -> &'static [&'static str] {
+                match self {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA_FIELDS
                     ),+
                 }
             }
@@ -165,7 +208,11 @@ define_static_fields!(
     (FIELD_FIELDS, FieldNodeSchema, Field),
     (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
     (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
-    (GENERIC_LIFETIME_FIELDS, GenericLifetimeNodeSchema, GenericLifetime),
+    (
+        GENERIC_LIFETIME_FIELDS,
+        GenericLifetimeNodeSchema,
+        GenericLifetime
+    ),
     (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst),
     (NAMED_TYPE_FIELDS, NamedTypeSchema, NamedType),
     (REFERENCE_TYPE_FIELDS, ReferenceTypeSchema, ReferenceType),
@@ -175,12 +222,20 @@ define_static_fields!(
     (FUNCTION_TYPE_FIELDS, FunctionTypeSchema, FunctionType),
     (NEVER_TYPE_FIELDS, NeverTypeSchema, NeverType),
     (INFERRED_TYPE_FIELDS, InferredTypeSchema, InferredType),
-    (RAW_POINTER_TYPE_FIELDS, RawPointerTypeSchema, RawPointerType),
-    (TRAIT_OBJECT_TYPE_FIELDS, TraitObjectTypeSchema, TraitObjectType),
+    (
+        RAW_POINTER_TYPE_FIELDS,
+        RawPointerTypeSchema,
+        RawPointerType
+    ),
+    (
+        TRAIT_OBJECT_TYPE_FIELDS,
+        TraitObjectTypeSchema,
+        TraitObjectType
+    ),
     (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
     (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
     (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
-    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
+    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType)
 );
 
 // impl NodeType {
@@ -194,5 +249,3 @@ define_static_fields!(
 //         }
 // }
 // }
-
-

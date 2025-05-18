@@ -1,14 +1,22 @@
+mod app;
+mod channels;
+mod core;
+mod error;
+mod state;
+mod ui;
+
 // -- external --
 use cozo::MemStorage;
 use eframe::egui;
 use egui::ahash::{HashMap, HashMapExt};
 use egui_extras::Column;
-use error::UiError;
 use ploke_error::Error;
 // -- workspace local imports --
 use ploke_db::{Database, QueryResult};
 use ploke_transform::schema::{create_schema_all, primary_nodes::FunctionNodeSchema};
 use ploke_transform::transform::transform_code_graph;
+use serde::{Deserialize, Serialize};
+use syn_parser::utils::LogStyle;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
 #[cfg(feature = "multithreaded")]
@@ -17,7 +25,7 @@ use std::sync::Arc;
 #[cfg(feature = "multithreaded")]
 use std::thread;
 
-mod error;
+pub(crate) const LOG_QUERY: &str = "log_query";
 
 struct PlokeApp {
     db: Arc<Database>,
@@ -38,6 +46,9 @@ struct PlokeApp {
     selected_cells: Vec<(usize, usize)>, // (row, column) indices
     selection_in_progress: Option<(usize, usize)>, // Starting cell for drag selection
     control_groups: HashMap<usize, Vec<(usize, usize)>>, // Control group number -> cells
+    // TODO: Maybe move the query area into its own app? Trying to follow organization of
+    // egui demo here, but might be overkill?
+    selected_anchor: Anchor,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -99,22 +110,37 @@ impl PlokeApp {
             selected_cells: Vec::new(),
             selection_in_progress: None,
             control_groups: HashMap::new(),
+            selected_anchor: Anchor::QueryCustom,
         }
     }
 
-    fn processed_rows(&self) -> Option< impl Iterator<Item = String> > {
+    fn processed_rows(&self) -> Option<impl Iterator<Item = String>> {
         // let iter_strs = self.results.map(|r| {r.map(|q| {
         //     self.selected_cells.iter().map(|(i, j)| {
         //         format_args!("{}", q.rows[*i][*j])
         //     })
         // })});
-        if let Some(Ok( q )) = &self.results {
-                return Some( self.selected_cells
+        if let Some(Ok(q)) = &self.results {
+            return Some(
+                self.selected_cells
                     .iter()
-                    .map(|(i, j)| format!("{}", q.rows[*i][*j])) );
+                    .map(|(i, j)| format!("{}", q.rows[*i][*j])),
+            );
         }
         None
     }
+
+    fn bar_contents(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, cmd: &mut Command) {
+        let mut selected_anchor = self.selected_anchor;
+        todo!()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+#[must_use]
+enum Command {
+    Nothing,
+    ResetEverything,
 }
 
 impl eframe::App for PlokeApp {
@@ -163,6 +189,12 @@ impl eframe::App for PlokeApp {
             // Query section
             ui.separator();
             ui.heading("Query Database");
+            egui::TopBottomPanel::top("query_app_top_bar").show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.visuals_mut().button_frame = false;
+                    self.bar_contents(ui, frame, cmd);
+                })
+            });
             ui.horizontal(|ui| {
                 ui.label("Query:");
                 ui.code_editor(&mut self.query);
@@ -348,16 +380,25 @@ impl PlokeApp {
         let start_time = std::time::Instant::now();
         self.results = Some(self.db.raw_query(&self.query).map_err(Error::from));
         self.last_query_time = Some(start_time.elapsed());
-        // match self.db.raw_query(&self.query) {
-        //     Ok(result) => {
-        //         self.results = Some(result);
-        //     }
-        //     Err(e) => {
-        //         self.results = {
-        //             format!("Query error: {}", e)
-        //         };
-        //     }
-        // }
+        // query logging
+        match self.db.raw_query(&self.query) {
+            Ok(_) => {
+                log::info!(target: LOG_QUERY,
+                    "{} {} | Number of matches: {}",
+                    "Query Status:".log_step(),
+                    "Success".log_spring_green(),
+                    self.results.iter().count()
+                );
+            }
+            Err(e) => {
+                log::error!(target: LOG_QUERY,
+                    "{} {} | {:#?}",
+                    "Query Status:".log_step(),
+                    "Error".log_error(),
+                    e
+                );
+            }
+        }
     }
 
     fn render_cozo_table(&mut self, ui: &mut egui::Ui, q: &QueryResult) {
