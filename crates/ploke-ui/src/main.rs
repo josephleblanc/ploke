@@ -153,8 +153,8 @@ impl PlokeApp {
             },
             app_query_builder: QueryBuilderApp {
                 current_builder_query: String::from("?[name, id] := *function { name, id }"),
-                db: Arc::clone(&self.db),
-                cells: Rc::clone(&self.cells),
+                db: Arc::clone(&db),
+                cells: Rc::clone(&cells),
             },
         }
     }
