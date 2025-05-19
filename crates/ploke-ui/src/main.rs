@@ -143,18 +143,18 @@ impl PlokeApp {
             status_rx,
             #[cfg(feature = "multithreaded")]
             status_tx,
-            cells,
+            cells: Rc::clone(&cells),
             selected_anchor: ui::Anchor::QueryCustom,
             app_query_custom: QueryCustomApp {
                 custom_query: String::from("?[name, id, body] := *function { name, id, body }"),
-                db: Arc::clone(&db),
-                cells: Rc::clone(&cells),
-                results: Rc::clone(&query_results),
+                db,
+                cells,
+                results: query_results,
             },
             app_query_builder: QueryBuilderApp {
                 current_builder_query: String::from("?[name, id] := *function { name, id }"),
-                db: Arc::clone(&db),
-                cells: Rc::clone(&cells),
+                db: Arc::clone(&self.db),
+                cells: Rc::clone(&self.cells),
             },
         }
     }
