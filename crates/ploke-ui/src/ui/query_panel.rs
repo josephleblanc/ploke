@@ -11,9 +11,9 @@ pub struct QueryCustomApp {
     // Custom Query specific state
     pub custom_query: String,
     // Shared state references
-    db: Arc<Database>,
-    cells: Rc<RefCell<TableCells>>,
-    results: Rc<RefCell<Option<Result<QueryResult, Error>>>>,
+    pub db: Arc<Database>,
+    pub cells: Rc<RefCell<TableCells>>,
+    pub results: Rc<RefCell<Option<Result<QueryResult, Error>>>>,
 }
 
 impl<'a> eframe::App for QueryCustomApp {
@@ -68,8 +68,8 @@ pub struct QueryBuilderApp {
     // Builder-specific state
     pub current_builder_query: String,
     // Shared state references
-    db: Arc<Database>,
-    cells: Rc<RefCell<TableCells>>,
+    pub db: Arc<Database>,
+    pub cells: Rc<RefCell<TableCells>>,
 }
 
 impl eframe::App for QueryBuilderApp {

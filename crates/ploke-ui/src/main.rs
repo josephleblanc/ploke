@@ -147,8 +147,8 @@ impl PlokeApp {
             selected_anchor: ui::Anchor::QueryCustom,
             app_query_custom: QueryCustomApp {
                 custom_query: String::from("?[name, id, body] := *function { name, id, body }"),
-                db,
-                cells,
+                db: db.clone(),
+                cells: cells.clone(),
                 results: query_results,
             },
             app_query_builder: QueryBuilderApp {
@@ -181,7 +181,6 @@ impl PlokeApp {
         self.selected_anchor = selected_anchor;
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {});
-        todo!()
     }
 
     pub fn apps_iter_mut(
@@ -257,15 +256,14 @@ impl eframe::App for PlokeApp {
             ui.separator();
             ui.heading("Query Database");
             let mut cmd = Command::Nothing;
-            egui::TopBottomPanel::top("query_app_top_bar")
-                .frame(egui::Frame::new().inner_margin(4))
-                .show(ctx, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.visuals_mut().button_frame = false;
-                        self.query_bar_contents(ui, frame, &mut cmd);
-                    })
-                });
             ui.horizontal(|ui| {
+                egui::Area::new(egui::Id::new( "query_panel" ))
+                    .show(ctx, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.visuals_mut().button_frame = false;
+                            self.query_bar_contents(ui, frame, &mut cmd);
+                        })
+                    });
                 // Moved logic for handling items that might have different tabs to the query
                 // apps in `query_panel.rs`
             });
