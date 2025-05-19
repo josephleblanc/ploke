@@ -53,6 +53,7 @@ struct PlokeApp {
     selected_anchor: ui::Anchor,
     app_query_custom: QueryCustomApp,
     app_query_builder: QueryBuilderApp,
+    query_section_id: Option<egui::Id>,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -156,6 +157,7 @@ impl PlokeApp {
                 db: Arc::clone(&db),
                 cells: Rc::clone(&cells),
             },
+            query_section_id: None,
         }
     }
 
@@ -200,6 +202,15 @@ impl PlokeApp {
         ]
         .into_iter()
     }
+
+    fn modify_table_cell(&self, arg: impl Fn(_)) -> _ {
+        // AI: Implement this function so it will take a function and perform some action on a
+        // table cell. `modify_table_cell` should be capable of accepting a closure argument that
+        // can perform the same functionality as is seen in my other comments below AI!
+        todo!()
+    }
+
+
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -220,7 +231,7 @@ impl eframe::App for PlokeApp {
             self.is_processing = false;
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::TopBottomPanel::top("main_ui_area").show(ctx, |ui| {
             ui.heading("Ploke Codegraph Processor");
 
             // Target directory section
@@ -256,16 +267,13 @@ impl eframe::App for PlokeApp {
             ui.separator();
             ui.heading("Query Database");
             let mut cmd = Command::Nothing;
+
+            // Content area
             ui.horizontal(|ui| {
-                egui::Area::new(egui::Id::new( "query_panel" ))
-                    .show(ctx, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.visuals_mut().button_frame = false;
-                            self.query_bar_contents(ui, frame, &mut cmd);
-                        })
-                    });
-                // Moved logic for handling items that might have different tabs to the query
-                // apps in `query_panel.rs`
+                self.query_bar_contents(ui, frame, &mut cmd);
+            });
+            ui.horizontal(|ui| {
+                self.query_section_id = Some(ui.id());
             });
 
             if ui.button("Execute").clicked() {
@@ -277,6 +285,10 @@ impl eframe::App for PlokeApp {
             //     })
             // })
 
+        });
+        self.show_selected_app(ctx, frame);
+
+        egui::TopBottomPanel::bottom("results_section").show(ctx, |ui| {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Results:");
@@ -301,6 +313,7 @@ impl eframe::App for PlokeApp {
                 ui.label("No results to show yet.");
             }
         });
+
     }
 }
 
@@ -355,6 +368,7 @@ impl PlokeApp {
             Ok(ProcessingStatus::Complete)
         });
     }
+
     fn process_target(&mut self) {
         let start_time = std::time::Instant::now();
         self.is_processing = true;
@@ -497,7 +511,9 @@ impl PlokeApp {
                                         row.col(|ui| {
                                             let is_selected = {
                                                 let cells = self.cells.borrow();
-                                                cells.selected_cells.contains(&(row_index, col_index))
+                                                cells
+                                                    .selected_cells
+                                                    .contains(&(row_index, col_index))
                                             };
 
                                             // Create a frame with background color if selected
@@ -506,45 +522,57 @@ impl PlokeApp {
                                                     .fill(egui::Color32::from_rgb(70, 130, 180))
                                                     .inner_margin(egui::Margin::same(2))
                                             } else {
-                                                egui::Frame::none()
+                                                egui::Frame::NONE
                                                     .inner_margin(egui::Margin::same(2))
                                             };
 
                                             // Render the cell with the frame
                                             frame.show(ui, |ui| {
-                                                    // Use selectable label for better interaction
-                                                    let response = ui.selectable_label(
-                                                        is_selected,
-                                                        cell_value.to_string(),
-                                                    );
+                                                // Use selectable label for better interaction
+                                                let response = ui.selectable_label(
+                                                    is_selected,
+                                                    cell_value.to_string(),
+                                                );
 
-                                                    // Handle click to select/deselect
-                                                    // Handle click to select/deselect
-                                                    if response.clicked() {
-                                                        let cell = (row_index, col_index);
-                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
-                                                            if cells.selected_cells.contains(&cell) {
-                                                                cells.selected_cells.retain(|&c| c != cell);
-                                                            } else {
-                                                                cells.selected_cells.push(cell);
-                                                            }
+                                                // Handle click to select/deselect
+                                                // Handle click to select/deselect
+                                                if response.clicked() {
+                                                    // AI: For example here
+                                                    let cell = (row_index, col_index);
+                                                    if let Ok(mut cells) =
+                                                        self.cells.try_borrow_mut()
+                                                    {
+                                                        if cells.selected_cells.contains(&cell) {
+                                                            cells
+                                                                .selected_cells
+                                                                .retain(|&c| c != cell);
+                                                        } else {
+                                                            cells.selected_cells.push(cell);
                                                         }
                                                     }
+                                                }
 
-                                                    // Handle drag start
-                                                    if response.drag_started() {
-                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
-                                                            cells.selection_in_progress = Some((row_index, col_index));
-                                                        }
+                                                // Handle drag start
+                                                if response.drag_started() {
+                                                    // AI: or here
+                                                    if let Ok(mut cells) =
+                                                        self.cells.try_borrow_mut()
+                                                    {
+                                                        cells.selection_in_progress =
+                                                            Some((row_index, col_index));
                                                     }
+                                                }
 
-                                                    // Handle ongoing drag
-                                                    if response.dragged() {
-                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+                                                // Handle ongoing drag
+                                                if response.dragged() {
+                                                    // AI: or here
+                                                    if let Ok(mut cells) =
+                                                        self.cells.try_borrow_mut()
+                                                    {
                                                         cells.selection_in_progress = None;
                                                     }
-                                                    }
-                                                });
+                                                }
+                                            });
                                         });
                                     }
                                 }
@@ -565,26 +593,20 @@ impl PlokeApp {
                 });
         });
     }
+
     fn handle_cell_click(&mut self, row: usize, col: usize) {
         let cell = (row, col);
 
         // Toggle selection state
-        self.modfy_table_cell(cell);
-    }
-
-    fn modfy_table_cell(&mut self, cell: (usize, usize)) {
-        if let Ok(mut cells) = self.cells.try_borrow_mut() {
-            fun_name(cell, &mut cells);
-        }
+        self.modify_table_cell(move |cell| {});
     }
 
     fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
         // Clear previous selection
         match self.cells.try_borrow_mut() {
             Ok(mut cells) => {
-
-            if let Some((start_row, start_col)) = cells.selection_in_progress {
-                cells.selected_cells.clear();
+                if let Some((start_row, start_col)) = cells.selection_in_progress {
+                    cells.selected_cells.clear();
                     // Calculate the rectangle of selected cells
                     let min_row = start_row.min(current_row);
                     let max_row = start_row.max(current_row);
@@ -602,6 +624,14 @@ impl PlokeApp {
             Err(e) => log_cell_error(e),
         }
     }
+    fn show_selected_app(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let selected_anchor = self.selected_anchor;
+        for (_name, anchor, app) in self.apps_iter_mut() {
+            if anchor == selected_anchor || ctx.memory(|mem| mem.everything_is_visible()) {
+                app.update(ctx, frame);
+            }
+        }
+    }
 
     pub(crate) fn reset_selected_cells(&mut self) {
         if let Ok(mut cells) = self.cells.try_borrow_mut() {
@@ -612,7 +642,7 @@ impl PlokeApp {
     }
 }
 
-fn fun_name(cell: (usize, usize), cells: &mut TableCells) {
+fn push_selected(cell: (usize, usize), cells: &mut TableCells) {
     if cells.selected_cells.contains(&cell) {
         cells.selected_cells.retain(|&c| c != cell);
     } else {
