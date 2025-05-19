@@ -1,0 +1,101 @@
+use std::sync::Arc;
+
+use ploke_db::{Database, QueryResult};
+use ploke_error::Error;
+use serde::{Deserialize, Serialize};
+
+use crate::Cells;
+
+
+pub struct QueryCustomApp<'a> {
+    // should only be an immutable state here?
+    db: Arc<Database>,
+    custom_query: String,
+    cells: &'a Cells,
+    results: &'a Option<Result<QueryResult, Error>>
+}
+
+impl<'a> eframe::App for QueryCustomApp<'a> {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default()
+            .show(ctx, |ui| {
+                ui.label("Query:");
+                ui.code_editor(&mut self.custom_query);
+                ui.vertical(|ui| {
+                    ui.label("Selected Items:");
+                    ui.horizontal_top(|ui| {
+                        if let Some(iter_selected) = self.processed_rows() {
+                            for item in iter_selected {
+                                if ui.button("Add Filter").clicked() {
+                                    println!("Do something!!!");
+                                }
+                                ui.label(item);
+                            }
+                        }
+                    })
+                })
+
+            });
+    }
+
+}
+
+impl<'a> QueryCustomApp<'a> {
+    fn processed_rows(&self) -> Option<impl Iterator<Item = String>> {
+        if let Some(Ok(q)) = &self.results {
+            return Some(
+                self.cells.selected_cells
+                    .iter()
+                    .map(|(i, j)| format!("{}", q.rows[*i][*j])),
+            );
+        }
+        None
+    }
+}
+
+
+pub struct QueryBuilderApp<'a> {
+    // should only be an immutable state here?
+    db: Arc<Database>,
+    cells: &'a mut Cells,
+}
+
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[must_use]
+pub enum Anchor {
+    QueryCustom,
+    QueryBuilder,
+}
+
+impl Anchor {
+    fn all() -> Vec<Self> {
+        vec![ Self::QueryCustom,
+        Self::QueryBuilder, ]
+    }
+
+    fn from_str_case_insensitive(anchor: &str) -> Option<Self> {
+        let anchor = anchor.to_lowercase();
+        Self::all().into_iter().find(|x| x.to_string() == anchor)
+    }
+}
+
+impl std::fmt::Display for Anchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut name = format!("{self:?}");
+        name.make_ascii_lowercase();
+        f.write_str(&name)
+    }
+}
+
+impl From<Anchor> for egui::WidgetText {
+    fn from(value: Anchor) -> Self {
+        Self::from(value.to_string())
+    }
+}
+
+impl Default for Anchor {
+    fn default() -> Self {
+        Self::QueryCustom
+    }
+}

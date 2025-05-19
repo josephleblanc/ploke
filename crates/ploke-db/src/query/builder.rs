@@ -1,7 +1,7 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
-use ploke_error::{Error, WarningError};
+use ploke_error::Error;
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
     MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
@@ -17,20 +17,27 @@ use ploke_transform::schema::types::{
     SliceTypeSchema, TraitObjectTypeSchema, TupleTypeSchema, UnknownTypeSchema,
 };
 
-use crate::error::DbWarning;
 use crate::{DbError, QueryResult};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+
+pub const LOG_TARGET_QUERY_BUILDER: &str = "query_builder";
 
 /// Main query builder struct
+#[derive(Debug, Clone)]
 pub struct QueryBuilder<'a> {
+    // AI: So this is my builder so far, which is taking and returning `Self`, but it seems like it
+    // might make more sense to be using `&mut self` on most of my methods instead, since I am
+    // building this in large part for a UI that allows for mutating the query through `egui`
+    // buttons and interface.
+    // What are the pros and cons of each approach AI?
     db: &'a cozo::Db<cozo::MemStorage>,
     selected_node: Option<NodeType>,
-    lhs: Vec<&'static str>,
+    lhs: HashSet<&'static str>,
     filters: Vec<String>,
     limit: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum NodeType {
     Function,
     Struct,
@@ -73,7 +80,7 @@ impl<'a> QueryBuilder<'a> {
         Self {
             db,
             selected_node: None,
-            lhs: Vec::new(),
+            lhs: HashSet::new(),
             filters: Vec::new(),
             limit: None,
         }
@@ -103,21 +110,45 @@ impl<'a> QueryBuilder<'a> {
         self
     }
 
-    pub fn add_lhs(&mut self, field: &'static str) -> Result<(), Error> {
+    /// Add a field value to the lhs (left hand side) of a cozo query for a node, depending on the
+    /// currently selected node type in `self.selected_node`.
+    /// ```rust
+    /// use ploke_db::QueryBuilder;
+    /// use ploke_transform::schema::primary_nodes::FunctionNodeSchema;
+    /// use cozo::{Db, MemStorage};
+    ///
+    /// let db = Db::new(MemStorage::default()).expect("Failed to create database");
+    /// db.initialize().expect("Failed to initialize database");
+    ///
+    /// let schema = &FunctionNodeSchema::SCHEMA;
+    /// let name_field = schema.name();
+    ///
+    /// let builder = QueryBuilder::new(&db)
+    ///     .structs()
+    ///     .add_lhs(name_field);
+    ///
+    /// assert!(builder.has_field(name_field));
+    /// assert!(!builder.has_field("random_name"));
+    /// ```
+    pub fn add_lhs(mut self, field: &'static str) -> Self {
         if let Some(node_ty) = self.selected_node {
             if node_ty.fields().contains(&field) {
-                self.lhs.push(field);
-                Ok(())
+                self.lhs.insert(field);
             } else {
-                Err(Error::Warning(WarningError::from(DbWarning::QueryBuild(
-                    format!("Cannot add field {} to {:?}", field, node_ty),
-                ))))
+                log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                    "Cannot add field {} to {:?}", field, node_ty
+                );
             }
         } else {
-            Err(Error::Warning(WarningError::from(DbWarning::QueryBuild(
-                format!("Calling add_lhs on None: {}", field),
-            ))))
+            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                "Calling add_lhs on None: {}", field
+            );
         }
+        self
+    }
+
+    pub fn has_field(&self, field: &'static str) -> bool {
+        self.lhs.contains(field)
     }
 
     /// Execute the constructed query
@@ -126,10 +157,14 @@ impl<'a> QueryBuilder<'a> {
             Some(NodeType::Function) => FunctionNodeSchema::SCHEMA.relation,
             Some(NodeType::Struct) => StructNodeSchema::SCHEMA.relation,
             None => {
-                return Err(Error::from(DbError::QueryConstruction("No node type selected".into())))
+                return Err(Error::from(DbError::QueryConstruction(
+                    "No node type selected".into(),
+                )))
             }
             _ => {
-                return Err(Error::from(DbError::QueryConstruction("Warning! Node type not yet supported".into())))
+                return Err(Error::from(DbError::QueryConstruction(
+                    "Warning! Node type not yet supported".into(),
+                )))
             }
         };
 
@@ -249,3 +284,25 @@ define_static_fields!(
 //         }
 // }
 // }
+#[cfg(test)]
+mod test {
+    use ploke_transform::schema::primary_nodes::StructNodeSchema;
+
+    #[test]
+    fn add_lhs() {
+        use crate::QueryBuilder;
+        use cozo::{Db, MemStorage};
+
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+
+        let schema = &StructNodeSchema::SCHEMA;
+        let name_field = schema.name();
+
+        let builder = QueryBuilder::new(&db).structs().add_lhs(name_field);
+
+        eprintln!("{:#?}", builder);
+        assert!(builder.has_field(name_field));
+        assert!(!builder.has_field("random_field_name"));
+    }
+}

@@ -13,6 +13,7 @@ serde_json = { workspace = true }
 # error handling
 ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
+log = { workspace = true }
 
 # pre-caching the schema fields for queries
 lazy_static = "1.4.0" # Added lazy_static

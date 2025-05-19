@@ -43,3 +43,4 @@ flume = { workspace = true }
 
 [features]
 multithreaded = []
+serde = []

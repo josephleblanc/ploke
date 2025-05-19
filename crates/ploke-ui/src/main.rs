@@ -21,16 +21,20 @@ use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
 #[cfg(feature = "multithreaded")]
 use flume::{Sender, bounded};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 #[cfg(feature = "multithreaded")]
 use std::thread;
+use ui::Anchor;
+use ui::query_panel::{QueryBuilderApp, QueryCustomApp};
 
 pub(crate) const LOG_QUERY: &str = "log_query";
 
 struct PlokeApp {
     db: Arc<Database>,
-    query: String,
-    results: Option<Result<QueryResult, Error>>,
+    query: Rc<RefCell<String>>,
+    results: Rc<RefCell<Option<Result<QueryResult, Error>>>>,
     last_query_time: Option<std::time::Duration>,
     target_directory: String,
     is_processing: bool,
@@ -43,12 +47,12 @@ struct PlokeApp {
     status_tx: Sender<ProcessingStatus>,
 
     // Table interaction state
-    selected_cells: Vec<(usize, usize)>, // (row, column) indices
-    selection_in_progress: Option<(usize, usize)>, // Starting cell for drag selection
-    control_groups: HashMap<usize, Vec<(usize, usize)>>, // Control group number -> cells
+    cells: Rc<RefCell<TableCells>>,
     // TODO: Maybe move the query area into its own app? Trying to follow organization of
     // egui demo here, but might be overkill?
-    selected_anchor: Anchor,
+    selected_anchor: ui::Anchor,
+    app_query_custom: QueryCustomApp,
+    app_query_builder: QueryBuilderApp,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -75,6 +79,31 @@ impl std::fmt::Display for ProcessingStatus {
     }
 }
 
+/// Contains data for the UI to reference the selected cells in the returned value from a query.
+pub struct TableCells {
+    selected_cells: Vec<(usize, usize)>, // (row, column) indices
+    selection_in_progress: Option<(usize, usize)>, // Starting cell for drag selection
+    control_groups: HashMap<usize, Vec<(usize, usize)>>, // Control group number -> cells
+}
+
+impl TableCells {
+    pub(crate) fn reset_selected_cells(cells: &mut TableCells) {
+        cells.selected_cells.clear();
+        cells.selection_in_progress = None;
+        cells.control_groups.clear();
+    }
+}
+
+impl Default for TableCells {
+    fn default() -> Self {
+        Self {
+            selected_cells: Vec::new(),
+            selection_in_progress: None,
+            control_groups: HashMap::new(),
+        }
+    }
+}
+
 impl PlokeApp {
     fn new() -> Self {
         let _ = env_logger::builder()
@@ -85,6 +114,13 @@ impl PlokeApp {
         db.initialize().expect("Failed to initialize database");
         let db = Arc::new(Database::new(db));
 
+        let cells = Rc::new(RefCell::new(TableCells::default()));
+        let query_results = Rc::new(RefCell::new(None));
+
+        let default_query = Rc::new(RefCell::new(String::from(
+            "?[name, id, body] := *function { name, id, body }",
+        )));
+
         // Initialize schemas
         create_schema_all(&db).expect("Failed to create schemas");
 
@@ -94,8 +130,8 @@ impl PlokeApp {
 
         Self {
             db,
-            query: String::from("?[name, id, body] := *function { name, id, body }"),
-            results: None,
+            query: default_query,
+            results: query_results,
             last_query_time: None,
             target_directory: String::from(
                 "/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes",
@@ -107,32 +143,54 @@ impl PlokeApp {
             status_rx,
             #[cfg(feature = "multithreaded")]
             status_tx,
-            selected_cells: Vec::new(),
-            selection_in_progress: None,
-            control_groups: HashMap::new(),
-            selected_anchor: Anchor::QueryCustom,
+            cells,
+            selected_anchor: ui::Anchor::QueryCustom,
+            app_query_custom: todo!(),
+            app_query_builder: todo!(),
         }
     }
 
-    fn processed_rows(&self) -> Option<impl Iterator<Item = String>> {
-        // let iter_strs = self.results.map(|r| {r.map(|q| {
-        //     self.selected_cells.iter().map(|(i, j)| {
-        //         format_args!("{}", q.rows[*i][*j])
-        //     })
-        // })});
-        if let Some(Ok(q)) = &self.results {
-            return Some(
-                self.selected_cells
-                    .iter()
-                    .map(|(i, j)| format!("{}", q.rows[*i][*j])),
-            );
-        }
-        None
-    }
-
-    fn bar_contents(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame, cmd: &mut Command) {
+    fn query_bar_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        frame: &mut eframe::Frame,
+        cmd: &mut Command,
+    ) {
         let mut selected_anchor = self.selected_anchor;
+        // Iterates over the buttons, both drawing them and setting the selected anchor based on
+        // the clicked button.
+        for (name, anchor, _app) in self.apps_iter_mut() {
+            if ui
+                .selectable_label(selected_anchor == anchor, name)
+                .clicked()
+            {
+                selected_anchor = anchor;
+            }
+        }
+
+        // original on egui demo is self.state.selected_anchor
+        self.selected_anchor = selected_anchor;
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {});
         todo!()
+    }
+
+    pub fn apps_iter_mut(
+        &mut self,
+    ) -> impl Iterator<Item = (&'static str, Anchor, &mut dyn eframe::App)> {
+        vec![
+            (
+                "Custom Query",
+                Anchor::QueryCustom,
+                &mut self.app_query_custom as &mut dyn eframe::App,
+            ),
+            (
+                "Query Builder",
+                Anchor::QueryBuilder,
+                &mut self.app_query_builder as &mut dyn eframe::App,
+            ),
+        ]
+        .into_iter()
     }
 }
 
@@ -144,7 +202,7 @@ enum Command {
 }
 
 impl eframe::App for PlokeApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // Check for async status updates
         #[cfg(feature = "multithreaded")]
         if let Ok(status) = self.status_rx.try_recv() {
@@ -189,31 +247,18 @@ impl eframe::App for PlokeApp {
             // Query section
             ui.separator();
             ui.heading("Query Database");
-            egui::TopBottomPanel::top("query_app_top_bar").show(ctx, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.visuals_mut().button_frame = false;
-                    self.bar_contents(ui, frame, cmd);
-                })
-            });
-            ui.horizontal(|ui| {
-                ui.label("Query:");
-                ui.code_editor(&mut self.query);
-                ui.vertical(|ui| {
-                    ui.label("Selected Items:");
-                    ui.horizontal_top(|ui| {
-                        if let Some(iter_selected) = self.processed_rows() {
-                            for item in iter_selected {
-                                if ui.button("Add Filter").clicked() {
-                                    println!("Do something!!!");
-                                }
-                                ui.label(item);
-                            }
-                        }
+            let mut cmd = Command::Nothing;
+            egui::TopBottomPanel::top("query_app_top_bar")
+                .frame(egui::Frame::new().inner_margin(4))
+                .show(ctx, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.visuals_mut().button_frame = false;
+                        self.query_bar_contents(ui, frame, &mut cmd);
                     })
-                    // for item in self.processed_rows() {
-                    //     ui.label(item);
-                    // }
-                })
+                });
+            ui.horizontal(|ui| {
+                // Moved logic for handling items that might have different tabs to the query
+                // apps in `query_panel.rs`
             });
 
             if ui.button("Execute").clicked() {
@@ -233,9 +278,7 @@ impl eframe::App for PlokeApp {
                 }
             });
 
-            // Try to parse as JSON first (common Cozo output format)
-
-            if let Some(query_result) = &self.results {
+            if let Some(query_result) = &*self.results.borrow() {
                 match query_result {
                     Ok(q_header_rows) => {
                         let q_clone = q_header_rows.clone();
@@ -378,19 +421,24 @@ impl PlokeApp {
 
     fn execute_query(&mut self) {
         let start_time = std::time::Instant::now();
-        self.results = Some(self.db.raw_query(&self.query).map_err(Error::from));
+        let query = match self.selected_anchor {
+            Anchor::QueryCustom => self.app_query_custom.custom_query.clone(),
+            Anchor::QueryBuilder => self.app_query_builder.current_builder_query.clone(),
+        };
+        let db_results = Some(self.db.raw_query(&query).map_err(Error::from));
+        self.results = Rc::new(RefCell::new(db_results));
         self.last_query_time = Some(start_time.elapsed());
         // query logging
-        match self.db.raw_query(&self.query) {
-            Ok(_) => {
+        match &*self.results.borrow() {
+            Some(Ok(result)) => {
                 log::info!(target: LOG_QUERY,
                     "{} {} | Number of matches: {}",
                     "Query Status:".log_step(),
                     "Success".log_spring_green(),
-                    self.results.iter().count()
+                    result.rows.len()
                 );
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 log::error!(target: LOG_QUERY,
                     "{} {} | {:#?}",
                     "Query Status:".log_step(),
@@ -398,6 +446,7 @@ impl PlokeApp {
                     e
                 );
             }
+            None => {}
         }
     }
 
@@ -437,54 +486,56 @@ impl PlokeApp {
                                 if let Some(data_row) = q.rows.get(row_index) {
                                     for (col_index, cell_value) in data_row.iter().enumerate() {
                                         row.col(|ui| {
-                                            // Check if this cell is selected
-                                            let is_selected = self
-                                                .selected_cells
-                                                .contains(&(row_index, col_index));
+                                            if let Ok(cells) = cells.try_borrow_mut() {
+                                                // Check if this cell is selected
+                                                let is_selected = cells
+                                                    .selected_cells
+                                                    .contains(&(row_index, col_index));
 
-                                            // Create a frame with background color if selected
-                                            let frame = if is_selected {
-                                                egui::Frame::NONE
-                                                    .fill(egui::Color32::from_rgb(70, 130, 180))
-                                                    .inner_margin(egui::Margin::same(2))
-                                            } else {
-                                                egui::Frame::none()
-                                                    .inner_margin(egui::Margin::same(2))
-                                            };
+                                                // Create a frame with background color if selected
+                                                let frame = if is_selected {
+                                                    egui::Frame::NONE
+                                                        .fill(egui::Color32::from_rgb(70, 130, 180))
+                                                        .inner_margin(egui::Margin::same(2))
+                                                } else {
+                                                    egui::Frame::none()
+                                                        .inner_margin(egui::Margin::same(2))
+                                                };
 
-                                            // Render the cell with the frame
-                                            frame.show(ui, |ui| {
-                                                // Use selectable label for better interaction
-                                                let response = ui.selectable_label(
-                                                    is_selected,
-                                                    cell_value.to_string(),
-                                                );
-
-                                                // Handle click to select/deselect
-                                                if response.clicked() {
-                                                    self.handle_cell_click(row_index, col_index);
-                                                }
-
-                                                // Handle drag start
-                                                if response.drag_started() {
-                                                    self.selection_in_progress =
-                                                        Some((row_index, col_index));
-                                                }
-
-                                                // Handle ongoing drag
-                                                if response.dragged()
-                                                    && self.selection_in_progress.is_some()
-                                                {
-                                                    self.update_drag_selection(
-                                                        row_index, col_index,
+                                                // Render the cell with the frame
+                                                frame.show(ui, |ui| {
+                                                    // Use selectable label for better interaction
+                                                    let response = ui.selectable_label(
+                                                        is_selected,
+                                                        cell_value.to_string(),
                                                     );
-                                                }
 
-                                                // Handle drag release
-                                                if response.drag_released() {
-                                                    self.selection_in_progress = None;
-                                                }
-                                            });
+                                                    // Handle click to select/deselect
+                                                    if response.clicked() {
+                                                        self.handle_cell_click(row_index, col_index);
+                                                    }
+
+                                                    // Handle drag start
+                                                    if response.drag_started() {
+                                                        cells.selection_in_progress =
+                                                            Some((row_index, col_index));
+                                                    }
+
+                                                    // Handle ongoing drag
+                                                    if response.dragged()
+                                                    && cells.selection_in_progress.is_some()
+                                                    {
+                                                        self.update_drag_selection(
+                                                            row_index, col_index,
+                                                        );
+                                                    }
+
+                                                    // Handle drag release
+                                                    if response.drag_released() {
+                                                        cells.selection_in_progress = None;
+                                                    }
+                                                });
+                                            }
                                         });
                                     }
                                 }
@@ -509,38 +560,69 @@ impl PlokeApp {
         let cell = (row, col);
 
         // Toggle selection state
-        if self.selected_cells.contains(&cell) {
-            self.selected_cells.retain(|&c| c != cell);
-        } else {
-            self.selected_cells.push(cell);
+        self.modfy_table_cell(cell);
+    }
+
+    fn modfy_table_cell(&mut self, cell: (usize, usize)) {
+        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+            fun_name(cell, cells);
         }
     }
 
     fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
-        if let Some((start_row, start_col)) = self.selection_in_progress {
-            // Clear previous selection
-            self.selected_cells.clear();
+        // Clear previous selection
+        match self.cells.try_borrow_mut() {
+            Ok(cells) => {
+                if let Some((start_row, start_col)) = cells.selection_in_progress {
+                    self.reset_selected_cells();
+                    // Calculate the rectangle of selected cells
+                    let min_row = start_row.min(current_row);
+                    let max_row = start_row.max(current_row);
+                    let min_col = start_col.min(current_col);
+                    let max_col = start_col.max(current_col);
 
-            // Calculate the rectangle of selected cells
-            let min_row = start_row.min(current_row);
-            let max_row = start_row.max(current_row);
-            let min_col = start_col.min(current_col);
-            let max_col = start_col.max(current_col);
-
-            // Add all cells in the rectangle to selection
-            for row in min_row..=max_row {
-                for col in min_col..=max_col {
-                    self.selected_cells.push((row, col));
+                    // Add all cells in the rectangle to selection
+                    for row in min_row..=max_row {
+                        for col in min_col..=max_col {
+                            cells.selected_cells.push((row, col));
+                        }
+                    }
                 }
             }
+
+            Err(e) => log_cell_error(e),
         }
     }
 
     pub(crate) fn reset_selected_cells(&mut self) {
-        self.selected_cells.clear();
-        self.selection_in_progress = None;
-        self.control_groups.clear();
+        match self.cells.try_borrow_mut() {
+            Ok(mut cells) => {
+                cells.selected_cells.clear();
+                cells.selection_in_progress = None;
+                cells.control_groups.clear();
+            }
+            Err(e) => {
+                log_cell_error(e);
+            }
+        };
     }
+}
+
+fn fun_name(cell: (usize, usize), mut cells: std::cell::RefMut<'_, TableCells>) {
+    if cells.selected_cells.contains(&cell) {
+        cells.selected_cells.retain(|&c| c != cell);
+    } else {
+        cells.selected_cells.push(cell);
+    }
+}
+
+fn log_cell_error(e: std::cell::BorrowMutError) {
+    log::error!(target: LOG_QUERY,
+        "{} {} | {}",
+        "borrow_mut Error".log_error(),
+        "reset_selected_cells".log_step(),
+        e.to_string()
+    );
 }
 
 fn main() -> Result<(), eframe::Error> {

@@ -3512,6 +3512,7 @@ version = "0.1.0"
 dependencies = [
  "cozo",
  "lazy_static",
+ "log",
  "ploke-error",
  "ploke-transform",
  "serde",
