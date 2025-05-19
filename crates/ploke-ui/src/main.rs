@@ -278,11 +278,11 @@ impl eframe::App for PlokeApp {
                 }
             });
 
-            if let Some(query_result) = &*self.results.borrow() {
-                match query_result {
-                    Ok(q_header_rows) => {
-                        let q_clone = q_header_rows.clone();
-                        self.render_cozo_table(ui, &q_clone);
+            let query_result = self.results.borrow();
+            if let Some(q_header_rows) = &*query_result {
+                match q_header_rows {
+                    Ok(q) => {
+                        self.render_cozo_table(ui, q);
                     }
                     Err(e) => {
                         ui.label(format!("{:#?}", e));
@@ -486,7 +486,7 @@ impl PlokeApp {
                                 if let Some(data_row) = q.rows.get(row_index) {
                                     for (col_index, cell_value) in data_row.iter().enumerate() {
                                         row.col(|ui| {
-                                            if let Ok(cells) = cells.try_borrow_mut() {
+                                            if let Ok(mut cells) = self.cells.try_borrow_mut() {
                                                 // Check if this cell is selected
                                                 let is_selected = cells
                                                     .selected_cells
@@ -565,16 +565,15 @@ impl PlokeApp {
 
     fn modfy_table_cell(&mut self, cell: (usize, usize)) {
         if let Ok(mut cells) = self.cells.try_borrow_mut() {
-            fun_name(cell, cells);
+            fun_name(cell, &mut cells);
         }
     }
 
     fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
         // Clear previous selection
-        match self.cells.try_borrow_mut() {
-            Ok(cells) => {
-                if let Some((start_row, start_col)) = cells.selection_in_progress {
-                    self.reset_selected_cells();
+        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+            if let Some((start_row, start_col)) = cells.selection_in_progress {
+                cells.selected_cells.clear();
                     // Calculate the rectangle of selected cells
                     let min_row = start_row.min(current_row);
                     let max_row = start_row.max(current_row);
@@ -595,20 +594,15 @@ impl PlokeApp {
     }
 
     pub(crate) fn reset_selected_cells(&mut self) {
-        match self.cells.try_borrow_mut() {
-            Ok(mut cells) => {
-                cells.selected_cells.clear();
-                cells.selection_in_progress = None;
-                cells.control_groups.clear();
-            }
-            Err(e) => {
-                log_cell_error(e);
-            }
-        };
+        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+            cells.selected_cells.clear();
+            cells.selection_in_progress = None;
+            cells.control_groups.clear();
+        }
     }
 }
 
-fn fun_name(cell: (usize, usize), mut cells: std::cell::RefMut<'_, TableCells>) {
+fn fun_name(cell: (usize, usize), cells: &mut TableCells) {
     if cells.selected_cells.contains(&cell) {
         cells.selected_cells.retain(|&c| c != cell);
     } else {
