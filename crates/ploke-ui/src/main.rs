@@ -129,9 +129,9 @@ impl PlokeApp {
         let (status_tx, status_rx) = bounded(100);
 
         Self {
-            db,
+            db: Arc::clone(&db),
             query: default_query,
-            results: query_results,
+            results: Rc::clone(&query_results),
             last_query_time: None,
             target_directory: String::from(
                 "/home/brasides/code/second_aider_dir/ploke/tests/fixture_crates/fixture_nodes",
