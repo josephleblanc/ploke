@@ -203,11 +203,15 @@ impl PlokeApp {
         .into_iter()
     }
 
-    fn modify_table_cell(&self, arg: impl Fn(_)) -> _ {
-        // AI: Implement this function so it will take a function and perform some action on a
-        // table cell. `modify_table_cell` should be capable of accepting a closure argument that
-        // can perform the same functionality as is seen in my other comments below AI!
-        todo!()
+    fn modify_table_cell<F>(&self, action: F) 
+    where
+        F: FnOnce(&mut TableCells),
+    {
+        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+            action(&mut cells);
+        } else {
+            log_cell_error(std::cell::BorrowMutError);
+        }
     }
 
 
@@ -537,40 +541,28 @@ impl PlokeApp {
                                                 // Handle click to select/deselect
                                                 // Handle click to select/deselect
                                                 if response.clicked() {
-                                                    // AI: For example here
                                                     let cell = (row_index, col_index);
-                                                    if let Ok(mut cells) =
-                                                        self.cells.try_borrow_mut()
-                                                    {
+                                                    self.modify_table_cell(|cells| {
                                                         if cells.selected_cells.contains(&cell) {
-                                                            cells
-                                                                .selected_cells
-                                                                .retain(|&c| c != cell);
+                                                            cells.selected_cells.retain(|&c| c != cell);
                                                         } else {
                                                             cells.selected_cells.push(cell);
                                                         }
-                                                    }
+                                                    });
                                                 }
 
                                                 // Handle drag start
                                                 if response.drag_started() {
-                                                    // AI: or here
-                                                    if let Ok(mut cells) =
-                                                        self.cells.try_borrow_mut()
-                                                    {
-                                                        cells.selection_in_progress =
-                                                            Some((row_index, col_index));
-                                                    }
+                                                    self.modify_table_cell(|cells| {
+                                                        cells.selection_in_progress = Some((row_index, col_index));
+                                                    });
                                                 }
 
                                                 // Handle ongoing drag
                                                 if response.dragged() {
-                                                    // AI: or here
-                                                    if let Ok(mut cells) =
-                                                        self.cells.try_borrow_mut()
-                                                    {
+                                                    self.modify_table_cell(|cells| {
                                                         cells.selection_in_progress = None;
-                                                    }
+                                                    });
                                                 }
                                             });
                                         });
