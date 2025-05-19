@@ -282,7 +282,9 @@ impl eframe::App for PlokeApp {
             if let Some(q_header_rows) = &*query_result {
                 match q_header_rows {
                     Ok(q) => {
-                        self.render_cozo_table(ui, q);
+                        let q = q.clone(); // Clone the result to avoid borrow issues
+                        drop(query_result);
+                        self.render_cozo_table(ui, &q);
                     }
                     Err(e) => {
                         ui.label(format!("{:#?}", e));
@@ -486,24 +488,23 @@ impl PlokeApp {
                                 if let Some(data_row) = q.rows.get(row_index) {
                                     for (col_index, cell_value) in data_row.iter().enumerate() {
                                         row.col(|ui| {
-                                            if let Ok(mut cells) = self.cells.try_borrow_mut() {
-                                                // Check if this cell is selected
-                                                let is_selected = cells
-                                                    .selected_cells
-                                                    .contains(&(row_index, col_index));
+                                            let is_selected = {
+                                                let cells = self.cells.borrow();
+                                                cells.selected_cells.contains(&(row_index, col_index))
+                                            };
 
-                                                // Create a frame with background color if selected
-                                                let frame = if is_selected {
-                                                    egui::Frame::NONE
-                                                        .fill(egui::Color32::from_rgb(70, 130, 180))
-                                                        .inner_margin(egui::Margin::same(2))
-                                                } else {
-                                                    egui::Frame::none()
-                                                        .inner_margin(egui::Margin::same(2))
-                                                };
+                                            // Create a frame with background color if selected
+                                            let frame = if is_selected {
+                                                egui::Frame::NONE
+                                                    .fill(egui::Color32::from_rgb(70, 130, 180))
+                                                    .inner_margin(egui::Margin::same(2))
+                                            } else {
+                                                egui::Frame::none()
+                                                    .inner_margin(egui::Margin::same(2))
+                                            };
 
-                                                // Render the cell with the frame
-                                                frame.show(ui, |ui| {
+                                            // Render the cell with the frame
+                                            frame.show(ui, |ui| {
                                                     // Use selectable label for better interaction
                                                     let response = ui.selectable_label(
                                                         is_selected,
@@ -511,31 +512,32 @@ impl PlokeApp {
                                                     );
 
                                                     // Handle click to select/deselect
+                                                    // Handle click to select/deselect
                                                     if response.clicked() {
-                                                        self.handle_cell_click(row_index, col_index);
+                                                        let cell = (row_index, col_index);
+                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+                                                            if cells.selected_cells.contains(&cell) {
+                                                                cells.selected_cells.retain(|&c| c != cell);
+                                                            } else {
+                                                                cells.selected_cells.push(cell);
+                                                            }
+                                                        }
                                                     }
 
                                                     // Handle drag start
                                                     if response.drag_started() {
-                                                        cells.selection_in_progress =
-                                                            Some((row_index, col_index));
+                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+                                                            cells.selection_in_progress = Some((row_index, col_index));
+                                                        }
                                                     }
 
                                                     // Handle ongoing drag
-                                                    if response.dragged()
-                                                    && cells.selection_in_progress.is_some()
-                                                    {
-                                                        self.update_drag_selection(
-                                                            row_index, col_index,
-                                                        );
-                                                    }
-
-                                                    // Handle drag release
-                                                    if response.drag_released() {
+                                                    if response.dragged() {
+                                                        if let Ok(mut cells) = self.cells.try_borrow_mut() {
                                                         cells.selection_in_progress = None;
                                                     }
+                                                    }
                                                 });
-                                            }
                                         });
                                     }
                                 }
@@ -571,7 +573,9 @@ impl PlokeApp {
 
     fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
         // Clear previous selection
-        if let Ok(mut cells) = self.cells.try_borrow_mut() {
+        match self.cells.try_borrow_mut() {
+            Ok(mut cells) => {
+
             if let Some((start_row, start_col)) = cells.selection_in_progress {
                 cells.selected_cells.clear();
                     // Calculate the rectangle of selected cells
@@ -588,7 +592,6 @@ impl PlokeApp {
                     }
                 }
             }
-
             Err(e) => log_cell_error(e),
         }
     }
