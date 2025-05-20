@@ -53,8 +53,6 @@ struct PlokeApp {
     app_query_custom: QueryCustomApp,
     app_query_builder: QueryBuilderApp,
     query_section_id: Option<egui::Id>,
-    query_section_height: f32,
-    is_resizing_query_panel: bool,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -262,26 +260,14 @@ impl eframe::App for PlokeApp {
             // })
         });
 
-        // self.show_selected_app(ctx, frame);
-        // Replace the show_selected_app() call with:
+        // Show the query panel with proper resizing
         egui::TopBottomPanel::top("query")
             .resizable(true)
             .min_height(100.0)
+            .default_height(150.0)
             .show(ctx, |ui| {
                 self.show_selected_app(ctx, frame);
-
-                if ui.ui_contains_pointer() && ui.input(|i| i.pointer.primary_down()) {
-                    self.is_resizing_query_panel = true;
-                }
             });
-        if self.is_resizing_query_panel {
-            if let Some(pointer_pos) = ctx.pointer_latest_pos() {
-                self.query_section_height = pointer_pos.y - ctx.used_rect().top();
-            }
-            if !ctx.input(|i| i.pointer.primary_down()) {
-                self.is_resizing_query_panel = false;
-            }
-        }
         #[cfg(feature = "strip_table")]
         use egui_extras::{Size, StripBuilder};
         #[cfg(feature = "strip_table")]
