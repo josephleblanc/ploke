@@ -127,8 +127,6 @@ impl PlokeApp {
                 cells: Rc::clone(&cells),
             },
             query_section_id: None,
-            query_section_height: 150.0,
-            is_resizing_query_panel: false,
         }
     }
 
@@ -264,7 +262,8 @@ impl eframe::App for PlokeApp {
         egui::TopBottomPanel::top("query")
             .resizable(true)
             .min_height(100.0)
-            .default_height(150.0)
+            .default_height(200.0)
+            .show_separator_line(true)
             .show(ctx, |ui| {
                 self.show_selected_app(ctx, frame);
             });
