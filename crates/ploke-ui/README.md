@@ -49,13 +49,16 @@ code_graph_navigator_ui/
 
 #### Overall Organization
 
-- [ ] Implement tab-like selection of window components
-  - [ ] Add a "Builder" vs "Custom" Query box
+- [✔] Implement tab-like selection of window components
+  - [✔] Add a "Builder" vs "Custom" Query box
 
 #### Query Box
 - [ ] Execute query on `<Shift-Enter>`
 - [ ] Add default queries in a dropdown menu.
   - [ ] Add tabs for different kinds of common queries, tbd.
+    - [ ] Basic prototype
+    - [ ] Full queries for each query type
+    - [ ] Common queries for, e.g. traversal to the `n`th connected relation, etc tbd
 - [ ] Add syntax highlighting for datalog queries
   - [ ] Look into the [syntect] crate for syntax highlighting through [egui_extras].
 
@@ -94,7 +97,7 @@ code_graph_navigator_ui/
 
 ### ploke-db
 
-- [ ] Implement query-builder
+- [✔] Implement query-builder
 
 
 [egui_extras]:https://docs.rs/egui_extras/latest/egui_extras/index.html

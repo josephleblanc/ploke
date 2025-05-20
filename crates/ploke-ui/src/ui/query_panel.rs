@@ -16,7 +16,7 @@ pub struct QueryCustomApp {
     pub results: Rc<RefCell<Option<Result<QueryResult, Error>>>>,
 }
 
-impl<'a> eframe::App for QueryCustomApp {
+impl eframe::App for QueryCustomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // NOTE: cells is mut for now, but could be immut here.
         if let Ok( cells ) = self.cells.try_borrow_mut() {
@@ -44,22 +44,22 @@ impl<'a> eframe::App for QueryCustomApp {
                     // })
                 });
             } else {
-                log::warn!(target: LOG_QUERY, 
-                    "{} {} | {:#?}",
-                    "QueryCustomApp".log_header(),
-                    "Database Error".log_error(),
-                    "e"
-                );
+                // log::warn!(target: LOG_QUERY, 
+                //     "{} {} | {:#?}",
+                //     "QueryCustomApp".log_header(),
+                //     "Database Error".log_error(),
+                //     "e"
+                // );
 
                 }
             });
             } else {
-                log::warn!(target: LOG_QUERY, 
-                "{} {} {}",
-                "QueryCustomApp".log_header(),
-                "Accessing TableCells".log_step(),
-                "Blocked access to mutable state self.cells".log_foreground_primary()
-            );
+                // log::warn!(target: LOG_QUERY, 
+                // "{} {} {}",
+                // "QueryCustomApp".log_header(),
+                // "Accessing TableCells".log_step(),
+                // "Blocked access to mutable state self.cells".log_foreground_primary()
+            // );
             }
     }
 }

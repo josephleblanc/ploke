@@ -42,5 +42,7 @@ colored = { workspace = true }
 flume = { workspace = true }
 
 [features]
+default = ["strip_table"]
 multithreaded = []
 serde = []
+strip_table = []

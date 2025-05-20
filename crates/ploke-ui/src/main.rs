@@ -8,32 +8,31 @@ mod ui;
 // -- external --
 use cozo::MemStorage;
 use eframe::egui;
-use egui::ahash::{HashMap, HashMapExt};
 use egui_extras::Column;
 use ploke_error::Error;
 // -- workspace local imports --
 use ploke_db::{Database, QueryResult};
-use ploke_transform::schema::{create_schema_all, primary_nodes::FunctionNodeSchema};
+use ploke_transform::schema::create_schema_all;
 use ploke_transform::transform::transform_code_graph;
-use serde::{Deserialize, Serialize};
 use syn_parser::utils::LogStyle;
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
 // -- std --
-#[cfg(feature = "multithreaded")]
-use flume::{Sender, bounded};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+// -- local ui elements --
+use ui::query_panel::{QueryBuilderApp, QueryCustomApp};
+use ui::{Anchor, TableCells};
+// -- conditional --
+#[cfg(feature = "multithreaded")]
+use flume::{Sender, bounded};
 #[cfg(feature = "multithreaded")]
 use std::thread;
-use ui::Anchor;
-use ui::query_panel::{QueryBuilderApp, QueryCustomApp};
 
 pub(crate) const LOG_QUERY: &str = "log_query";
 
 struct PlokeApp {
     db: Arc<Database>,
-    query: Rc<RefCell<String>>,
     results: Rc<RefCell<Option<Result<QueryResult, Error>>>>,
     last_query_time: Option<std::time::Duration>,
     target_directory: String,
@@ -80,31 +79,6 @@ impl std::fmt::Display for ProcessingStatus {
     }
 }
 
-/// Contains data for the UI to reference the selected cells in the returned value from a query.
-pub struct TableCells {
-    selected_cells: Vec<(usize, usize)>, // (row, column) indices
-    selection_in_progress: Option<(usize, usize)>, // Starting cell for drag selection
-    control_groups: HashMap<usize, Vec<(usize, usize)>>, // Control group number -> cells
-}
-
-impl TableCells {
-    pub(crate) fn reset_selected_cells(cells: &mut TableCells) {
-        cells.selected_cells.clear();
-        cells.selection_in_progress = None;
-        cells.control_groups.clear();
-    }
-}
-
-impl Default for TableCells {
-    fn default() -> Self {
-        Self {
-            selected_cells: Vec::new(),
-            selection_in_progress: None,
-            control_groups: HashMap::new(),
-        }
-    }
-}
-
 impl PlokeApp {
     fn new() -> Self {
         let _ = env_logger::builder()
@@ -118,10 +92,6 @@ impl PlokeApp {
         let cells = Rc::new(RefCell::new(TableCells::default()));
         let query_results = Rc::new(RefCell::new(None));
 
-        let default_query = Rc::new(RefCell::new(String::from(
-            "?[name, id, body] := *function { name, id, body }",
-        )));
-
         // Initialize schemas
         create_schema_all(&db).expect("Failed to create schemas");
 
@@ -131,7 +101,6 @@ impl PlokeApp {
 
         Self {
             db: Arc::clone(&db),
-            query: default_query,
             results: Rc::clone(&query_results),
             last_query_time: None,
             target_directory: String::from(
@@ -164,7 +133,7 @@ impl PlokeApp {
     fn query_bar_contents(
         &mut self,
         ui: &mut egui::Ui,
-        frame: &mut eframe::Frame,
+        _frame: &mut eframe::Frame,
         cmd: &mut Command,
     ) {
         let mut selected_anchor = self.selected_anchor;
@@ -181,8 +150,6 @@ impl PlokeApp {
 
         // original on egui demo is self.state.selected_anchor
         self.selected_anchor = selected_anchor;
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {});
     }
 
     pub fn apps_iter_mut(
@@ -203,18 +170,19 @@ impl PlokeApp {
         .into_iter()
     }
 
-    fn modify_table_cell<F>(&self, action: F) 
+    fn modify_table_cell<F>(&self, action: F)
     where
         F: FnOnce(&mut TableCells),
     {
-        if let Ok(mut cells) = self.cells.try_borrow_mut() {
-            action(&mut cells);
-        } else {
-            log_cell_error(std::cell::BorrowMutError);
+        match self.cells.try_borrow_mut() {
+            Ok(mut cells) => {
+                action(&mut cells);
+            }
+            Err(e) => {
+                log_cell_error(e);
+            }
         }
     }
-
-
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -288,10 +256,40 @@ impl eframe::App for PlokeApp {
             //     ui.collapsing("function", |ui| {
             //     })
             // })
-
         });
+
         self.show_selected_app(ctx, frame);
 
+        #[cfg(feature = "strip_table")]
+        use egui_extras::{Size, StripBuilder};
+        #[cfg(feature = "strip_table")]
+        egui::TopBottomPanel::bottom("results_section").show(ctx, |ui| {
+            StripBuilder::new(ui)
+                .size(Size::remainder().at_least(400.0)) // for the table
+                .vertical(|mut strip| {
+                    strip.cell(|ui| {
+                        egui::ScrollArea::horizontal().show(ui, |ui| {
+                            let query_result = self.results.borrow();
+                            if let Some(q_header_rows) = &*query_result {
+                                match q_header_rows {
+                                    Ok(q) => {
+                                        let q = q.clone(); // Clone the result to avoid borrow issues
+                                        drop(query_result);
+                                        self.render_cozo_table(ui, &q);
+                                    }
+                                    Err(e) => {
+                                        ui.label(format!("{:#?}", e));
+                                    }
+                                }
+                            } else {
+                                ui.label("No results to show yet.");
+                            }
+                        });
+                    });
+                });
+        });
+
+        #[cfg(not(feature = "strip_table"))]
         egui::TopBottomPanel::bottom("results_section").show(ctx, |ui| {
             ui.separator();
             ui.horizontal(|ui| {
@@ -317,7 +315,6 @@ impl eframe::App for PlokeApp {
                 ui.label("No results to show yet.");
             }
         });
-
     }
 }
 
@@ -544,7 +541,9 @@ impl PlokeApp {
                                                     let cell = (row_index, col_index);
                                                     self.modify_table_cell(|cells| {
                                                         if cells.selected_cells.contains(&cell) {
-                                                            cells.selected_cells.retain(|&c| c != cell);
+                                                            cells
+                                                                .selected_cells
+                                                                .retain(|&c| c != cell);
                                                         } else {
                                                             cells.selected_cells.push(cell);
                                                         }
@@ -554,7 +553,8 @@ impl PlokeApp {
                                                 // Handle drag start
                                                 if response.drag_started() {
                                                     self.modify_table_cell(|cells| {
-                                                        cells.selection_in_progress = Some((row_index, col_index));
+                                                        cells.selection_in_progress =
+                                                            Some((row_index, col_index));
                                                     });
                                                 }
 
@@ -586,13 +586,8 @@ impl PlokeApp {
         });
     }
 
-    fn handle_cell_click(&mut self, row: usize, col: usize) {
-        let cell = (row, col);
-
-        // Toggle selection state
-        self.modify_table_cell(move |cell| {});
-    }
-
+    // TODO: Implement this
+    #[allow(dead_code, reason = "useful soon")]
     fn update_drag_selection(&mut self, current_row: usize, current_col: usize) {
         // Clear previous selection
         match self.cells.try_borrow_mut() {
@@ -616,6 +611,7 @@ impl PlokeApp {
             Err(e) => log_cell_error(e),
         }
     }
+
     fn show_selected_app(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let selected_anchor = self.selected_anchor;
         for (_name, anchor, app) in self.apps_iter_mut() {
