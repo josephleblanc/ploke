@@ -53,6 +53,8 @@ struct PlokeApp {
     app_query_custom: QueryCustomApp,
     app_query_builder: QueryBuilderApp,
     query_section_id: Option<egui::Id>,
+    query_section_height: f32,
+    is_resizing_query_panel: bool,
 }
 
 #[derive(Clone, PartialEq, PartialOrd, Eq, Ord)]
@@ -127,6 +129,8 @@ impl PlokeApp {
                 cells: Rc::clone(&cells),
             },
             query_section_id: None,
+            query_section_height: 150.0,
+            is_resizing_query_panel: false,
         }
     }
 
@@ -258,14 +262,33 @@ impl eframe::App for PlokeApp {
             // })
         });
 
-        self.show_selected_app(ctx, frame);
+        // self.show_selected_app(ctx, frame);
+        // Replace the show_selected_app() call with:
+        egui::TopBottomPanel::top("query")
+            .resizable(true)
+            .min_height(100.0)
+            .show(ctx, |ui| {
+                self.show_selected_app(ctx, frame);
 
+                if ui.ui_contains_pointer() && ui.input(|i| i.pointer.primary_down()) {
+                    self.is_resizing_query_panel = true;
+                }
+            });
+        if self.is_resizing_query_panel {
+            if let Some(pointer_pos) = ctx.pointer_latest_pos() {
+                self.query_section_height = pointer_pos.y - ctx.used_rect().top();
+            }
+            if !ctx.input(|i| i.pointer.primary_down()) {
+                self.is_resizing_query_panel = false;
+            }
+        }
         #[cfg(feature = "strip_table")]
         use egui_extras::{Size, StripBuilder};
         #[cfg(feature = "strip_table")]
-        egui::TopBottomPanel::bottom("results_section").show(ctx, |ui| {
+        // egui::TopBottomPanel::bottom("results_section").show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |ui| {
             StripBuilder::new(ui)
-                .size(Size::remainder().at_least(400.0)) // for the table
+                .size(Size::remainder().at_least(100.0)) // for the table
                 .vertical(|mut strip| {
                     strip.cell(|ui| {
                         egui::ScrollArea::horizontal().show(ui, |ui| {
