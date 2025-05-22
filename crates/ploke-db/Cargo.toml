@@ -9,6 +9,7 @@ ploke-transform = { path = "../ingest/ploke-transform" }
 syn_parser = { path = "../ingest/syn_parser" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+itertools = { workspace = true }
 
 # error handling
 ploke-error = { path = "../ploke-error" }

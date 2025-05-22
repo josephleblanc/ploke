@@ -1,6 +1,7 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
+use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
@@ -24,21 +25,18 @@ pub const LOG_TARGET_QUERY_BUILDER: &str = "query_builder";
 
 /// Main query builder struct
 #[derive(Debug, Clone)]
-pub struct QueryBuilder<'a> {
-    // AI: So this is my builder so far, which is taking and returning `Self`, but it seems like it
-    // might make more sense to be using `&mut self` on most of my methods instead, since I am
-    // building this in large part for a UI that allows for mutating the query through `egui`
-    // buttons and interface.
-    // What are the pros and cons of each approach AI?
-    db: &'a cozo::Db<cozo::MemStorage>,
-    selected_node: Option<NodeType>,
-    lhs: HashSet<&'static str>,
+pub struct QueryBuilder
+    // <'a> 
+    {
+    // db: &'a cozo::Db<cozo::MemStorage>,
+    pub selected_node: Option<NodeType>,
+    pub lhs: HashSet<&'static str>,
     filters: Vec<String>,
     limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum NodeType {
+pub enum NodeType {
     Function,
     Struct,
     Enum,
@@ -74,11 +72,54 @@ enum NodeType {
     UnknownType,
 }
 
-impl<'a> QueryBuilder<'a> {
+impl NodeType {
+    pub fn all_variants() -> [Self; 33] {
+        use NodeType::*;
+        [
+            Function,
+            Struct,
+            Enum,
+            Trait,
+            Module,
+            Const,
+            Impl,
+            Import,
+            Macro,
+            Static,
+            TypeAlias,
+            Union,
+            Param,
+            Variant,
+            Field,
+            Attribute,
+            GenericType,
+            GenericLifetime,
+            GenericConst,
+            NamedType,
+            ReferenceType,
+            SliceType,
+            ArrayType,
+            TupleType,
+            FunctionType,
+            NeverType,
+            InferredType,
+            RawPointerType,
+            TraitObjectType,
+            ImplTraitType,
+            ParenType,
+            MacroType,
+            UnknownType,
+        ]
+    }
+}
+
+impl QueryBuilder {
     /// Create a new query builder
-    pub fn new(db: &'a cozo::Db<cozo::MemStorage>) -> Self {
+    pub fn new(
+        // db: &'a cozo::Db<cozo::MemStorage>
+    ) -> Self {
         Self {
-            db,
+            // db,
             selected_node: None,
             lhs: HashSet::new(),
             filters: Vec::new(),
@@ -147,54 +188,74 @@ impl<'a> QueryBuilder<'a> {
         self
     }
 
+    pub fn insert_lhs_field(&mut self, field: &'static str) {
+        if let Some(node_ty) = self.selected_node {
+            if node_ty.fields().contains(&field) {
+                self.lhs.insert(field);
+            } else {
+                log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                    "Cannot add field {} to {:?}", field, node_ty
+                );
+            }
+        } else {
+            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                "Calling add_lhs on None: {}", field
+            );
+        }
+    }
+
+    pub fn lhs_to_query_string(&self) -> String {
+        format!("?[\n{}\n]", self.lhs.iter().join(",\n"))
+    }
+
     pub fn has_field(&self, field: &'static str) -> bool {
         self.lhs.contains(field)
     }
 
-    /// Execute the constructed query
-    pub fn execute(self) -> Result<QueryResult, Error> {
-        let relation = match self.selected_node {
-            Some(NodeType::Function) => FunctionNodeSchema::SCHEMA.relation,
-            Some(NodeType::Struct) => StructNodeSchema::SCHEMA.relation,
-            None => {
-                return Err(Error::from(DbError::QueryConstruction(
-                    "No node type selected".into(),
-                )))
-            }
-            _ => {
-                return Err(Error::from(DbError::QueryConstruction(
-                    "Warning! Node type not yet supported".into(),
-                )))
-            }
-        };
-
-        let mut query = match relation {
-            "functions" => format!(
-                "?[id, name, visibility, return_type_id, docstring, body] := *{}[id, name, visibility, return_type_id, docstring, body]",
-                relation
-            ),
-            "structs" => format!(
-                "?[id, name, visibility, docstring] := *{}[id, name, visibility, docstring]",
-                relation
-            ),
-            _ => return Err(Error::from(DbError::QueryConstruction(format!("Unsupported relation: {}", relation)))),
-        };
-
-        if !self.filters.is_empty() {
-            query.push_str(", ");
-            query.push_str(&self.filters.join(", "));
-        }
-
-        if let Some(limit) = self.limit {
-            query.push_str(&format!(" :limit {}", limit));
-        }
-
-        self.db
-            .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
-            .map(QueryResult::from)
-            .map_err(|e| DbError::Cozo(e.to_string()))
-            .map_err(Error::from)
-    }
+    // /// Execute the constructed query
+    // pub fn execute(self) -> Result<QueryResult, Error> {
+    //     let relation = match self.selected_node {
+    //         Some(NodeType::Function) => FunctionNodeSchema::SCHEMA.relation,
+    //         Some(NodeType::Struct) => StructNodeSchema::SCHEMA.relation,
+    //         None => {
+    //             return Err(Error::from(DbError::QueryConstruction(
+    //                 "No node type selected".into(),
+    //             )))
+    //         }
+    //         _ => {
+    //             return Err(Error::from(DbError::QueryConstruction(
+    //                 "Warning! Node type not yet supported".into(),
+    //             )))
+    //         }
+    //     };
+    //
+    //     let mut query = match relation {
+    //         "functions" => format!(
+    //             "?[id, name, visibility, return_type_id, docstring, body] := *{}[id, name, visibility, return_type_id, docstring, body]",
+    //             relation
+    //         ),
+    //         "structs" => format!(
+    //             "?[id, name, visibility, docstring] := *{}[id, name, visibility, docstring]",
+    //             relation
+    //         ),
+    //         _ => return Err(Error::from(DbError::QueryConstruction(format!("Unsupported relation: {}", relation)))),
+    //     };
+    //
+    //     if !self.filters.is_empty() {
+    //         query.push_str(", ");
+    //         query.push_str(&self.filters.join(", "));
+    //     }
+    //
+    //     if let Some(limit) = self.limit {
+    //         query.push_str(&format!(" :limit {}", limit));
+    //     }
+    //
+    //     self.db
+    //         .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+    //         .map(QueryResult::from)
+    //         .map_err(|e| DbError::Cozo(e.to_string()))
+    //         .map_err(Error::from)
+    // }
 }
 
 macro_rules! define_static_fields {
@@ -218,6 +279,13 @@ macro_rules! define_static_fields {
                 match self {
                     $(
                         NodeType::$node_type => <$schema>::SCHEMA_FIELDS
+                    ),+
+                }
+            }
+            pub fn relation_str(self) -> &'static str {
+                match self {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA.relation
                     ),+
                 }
             }
@@ -293,13 +361,15 @@ mod test {
         use crate::QueryBuilder;
         use cozo::{Db, MemStorage};
 
-        let db = Db::new(MemStorage::default()).expect("Failed to create database");
-        db.initialize().expect("Failed to initialize database");
+        // let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        // db.initialize().expect("Failed to initialize database");
 
         let schema = &StructNodeSchema::SCHEMA;
         let name_field = schema.name();
 
-        let builder = QueryBuilder::new(&db).structs().add_lhs(name_field);
+        let builder = QueryBuilder::new(
+            // &db
+        ).structs().add_lhs(name_field);
 
         eprintln!("{:#?}", builder);
         assert!(builder.has_field(name_field));

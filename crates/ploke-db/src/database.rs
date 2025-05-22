@@ -37,8 +37,8 @@ impl Database {
         Ok(QueryResult::from(result))
     }
 
-    /// Create a new query builder
-    pub fn query(&self) -> QueryBuilder {
-        QueryBuilder::new(&self.db)
-    }
+    // /// Create a new query builder
+    // pub fn create_query_builder(&self) -> QueryBuilder {
+    //     QueryBuilder::new(&self.db)
+    // }
 }

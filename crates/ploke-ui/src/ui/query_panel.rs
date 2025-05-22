@@ -1,11 +1,11 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use ploke_db::{Database, QueryResult};
+use ploke_db::{Database, NodeType, QueryBuilder, QueryResult};
 use ploke_error::Error;
 use serde::{Deserialize, Serialize};
 use syn_parser::utils::LogStyle;
 
-use crate::{TableCells, LOG_QUERY};
+use crate::{LOG_QUERY, TableCells};
 
 pub struct QueryCustomApp {
     // Custom Query specific state
@@ -19,48 +19,47 @@ pub struct QueryCustomApp {
 impl eframe::App for QueryCustomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // NOTE: cells is mut for now, but could be immut here.
-        if let Ok( cells ) = self.cells.try_borrow_mut() {
+        if let Ok(cells) = self.cells.try_borrow_mut() {
             let results = self.results.borrow();
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.label("Query:");
                 ui.code_editor(&mut self.custom_query);
 
-        if let Some(Ok(q)) = &*results {
+                if let Some(Ok(q)) = &*results {
                     let iter_selected = cells
-                    .selected_cells
-                    .iter()
-                    .map(|(i, j)| format!("{}", q.rows[*i][*j]));
+                        .selected_cells
+                        .iter()
+                        .map(|(i, j)| format!("{}", q.rows[*i][*j]));
 
-                ui.vertical(|ui| {
-                    ui.label("Selected Items:");
-                    // ui.horizontal_top(|ui| {
-                            for item in iter_selected {
-                                if ui.button("Add Filter").clicked() {
-                                    println!("Do something!!!");
-                                }
-                                ui.label(item);
+                    ui.vertical(|ui| {
+                        ui.label("Selected Items:");
+                        // ui.horizontal_top(|ui| {
+                        for item in iter_selected {
+                            if ui.button("Add Filter").clicked() {
+                                println!("Do something!!!");
                             }
-                    // })
-                });
-            } else {
-                // log::warn!(target: LOG_QUERY, 
-                //     "{} {} | {:#?}",
-                //     "QueryCustomApp".log_header(),
-                //     "Database Error".log_error(),
-                //     "e"
-                // );
-
+                            ui.label(item);
+                        }
+                        // })
+                    });
+                } else {
+                    // log::warn!(target: LOG_QUERY,
+                    //     "{} {} | {:#?}",
+                    //     "QueryCustomApp".log_header(),
+                    //     "Database Error".log_error(),
+                    //     "e"
+                    // );
                 }
             });
-            } else {
-                // log::warn!(target: LOG_QUERY, 
-                // "{} {} {}",
-                // "QueryCustomApp".log_header(),
-                // "Accessing TableCells".log_step(),
-                // "Blocked access to mutable state self.cells".log_foreground_primary()
+        } else {
+            // log::warn!(target: LOG_QUERY,
+            // "{} {} {}",
+            // "QueryCustomApp".log_header(),
+            // "Accessing TableCells".log_step(),
+            // "Blocked access to mutable state self.cells".log_foreground_primary()
             // );
-            }
+        }
     }
 }
 
@@ -70,51 +69,61 @@ pub struct QueryBuilderApp {
     // Shared state references
     pub db: Arc<Database>,
     pub cells: Rc<RefCell<TableCells>>,
+    pub query_builder: QueryBuilder,
+    pub selected_node_type: NodeType,
 }
 
 impl eframe::App for QueryBuilderApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+
+        egui::SidePanel::left("something").show(ctx, |ui| {
+                ui.vertical(|ui| {
+                    ui.label("Node Types");
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if ui.button("Function").clicked() {
+                            self.current_builder_query
+                                .push_str("?[name, id] := *function { name, id }");
+                        }
+                        if ui.button("Struct").clicked() {
+                            self.current_builder_query
+                                .push_str("?[name, id] := *struct { name, id }");
+                        }
+                    });
+                });
+        });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Query Builder");
 
             ui.horizontal(|ui| {
-                if ui.button("Function").clicked() {
-                    self.current_builder_query.push_str("?[name, id] := *function { name, id }");
+                // Query preview
+                ui.label("Query Preview:");
+                // NOTE: I don't think code_editor really needs to be &mut
+                ui.code(&mut self.current_builder_query);
+
+                // Selected items from table (shared state)
+                let cells = self.cells.borrow();
+                ui.separator();
+                ui.label("Selected Items");
+
+                if cells.selected_cells.is_empty() {
+                    ui.label("No selections");
+                } else {
+                    // NOTE: Maybe use vertical_wrapped if that exists?
+                    ui.horizontal_wrapped(|ui| {
+                        for (row, col) in &cells.selected_cells {
+                            ui.label(format!("Cell ({}, {})", row, col));
+                        }
+                    });
                 }
-                if ui.button("Struct").clicked() {
-                    self.current_builder_query.push_str("?[name, id] := *struct { name, id }");
+                // Query builder controls
+                if ui.button("Add Filter").clicked() {
+                    // Example: Add filter for selected items
+                    if !cells.selected_cells.is_empty() {
+                        self.current_builder_query
+                            .push_str("\nfilter id = $selected_id");
+                    }
                 }
             });
-
-            // Query preview
-            ui.separator();
-            ui.label("Query Preview:");
-            // NOTE: I don't think code_editor really needs to be &mut
-            ui.code_editor(&mut self.current_builder_query);
-
-            // Selected items from table (shared state)
-            let cells = self.cells.borrow();
-            ui.separator();
-            ui.label("Selected Items");
-
-            if cells.selected_cells.is_empty() {
-                ui.label("No selections");
-            } else {
-                // NOTE: Maybe use vertical_wrapped if that exists?
-                ui.horizontal_wrapped(|ui| {
-                    for (row, col) in &cells.selected_cells {
-                        ui.label(format!("Cell ({}, {})", row, col));
-                    }
-                });
-            }
-
-            // Query builder controls
-            if ui.button("Add Filter").clicked() {
-                // Example: Add filter for selected items
-                if !cells.selected_cells.is_empty() {
-                    self.current_builder_query.push_str("\nfilter id = $selected_id");
-                }
-            }
         });
     }
 }
