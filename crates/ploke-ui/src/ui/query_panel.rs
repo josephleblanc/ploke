@@ -10,6 +10,9 @@ use crate::{LOG_QUERY, TableCells};
 pub struct QueryCustomApp {
     // Custom Query specific state
     pub custom_query: String,
+    /// Stores the selected schema. This is intended to help the user see what the schema are that
+    /// they acan use for the custom queries.
+    pub selected_schema: &'static str,
     // Shared state references
     pub db: Arc<Database>,
     pub cells: Rc<RefCell<TableCells>>,

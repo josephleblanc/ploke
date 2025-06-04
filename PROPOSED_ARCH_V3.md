@@ -1,7 +1,51 @@
 # ploke Project Architecture (WIP)
 
+
+
  ## 1. Project Vision
- ploke aims to be a powerful RAG (Retrieval-Augmented Generation) system for code generation and refactoring. It provides developers with context-aware code suggestions by analyzing their codebase and using that knowledge to enhance LLM-based code generation. The core value proposition is more accurate, contextually relevant code generation that respects existing patterns and conventions in the user's codebase.
+ ploke aims to be a powerful RAG (Retrieval-Augmented Generation) system for code generation and refactoring. It provides developers with context-aware code suggestions by analyzing their codebase and using that knowledge to enhance LLM-based code generation. Our goal is to empower users with a tool to facilitate human-AI collaboration on even mid-to-large size projects by providing LLMs with the context required to be useful to capable rust developers by leveraging our custom built and highly granular code graph to provide LLMs with relevant code snippets to produce good rust code that integrates with your code base, correctly uses rapidly-developing dependencies, and adheres to project style and idioms.
+
+The longer-term vision of the `ploke` project is to leverage a combination of static analysis, detailed queries, and extensive user configuration options to find new ways for developers to utilize AI-generated code in new and engaging ways. We want to help contribute to a future in which developer-AI collaboration can extend a developer's capacity for high-quality, well-architected code. Many of the most popular developer tools today have created fluid experiences of engaging with AI, but have also uncovered problems that might degrade the quality, maintainability, and safety of generated code. 
+
+### Misalignments of currently available tooling
+
+Our hypothesis is that these issues are deeply rooted in design decisions that may not be aligned with some users' goals or development style: 
+
+1. **General over Specific ASTs**: Most code-gen tools focus on the generality of solutions for context management (e.g. using TreeSitter for AST traversal in RAGs). This results in LLMs failing to leverage the inherent strengths of a statically-typed language with unique features like Rust.
+
+2. **Solving isolated tasks**: The emphasis is often placed on solving isolated tasks (as seen similarly in many LLM testing benchmarks) over integration into a larger project and correct usage of previously existing code structures. This often results in the LLM either hallucinating or assuming the existence of code structures that exist, failing to utilize pre-existing structures, or departing from desired programming patterns readily seen throughout the code base. While some tools hope to solve this issue with a `Conventions.md` document or similar, we believe more can be done to maintain consistent style by utilizing the implicit patterns already present in an existing code base.
+
+3. **Minimal exposure of complexity to developers at the cost of innovation**: While this design philosophy is a valid and appropriate choice for many use-cases and professional environments, we believe this approach may limit or simply not prioritize innovative, inherently complex features that hold great potential for developer experience, productivity, and control.
+
+While we aim to provide a stream-lined developer experience, we also aim to make available new, powerful features that will empower those developers who want to push the edge of what can be accomplished with AI collaboration without compromising on their project vision, code quality, or complexity. As such, our future development aims to invite developers to leverage their understanding of larger, more complex projects in new ways. Our design principles are:
+
+### Our Solution and Approach to Design
+
+1. **Built for Rust**: Our custom parser, built with a visitor structure implemented using `syn`, captures all of the 17 distinct rust items detailed in the rust reference as unique node types, generates edges that encode syntatically accurate relationships, and stores details of rust-specific features and strengths, with support for all rust types (as detailed in the rust reference, including lifetimes), track unsafe and async usage along with cfgs, attributes, and (in progress) generic bounds for types, traits, and lifetimes.
+
+2. **Focus on interconnectedness of project**: Our internal metrics for feature development will prioritize LLM-generated code that emphasizes the deeply interconnected structure of more mature projects. As we are under rapid development we do not have these metrics yet, but are committed to developing them for our MVP. While we will provide results for more widely accepted benchmarks on LLM performance using `ploke`, these metrics are unlikely to drive design decisions and feature development. Instead, we focus on metrics that help measure the quality of accepted solutions: is the solution similar to other code in the user's crate (measurable with graph analysis), how efficient is the solution, does it introduce rust anti-patterns?
+
+3. **Expose New, Engaging, and Intuitive Controls to the Developer**: In addition to excellent built-in configuration to enhance LLM performance, we place an emphasis on user customization through engaging, intuitive UI beyond the CLI interface to invite users to: write their own custom queries using `cozo`'s built-in datalog and include the results in the LLM's prompt, provide a query builder for exploration of their code base and our schema's representation of it, modify and customize detailed settings for LLMs using our `egui` UI config or a .toml file, add local or unusual models with their own configs, and more. We aspire to be for LLM-generated code what `nvim` is for IDEs. Our stretch goal (which may not make it into the MVP, pending development time, but which is a high priority) is to add a visual, interactive representation of the code graph (see below).
+
+<details>
+  <summary>
+    Interactive Visual Code Graph
+  </summary>
+
+  For the interactive visual representation we plan to use `egui` possibly integrating `bevy` (pending development time), to promote user exploration of their code graph and transparently expose which parts of the code graph are included in the user's query, 
+
+  - variable granularity of displayed nodes depending on zoom
+  - visual indicators (highlighting, animation) of the traversal performed while generating the augmented prompt with our RAG pipeline.
+    - LLM responses can take time! We want to make static analysis fun and give you something pretty to look at while you wait.
+  - nodes will be clicked on to display a popup of their source code, highlight connections to the nth degree, and more pending feedback/dev time.
+  - different filters available to view: Module dependency graph, call graph, possibly more (depending on user feedback)
+  - highlighting of unsafe and async nodes
+  - quick and easy methods for manual selections of nodes or clusters to include in user query
+  - time-travel (`cozo`-powered) navigation to peer back at earlier stages of your code graph, potentially with animations to show its growth over time, and prompt the LLM to report on insights regarding the changing structure of the project.
+  - (stretch) visual indicators of test coverage, LLM-generated code, and performance estimates
+  - (stretch) query panel for quick questions to the LLM on selected code or the structure of the code graph
+  - more developments to come. We believe this feature could significantly improve developer interaction with LLMs by providing a clear 
+</details>
 
  ## 2. Overview
  This document serves as the working design document for the `ploke` project
@@ -27,7 +71,7 @@
    - Traits defined in the code
    - Relationships between these elements
 
- - **AST (Abstract Syntax Tree)**: A tree representation of the abstract syntactic structure of source code. We use the `syn` crate to parse Rust code into ASTs.
+ - **AST (Abstract Syntax Tree)**: A tree representation of the abstract syntactic structure of source code. We use the `syn` crate to parse Rust code into ASTs for traversal using an implementation of `syn::Visitor`.
 
  ## 4. System Architecture
 
@@ -97,7 +141,7 @@ flowchart TD
 | parallel processing | ✅ Implemented | Rayon-based parallel file processing |
 | embed | 🚧 Planned | Vector embeddings for code snippets |
 | graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
-| database | 🚧 Planned | CozoDB integration for hybrid vector-graph storage |
+| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage |
 | watcher | 🚧 Planned | File system watcher for code changes |
 | writer | 🚧 Planned | Code generation and modification |
 | context | 🚧 Planned | Context building for LLM prompts |

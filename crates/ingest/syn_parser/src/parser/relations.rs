@@ -250,6 +250,27 @@ impl SyntacticRelation {
         self.target() == r_next.target()
     }
 
+    /// Formats the name of the `SyntacticRelation` variant name as a string.
+    ///
+    /// Useful for translating into the database. For now we will follow a convention of the
+    /// relation type being represented with the same name case (camel-case) as the original enum.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            SyntacticRelation::Contains { .. } => "Contains",
+            SyntacticRelation::ResolvesToDefinition { .. } => "ResolvesToDefinition",
+            SyntacticRelation::CustomPath { .. } => "CustomPath",
+            SyntacticRelation::Sibling { .. } => "Sibling",
+            SyntacticRelation::ModuleImports { .. } => "ModuleImports",
+            SyntacticRelation::ReExports { .. } => "ReExports",
+            SyntacticRelation::StructField { .. } => "StructField",
+            SyntacticRelation::UnionField { .. } => "UnionField",
+            SyntacticRelation::VariantField { .. } => "VariantField",
+            SyntacticRelation::EnumVariant { .. } => "EnumVariant",
+            SyntacticRelation::ImplAssociatedItem { .. } => "ImplAssociatedItem",
+            SyntacticRelation::TraitAssociatedItem { .. } => "TraitAssociatedItem",
+        }
+    }
+
     #[cfg(not(feature = "not_wip_marker"))]
     pub fn traverse_pub(&self, r_next: Self) {
         match *self {

@@ -56,8 +56,8 @@ code_graph_navigator_ui/
 - [ ] Execute query on `<Shift-Enter>`
 - [ ] Add default queries in a dropdown menu.
   - [ ] Add tabs for different kinds of common queries, tbd.
-    - [ ] Basic prototype
-    - [ ] Full queries for each query type
+    - [✔] Basic prototype
+    - [✔] Full queries for each query type
     - [ ] Common queries for, e.g. traversal to the `n`th connected relation, etc tbd
 - [ ] Add syntax highlighting for datalog queries
   - [ ] Look into the [syntect] crate for syntax highlighting through [egui_extras].

@@ -3,6 +3,7 @@
 
 use itertools::Itertools;
 use ploke_error::Error;
+use ploke_transform::schema::edges::SyntacticRelationSchema;
 use ploke_transform::schema::primary_nodes::{
     ConstNodeSchema, EnumNodeSchema, FunctionNodeSchema, ImplNodeSchema, ImportNodeSchema,
     MacroNodeSchema, ModuleNodeSchema, StaticNodeSchema, StructNodeSchema, TraitNodeSchema,
@@ -19,20 +20,31 @@ use ploke_transform::schema::types::{
 };
 
 use crate::{DbError, QueryResult};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const LOG_TARGET_QUERY_BUILDER: &str = "query_builder";
 
 /// Main query builder struct
 #[derive(Debug, Clone)]
-pub struct QueryBuilder
-    // <'a> 
-    {
-    // db: &'a cozo::Db<cozo::MemStorage>,
+pub struct QueryBuilder {
     pub selected_node: Option<NodeType>,
     pub lhs: HashSet<&'static str>,
+    pub custom_lhs: Vec<String>,
+    pub rhs_rels: HashMap<RhsRelation, Vec<FieldValue>>,
     filters: Vec<String>,
     limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FieldValue {
+    pub field: &'static str,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RhsRelation {
+    pub node_type: NodeType,
+    pub node_type_index: i8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,10 +82,11 @@ pub enum NodeType {
     ParenType,
     MacroType,
     UnknownType,
+    SyntaxEdge,
 }
 
 impl NodeType {
-    pub fn all_variants() -> [Self; 33] {
+    pub fn all_variants() -> [Self; 34] {
         use NodeType::*;
         [
             Function,
@@ -109,21 +122,21 @@ impl NodeType {
             ParenType,
             MacroType,
             UnknownType,
+            SyntaxEdge,
         ]
     }
 }
 
 impl QueryBuilder {
     /// Create a new query builder
-    pub fn new(
-        // db: &'a cozo::Db<cozo::MemStorage>
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            // db,
             selected_node: None,
             lhs: HashSet::new(),
+            rhs_rels: HashMap::new(),
             filters: Vec::new(),
             limit: None,
+            custom_lhs: Vec::new(),
         }
     }
 
@@ -204,12 +217,103 @@ impl QueryBuilder {
         }
     }
 
+    /// Represents a custom binding in the datalog query, e.g.
+    /// ```datalog
+    /// ?[
+    ///     id,
+    ///     name,
+    ///     custom_binding
+    /// ] := *function {
+    ///     id,
+    ///     name,
+    ///     body: custom_binding
+    /// }
+    /// ```
+    pub fn insert_lhs_custom(&mut self, custom_field: String) {
+        if self.selected_node.is_none() {
+                self.custom_lhs.push(custom_field);
+        } else {
+            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                "Calling insert_lhs_custom on Some, when it should only ever be called when the builder's selected_node is None: {}", custom_field
+            );
+        }
+    }
+
     pub fn lhs_to_query_string(&self) -> String {
-        format!("?[\n{}\n]", self.lhs.iter().join(",\n"))
+        format!("?[\n\t{}\n]", self.lhs.iter().join(",\n\t"))
+    }
+
+    pub fn rhs_to_query_string(&self) -> String {
+        let mut rhs_string = String::new();
+        for (rhs_rel, field_vals) in self.rhs_rels.iter() {
+            // push start of relation, e.g. `*function {`
+            rhs_string.push('*');
+            rhs_string.push_str(rhs_rel.node_type.relation_str());
+            rhs_string.push_str(" {\n");
+
+            // process fields, e.g. `name: "func_name", id: first_id, body`
+            for field_val in field_vals {
+                rhs_string.push('\t');
+                rhs_string.push_str(field_val.field);
+                if !field_val.value.is_empty() {
+                    rhs_string.push(':');
+                    rhs_string.push(' ');
+                    rhs_string.push_str(&field_val.value);
+                }
+                rhs_string.push(',');
+                rhs_string.push('\n');
+            }
+
+            // end the fields section of the rhs
+            rhs_string.push('}');
+            rhs_string.push(',');
+            rhs_string.push('\n');
+        }
+
+        rhs_string
     }
 
     pub fn has_field(&self, field: &'static str) -> bool {
         self.lhs.contains(field)
+    }
+
+    /// Infallible insertion of new rhs to `rhs_rels`.
+    ///
+    /// Checks if the node type is already reprsented in the rhs, and if so will find the highest
+    /// node_type_index and increment the count to give an accurate index of the newly added rhs.
+    ///
+    /// For example, if there is already a `*struct { .. }` in the query's rhs, that first
+    /// occurrance of the `struct` relation will be stored in the `rhs_rel` field with the key,
+    /// `(NodeType::Struct, 0)`, where `0` is the number of `NodeType::Struct` in the rhs_rels
+    /// `HashMap`. When we want to add a second `*struct { .. }` to the rhs, it will be stored with
+    /// the key `(NodeType::Struct, 1)`, and each entry will have their own distinct set of
+    /// included fields for the rhs.
+    ///
+    /// Keeping the set of fields tracked for each rhs item separately allows us to have queries
+    /// like:
+    /// ```datalog
+    /// ?[name] :=
+    ///     *module { id: first_id, name },
+    ///     *module { id: second_id },
+    ///     *syntax_edge {
+    ///         source_id: first_id,
+    ///         target_id: second_id,
+    ///         relation_kind: "Contains"
+    ///     }
+    /// ```
+    pub fn insert_rhs_rel(&mut self, node_type: NodeType) {
+        let node_type_index = self
+            .rhs_rels
+            .keys()
+            .max_by_key(|rhs| rhs.node_type_index)
+            .map(|rhs| rhs.node_type_index + 1)
+            .unwrap_or(0);
+        let new_rhs = RhsRelation {
+            node_type,
+            node_type_index,
+        };
+
+        self.rhs_rels.insert(new_rhs, Vec::new());
     }
 
     // /// Execute the constructed query
@@ -256,6 +360,12 @@ impl QueryBuilder {
     //         .map_err(|e| DbError::Cozo(e.to_string()))
     //         .map_err(Error::from)
     // }
+}
+
+impl Default for QueryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 macro_rules! define_static_fields {
@@ -338,7 +448,8 @@ define_static_fields!(
     (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
     (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
     (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
-    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType)
+    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
+    (SYNTAX_EDGE_FIELDS, SyntacticRelationSchema, SyntaxEdge)
 );
 
 // impl NodeType {
@@ -369,7 +480,9 @@ mod test {
 
         let builder = QueryBuilder::new(
             // &db
-        ).structs().add_lhs(name_field);
+        )
+        .structs()
+        .add_lhs(name_field);
 
         eprintln!("{:#?}", builder);
         assert!(builder.has_field(name_field));

@@ -147,7 +147,7 @@ impl SyntacticRelationSchema {
     ) -> BTreeMap<String, cozo::DataValue> {
         let source_id = relation.source().to_cozo_uuid();
         let target_id = relation.target().to_cozo_uuid();
-        let relation_kind = format!("{:?}", relation);
+        let relation_kind = relation.kind_str();
         let schema = &SyntacticRelationSchema::SCHEMA;
 
         // Extract the node type names from the relation variant

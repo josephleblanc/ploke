@@ -8,11 +8,12 @@ mod ui;
 // -- external --
 use cozo::MemStorage;
 use eframe::egui;
-use egui::{FontId, RichText};
+use egui::{Button, FontId, Label, RichText, TextEdit, TextStyle};
 use egui_extras::Column;
-use ploke_db::{Database, NodeType, QueryResult};
+use ploke_db::{Database, FieldValue, NodeType, QueryResult};
 use ploke_error::Error;
 use ploke_transform::schema::create_schema_all;
+use ploke_transform::schema::primary_nodes::FunctionNodeSchema;
 use ploke_transform::transform::transform_code_graph;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 use syn_parser::{ParsedCodeGraph, run_phases_and_collect};
@@ -99,9 +100,11 @@ impl PlokeApp {
         #[cfg(feature = "multithreaded")]
         let (status_tx, status_rx) = bounded(100);
 
-        let prepopulated_builder = ploke_db::QueryBuilder::new().functions().add_lhs("name").add_lhs("id");
+        let prepopulated_builder = ploke_db::QueryBuilder::new()
+            .functions()
+            .add_lhs("name")
+            .add_lhs("id");
         let current_builder_query = prepopulated_builder.lhs_to_query_string();
-
 
         Self {
             db: Arc::clone(&db),
@@ -124,9 +127,13 @@ impl PlokeApp {
                 db: db.clone(),
                 cells: cells.clone(),
                 results: query_results,
+                selected_schema: NodeType::Function.to_base_query(),
             },
             app_query_builder: QueryBuilderApp {
-                current_builder_query: format!("{} := *function {{ name, id }}", current_builder_query),
+                current_builder_query: format!(
+                    "{} := *function {{ name, id }}",
+                    current_builder_query
+                ),
                 db: Arc::clone(&db),
                 cells: Rc::clone(&cells),
                 query_builder: prepopulated_builder,
@@ -215,10 +222,18 @@ impl PlokeApp {
             .show_separator_line(true)
             .show_inside(ui, |ui| {
                 ui.label(RichText::new("Left-Hand Side:").font(FontId::proportional(14.0)));
+                ui.separator();
                 ui.horizontal(|ui| {
-                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                    let indentation = 2.0 * 4.0 * ui.fonts(|f| f.glyph_width(&font_id, ' '));
-                    ui.add_space(indentation);
+                    // NOTE: The following was taken from the egui demo but doesn't seem to be
+                    // doing what I want here, which is to provide indentation for the items in the
+                    // code that would follow a similar indentation to something like:
+                    // ?[
+                    //      item,
+                    //      item2,
+                    // ]
+                    // let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                    // let indentation = 2.0 * 4.0 * ui.fonts(|f| f.glyph_width(&font_id, ' '));
+                    // ui.add_space(indentation);
 
                     egui::Grid::new("query_builder_interactive")
                         .striped(true)
@@ -228,22 +243,20 @@ impl PlokeApp {
                         });
                 });
             });
-        egui::CentralPanel::default()
-            .show_inside(ui, |ui| {
-                ui.label(RichText::new("Right-Hand Side:").font(FontId::proportional(14.0)));
-                ui.horizontal(|ui| {
-                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                    let indentation = 2.0 * 4.0 * ui.fonts(|f| f.glyph_width(&font_id, ' '));
-                    ui.add_space(indentation);
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.label(RichText::new("Right-Hand Side:").font(FontId::proportional(14.0)));
+            ui.horizontal(|ui| {
+                // let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                // let indentation = 2.0 * 4.0 * ui.fonts(|f| f.glyph_width(&font_id, ' '));
+                // ui.add_space(indentation);
 
-                    egui::Grid::new("query_builder_interactive")
-                        .striped(true)
-                        .num_columns(2)
-                        .show(ui, |ui| {
-                            self.rhs_grid(ui);
-                        });
-                });
-
+                egui::Grid::new("query_builder_interactive")
+                    .striped(true)
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        self.rhs_grid(ui);
+                    });
+            });
         });
     }
 
@@ -278,33 +291,72 @@ impl PlokeApp {
 
         // ------------------------------
         // ------------------------------
-        show_code(ui, "");
-            ui.menu_button("+", |ui| {
-                add_builder_lhs_field(query_builder, builder_preview, ui);
+        // show_code(ui, "");
+        ui.menu_button("+", |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for relation in NodeType::all_variants() {
+                    if ui.button(relation.relation_str()).clicked() {
+                        query_builder.insert_rhs_rel(relation);
+                    }
+                }
             });
+        });
         ui.end_row();
         // ------------------------------
         let mut to_remove = None;
-        for lhs_field in query_builder.lhs.iter() {
-            show_code(ui, lhs_field);
-            if ui.button("-").clicked() {
-                to_remove = Some(lhs_field.clone());
+        let mut field_to_remove = None;
+        for (k, v) in query_builder.rhs_rels.iter_mut() {
+            // show title of relation type on one line, e.g. *function or *struct
+            ui.horizontal(|ui| {
+                if ui.button("-").clicked() {
+                    to_remove = Some(*k);
+                }
+                show_code(ui, k.node_type.relation_str());
+            });
+            ui.end_row();
+
+            // on the following rows, show the selected fields
+            for fv in v.iter_mut() {
+                ui.label("\t");
+                if ui.button("-").clicked() {
+                    field_to_remove = Some((k.clone(), fv.clone()));
+                }
+                show_code(ui, fv.field);
+                show_code(ui, ": ");
+                ui.add(
+                    TextEdit::singleline(&mut fv.value).clip_text(false), // TODO: Add ghost text for the expected datatype here
+                );
+                show_code(ui, ",");
+                ui.end_row();
             }
-            ui.end_row()
+            ui.menu_button("+", |ui| {
+                for new_field in k.node_type.fields() {
+                    if !v.iter().any(|fv| &fv.field == new_field) && ui.button(*new_field).clicked()
+                    {
+                        v.push(FieldValue {
+                            field: new_field,
+                            value: String::new(),
+                        })
+                    }
+                }
+            });
+            ui.end_row();
         }
-        if let Some(lhs_to_remove) = to_remove {
-            query_builder.lhs.remove(lhs_to_remove);
+
+        if let Some(rhs_to_remove) = to_remove {
+            query_builder.rhs_rels.remove(&rhs_to_remove.clone());
+        }
+        if let Some((key, rhs_field_to_remove)) = field_to_remove {
+            query_builder.rhs_rels.get_mut(&key);
         }
         // ------------------------------
-        show_code(ui, "]");
         ui.end_row();
         // ------------------------------
-        ui.heading("Example");
         ui.end_row();
     }
 
     /// The interactable, dynamic grid of the fields on the left-hand side of a query to the cozo
-    /// database. 
+    /// database.
     ///
     /// The "+" provides the user with a menu/submenu of node type/node field to add to
     /// the left-hand side of the query. Upon selection the query preview in the LHS panel will
@@ -325,14 +377,18 @@ impl PlokeApp {
         // ------------------------------
         // ------------------------------
         show_code(ui, "?[");
-            ui.menu_button("+", |ui| {
-                add_builder_lhs_field(query_builder, builder_preview, ui);
-            });
+        ui.menu_button("+", |ui| {
+            add_builder_lhs_field(query_builder, builder_preview, ui);
+        });
         ui.end_row();
         // ------------------------------
         let mut to_remove = None;
         for lhs_field in query_builder.lhs.iter() {
-            show_code(ui, lhs_field);
+            ui.horizontal(|ui| {
+                ui.label("\t");
+                show_code(ui, lhs_field);
+                ui.label(",");
+            });
             if ui.button("-").clicked() {
                 to_remove = Some(lhs_field.clone());
             }
@@ -340,6 +396,26 @@ impl PlokeApp {
         }
         if let Some(lhs_to_remove) = to_remove {
             query_builder.lhs.remove(lhs_to_remove);
+        }
+
+        let mut to_remove: Option<usize> = None;
+        for (i, binding) in query_builder.custom_lhs.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+
+        ui.add(TextEdit::singleline(binding));
+                ui.text_edit_singleline(binding);
+                if ui.button("-").clicked() {
+                    to_remove = Some(i);
+                }
+            });
+        }
+        if let Some(binding_index) = to_remove {
+            query_builder.custom_lhs.remove(binding_index);
+        }
+        // ------ Custom Bindings -------
+        if ui.button("+ Custom").clicked() {
+            query_builder.selected_node = None;
+            query_builder.insert_lhs_custom(String::new()); // Add new empty binding
         }
         // ------------------------------
         show_code(ui, "]");
@@ -361,9 +437,34 @@ impl PlokeApp {
                     use ploke_db::NodeType;
                     for node_type in NodeType::all_variants().iter() {
                         if ui.button(node_type.relation_str()).clicked() {
-                            self.app_query_builder
-                                .current_builder_query
-                                .push_str(node_type.to_base_query());
+                            match self.selected_anchor {
+                                Anchor::QueryCustom => {
+                                    self.app_query_custom
+                                        .custom_query
+                                        .push_str(node_type.to_base_query());
+                                }
+                                Anchor::QueryBuilder => {
+                                    self.app_query_builder
+                                        .current_builder_query
+                                        .push_str(node_type.to_base_query());
+                                }
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+    fn render_schema_select_col(&mut self, ui: &mut egui::Ui) {
+        ui.push_id("selectable_schema", |ui| {
+            ui.vertical(|ui| {
+                ui.label("Schema");
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    use ploke_db::NodeType;
+                    for node_type in NodeType::all_variants().iter() {
+                        if ui.button(node_type.relation_str()).clicked() {
+                            self.app_query_custom.selected_schema = node_type.to_base_query();
                         }
                     }
                 });
@@ -371,17 +472,56 @@ impl PlokeApp {
         });
     }
 
-    fn render_custom_query(&mut self, ui: &mut egui::Ui) {
-        if let Ok(cells) = self.cells.try_borrow_mut() {
+    fn render_schema_view(&self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        ui.vertical(|ui| {
             ui.horizontal(|ui| {
-                ui.vertical(|ui| {
+                ui.label("Schema View");
+                if ui.button("Copy").clicked() {
+                    ctx.copy_text(self.app_query_custom.selected_schema.to_string());
+                }
+            });
+            ui.separator();
+            ui.label(egui::RichText::new(self.app_query_custom.selected_schema).code());
+        });
+    }
+
+    fn render_custom_query(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+        egui::SidePanel::left("node_types")
+            .resizable(true) // changed to false
+            .min_width(100.0)
+            .default_width(100.0)
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                self.render_schema_select_col(ui);
+            });
+        egui::SidePanel::right("schema_view")
+            .resizable(true) // changed to false
+            .min_width(100.0)
+            .default_width(200.0)
+            .show_separator_line(true)
+            .show_inside(ui, |ui| {
+                self.render_schema_view(ctx, ui);
+            });
+
+        if let Ok(cells) = self.cells.try_borrow_mut() {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // ui.vertical(|ui| {
                     ui.push_id("custom_query_text", |ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.label("Query:");
-                            ui.code_editor(&mut self.app_query_custom.custom_query);
-                        });
+                        ui.label("Query:");
+
+                        ui.add(
+                            TextEdit::multiline(&mut self.app_query_custom.custom_query)
+                                .font(TextStyle::Monospace)
+                                .lock_focus(true)
+                                .desired_rows(10),
+                        );
+                        // ui.code_editor(&mut self.app_query_custom.custom_query);
                     });
+                    // });
                 });
+                ui.separator();
+
                 ui.vertical(|ui| {
                     ui.push_id("selected_cells", |ui| {
                         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -414,6 +554,11 @@ impl PlokeApp {
 
     fn render_db_results(&mut self, ui: &mut egui::Ui) {
         use egui_extras::{Size, StripBuilder};
+
+                ui.label("Results:");
+                if let Some(duration) = self.last_query_time {
+                    ui.label(format!("(Query took: {:.2?})", duration));
+                }
         StripBuilder::new(ui)
             .size(Size::remainder().at_least(100.0)) // for the table
             .vertical(|mut strip| {
@@ -555,25 +700,25 @@ impl eframe::App for PlokeApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Query Builder");
-            ui.separator();
+            // ui.separator();
 
             match self.selected_anchor {
-                Anchor::QueryCustom => self.render_custom_query(ui),
+                Anchor::QueryCustom => self.render_custom_query(ctx, ui),
                 Anchor::QueryBuilder => {
-                    egui::SidePanel::left("node_types")
-                        .resizable(true) // changed to false
-                        .min_width(100.0)
-                        .default_width(100.0)
-                        .show_separator_line(true)
-                        .show_inside(ui, |ui| {
-                            self.render_relation_type_col(ui);
-                        });
                     egui::SidePanel::right("query_preview")
                         .resizable(true)
                         .min_width(100.0)
                         .show_separator_line(true)
                         .show_inside(ui, |ui| {
                             ui.heading("Test Right Area");
+                            if ui.button("update").clicked() {
+                                let lhs =
+                                    self.app_query_builder.query_builder.lhs_to_query_string();
+                                let rhs =
+                                    self.app_query_builder.query_builder.rhs_to_query_string();
+                                self.app_query_builder.current_builder_query =
+                                    format!("{} := {}", lhs, rhs);
+                            }
                             show_code(ui, &self.app_query_builder.current_builder_query);
                         });
                     egui::CentralPanel::default().show_inside(ui, |ui| {
