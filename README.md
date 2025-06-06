@@ -59,25 +59,27 @@ For a detailed overview of the project's architecture, components, and current s
 
 ## Project Status
 
-⚠️ **Work in Progress:** This project is currently under active development. The architecture and implementation details are evolving. To see more details on project architecture, check the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)**.
+⚠️ **Work in Progress:** This project is currently under active development. The architecture and implementation details are evolving. To see more details on project architecture, including descriptions of the project components, processing pipeline, and concurrency strategy, check the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)**.
 
 
 | Component | Status | Description |
 |-----------|--------|-------------|
+| core | ✅ Implemented | Core data types (NodeId, TrackingHash, TypeId..) |
 | syn_parser | ✅ Implemented | Core parsing logic using syn, visitor pattern, and code graph generation |
-| serialization | ✅ Implemented | RON serialization of CodeGraph |
-| channel | ✅ Implemented | Flume-based communication between components |
+| Incremental updates | 👷 Partial | Incremental parsing and updates to cozo database |
+| channel | 👷 Partial, pending others | Flume-based communication between components |
 | parallel processing | ✅ Implemented | Rayon-based parallel file processing |
 | embed | 🚧 Planned | Vector embeddings for code snippets |
-| graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
-| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage |
+| transform | ✅ Implemented | Transformation of intermediate AST representation to graph database format |
+| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage (34 schema implemented and tested) |
 | watcher | 🚧 Planned | File system watcher for code changes |
 | writer | 🚧 Planned | Code generation and modification |
 | context | 🚧 Planned | Context building for LLM prompts |
 | llm | 🚧 Planned | LLM integration for code generation |
 | prompt | 🚧 Planned | Prompt engineering of user prompt |
-| ui | 🚧 Planned | User interface (CLI/GUI) |
-| analyze | 🚧 Planned | Static analysis of parsed code |
+| ui | 👷 In Progress | User interface (primary CLI, tools/customizations GUI) |
+| analyze | 🚧 Planned   Post-MVP | Static analysis of parsed code |
+| ploke-lsp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
 
 ## Architecture Overview
 
@@ -93,7 +95,7 @@ For a detailed overview of the project's architecture, components, and current s
  │   │   ├── syn_parser/       󰆧    # AST traversal + parsing (Rayon)
  │   │   ├── ploke-lsp/        󰚩    # LSP data processing (Tokio)
  │   │   ├── ploke-embed/      󰚩    # Vector embeddings (Rayon)
- │   │   └── ploke-graph/      󰆧    # AST ➔ CozoDB (Rayon)
+ │   │   └── ploke-transform/  󰆧    # AST ➔ CozoDB (Rayon)
  │   ├── io/                   󰚩    # Input/Output pipeline (Tokio)
  │   │   ├── watcher/          󰚩    # File watching (Tokio)
  │   │   └── writer/           󰚩    # Code writing (Tokio)
