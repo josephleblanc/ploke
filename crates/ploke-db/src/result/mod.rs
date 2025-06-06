@@ -6,11 +6,11 @@ mod snippet;
 pub use formatter::ResultFormatter;
 pub use snippet::CodeSnippet;
 
-use crate::error::Error;
+use crate::error::DbError;
 use cozo::NamedRows;
 
 /// Result of a database query
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryResult {
     pub rows: Vec<Vec<cozo::DataValue>>,
     pub headers: Vec<String>,
@@ -18,7 +18,7 @@ pub struct QueryResult {
 
 impl QueryResult {
     /// Convert query results into code snippets
-    pub fn into_snippets(self) -> Result<Vec<CodeSnippet>, Error> {
+    pub fn into_snippets(self) -> Result<Vec<CodeSnippet>, DbError> {
         self.rows
             .iter()
             .map(|row| CodeSnippet::from_db_row(row))

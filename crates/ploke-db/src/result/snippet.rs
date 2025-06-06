@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::error::Error;
+use crate::error::DbError;
 
 /// A retrieved code snippet with context
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,12 +22,12 @@ pub struct CodeSnippet {
 
 impl CodeSnippet {
     /// Create new snippet from database row
-    pub fn from_db_row(row: &[cozo::DataValue]) -> Result<Self, Error> {
+    pub fn from_db_row(row: &[cozo::DataValue]) -> Result<Self, DbError> {
         // Expected row format: [id, name, visibility, docstring]
         let name = row
             .get(1)
             .and_then(|v| v.get_str())
-            .ok_or(Error::QueryExecution("Missing name in row".into()))?;
+            .ok_or(DbError::QueryExecution("Missing name in row".into()))?;
 
         Ok(Self {
             text: name.to_string(),

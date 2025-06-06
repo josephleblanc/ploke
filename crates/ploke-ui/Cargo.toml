@@ -11,9 +11,12 @@ path = "src/main.rs"
 # core ui elements
 eframe = "0.31"
 egui = "0.31"
+egui_extras = "0.31"
 
 # database integration
 cozo = { workspace = true }
+ploke-db = { path = "../ploke-db" }
+ploke-transform = { path = "../ingest/ploke-transform" }
 
 # core types
 ploke-core = { path = "../ploke-core" }
@@ -21,11 +24,8 @@ ploke-core = { path = "../ploke-core" }
 # parsing and code graph
 syn_parser = { path = "../ingest/syn_parser" }
 
-# transform into database from parser
-ploke-transform = { path = "../ingest/ploke-transform" }
-
-# database wrapper and query methods + query builder
-ploke-db = { path = "../ploke-db" }
+# persistence
+serde = { workspace = true }
 
 rfd = "0.12" # For file dialogs
 
@@ -38,4 +38,11 @@ env_logger = "0.11"
 log = { workspace = true }
 colored = { workspace = true }
 
-crossbeam = "0.8" # For thread communication
+# concurrency
+flume = { workspace = true }
+
+[features]
+default = ["strip_table"]
+multithreaded = []
+serde = []
+strip_table = []
