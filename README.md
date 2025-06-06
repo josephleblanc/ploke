@@ -1,16 +1,12 @@
 # ploke
 
-**ploke** aims to be a powerful Retrieval-Augmented Generation (RAG) system designed specifically for Rust code generation and refactoring. It analyzes your codebase to provide context-aware code suggestions, enhancing LLM outputs for more accurate and relevant results that respect your project's existing patterns. **ploke**'s emphasis on a comprehensive code graph and static analysis integration has potential to make LLMs useful on larger, complex projects, and our processing of dependencies into the graph means you will be able to use rapidly developing crates that might be outside the LLM's context window.
+**ploke** aims to be a powerful LLM interface in the terminal (think `aider`) for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system designed specifically for Rust code generation and refactoring. It analyzes your codebase to provide context-aware code suggestions, enhancing LLM outputs for more accurate and relevant results that respect your project's existing patterns. **ploke**'s emphasis on a comprehensive code graph and static analysis integration has potential to make LLMs useful on larger, complex projects, and our processing of dependencies into the graph means you will be able to use rapidly developing crates that might be outside the LLM's training window.
 
 For a detailed overview of the project's architecture, components, and current status, please refer to the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)**.
 
 To see our policy on AI-collaboration on the use of AI in developing `ploke`, see the section below.
+<!-- To see some of our design philosophy, see our ADR directory, design documentation, or detailed planning and testing documents. -->
 
-To see some of our design philosophy, see our ADR directory, design documentation, or detailed planning and testing documents.
-
-## Project Status
-
-⚠️ **Work in Progress:** This project is currently under active development. The architecture and implementation details are evolving. To see implementation status, check the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)** . 
 
 ## Architecture & Design
 
@@ -60,6 +56,82 @@ For a detailed overview of the project's architecture, components, and current s
   - (stretch) query panel for quick questions to the LLM on selected code or the structure of the code graph
   - more developments to come. We believe this feature could significantly improve developer interaction with LLMs by providing a clear 
 </details>
+
+## Project Status
+
+⚠️ **Work in Progress:** This project is currently under active development. The architecture and implementation details are evolving. To see more details on project architecture, check the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)**.
+
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| syn_parser | ✅ Implemented | Core parsing logic using syn, visitor pattern, and code graph generation |
+| serialization | ✅ Implemented | RON serialization of CodeGraph |
+| channel | ✅ Implemented | Flume-based communication between components |
+| parallel processing | ✅ Implemented | Rayon-based parallel file processing |
+| embed | 🚧 Planned | Vector embeddings for code snippets |
+| graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
+| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage |
+| watcher | 🚧 Planned | File system watcher for code changes |
+| writer | 🚧 Planned | Code generation and modification |
+| context | 🚧 Planned | Context building for LLM prompts |
+| llm | 🚧 Planned | LLM integration for code generation |
+| prompt | 🚧 Planned | Prompt engineering of user prompt |
+| ui | 🚧 Planned | User interface (CLI/GUI) |
+| analyze | 🚧 Planned | Static analysis of parsed code |
+
+## Architecture Overview
+
+ ### File System Structure
+
+ ```
+ ploke/
+ ├── Cargo.toml                     # Workspace configuration
+ ├── crates/
+ │   ├── core/                 󱃜    # Core types and traits (NodeId..)
+ │   ├── error/                󱃜    # Cross-crate error types
+ │   ├── ingest/                    # Core processing Pipeline
+ │   │   ├── syn_parser/       󰆧    # AST traversal + parsing (Rayon)
+ │   │   ├── ploke-lsp/        󰚩    # LSP data processing (Tokio)
+ │   │   ├── ploke-embed/      󰚩    # Vector embeddings (Rayon)
+ │   │   └── ploke-graph/      󰆧    # AST ➔ CozoDB (Rayon)
+ │   ├── io/                   󰚩    # Input/Output pipeline (Tokio)
+ │   │   ├── watcher/          󰚩    # File watching (Tokio)
+ │   │   └── writer/           󰚩    # Code writing (Tokio)
+ │   ├── ploke-db/             󰚩    # Query processing (Tokio)
+ │   ├── context/              󰚩    # LLM context (Tokio)
+ │   ├── llm/                  󰚩    # Local LLM integration (Tokio)
+ │   ├── prompt/               󰚩    # Prompt engineering (Tokio)
+ │   ├── ui/                   󰚩    # CLI/GUI (Tokio/EGUI)
+ │   └── analyze/              󰆧    # Static analysis (Rayon)
+ ├── examples/                      # Documentation examples
+ └── benches/                       # Performance benchmarks
+
+ 󰚩    Asynchronous (tokio)
+ 󰆧    Multithreaded (rayon)
+ Rayon Domain (󰆧 ) ↔ Flume Channel ↔ Tokio Domain (󰚩 )
+ 󱃜  Send + Sync (Not tied to tokio or rayon runtime)
+ ```
+
+### Data Flow Diagrams
+
+```mermaid
+flowchart TD
+    watcher["File Watcher<br>󰚩 Tokio"] --> parser
+    ui["UI<br>󰚩 Tokio"] --> parser["Parser<br>󰆧 Rayon"]
+    parser -->|flume| embed["Embeddings<br>󰆧 Rayon"]
+    parser -->|flume| grraphT["Graph Transformer<br>󰆧 Rayon"]
+    embed -->|write| db["Database<br>󰚩 Tokio"]
+    grraphT -->|write| db
+    db -->|read| analyze["Analyzer<br>󰆧 Rayon"]
+    analyze -->|write| db
+    db -->|Query Results| context["Context Builder<br>󰚩 Tokio"]
+    lsp["LSP<br>󰚩 Tokio"] --> context
+    ui --> prompt["Prompt<br>󰚩 Tokio"]
+    context --> llm["LLM<br>󰚩 Tokio"]
+    llm --> ui
+    prompt --> db
+    ploke_grraph["Schema<br>󱃜 Thread-safe"] -->|Schema| db
+```
 
 ## Policy on AI Collaboration
 
@@ -167,7 +239,9 @@ We are deeply committed to creating a project that has clean, idiomatic rust tha
   - See [parser_error_handling]
 </details>
 
-## Current Focus: Initial UI of Query
+## Current Focus: CLI
+
+Our immediate focus is on the CLI that forms the primary user-facing interface with the LLM.
 
 [uuid_refactor]:./docs/plans/uuid_refactor
 [00_overview]:./docs/plans/uuid_refactor/00_overview_batch_processing_model.md
