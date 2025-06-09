@@ -199,6 +199,10 @@ B. User Experience
     - Agent reasoning chains
   - Status indicators for ongoing processes
   - Subtle hints for improving LLM interaction
+- Schema versioning will be minimal placeholder since:
+  - MVP uses embedded in-memory CozoDB
+  - Persistent graph state not yet implemented
+  - Focus is on iterative framework development
 
 C. Extensibility
 - Plugin system for new features
