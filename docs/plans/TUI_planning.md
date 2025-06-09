@@ -35,12 +35,14 @@ A. TUI Component
   - Metadata (similarity scores, validation results)
 
 B. Intent Processing
-- Small LLM classifies user intent:
+- Small LLM classifies user intent and expands query:
   - Code generation
   - Code modification
   - Question/explanation
   - Refactoring
-- Output feeds into query generation
+- Query expansion to enhance context retrieval
+- Combined intent + expanded query feeds into query generation
+- Note: Query expansion strategy requires testing to determine optimal approach
 
 C. Query Generation
 - Convert intent into Datalog queries
@@ -58,20 +60,29 @@ D. RAG Pipeline
 3. EXTENSION POINTS & FUTURE FEATURES
 
 A. Static Analysis Integration
-- Hook points for rust-analyzer
+- Future development: rust-analyzer integration (not part of MVP)
 - Integration with existing code graph
 - Custom lints for AI-generated code
 - Real-time validation
+- Consider integration with user's preferred editor (nvim, VSCode, etc) for code preview
+  - Trade-off: External editor provides familiar environment but fragments user experience
+  - Recommendation: Start with built-in preview in TUI, add editor integration as optional feature
 
 B. Version Control
 - Git integration from day one
 - Atomic commits for AI changes
 - Branch management for experimental changes
 - Change history separate from git
+- Potential integration with cozo's timetravel feature
+  - Could complement git by tracking fine-grained LLM changes
+  - Consider using timetravel for undo/redo stack
+  - Git remains source of truth for committed changes
 
 C. Multi-Agent Review
 - Pluggable agent system
-- Role-based agents (architect, security, performance)
+- Role-based agents with user-defined prompts in config file
+  - Default roles: architect, security, performance
+  - Custom role definition format in config
 - Agent communication protocol
 - Consensus mechanisms
 
@@ -133,6 +144,10 @@ A. Change Management
 - Change preview before application
 - Partial accept/reject UI
 - Change refinement interface
+- Toggleable recent changes panel
+  - Timeline view of modifications
+  - Diff visualization
+  - Change metadata (timestamp, intent, etc)
 
 B. Context Visualization
 - Embedding similarity visualization
@@ -164,6 +179,16 @@ B. User Experience
 - Clear feedback
 - Intuitive commands
 - Progressive disclosure of features
+- Transparency of LLM interaction:
+  - Minimal default UI showing essential info
+  - Toggleable detailed views for:
+    - Intent classification results
+    - Query expansion details
+    - RAG pipeline metrics
+    - Embedding similarities
+    - Agent reasoning chains
+  - Status indicators for ongoing processes
+  - Subtle hints for improving LLM interaction
 
 C. Extensibility
 - Plugin system for new features
