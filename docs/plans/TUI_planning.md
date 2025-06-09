@@ -1,0 +1,176 @@
+<!-- Provided by Claude 3.5 -->
+
+# Plan for TUI (WIP)
+
+Jun 9 2025
+
+I'll provide a comprehensive analysis and design exploration. Let me break this down into major sections:
+
+1. CORE ARCHITECTURE DECISIONS
+
+A. TUI vs Current UI
+- Given the goals, replacing/archiving the current UI with a `ratatui`-based TUI makes sense
+- `ratatui` provides excellent terminal manipulation capabilities while keeping the interface focused
+- The existing UI code could be archived or moved to a separate branch for potential future GUI needs
+
+B. Pipeline Architecture
+Suggest a modular pipeline with these key components:
+1. User Interface Layer (TUI)
+2. Intent Processing Layer (small LLM)
+3. Query Generation Layer (small LLM + datalog)
+4. RAG Processing Layer
+5. Code Generation/Edit Layer (main LLM)
+6. Code Analysis & Validation Layer
+
+2. DETAILED COMPONENT DESIGN
+
+A. TUI Component
+- Main chat interface similar to aider
+- Multiple modes (chat, code, review)
+- Status bar showing current mode, git status, etc
+- Split panes for:
+  - Chat history
+  - Code context
+  - Proposed changes
+  - Metadata (similarity scores, validation results)
+
+B. Intent Processing
+- Small LLM classifies user intent:
+  - Code generation
+  - Code modification
+  - Question/explanation
+  - Refactoring
+- Output feeds into query generation
+
+C. Query Generation
+- Convert intent into Datalog queries
+- Multiple query strategies based on intent
+- Query templating system for common patterns
+- Query optimization layer
+
+D. RAG Pipeline
+- Vector embedding storage
+- Multiple retrieval strategies
+- Reranking system
+- Context window optimization
+- Chunking strategies
+
+3. EXTENSION POINTS & FUTURE FEATURES
+
+A. Static Analysis Integration
+- Hook points for rust-analyzer
+- Integration with existing code graph
+- Custom lints for AI-generated code
+- Real-time validation
+
+B. Version Control
+- Git integration from day one
+- Atomic commits for AI changes
+- Branch management for experimental changes
+- Change history separate from git
+
+C. Multi-Agent Review
+- Pluggable agent system
+- Role-based agents (architect, security, performance)
+- Agent communication protocol
+- Consensus mechanisms
+
+4. MVP ROADMAP
+
+Phase 1: Core Chat
+- Basic TUI with chat
+- Simple RAG pipeline
+- Basic code editing
+
+Phase 2: Enhanced Context
+- Intent processing
+- Improved query generation
+- Basic code validation
+
+Phase 3: Advanced Features
+- Multi-agent review
+- Advanced static analysis
+- Enhanced UI features
+
+5. IMPLEMENTATION APPROACH
+
+A. Crate Structure
+```
+ploke-tui/           # New TUI crate
+├── src/
+│   ├── ui/         # TUI components
+│   ├── intent/     # Intent processing
+│   ├── query/      # Query generation
+│   ├── rag/        # RAG pipeline
+│   ├── agents/     # Multi-agent system
+│   └── analysis/   # Code analysis
+```
+
+B. Key Traits & Interfaces
+```rust
+trait IntentProcessor {
+    fn process(&self, input: &str) -> Intent;
+}
+
+trait QueryGenerator {
+    fn generate(&self, intent: Intent) -> Vec<DatalogQuery>;
+}
+
+trait RagPipeline {
+    fn retrieve(&self, queries: &[DatalogQuery]) -> Context;
+    fn rerank(&self, context: &Context) -> RankedContext;
+}
+
+trait CodeGenerator {
+    fn generate(&self, context: RankedContext) -> CodeChanges;
+}
+```
+
+6. QUALITY OF LIFE FEATURES
+
+A. Change Management
+- Undo/redo stack for all changes
+- Change preview before application
+- Partial accept/reject UI
+- Change refinement interface
+
+B. Context Visualization
+- Embedding similarity visualization
+- Code relationship graphs
+- Change impact analysis
+- Performance metrics
+
+7. RECOMMENDED PATH FORWARD
+
+1. Start with new `ploke-tui` crate
+2. Implement basic TUI chat interface
+3. Create simple RAG pipeline using existing code graph
+4. Add basic code editing capabilities
+5. Implement intent processing
+6. Add query generation
+7. Enhance with validation and analysis
+8. Add multi-agent features
+
+8. KEY CONSIDERATIONS
+
+A. Performance
+- Async processing for LLM calls
+- Efficient context management
+- Smart caching of embeddings
+- Incremental updates
+
+B. User Experience
+- Fast response times
+- Clear feedback
+- Intuitive commands
+- Progressive disclosure of features
+
+C. Extensibility
+- Plugin system for new features
+- Custom agent definitions
+- Additional analysis tools
+- Alternative LLM backends
+
+This design provides a solid foundation while maintaining flexibility for future enhancements. The modular approach allows for incremental development and easy addition of new features.
+
+Would you like me to elaborate on any particular aspect of this design?
