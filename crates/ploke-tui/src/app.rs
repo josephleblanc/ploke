@@ -84,11 +84,17 @@ impl App {
 
         match self.mode {
             Mode::Normal => match key_event.code {
+                // TODO: Change method of exiting here. Just pressing "q", with no confirmation,
+                // makes it too easy to accidentally exit the application.
                 KeyCode::Char('q') => self.should_quit = true,
                 KeyCode::Char('i') => self.mode = Mode::Input, // Enter input mode
+
+                // more here..
                 _ => {}
             },
             Mode::Input => match key_event.code {
+                // How can we support multiple key presses here? It might be nice to have a
+                // "Shift+Enter" configurable option for multi-line input.
                 KeyCode::Enter => {
                     if !self.current_input.trim().is_empty() {
                         let query = self.current_input.drain(..).collect();
