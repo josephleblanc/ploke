@@ -1,26 +1,27 @@
 <!-- Provided by Claude 3.5 -->
 
-# Plan Overview for TUI (WIP)
+# TUI Component Design Overview
 
 Jun 9 2025
 
-I'll provide a comprehensive analysis and design exploration. Let me break this down into major sections:
+This document outlines the design for the TUI component of the ploke project. The TUI provides a terminal-based interface for interacting with ploke's existing infrastructure.
 
-1. CORE ARCHITECTURE DECISIONS
+1. SCOPE AND INTEGRATION
 
-A. TUI vs Current UI
-- Given the goals, replacing/archiving the current UI with a `ratatui`-based TUI makes sense
-- `ratatui` provides excellent terminal manipulation capabilities while keeping the interface focused
-- The existing UI code could be archived or moved to a separate branch for potential future GUI needs
+A. Role in ploke Architecture
+- Terminal-based interface using `ratatui` for user interaction
+- Coordinates with existing ploke components:
+  - Uses `ploke-db` for RAG operations and code graph queries
+  - Relies on `syn_parser` for code analysis
+  - Integrates with `ploke-transform` for code modifications
+  - Leverages `cozo` through existing infrastructure
 
-B. Pipeline Architecture
-Suggest a modular pipeline with these key components:
-1. User Interface Layer (TUI)
-2. Intent Processing Layer (small LLM)
-3. Query Generation Layer (small LLM + datalog)
-4. RAG Processing Layer
-5. Code Generation/Edit Layer (main LLM)
-6. Code Analysis & Validation Layer
+B. Component Responsibilities
+1. User Interface Rendering
+2. Input Processing and Command Handling
+3. Result Display and Formatting
+4. Session Management
+5. Configuration Interface
 
 2. DETAILED COMPONENT DESIGN
 
