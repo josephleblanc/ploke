@@ -89,20 +89,29 @@ C. Multi-Agent Review
 
 4. MVP ROADMAP
 
-Phase 1: Core Chat
-- Basic TUI with chat
-- Simple RAG pipeline
-- Basic code editing
+Development will follow an iterative framework-first approach:
+1. Initial LLM interaction framework
+2. RAG integration on tested framework
 
-Phase 2: Enhanced Context
+Phase 1: Core Chat Framework
+- Basic TUI chat interface
+- LLM communication pipeline
+- Basic code editing
+- Placeholder context management
+- Error handling foundation
+
+Phase 2: RAG Integration
+- Simple RAG pipeline
+- Query generation
 - Intent processing
-- Improved query generation
-- Basic code validation
+- Basic validation
+- Schema versioning placeholder
 
 Phase 3: Advanced Features
 - Multi-agent review
-- Advanced static analysis
-- Enhanced UI features
+- Enhanced static analysis
+- UI refinements
+- Persistent storage integration
 
 5. IMPLEMENTATION APPROACH
 
