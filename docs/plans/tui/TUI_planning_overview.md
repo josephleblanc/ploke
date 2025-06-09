@@ -1,6 +1,6 @@
 <!-- Provided by Claude 3.5 -->
 
-# Plan for TUI (WIP)
+# Plan Overview for TUI (WIP)
 
 Jun 9 2025
 
