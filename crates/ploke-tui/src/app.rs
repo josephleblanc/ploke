@@ -88,6 +88,14 @@ impl App {
     fn handle_key_event(&mut self, key_event: crossterm::event::KeyEvent) {
         use crossterm::event::{KeyCode, KeyModifiers};
 
+        // Global key handlers (work in any mode)
+        if key_event.modifiers.contains(KeyModifiers::CONTROL) 
+            && key_event.code == KeyCode::Char('c') 
+        {
+            self.should_quit = true;
+            return;
+        }
+
         match self.mode {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
