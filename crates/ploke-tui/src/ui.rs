@@ -1,4 +1,5 @@
-// src/ui.rs
+use ratatui::widgets::Clear;
+use ratatui::prelude::Color;
 use ratatui::{
     backend::Backend,
     layout::Rect,
@@ -28,9 +29,8 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         ])
         .split(popup_layout[1])[1]
 }
-};
 
-use crate::app::{App, Mode};
+use crate::app::{App, ModalType, Mode};
 
 /// Renders the application's UI.
 pub fn render(f: &mut Frame, app: &App) {
