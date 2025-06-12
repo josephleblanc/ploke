@@ -1,10 +1,33 @@
 // src/ui.rs
 use ratatui::{
     backend::Backend,
+    layout::Rect,
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style, Stylize},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
+};
+
+/// Helper to create centered rects for modal dialogs
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
 };
 
 use crate::app::{App, Mode};
@@ -47,6 +70,19 @@ pub fn render(f: &mut Frame, app: &App) {
         });
 
     f.render_widget(input_paragraph, chunks[1]);
+
+    // Render modals on top
+    if let Some(modal) = app.active_modals.last() {
+        let dialog = match modal {
+            ModalType::QuitConfirm => Paragraph::new("Quit application? (y/n)")
+                .block(Block::default().title("Confirm Quit").borders(Borders::ALL))
+                .style(Style::default().fg(Color::Yellow)),
+        };
+        
+        let area = centered_rect(60, 20, f.size());
+        f.render_widget(Clear, area); // Clear background
+        f.render_widget(dialog, area);
+    }
 
     // Set cursor position if in input mode
     if app.mode == Mode::Input {

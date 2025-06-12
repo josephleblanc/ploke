@@ -84,17 +84,24 @@ impl App {
 
         match self.mode {
             Mode::Normal => match key_event.code {
-                KeyCode::Char('q') => self.mode = Mode::QuitConfirm,
+                KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
                 KeyCode::Char('i') => self.mode = Mode::Input,
 
                 // more here..
                 _ => {}
             },
-            Mode::QuitConfirm => match key_event.code {
-                KeyCode::Char('y') => self.should_quit = true,
-                KeyCode::Char('n') | KeyCode::Esc => self.mode = Mode::Normal,
-                _ => {},
-            },
+            // Modal handling (applies to topmost modal)
+            _ if !self.active_modals.is_empty() => {
+                if let Some(top_modal) = self.active_modals.last() {
+                    match (top_modal, key_event.code) {
+                        (ModalType::QuitConfirm, KeyCode::Char('y')) => self.should_quit = true,
+                        (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
+                            self.active_modals.pop();
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Mode::Input => match key_event.code {
                 // How can we support multiple key presses here? It might be nice to have a
                 // "Shift+Enter" configurable option for multi-line input.
