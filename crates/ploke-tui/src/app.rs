@@ -84,13 +84,16 @@ impl App {
 
         match self.mode {
             Mode::Normal => match key_event.code {
-                // TODO: Change method of exiting here. Just pressing "q", with no confirmation,
-                // makes it too easy to accidentally exit the application.
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Char('i') => self.mode = Mode::Input, // Enter input mode
+                KeyCode::Char('q') => self.mode = Mode::QuitConfirm,
+                KeyCode::Char('i') => self.mode = Mode::Input,
 
                 // more here..
                 _ => {}
+            },
+            Mode::QuitConfirm => match key_event.code {
+                KeyCode::Char('y') => self.should_quit = true,
+                KeyCode::Char('n') | KeyCode::Esc => self.mode = Mode::Normal,
+                _ => {},
             },
             Mode::Input => match key_event.code {
                 // How can we support multiple key presses here? It might be nice to have a
