@@ -89,6 +89,8 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         // Global key handlers (work in any mode)
+        // NOTE: This must be checked before modal specific handling, otherwise if a modal
+        // is open, it will intercept Ctrl+C.
         if key_event.modifiers.contains(KeyModifiers::CONTROL) 
             && key_event.code == KeyCode::Char('c') 
         {
@@ -96,6 +98,25 @@ impl App {
             return;
         }
 
+        // Modal handling (applies to topmost modal if any)
+        if let Some(top_modal) = self.active_modals.last() {
+            match (top_modal, key_event.code) {
+                (ModalType::QuitConfirm, KeyCode::Char('y')) => {
+                    self.should_quit = true;
+                    return; // Consume event
+                }
+                (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
+                    self.active_modals.pop();
+                    return; // Consume event
+                }
+                // If the key is not handled by the active modal,
+                // let it fall through to mode-specific handling.
+                _ => {}
+            }
+        }
+
+        // If no active modals, or if the event was not consumed by modal logic,
+        // proceed with mode-specific key handling.
         match self.mode {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
@@ -104,18 +125,8 @@ impl App {
                 // more here..
                 _ => {}
             },
-            // Modal handling (applies to topmost modal)
-            _ if !self.active_modals.is_empty() => {
-                if let Some(top_modal) = self.active_modals.last() {
-                    match (top_modal, key_event.code) {
-                        (ModalType::QuitConfirm, KeyCode::Char('y')) => self.should_quit = true,
-                        (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
-                            self.active_modals.pop();
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            // The original `_ if !self.active_modals.is_empty()` branch is removed
+            // as modal handling is now done above.
             Mode::Input => match key_event.code {
                 // How can we support multiple key presses here? It might be nice to have a
                 // "Shift+Enter" configurable option for multi-line input.
