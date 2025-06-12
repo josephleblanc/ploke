@@ -1,4 +1,4 @@
-use ratatui::widgets::Clear;
+use ratatui::widgets::{Clear, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::prelude::Color;
 use ratatui::{
     backend::Backend,
@@ -44,6 +44,18 @@ pub fn render(f: &mut Frame, app: &App) {
     let history_block = Block::default()
         .borders(Borders::ALL)
         .title("Chat History");
+    // Render the block first to get its inner area for content + scrollbar
+    f.render_widget(history_block.clone(), chunks[0]);
+    let history_inner_area = history_block.inner(chunks[0]);
+
+    // Create a new horizontal sub-layout within history_inner_area
+    let history_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+        .split(history_inner_area);
+
+    let text_area = history_chunks[0];
+    let scrollbar_area = history_chunks[1];
 
     let messages: Vec<ratatui::text::Line> = app
         .messages
@@ -52,10 +64,26 @@ pub fn render(f: &mut Frame, app: &App) {
         .collect();
 
     let history_paragraph = Paragraph::new(messages)
-        .block(history_block)
-        .wrap(Wrap { trim: false }); // Allow long lines to wrap
+        // No block here if the outer block is already rendered
+        .wrap(Wrap { trim: false })
+        .scroll((app.history_scroll_offset as u16, 0));
 
-    f.render_widget(history_paragraph, chunks[0]);
+    f.render_widget(history_paragraph, text_area); // Render paragraph in its dedicated area
+
+    // Create and render the Scrollbar
+    // Only show scrollbar if content might be larger than the available space.
+    // This is a heuristic, as precise line count after wrapping is complex.
+    if app.messages.len() > text_area.height as usize {
+        let mut scrollbar_state = ScrollbarState::new(app.messages.len())
+            .position(app.history_scroll_offset);
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"))
+            .thumb_symbol("█");
+
+        f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
 
     // Input Pane
     let input_block = Block::default()

@@ -37,7 +37,8 @@ pub struct App {
     pub messages: VecDeque<String>, // Using VecDeque for efficient pop_front/push_back
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
-    pub active_modals: Vec<ModalType>
+    pub active_modals: Vec<ModalType>,
+    pub history_scroll_offset: usize,
 }
 
 impl App {
@@ -54,6 +55,7 @@ impl App {
             should_quit: false,
             backend_tx,
             active_modals: Vec::new(),
+            history_scroll_offset: 0,
         }
     }
 
@@ -71,12 +73,14 @@ impl App {
                 if self.messages.len() > self.messages.capacity() {
                     self.messages.pop_front(); // Keep history within capacity
                 }
+                self.history_scroll_offset = usize::MAX;
             }
             AppEvent::SendQuery(query) => {
                 self.messages.push_back(format!("You: {}", query));
                 if self.messages.len() > self.messages.capacity() {
                     self.messages.pop_front();
                 }
+                self.history_scroll_offset = usize::MAX;
                 // Send the query to the backend
                 let _ = self.backend_tx.send(BackendRequest::Query(query));
             }
@@ -89,6 +93,8 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         // Global key handlers (work in any mode)
+        // NOTE: This must be checked before modal specific handling, otherwise if a modal
+        // is open, it will intercept Ctrl+C.
         if key_event.modifiers.contains(KeyModifiers::CONTROL) 
             && key_event.code == KeyCode::Char('c') 
         {
@@ -96,26 +102,46 @@ impl App {
             return;
         }
 
+        // Modal handling (applies to topmost modal if any)
+        if let Some(top_modal) = self.active_modals.last() {
+            match (top_modal, key_event.code) {
+                (ModalType::QuitConfirm, KeyCode::Char('y')) => {
+                    self.should_quit = true;
+                    return; // Consume event
+                }
+                (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
+                    self.active_modals.pop();
+                    return; // Consume event
+                }
+                // If the key is not handled by the active modal,
+                // let it fall through to mode-specific handling.
+                _ => {}
+            }
+        }
+
+        // If no active modals, or if the event was not consumed by modal logic,
+        // proceed with mode-specific key handling.
         match self.mode {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
                 KeyCode::Char('i') => self.mode = Mode::Input,
-
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.history_scroll_offset = self.history_scroll_offset.saturating_sub(1);
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if !self.messages.is_empty() {
+                        self.history_scroll_offset = self.history_scroll_offset.saturating_add(1);
+                        // Ensure offset doesn't go beyond the last message index
+                        if self.history_scroll_offset >= self.messages.len() {
+                            self.history_scroll_offset = self.messages.len().saturating_sub(1);
+                        }
+                    }
+                }
                 // more here..
                 _ => {}
             },
-            // Modal handling (applies to topmost modal)
-            _ if !self.active_modals.is_empty() => {
-                if let Some(top_modal) = self.active_modals.last() {
-                    match (top_modal, key_event.code) {
-                        (ModalType::QuitConfirm, KeyCode::Char('y')) => self.should_quit = true,
-                        (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
-                            self.active_modals.pop();
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            // The original `_ if !self.active_modals.is_empty()` branch is removed
+            // as modal handling is now done above.
             Mode::Input => match key_event.code {
                 // How can we support multiple key presses here? It might be nice to have a
                 // "Shift+Enter" configurable option for multi-line input.
