@@ -7,7 +7,11 @@ pub enum Mode {
     #[default]
     Normal, // For navigation, general commands
     Input,  // For typing user queries
-    // Add more modes as needed, e.g., `ViewingGraph`, `Settings`
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ModalType {
+    QuitConfirm
 }
 
 /// Events that can be sent to the App for state updates.
@@ -33,6 +37,7 @@ pub struct App {
     pub messages: VecDeque<String>, // Using VecDeque for efficient pop_front/push_back
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
+    pub active_modals: Vec<ModalType>
 }
 
 impl App {
@@ -48,6 +53,7 @@ impl App {
             messages: VecDeque::with_capacity(100),
             should_quit: false,
             backend_tx,
+            active_modals: Vec::new(),
         }
     }
 
