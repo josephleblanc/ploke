@@ -21,7 +21,6 @@ use tokio::task;
 async fn main() -> Result<()> {
     // 1. Setup error handling with color-eyre
     // This provides enhanced error messages and backtraces.
-    eyre::install()?;
 
     // 2. Initialize the terminal for TUI
     // Enter raw mode to capture key presses directly.

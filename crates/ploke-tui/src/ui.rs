@@ -10,7 +10,7 @@ use ratatui::{
 use crate::app::{App, Mode};
 
 /// Renders the application's UI.
-pub fn render<B: Backend>(f: &mut Frame<B>, app: &App) {
+pub fn render(f: &mut Frame, app: &App) {
     // Define main layout: history pane, input pane
     let chunks = Layout::default()
         .direction(Direction::Vertical)
