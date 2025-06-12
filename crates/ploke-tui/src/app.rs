@@ -37,7 +37,8 @@ pub struct App {
     pub messages: VecDeque<String>, // Using VecDeque for efficient pop_front/push_back
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
-    pub active_modals: Vec<ModalType>
+    pub active_modals: Vec<ModalType>,
+    pub history_scroll_offset: usize,
 }
 
 impl App {
@@ -54,6 +55,7 @@ impl App {
             should_quit: false,
             backend_tx,
             active_modals: Vec::new(),
+            history_scroll_offset: 0,
         }
     }
 
@@ -71,12 +73,14 @@ impl App {
                 if self.messages.len() > self.messages.capacity() {
                     self.messages.pop_front(); // Keep history within capacity
                 }
+                self.history_scroll_offset = usize::MAX;
             }
             AppEvent::SendQuery(query) => {
                 self.messages.push_back(format!("You: {}", query));
                 if self.messages.len() > self.messages.capacity() {
                     self.messages.pop_front();
                 }
+                self.history_scroll_offset = usize::MAX;
                 // Send the query to the backend
                 let _ = self.backend_tx.send(BackendRequest::Query(query));
             }
@@ -121,7 +125,18 @@ impl App {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
                 KeyCode::Char('i') => self.mode = Mode::Input,
-
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.history_scroll_offset = self.history_scroll_offset.saturating_sub(1);
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if !self.messages.is_empty() {
+                        self.history_scroll_offset = self.history_scroll_offset.saturating_add(1);
+                        // Ensure offset doesn't go beyond the last message index
+                        if self.history_scroll_offset >= self.messages.len() {
+                            self.history_scroll_offset = self.messages.len().saturating_sub(1);
+                        }
+                    }
+                }
                 // more here..
                 _ => {}
             },
