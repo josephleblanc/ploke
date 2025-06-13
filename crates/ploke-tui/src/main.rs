@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let (backend_request_tx, backend_request_rx) = flume::unbounded::<BackendRequest>();
 
     // 4. Load configuration
-    let config = config::Config::load();
+    let config = crate::config::Config::load();
     
     // Create the application state with config
     let mut app = App::new(backend_request_tx.clone(), config); // Clone sender for App to use

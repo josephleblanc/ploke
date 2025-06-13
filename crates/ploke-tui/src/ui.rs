@@ -86,9 +86,9 @@ pub fn render(f: &mut Frame, app: &App) {
 
     // Set cursor position if in input mode
     if app.mode == Mode::Input {
-        f.set_cursor_position(
+        f.set_cursor_position((
             chunks[1].x + app.current_input.len() as u16 + 1, // +1 for border
-            chunks[1].y + 1, // +1 for border
-        );
+            chunks[1].y + 1 // +1 for border
+        ));
     }
 }

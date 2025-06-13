@@ -1,8 +1,6 @@
 // src/backend.rs
-use flume::{Receiver, Sender};
-use tokio::time::{self, Duration};
-
 use crate::app::{BackendRequest, AppEvent};
+use crate::config::Config;
 
 use reqwest::Client;
 use serde_json::json;
@@ -25,7 +23,7 @@ pub async fn start_backend_listener(
             String::new() // Will fail API calls but allows graceful shutdown
         });
     
-    let model_name = &app.config.model;
+    let model_name = &config.model;
 
     while let Ok(request) = backend_rx.recv_async().await {
         match request {
