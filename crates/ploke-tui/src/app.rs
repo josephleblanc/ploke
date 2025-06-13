@@ -6,12 +6,12 @@ use std::collections::VecDeque;
 pub enum Mode {
     #[default]
     Normal, // For navigation, general commands
-    Input,  // For typing user queries
+    Input, // For typing user queries
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ModalType {
-    QuitConfirm
+    QuitConfirm,
 }
 
 /// Events that can be sent to the App for state updates.
@@ -37,7 +37,7 @@ pub struct App {
     pub messages: VecDeque<String>, // Using VecDeque for efficient pop_front/push_back
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
-    pub active_modals: Vec<ModalType>
+    pub active_modals: Vec<ModalType>,
 }
 
 impl App {
@@ -89,13 +89,23 @@ impl App {
         use crossterm::event::{KeyCode, KeyModifiers};
 
         // Global key handlers (work in any mode)
-        if key_event.modifiers.contains(KeyModifiers::CONTROL) 
-            && key_event.code == KeyCode::Char('c') 
+        if key_event.modifiers.contains(KeyModifiers::CONTROL)
+            && key_event.code == KeyCode::Char('c')
         {
             self.should_quit = true;
             return;
         }
 
+        if let Some(active_modal) = self.active_modals.last() {
+            match (active_modal, key_event.code) {
+                (ModalType::QuitConfirm, KeyCode::Char('y')) => self.should_quit = true,
+                (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
+                    self.active_modals.pop();
+                }
+                _ => {} // Ignore other keys when modal is active
+            }
+            return; // Modal handling consumes the event
+        }
         match self.mode {
             Mode::Normal => match key_event.code {
                 KeyCode::Char('q') => self.active_modals.push(ModalType::QuitConfirm),
@@ -105,17 +115,6 @@ impl App {
                 _ => {}
             },
             // Modal handling (applies to topmost modal)
-            _ if !self.active_modals.is_empty() => {
-                if let Some(top_modal) = self.active_modals.last() {
-                    match (top_modal, key_event.code) {
-                        (ModalType::QuitConfirm, KeyCode::Char('y')) => self.should_quit = true,
-                        (ModalType::QuitConfirm, KeyCode::Char('n') | KeyCode::Esc) => {
-                            self.active_modals.pop();
-                        }
-                        _ => {}
-                    }
-                }
-            }
             Mode::Input => match key_event.code {
                 // How can we support multiple key presses here? It might be nice to have a
                 // "Shift+Enter" configurable option for multi-line input.
@@ -130,7 +129,7 @@ impl App {
                 }
                 KeyCode::Esc => {
                     self.mode = Mode::Normal; // Exit input mode
-                    self.current_input.clear(); // Clear input on escape
+                    // self.current_input.clear(); // Clear input on escape
                 }
                 KeyCode::Char(c) => {
                     if key_event.modifiers.contains(KeyModifiers::CONTROL) {
