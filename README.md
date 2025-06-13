@@ -4,13 +4,11 @@
 
 For a detailed overview of the project's architecture, components, and current status, please refer to the **[Proposed Architecture Document (PROPOSED_ARCH_V3.md)](./PROPOSED_ARCH_V3.md)**.
 
-To see our policy on AI-collaboration on the use of AI in developing `ploke`, see the section below.
+To see our policy on AI-collaboration on the use of AI in developing `ploke`, see the [Policy on AI Collaboration](https://github.com/josephleblanc/ploke?tab=readme-ov-file#policy-on-ai-collaboration) below.
 <!-- To see some of our design philosophy, see our ADR directory, design documentation, or detailed planning and testing documents. -->
 
 
-## Architecture & Design
-
-### 1. Project Vision
+## Project Vision
  ploke aims to be a powerful RAG (Retrieval-Augmented Generation) system for code generation and refactoring. It provides developers with context-aware code suggestions by analyzing their codebase and using that knowledge to enhance LLM-based code generation. Our goal is to empower users with a tool to facilitate human-AI collaboration on even mid-to-large size projects by providing LLMs with the context required to be useful to capable rust developers by leveraging our custom built and highly granular code graph to provide LLMs with relevant code snippets to produce good rust code that integrates with your code base, correctly uses rapidly-developing dependencies, and adheres to project style and idioms.
 
 The longer-term vision of the `ploke` project is to leverage a combination of static analysis, detailed queries, and extensive user configuration options to find new ways for developers to utilize AI-generated code in new and engaging ways. We want to help contribute to a future in which developer-AI collaboration can extend a developer's capacity for high-quality, well-architected code. Many of the most popular developer tools today have created fluid experiences of engaging with AI, but have also uncovered problems that might degrade the quality, maintainability, and safety of generated code. 
@@ -251,7 +249,7 @@ Our immediate focus is on the CLI that forms the primary user-facing interface w
 [02_phase2]:./docs/plans/uuid_refactor/02_phase2_parallel_parse_implementation.md
 [03a_phase3]:./docs/plans/uuid_refactor/03a_phase3_known_limitations.md
 [02b_phase2_testing]:./docs/plans/uuid_refactor/02b_phase2_testing.md
-[02a_phase2_error_analysis]:./docs/plans/uuid_refactor/02b_phase2_testing.md 
+[02a_phase2_error_analysis]:./docs/plans/uuid_refactor/02a_phase2_error_analysis.md 
 [module_node_tests]:./crates/ingest/syn_parser/tests/uuid_phase2_partial_graphs/nodes/modules.rs
 [PROPOSED_ARCH_V3]:./PROPOSED_ARCH_V3.md
 [adrs]:./docs/design/adrs 
