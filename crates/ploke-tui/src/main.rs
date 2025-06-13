@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let (backend_request_tx, backend_request_rx) = flume::unbounded::<BackendRequest>();
 
     // 4. Load configuration
-    let config = ploke_tui::config::Config::load();
+    let config = config::Config::builder().add_source(config::File::with_name(".ploke.settings"));
     
     // Create the application state with config
     let mut app = App::new(backend_request_tx.clone(), config); // Clone sender for App to use
