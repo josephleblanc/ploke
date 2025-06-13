@@ -45,16 +45,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(backend_tx: flume::Sender<BackendRequest>) -> Self {
+    pub fn new(backend_tx: flume::Sender<BackendRequest>, config: crate::config::Config) -> Self {
         Self {
             mode: Mode::default(),
             current_input: String::new(),
-            // TODO: history size arbitrarily limited here. Need to implement a way to limit
-            // conversation history based on user preferences in a config, with sane defaults based
-            // on model.
-            // Follow `aider`s lead here and don't enforce it (at not least without user preference).
-            // The user should always be in control.
-            messages: VecDeque::with_capacity(100),
+            messages: VecDeque::with_capacity(config.max_history),
+            config,
             should_quit: false,
             backend_tx,
             active_modals: Vec::new(),

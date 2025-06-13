@@ -14,8 +14,17 @@ pub async fn start_backend_listener(
     app_event_tx: flume::Sender<AppEvent>,
 ) -> color_eyre::Result<()> {
     let client = Client::new();
-    let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
-    let model_name = "gpt-3.5-turbo";
+    let api_key = app.config.openai_api_key
+        .or_else(|| env::var("OPENAI_API_KEY").ok())
+        .unwrap_or_else(|| {
+            let _ = app_event_tx.send(AppEvent::BackendResponse {
+                model: "SYSTEM".to_string(),
+                content: "\nERROR: No OpenAI API key found\n\nConfigure your API key either:\n1. Via config file: ~/.config/ploke/config.toml\n2. Environment variable: OPENAI_API_KEY\n\nGet key from https://platform.openai.com/api-keys".to_string(),
+            });
+            String::new() // Will fail API calls but allows graceful shutdown
+        });
+    
+    let model_name = &app.config.model;
 
     while let Ok(request) = backend_rx.recv_async().await {
         match request {
