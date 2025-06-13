@@ -22,7 +22,10 @@ pub enum AppEvent {
     /// A terminal resize event.
     Resize(u16, u16),
     /// A message received from the backend (e.g., an LLM response).
-    BackendResponse(String),
+    BackendResponse {
+        model: String,
+        content: String,
+    },
     /// A request to send to the backend.
     SendQuery(String),
     /// Request to quit the application.
@@ -65,9 +68,8 @@ impl App {
                 // In a real app, you might re-calculate layouts here
                 // For now, ratatui handles basic resizing automatically
             }
-            AppEvent::BackendResponse(response) => {
-                // TODO: Change this to have model name, or otherwise something better than "LLM"
-                self.messages.push_back(format!("LLM: {}", response));
+            AppEvent::BackendResponse { model, content } => {
+                self.messages.push_back(format!("{}: {}", model, content));
                 if self.messages.len() > self.messages.capacity() {
                     self.messages.pop_front(); // Keep history within capacity
                 }
