@@ -4,8 +4,8 @@ mod ui;
 mod events;
 mod backend;
 
-use app::{App, AppEvent, BackendRequest, BackendResponse};
-use color_eyre::eyre::{self, Result};
+use app::{App, AppEvent, BackendRequest};
+use color_eyre::eyre::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let (backend_request_tx, backend_request_rx) = flume::unbounded::<BackendRequest>();
 
     // 4. Load configuration
-    let config = config::Config::builder().add_source(config::File::with_name(".ploke.settings"));
+    let config = config::Config::load();
     
     // Create the application state with config
     let mut app = App::new(backend_request_tx.clone(), config); // Clone sender for App to use
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
 
     // Backend listener task: receives requests from App and sends responses back to App.
     let backend_handle = task::spawn(async move {
-        if let Err(e) = backend::start_backend_listener(backend_request_rx, app_event_tx).await {
+        if let Err(e) = backend::start_backend_listener(backend_request_rx, app_event_tx, config).await {
             eprintln!("Backend listener error: {:?}", e);
         }
     });

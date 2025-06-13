@@ -38,7 +38,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(3)].as_ref())
-        .split(f.size());
+        .split(f.area());
 
     // Chat History Pane
     let history_block = Block::default()
@@ -79,14 +79,14 @@ pub fn render(f: &mut Frame, app: &App) {
                 .style(Style::default().fg(Color::Yellow)),
         };
         
-        let area = centered_rect(60, 20, f.size());
+        let area = centered_rect(60, 20, f.area());
         f.render_widget(Clear, area); // Clear background
         f.render_widget(dialog, area);
     }
 
     // Set cursor position if in input mode
     if app.mode == Mode::Input {
-        f.set_cursor(
+        f.set_cursor_position(
             chunks[1].x + app.current_input.len() as u16 + 1, // +1 for border
             chunks[1].y + 1, // +1 for border
         );
