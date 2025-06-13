@@ -1,4 +1,5 @@
 // src/app.rs
+use crate::Config;
 use std::collections::VecDeque;
 
 /// Represents the current mode of the application.
@@ -41,11 +42,11 @@ pub struct App {
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
     pub active_modals: Vec<ModalType>,
-    pub config: crate::config::Config,
+    pub config: Config,
 }
 
 impl App {
-    pub fn new(backend_tx: flume::Sender<BackendRequest>, config: crate::config::Config) -> Self {
+    pub fn new(backend_tx: flume::Sender<BackendRequest>, config: Config) -> Self {
         Self {
             mode: Mode::default(),
             current_input: String::new(),

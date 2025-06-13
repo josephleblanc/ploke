@@ -10,7 +10,7 @@ use std::env;
 pub async fn start_backend_listener(
     backend_rx: flume::Receiver<BackendRequest>,
     app_event_tx: flume::Sender<AppEvent>,
-    config: config::Config,
+    config: Config,
 ) -> color_eyre::Result<()> {
     let client = Client::new();
     let api_key = config.openai_api_key

@@ -3,6 +3,7 @@ mod app;
 mod ui;
 mod events;
 mod backend;
+mod config;
 
 use app::{App, AppEvent, BackendRequest};
 use color_eyre::eyre::Result;
@@ -16,6 +17,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
 use tokio::task;
+use crate::config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -41,7 +43,7 @@ async fn main() -> Result<()> {
     let config = crate::config::Config::load();
     
     // Create the application state with config
-    let mut app = App::new(backend_request_tx.clone(), config); // Clone sender for App to use
+    let mut app = App::new(backend_request_tx.clone(), config.clone()); // Clone sender for App to use
 
     // 5. Spawn background tasks
     // Event listener task: polls for terminal events and sends them to the App.
