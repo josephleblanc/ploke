@@ -1,10 +1,11 @@
 // src/backend.rs
-use crate::app::{BackendRequest, AppEvent};
-use crate::config::Config;
-
-use reqwest::Client;
-use serde_json::json;
+use flume::{Receiver, Sender};
+use reqwest;
+use serde_json::{json, Value};
 use std::env;
+use tokio::time::{self, Duration};
+
+use crate::app::{AppEvent, BackendRequest, BackendResponse};
 
 /// Spawns a Tokio task that communicates with the OpenAI API.
 pub async fn start_backend_listener(
