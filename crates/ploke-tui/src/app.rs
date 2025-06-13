@@ -41,6 +41,7 @@ pub struct App {
     pub should_quit: bool,
     pub backend_tx: flume::Sender<BackendRequest>, // Channel to send requests to the backend
     pub active_modals: Vec<ModalType>,
+    pub config: crate::config::Config,
 }
 
 impl App {

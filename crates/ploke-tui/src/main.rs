@@ -37,8 +37,11 @@ async fn main() -> Result<()> {
     // backend_request_tx/rx: For sending requests from the App to the simulated backend.
     let (backend_request_tx, backend_request_rx) = flume::unbounded::<BackendRequest>();
 
-    // 4. Create the application state
-    let mut app = App::new(backend_request_tx.clone()); // Clone sender for App to use
+    // 4. Load configuration
+    let config = ploke_tui::config::Config::load();
+    
+    // Create the application state with config
+    let mut app = App::new(backend_request_tx.clone(), config); // Clone sender for App to use
 
     // 5. Spawn background tasks
     // Event listener task: polls for terminal events and sends them to the App.
