@@ -1,12 +1,13 @@
  # Ploke TUI Development Roadmap
 
  ## Immediate Priorities
+ - [x] Add quit confirmation dialog (handle_key_event)
  - [ ] Implement configurable history limits (App::new)
- - [ ] Add quit confirmation dialog (handle_key_event)
  - [ ] Replace "LLM:" prefix with actual model name (AppEvent::BackendResponse)
+ - [ ] Add scrollable message history
+ - [ ] Implement real LLM API integration (replace backend.rs simulation)
 
  ## Core Features
- - [ ] Scrollable message history
  - [ ] Implement command system (`/help`, `/save`, `/config`)
  - [ ] Add actual LLM API integration (backend.rs)
  - [ ] Input validation/sanitization
