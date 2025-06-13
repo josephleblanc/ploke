@@ -2,7 +2,7 @@
 use flume::{Receiver, Sender};
 use tokio::time::{self, Duration};
 
-use crate::app::{BackendRequest, BackendResponse, AppEvent};
+use crate::app::{BackendRequest, AppEvent};
 
 use reqwest::Client;
 use serde_json::json;
