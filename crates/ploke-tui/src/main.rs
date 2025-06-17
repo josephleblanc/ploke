@@ -1,98 +1,93 @@
-// src/main.rs
-mod app;
-mod ui;
-mod events;
-mod backend;
-mod config;
-
-use app::{App, AppEvent, BackendRequest};
-use color_eyre::eyre::Result;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
-    execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-    },
-};
-use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
-use tokio::task;
-use crate::config::Config;
+
+struct AppState {
+    chat_history: Vec<Messages>, // Conversation History
+    input_buffer: String, // User's current input
+    rag_context: RagContext, // From backend
+    message_queue: flume::Receiver<BackendMessage>,
+
+    // ... more state fields here
+}
+
+#[derive(Clone)]
+struct AppChannels {
+    ui_to_backend: flume::Sender<BackendRequest>,
+    backend_to_ui: flume::Sender<UiUpdate>
+}
+
+struct Messages {
+    // TODO: Decide what these look like.
+    // Questions:
+    //  - Do these hold metadata from the LLM's response?
+    //  - Is there some way to design this struct that will facilitate the user being able to go in
+    //  and edit the LLM's code suggestions?
+    //  - To what degree should `Messages` be structured? For example, do we want to have a field
+    //  for `text_response` and `code_suggestion`? This would necessitate a processing step between
+    //  the raw response from the LLM's API, e.g. if the LLM usually puts the code snippets into
+    //  triple backticks, we would need to identify and extract those segments of the LLM response.
+    //  - What methods would we want to implement on the `Message` so it can be displayed if we
+    //  decide to go the route of a more structured `Messages` data structure?
+    //  - If we want to implement a way to approve/deny/edit the LLM's code suggestions, how do we
+    //  add the TUI elements that would allow for this kind of user interaction?
+    //  
+    // Re: Code snippets from LLM:
+    //  Advanced feature ideas:
+    //  1. Buffering code suggestions with linting
+    //      We are currently using the `span` of a given node, e.g. a `FunctionNode` in the code
+    //      graph backend. Is there some way we can hook into rust-analyzer and create a buffer file
+    //      that automatically will provide linting here?
+    //  2. git-like conversation control
+    //      We want to provide a way for the user to manage the conversation history effectively.
+    //      Ideally we can implement something extremely similar to git commands to manage this
+    //      interaction, possibly using git itself (though this would present some challenges, as
+    //      the user's crate likely is already in a git repo). The goal would be to enable a
+    //      branching structure of conversation history that allows the user to revisit earlier
+    //      points in the conversation, branch the conversation and switch branches, and merge
+    //      different conversations (though this would require careful design, possibly querying
+    //      the LLM with both branches and suggesting how they could be merged). 
+    //      This feature would need to be implemented across several data structures, but is there
+    //      something we can do now to lay the foundation for this later feature?
+}
+
+struct RagContext {
+    // NOTE: RAG backend interface not yet designed.
+    //
+    // I want to understand better how the TUI works before designing the interface with the RAG
+    // backend.
+    // Will need to look at other files in the project and decide what the pipeline looks like to
+    // and from the RAG for this to work.
+}
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // 1. Setup error handling with color-eyre
-    // This provides enhanced error messages and backtraces.
-
-    // 2. Initialize the terminal for TUI
-    // Enter raw mode to capture key presses directly.
-    enable_raw_mode()?;
-    // Enter alternate screen to not mess up the user's terminal history.
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // 3. Setup Flume Channels for inter-task communication
-    // app_event_tx/rx: For sending UI events (key presses, resizes, backend responses) to the App.
-    let (app_event_tx, app_event_rx) = flume::unbounded::<AppEvent>();
-    // backend_request_tx/rx: For sending requests from the App to the simulated backend.
-    let (backend_request_tx, backend_request_rx) = flume::unbounded::<BackendRequest>();
-
-    // 4. Load configuration
-    let config = crate::config::Config::load();
+async fn main() -> io::Result<()> {
+    // Initialize app state and channels
+    let (tx, rx) = flume::unbounded();
+    let mut app = AppState::new(tx.clone());
     
-    // Create the application state with config
-    let mut app = App::new(backend_request_tx.clone(), config.clone()); // Clone sender for App to use
-
-    // 5. Spawn background tasks
-    // Event listener task: polls for terminal events and sends them to the App.
-    let event_tx_clone = app_event_tx.clone();
-    let event_handle = task::spawn(async move {
-        if let Err(e) = events::start_event_listener(event_tx_clone).await {
-            eprintln!("Event listener error: {:?}", e);
-        }
+    tokio::spawn(async move {
+        backend_processor(rx).await; // Handles DB/LLM comms
     });
 
-    // Backend listener task: receives requests from App and sends responses back to App.
-    let backend_handle = task::spawn(async move {
-        if let Err(e) = backend::start_backend_listener(backend_request_rx, app_event_tx, config).await {
-            eprintln!("Backend listener error: {:?}", e);
-        }
-    });
+    let mut event_stream = crossterm::event::EventStream::new();
 
-    // 6. Main application loop
     loop {
-        // Draw the UI
-        terminal.draw(|f| ui::render(f, &app))?;
+         terminal.draw(|f| ui::render(&app, f))?;
 
-        // Process events
-        // Try to receive an event without blocking. If no event, continue to next frame.
-        if let Ok(event) = app_event_rx.try_recv() {
-            app.update(event);
-        }
+         tokio::select! {
+             // Handle user input events
+             Some(event) = event_stream.next() => {
+                 handle_input(&mut app, event?);
+             }
 
-        // Check if the app should quit
-        if app.should_quit {
-            break;
-        }
+             // Handle backend messages
+             Ok(msg) = app.message_queue.recv_async() => {
+                 process_backend_message(&mut app, msg);
+             }
 
-        // Small delay to prevent busy-looping, adjust as needed
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+             // Frame rate limiter (60 FPS)
+             _ = sleep(Duration::from_millis(16)) => {
+                 // Force redraw even if no events
+             }
+         }
     }
-
-    // 7. Cleanup and restore terminal
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
-
-    // Wait for background tasks to finish gracefully (optional, but good practice)
-    event_handle.await?;
-    backend_handle.await?;
-
-    Ok(())
 }

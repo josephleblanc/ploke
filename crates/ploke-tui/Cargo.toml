@@ -9,6 +9,7 @@ ratatui = "0.29"
 # concurrency
 crossterm = { version = "0.29", features = ["event-stream", "serde"] }
 tokio = { workspace = true }                                           # "full" for simplicity, you can narrow down later
+tokio-utils = "0.1"
 flume = { workspace = true }
 # network
 reqwest = { version = "0.11", features = ["json"] }
@@ -19,13 +20,13 @@ tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
 # config
 toml = "0.8"
 dirs = "5.0"
-# user-facing error handling
-anyhow = "1.0"
 
-# error handling
+# user-facing error handling
+color-eyre = "0.6"
+
+# integrate workspace error handling
 ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
 log = { workspace = true }
 
-color-eyre = "0.6"
-futures = "0.3"    # For .fuse() on streams
+futures = "0.3" # For .fuse() on streams
