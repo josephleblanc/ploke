@@ -4,12 +4,16 @@ use std::fmt;
 #[derive(Debug)]
 pub enum ChatError {
     ParentNotFound(Uuid),
+    SiblingNotFound(Uuid), // New
+    RootHasNoSiblings,     // New
 }
 
 impl fmt::Display for ChatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ChatError::ParentNotFound(id) => write!(f, "Parent message not found: {}", id),
+            ChatError::SiblingNotFound(id) => write!(f, "Sibling messa not found: {}", id),
+            ChatError::RootHasNoSiblings => write!(f, "Root messages cannot have siblings"),
         }
     }
 }
@@ -17,7 +21,7 @@ impl fmt::Display for ChatError {
 impl std::error::Error for ChatError {}
 
 /// Represents an individual message in the branching conversation tree.
-/// 
+///
 /// Each message forms a node in the hierarchical chat history with:
 /// - Links to its parent message (if any)
 /// - List of child messages forming conversation branches
@@ -88,12 +92,25 @@ impl ChatHistory {
             content: content.to_string(),
         };
 
-        let parent = self.messages.get_mut(&parent_id)
+        let parent = self
+            .messages
+            .get_mut(&parent_id)
             .ok_or(ChatError::ParentNotFound(parent_id))?;
-        
+
         parent.children.push(child_id);
         self.messages.insert(child_id, child);
         Ok(child_id)
+    }
+
+    pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
+     let sibling = self.messages.get(&sibling_id)
+         .ok_or(ChatError::SiblingNotFound(sibling_id))?;
+
+     let parent_id = sibling.parent
+         .ok_or(ChatError::RootHasNoSiblings)?;
+
+     // Reuse add_child but with the sibling's parent
+     self.add_child(parent_id, content)
     }
 
     /// Gets the current conversation path from root to active message.
