@@ -158,8 +158,47 @@ impl App {
         }
     }
 
-    fn navigate_sibling(&mut self) {
+    /// Navigates between sibling messages sharing the same parent
+    ///
+    /// # Arguments
+    /// * `direction` - NavigationDirection::Next/Previous to move through siblings
+    ///
+    /// # Returns
+    /// Result containing UUID of new current message if successful
+    ///
+    /// # Errors
+    /// Returns `ChatError::RootHasNoSiblings` if trying to navigate from root
+    /// Returns `ChatError::SiblingNotFound` if no siblings available
+    pub fn navigate_sibling(&mut self, direction: NavigationDirection) -> Result<Uuid, ChatError> {
+        let current_id = self.current;
+        let current_msg = self.messages.get(&current_id)
+            .ok_or(ChatError::SiblingNotFound(current_id))?;
 
+        let parent_id = current_msg.parent
+            .ok_or(ChatError::RootHasNoSiblings)?;
+
+        let parent = self.messages.get(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+
+        // Get all siblings including current message
+        let siblings = &parent.children;
+        let current_idx = siblings.iter()
+            .position(|&id| id == current_id)
+            .ok_or(ChatError::SiblingNotFound(current_id))?;
+
+        let new_idx = match direction {
+            NavigationDirection::Next => (current_idx + 1) % siblings.len(),
+            NavigationDirection::Previous => {
+                if current_idx == 0 {
+                    siblings.len() - 1
+                } else {
+                    current_idx - 1
+                }
+            }
+        };
+
+        self.current = siblings[new_idx];
+        Ok(self.current)
     }
 
     fn add_user_message_safe(&mut self) -> Result<(), chat_history::ChatError> {
@@ -226,6 +265,8 @@ impl App {
                 // Navigation
                 (_, KeyCode::Left) => self.navigate_parent(),
                 (_, KeyCode::Right) => self.navigate_child(),
+                (_, KeyCode::Char('h')) => self.navigate_sibling(chat_history::NavigationDirection::Previous),
+                (_, KeyCode::Char('l')) => self.navigate_sibling(chat_history::NavigationDirection::Next),
 
                 _ => {}
             },

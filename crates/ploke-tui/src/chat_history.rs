@@ -2,10 +2,16 @@ use super::*;
 use std::fmt;
 
 #[derive(Debug)]
+pub enum NavigationDirection {
+    Next,
+    Previous,
+}
+
+#[derive(Debug)]
 pub enum ChatError {
     ParentNotFound(Uuid),
-    SiblingNotFound(Uuid), // New
-    RootHasNoSiblings,     // New
+    SiblingNotFound(Uuid),
+    RootHasNoSiblings,
 }
 
 impl fmt::Display for ChatError {
