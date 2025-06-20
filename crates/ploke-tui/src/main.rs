@@ -10,7 +10,7 @@ mod chat_history;
 
 use std::collections::HashMap;
 
-use chat_history::ChatHistory;
+use chat_history::{ChatError, ChatHistory};
 use color_eyre::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::{FutureExt, StreamExt};
