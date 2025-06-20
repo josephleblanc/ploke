@@ -29,4 +29,7 @@ ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
 log = { workspace = true }
 
+# conversation history branching
+uuid = { workspace = true }
+
 futures = "0.3" # For .fuse() on streams

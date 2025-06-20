@@ -9,13 +9,13 @@ use super::*;
 #[derive(Debug, Default)]
 pub struct Message {
     /// Unique identifier for the message
-    id: Uuid,
+    pub id: Uuid,
     /// Parent message UUID (None for root messages)
-    parent: Option<Uuid>,
+    pub parent: Option<Uuid>,
     /// Child message UUIDs forming conversation branches
-    children: Vec<Uuid>,
+    pub children: Vec<Uuid>,
     /// Text content of the message
-    content: String,
+    pub content: String,
 }
 
 /// Manages the complete branching conversation history using a tree structure.
@@ -25,9 +25,9 @@ pub struct Message {
 #[derive(Debug, Default)]
 pub struct ChatHistory {
     /// All messages in the conversation history, indexed by UUID
-    messages: HashMap<Uuid, Message>,
+    pub messages: HashMap<Uuid, Message>,
     /// UUID of the currently active message in the conversation flow
-    current: Uuid,
+    pub current: Uuid,
 }
 
 impl ChatHistory {
