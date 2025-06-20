@@ -50,22 +50,18 @@ pub struct App {
     // User input buffer
     // (add more buffers for editing other messages later?)
     input_buffer: String,
-    // Current conversation branch
-    current_branch: Uuid,
 }
 
 impl App {
     /// Construct a new instance of [`App`].
     pub fn new() -> Self {
         let chat_history = ChatHistory::new();
-        let current_branch = chat_history.current;
         Self {
-            running: true,
+            running: false, // Will be set to true in run()
             event_stream: EventStream::new(),
             list: ListState::default(),
             chat_history,
             input_buffer: String::new(),
-            current_branch, // Use real root UUID
         }
     }
 
@@ -132,6 +128,7 @@ impl App {
     fn navigate_parent(&mut self) {
         if let Some(parent) = self.chat_history.messages[&self.chat_history.current].parent {
             self.chat_history.current = parent;
+            self.sync_list_selection();
         }
     }
 
@@ -139,6 +136,7 @@ impl App {
         let current = &self.chat_history.messages[&self.chat_history.current];
         if let Some(first_child) = current.children.first() {
             self.chat_history.current = *first_child;
+            self.sync_list_selection();
         }
     }
 
@@ -199,14 +197,18 @@ impl App {
             // Navigation
             (_, KeyCode::Left) => self.navigate_parent(),
             (_, KeyCode::Right) => self.navigate_child(),
-            (_, KeyCode::Char('b')) => self.create_new_branch(),
 
             // Input handling
             (_, KeyCode::Char(c)) => self.input_buffer.push(c),
             (_, KeyCode::Backspace) => {
                 self.input_buffer.pop();
             }
-            (_, KeyCode::Enter) => self.commit_message(),
+            (_, KeyCode::Enter) => {
+                if let Err(e) = self.add_user_message_safe() {
+                    // Could log error or show in UI
+                    eprintln!("Error adding message: {}", e);
+                }
+            }
 
             // Add other key handlers here.
             _ => {}

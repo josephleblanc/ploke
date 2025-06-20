@@ -1,4 +1,20 @@
 use super::*;
+use std::fmt;
+
+#[derive(Debug)]
+pub enum ChatError {
+    ParentNotFound(Uuid),
+}
+
+impl fmt::Display for ChatError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ChatError::ParentNotFound(id) => write!(f, "Parent message not found: {}", id),
+        }
+    }
+}
+
+impl std::error::Error for ChatError {}
 
 /// Represents an individual message in the branching conversation tree.
 /// 
@@ -63,7 +79,7 @@ impl ChatHistory {
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
-    pub fn add_child(&mut self, parent_id: Uuid, content: &str) -> Uuid {
+    pub fn add_child(&mut self, parent_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
         let child_id = Uuid::new_v4();
         let child = Message {
             id: child_id,
@@ -72,12 +88,12 @@ impl ChatHistory {
             content: content.to_string(),
         };
 
-        if let Some(parent) = self.messages.get_mut(&parent_id) {
-            parent.children.push(child_id);
-        }
-
+        let parent = self.messages.get_mut(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+        
+        parent.children.push(child_id);
         self.messages.insert(child_id, child);
-        child_id
+        Ok(child_id)
     }
 
     /// Gets the current conversation path from root to active message.
