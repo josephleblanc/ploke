@@ -140,19 +140,22 @@ impl App {
         }
     }
 
-    fn create_new_branch(&mut self) {
-        let new_branch_id = self
-            .chat_history
-            .add_child(self.chat_history.current, &self.input_buffer);
-        self.chat_history.current = new_branch_id;
-        self.input_buffer.clear();
+    fn add_user_message_safe(&mut self) -> Result<(), chat_history::ChatError> {
+        if !self.input_buffer.is_empty() {
+            let new_message_id = self
+                .chat_history
+                .add_child(self.chat_history.current, &self.input_buffer)?;
+            self.chat_history.current = new_message_id;
+            self.input_buffer.clear();
+            self.sync_list_selection();
+        }
+        Ok(())
     }
 
-    fn commit_message(&mut self) {
-        if !self.input_buffer.is_empty() {
-            self.chat_history
-                .add_child(self.chat_history.current, &self.input_buffer);
-            self.input_buffer.clear();
+    fn sync_list_selection(&mut self) {
+        let path = self.chat_history.get_current_path();
+        if let Some(current_index) = path.iter().position(|msg| msg.id == self.chat_history.current) {
+            self.list.select(Some(current_index));
         }
     }
 
