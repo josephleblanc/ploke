@@ -102,15 +102,30 @@ impl ChatHistory {
         Ok(child_id)
     }
 
+    /// Adds a new sibling message to the conversation tree.
+    ///
+    /// Creates a new message that shares the same parent as the specified sibling,
+    /// allowing for parallel conversation branches.
+    ///
+    /// # Arguments
+    /// * `sibling_id` - UUID of an existing sibling message to reference
+    /// * `content` - Text content for the new sibling message
+    ///
+    /// # Returns
+    /// UUID of the newly created sibling message
+    ///
+    /// # Errors
+    /// Returns `ChatError::SiblingNotFound` if the reference sibling doesn't exist
+    /// Returns `ChatError::RootHasNoSiblings` if trying to add siblings to root message
     pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
-     let sibling = self.messages.get(&sibling_id)
-         .ok_or(ChatError::SiblingNotFound(sibling_id))?;
+        let sibling = self.messages.get(&sibling_id)
+            .ok_or(ChatError::SiblingNotFound(sibling_id))?;
 
-     let parent_id = sibling.parent
-         .ok_or(ChatError::RootHasNoSiblings)?;
+        let parent_id = sibling.parent
+            .ok_or(ChatError::RootHasNoSiblings)?;
 
-     // Reuse add_child but with the sibling's parent
-     self.add_child(parent_id, content)
+        // Reuse add_child but with the sibling's parent
+        self.add_child(parent_id, content)
     }
 
     /// Gets the current conversation path from root to active message.
