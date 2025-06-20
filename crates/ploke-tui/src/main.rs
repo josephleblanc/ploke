@@ -44,9 +44,9 @@ pub enum Mode {
 
 impl std::fmt::Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // implement this for Normal into "Normal", etc AI!
         match self {
-            Mode::Normal => 
+            Mode::Normal => write!(f, "Normal"),
+            Mode::Insert => write!(f, "Insert"),
         }
     }
 }
