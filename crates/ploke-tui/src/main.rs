@@ -7,7 +7,6 @@
 // 5 Add color coding for different message types (user vs assistant)
 
 mod chat_history;
-mod status_line;
 
 use std::collections::HashMap;
 
@@ -16,7 +15,10 @@ use color_eyre::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use ratatui::{
-    style::Stylize, text::Line, widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph}, DefaultTerminal, Frame
+    DefaultTerminal, Frame,
+    style::Stylize,
+    text::Line,
+    widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
 use ratatui::prelude::*;
@@ -101,7 +103,11 @@ impl App {
         // Here just a simple 50-50 split top/bottom
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20), Constraint::Length(10)])
+            .constraints(vec![
+                Constraint::Percentage(80),
+                Constraint::Percentage(20),
+                Constraint::Length(1),
+            ])
             .split(frame.area());
 
         // Render message tree
@@ -109,18 +115,9 @@ impl App {
             .chat_history
             .get_current_path()
             .iter()
-            .enumerate()
-            .map(|(depth, msg)| {
-                let indent = "  ".repeat(depth);
-                let prefix = if depth == 0 {
-                    "◈ ".blue()
-                } else {
-                    "↳ ".dark_gray()
-                };
+            .map(|msg| {
 
                 ListItem::new(Line::from(vec![
-                    Span::raw(indent),
-                    prefix,
                     Span::raw(&msg.content),
                 ]))
             })
@@ -137,15 +134,20 @@ impl App {
             .block(Block::bordered().title("Input"))
             .style(Style::new().fg(Color::Yellow));
 
+        // Render Mode to text
+        let status_bar = Block::default()
+            .title(self.mode.to_string())
+            .borders(Borders::NONE)
+            .padding(Padding::vertical(1));
 
         frame.render_stateful_widget(list, layout[0], &mut self.list);
         frame.render_widget(input, layout[1]);
+        frame.render_widget(status_bar, layout[2]);
     }
 
     fn navigate_parent(&mut self) {
         if let Some(parent) = self.chat_history.messages[&self.chat_history.current].parent {
             self.chat_history.current = parent;
-            self.sync_list_selection();
         }
     }
 
@@ -153,8 +155,11 @@ impl App {
         let current = &self.chat_history.messages[&self.chat_history.current];
         if let Some(first_child) = current.children.first() {
             self.chat_history.current = *first_child;
-            self.sync_list_selection();
         }
+    }
+
+    fn navigate_sibling(&mut self) {
+
     }
 
     fn add_user_message_safe(&mut self) -> Result<(), chat_history::ChatError> {
@@ -228,7 +233,7 @@ impl App {
                 (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => {
                     todo!("Add way to cancel waiting for response")
                 }
-                (KeyModifiers::CONTROL, KeyCode::Char('j') | KeyCode::Char('k') ) => {
+                (KeyModifiers::CONTROL, KeyCode::Char('j') | KeyCode::Char('k')) => {
                     self.mode = Mode::Normal;
                 }
                 (_, KeyCode::Esc) => self.mode = Mode::Normal,
