@@ -2322,6 +2322,7 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-utils",
  "toml",
+ "uuid",
 ]
 
 [[package]]
