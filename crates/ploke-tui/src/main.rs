@@ -7,6 +7,7 @@
 // 5 Add color coding for different message types (user vs assistant)
 
 mod chat_history;
+mod status_line;
 
 use std::collections::HashMap;
 
@@ -15,10 +16,7 @@ use color_eyre::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use ratatui::{
-    DefaultTerminal, Frame,
-    style::Stylize,
-    text::Line,
-    widgets::{Block, ListItem, ListState, Paragraph},
+    style::Stylize, text::Line, widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph}, DefaultTerminal, Frame
 };
 // for list
 use ratatui::prelude::*;
@@ -37,19 +35,36 @@ async fn main() -> color_eyre::Result<()> {
     result
 }
 
+#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Mode {
+    #[default]
+    Normal,
+    Insert,
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // implement this for Normal into "Normal", etc AI!
+        match self {
+            Mode::Normal => 
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct App {
     /// Is the application running?
     running: bool,
-    // Event stream.
+    /// Event stream.
     event_stream: EventStream,
     //
     list: ListState,
-    // Branching Chat History
+    /// Branching Chat History
     pub chat_history: ChatHistory,
-    // User input buffer
+    /// User input buffer
     // (add more buffers for editing other messages later?)
     input_buffer: String,
+    mode: Mode,
 }
 
 impl App {
@@ -62,6 +77,7 @@ impl App {
             list: ListState::default(),
             chat_history,
             input_buffer: String::new(),
+            mode: Mode::default(),
         }
     }
 
@@ -85,7 +101,7 @@ impl App {
         // Here just a simple 50-50 split top/bottom
         let layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
+            .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20), Constraint::Length(10)])
             .split(frame.area());
 
         // Render message tree
@@ -121,6 +137,7 @@ impl App {
             .block(Block::bordered().title("Input"))
             .style(Style::new().fg(Color::Yellow));
 
+
         frame.render_stateful_widget(list, layout[0], &mut self.list);
         frame.render_widget(input, layout[1]);
     }
@@ -154,7 +171,10 @@ impl App {
 
     fn sync_list_selection(&mut self) {
         let path = self.chat_history.get_current_path();
-        if let Some(current_index) = path.iter().position(|msg| msg.id == self.chat_history.current) {
+        if let Some(current_index) = path
+            .iter()
+            .position(|msg| msg.id == self.chat_history.current)
+        {
             self.list.select(Some(current_index));
         }
     }
@@ -186,32 +206,50 @@ impl App {
 
     /// Handles the key events and updates the state of [`App`].
     fn on_key_event(&mut self, key: KeyEvent) {
+        let mode = self.mode;
+
+        match mode {
+            Mode::Normal => match (key.modifiers, key.code) {
+                (_, KeyCode::Char('i')) => self.mode = Mode::Insert,
+
+                // navigate messages in conversation
+                (_, KeyCode::Up | KeyCode::Char('k')) => self.list.select_previous(),
+                (_, KeyCode::Down | KeyCode::Char('j')) => self.list.select_next(),
+                (_, KeyCode::Char('K')) => self.list.select_first(),
+                (_, KeyCode::Char('J')) => self.list.select_last(),
+
+                // Navigation
+                (_, KeyCode::Left) => self.navigate_parent(),
+                (_, KeyCode::Right) => self.navigate_child(),
+
+                _ => {}
+            },
+            Mode::Insert => match (key.modifiers, key.code) {
+                (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => {
+                    todo!("Add way to cancel waiting for response")
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('j') | KeyCode::Char('k') ) => {
+                    self.mode = Mode::Normal;
+                }
+                (_, KeyCode::Esc) => self.mode = Mode::Normal,
+
+                // Input handling
+                (_, KeyCode::Char(c)) => self.input_buffer.push(c),
+                (_, KeyCode::Backspace) => {
+                    self.input_buffer.pop();
+                }
+                (_, KeyCode::Enter) => {
+                    if let Err(e) = self.add_user_message_safe() {
+                        // Could log error or show in UI
+                        eprintln!("Error adding message: {}", e);
+                    }
+                }
+                _ => {}
+            },
+        }
         match (key.modifiers, key.code) {
             // How to quit application
-            (_, KeyCode::Esc | KeyCode::Char('q'))
-            | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
-
-            // navigate messages in conversation
-            (_, KeyCode::Up | KeyCode::Char('k')) => self.list.select_previous(),
-            (_, KeyCode::Down | KeyCode::Char('j')) => self.list.select_next(),
-            (_, KeyCode::Char('K')) => self.list.select_first(),
-            (_, KeyCode::Char('J')) => self.list.select_last(),
-
-            // Navigation
-            (_, KeyCode::Left) => self.navigate_parent(),
-            (_, KeyCode::Right) => self.navigate_child(),
-
-            // Input handling
-            (_, KeyCode::Char(c)) => self.input_buffer.push(c),
-            (_, KeyCode::Backspace) => {
-                self.input_buffer.pop();
-            }
-            (_, KeyCode::Enter) => {
-                if let Err(e) = self.add_user_message_safe() {
-                    // Could log error or show in UI
-                    eprintln!("Error adding message: {}", e);
-                }
-            }
+            (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
 
             // Add other key handlers here.
             _ => {}
