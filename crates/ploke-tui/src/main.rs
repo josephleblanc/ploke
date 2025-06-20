@@ -1,93 +1,211 @@
-use std::io;
+// TODO:
+//
+// 1 Add serialization support for saving/loading conversations
+// 2 Implement scrolling through long message histories
+// 3 Add visual indicators for branch points
+// 4 Implement sibling navigation (up/down between children of same parent)
+// 5 Add color coding for different message types (user vs assistant)
 
-struct AppState {
-    chat_history: Vec<Messages>, // Conversation History
-    input_buffer: String, // User's current input
-    rag_context: RagContext, // From backend
-    message_queue: flume::Receiver<BackendMessage>,
+mod chat_history;
 
-    // ... more state fields here
-}
+use std::collections::HashMap;
 
-#[derive(Clone)]
-struct AppChannels {
-    ui_to_backend: flume::Sender<BackendRequest>,
-    backend_to_ui: flume::Sender<UiUpdate>
-}
-
-struct Messages {
-    // TODO: Decide what these look like.
-    // Questions:
-    //  - Do these hold metadata from the LLM's response?
-    //  - Is there some way to design this struct that will facilitate the user being able to go in
-    //  and edit the LLM's code suggestions?
-    //  - To what degree should `Messages` be structured? For example, do we want to have a field
-    //  for `text_response` and `code_suggestion`? This would necessitate a processing step between
-    //  the raw response from the LLM's API, e.g. if the LLM usually puts the code snippets into
-    //  triple backticks, we would need to identify and extract those segments of the LLM response.
-    //  - What methods would we want to implement on the `Message` so it can be displayed if we
-    //  decide to go the route of a more structured `Messages` data structure?
-    //  - If we want to implement a way to approve/deny/edit the LLM's code suggestions, how do we
-    //  add the TUI elements that would allow for this kind of user interaction?
-    //  
-    // Re: Code snippets from LLM:
-    //  Advanced feature ideas:
-    //  1. Buffering code suggestions with linting
-    //      We are currently using the `span` of a given node, e.g. a `FunctionNode` in the code
-    //      graph backend. Is there some way we can hook into rust-analyzer and create a buffer file
-    //      that automatically will provide linting here?
-    //  2. git-like conversation control
-    //      We want to provide a way for the user to manage the conversation history effectively.
-    //      Ideally we can implement something extremely similar to git commands to manage this
-    //      interaction, possibly using git itself (though this would present some challenges, as
-    //      the user's crate likely is already in a git repo). The goal would be to enable a
-    //      branching structure of conversation history that allows the user to revisit earlier
-    //      points in the conversation, branch the conversation and switch branches, and merge
-    //      different conversations (though this would require careful design, possibly querying
-    //      the LLM with both branches and suggesting how they could be merged). 
-    //      This feature would need to be implemented across several data structures, but is there
-    //      something we can do now to lay the foundation for this later feature?
-}
-
-struct RagContext {
-    // NOTE: RAG backend interface not yet designed.
-    //
-    // I want to understand better how the TUI works before designing the interface with the RAG
-    // backend.
-    // Will need to look at other files in the project and decide what the pipeline looks like to
-    // and from the RAG for this to work.
-}
+use chat_history::ChatHistory;
+use color_eyre::Result;
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use futures::{FutureExt, StreamExt};
+use ratatui::{
+    DefaultTerminal, Frame,
+    style::Stylize,
+    text::Line,
+    widgets::{Block, ListItem, ListState, Paragraph},
+};
+// for list
+use ratatui::prelude::*;
+use ratatui::{
+    style::Style,
+    widgets::{List, ListDirection},
+};
+use uuid::Uuid;
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
-    // Initialize app state and channels
-    let (tx, rx) = flume::unbounded();
-    let mut app = AppState::new(tx.clone());
-    
-    tokio::spawn(async move {
-        backend_processor(rx).await; // Handles DB/LLM comms
-    });
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+    let terminal = ratatui::init();
+    let result = App::new().run(terminal).await;
+    ratatui::restore();
+    result
+}
 
-    let mut event_stream = crossterm::event::EventStream::new();
+#[derive(Debug, Default)]
+pub struct App {
+    /// Is the application running?
+    running: bool,
+    // Event stream.
+    event_stream: EventStream,
+    //
+    list: ListState,
+    // Branching Chat History
+    pub chat_history: ChatHistory,
+    // User input buffer
+    // (add more buffers for editing other messages later?)
+    input_buffer: String,
+    // Current conversation branch
+    current_branch: Uuid,
+}
 
-    loop {
-         terminal.draw(|f| ui::render(&app, f))?;
+impl App {
+    /// Construct a new instance of [`App`].
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-         tokio::select! {
-             // Handle user input events
-             Some(event) = event_stream.next() => {
-                 handle_input(&mut app, event?);
-             }
+    /// Run the application's main loop.
+    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        self.running = true;
+        while self.running {
+            terminal.draw(|frame| self.draw(frame))?;
+            self.handle_crossterm_events().await?;
+        }
+        Ok(())
+    }
 
-             // Handle backend messages
-             Ok(msg) = app.message_queue.recv_async() => {
-                 process_backend_message(&mut app, msg);
-             }
+    /// Renders the user interface.
+    ///
+    /// This is where you add new widgets. See the following resources for more information:
+    /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
+    /// - <https://github.com/ratatui/ratatui/tree/master/examples>
+    fn draw(&mut self, frame: &mut Frame) {
+        // Define layout
+        // Here just a simple 50-50 split top/bottom
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(vec![Constraint::Percentage(80), Constraint::Percentage(20)])
+            .split(frame.area());
 
-             // Frame rate limiter (60 FPS)
-             _ = sleep(Duration::from_millis(16)) => {
-                 // Force redraw even if no events
-             }
-         }
+        // Render message tree
+        let messages: Vec<ListItem> = self
+            .chat_history
+            .get_current_path()
+            .iter()
+            .enumerate()
+            .map(|(depth, msg)| {
+                let indent = "  ".repeat(depth);
+                let prefix = if depth == 0 {
+                    "◈ ".blue()
+                } else {
+                    "↳ ".dark_gray()
+                };
+
+                ListItem::new(Line::from(vec![
+                    Span::raw(indent),
+                    prefix,
+                    Span::raw(&msg.content),
+                ]))
+            })
+            .collect();
+
+        let list = List::new(messages)
+            .block(Block::bordered().title("Conversation"))
+            .highlight_style(Style::new().reversed())
+            .highlight_symbol(">>");
+        // .repeat_highlight_symbol(true);
+
+        // Render input area
+        let input = Paragraph::new(self.input_buffer.as_str())
+            .block(Block::bordered().title("Input"))
+            .style(Style::new().fg(Color::Yellow));
+
+        frame.render_stateful_widget(list, layout[0], &mut self.list);
+        frame.render_widget(input, layout[1]);
+    }
+
+    fn navigate_parent(&mut self) {
+        if let Some(parent) = self.chat_history.messages[&self.chat_history.current].parent {
+            self.chat_history.current = parent;
+        }
+    }
+
+    fn navigate_child(&mut self) {
+        let current = &self.chat_history.messages[&self.chat_history.current];
+        if let Some(first_child) = current.children.first() {
+            self.chat_history.current = *first_child;
+        }
+    }
+
+    fn create_new_branch(&mut self) {
+        let new_branch_id = self
+            .chat_history
+            .add_child(self.chat_history.current, &self.input_buffer);
+        self.chat_history.current = new_branch_id;
+        self.input_buffer.clear();
+    }
+
+    fn commit_message(&mut self) {
+        if !self.input_buffer.is_empty() {
+            self.chat_history
+                .add_child(self.chat_history.current, &self.input_buffer);
+            self.input_buffer.clear();
+        }
+    }
+
+    /// Reads the crossterm events and updates the state of [`App`].
+    async fn handle_crossterm_events(&mut self) -> Result<()> {
+        tokio::select! {
+            event = self.event_stream.next().fuse() => {
+                match event {
+                    Some(Ok(evt)) => {
+                        match evt {
+                            Event::Key(key)
+                                if key.kind == KeyEventKind::Press
+                                    => self.on_key_event(key),
+                            Event::Mouse(_) => {}
+                            Event::Resize(_, _) => {}
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                // Sleep for a short duration to avoid busy waiting.
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles the key events and updates the state of [`App`].
+    fn on_key_event(&mut self, key: KeyEvent) {
+        match (key.modifiers, key.code) {
+            // How to quit application
+            (_, KeyCode::Esc | KeyCode::Char('q'))
+            | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
+
+            // navigate messages in conversation
+            (_, KeyCode::Up | KeyCode::Char('k')) => self.list.select_previous(),
+            (_, KeyCode::Down | KeyCode::Char('j')) => self.list.select_next(),
+            (_, KeyCode::Char('K')) => self.list.select_first(),
+            (_, KeyCode::Char('J')) => self.list.select_last(),
+
+            // Navigation
+            (_, KeyCode::Left) => self.navigate_parent(),
+            (_, KeyCode::Right) => self.navigate_child(),
+            (_, KeyCode::Char('b')) => self.create_new_branch(),
+
+            // Input handling
+            (_, KeyCode::Char(c)) => self.input_buffer.push(c),
+            (_, KeyCode::Backspace) => {
+                self.input_buffer.pop();
+            }
+            (_, KeyCode::Enter) => self.commit_message(),
+
+            // Add other key handlers here.
+            _ => {}
+        }
+    }
+
+    /// Set running to false to quit the application.
+    fn quit(&mut self) {
+        self.running = false;
     }
 }
