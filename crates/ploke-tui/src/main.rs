@@ -184,7 +184,10 @@ impl App {
         let siblings = &parent.children;
         let current_idx = siblings.iter()
             .position(|&id| id == current_id)
-            .ok_or(ChatError::SiblingNotFound(current_id))?;
+            .unwrap_or_else(|| {
+                let new_sibling_id = self.add_sibling(current_id, "").unwrap();
+                siblings.len() - 1
+            });
 
         let new_idx = match direction {
             NavigationDirection::Next => (current_idx + 1) % siblings.len(),
