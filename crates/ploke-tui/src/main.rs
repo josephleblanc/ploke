@@ -37,7 +37,7 @@ async fn main() -> color_eyre::Result<()> {
     result
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
     /// Is the application running?
     running: bool,
@@ -57,7 +57,15 @@ pub struct App {
 impl App {
     /// Construct a new instance of [`App`].
     pub fn new() -> Self {
-        Self::default()
+        let chat_history = ChatHistory::new();
+        Self {
+            running: true,
+            event_stream: EventStream::new(),
+            list: ListState::default(),
+            chat_history,
+            input_buffer: String::new(),
+            current_branch: chat_history.current, // Use real root UUID
+        }
     }
 
     /// Run the application's main loop.
