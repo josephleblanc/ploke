@@ -47,11 +47,16 @@ pub enum StateCommand {
 // This enforces a single source of truth and prevents UI from ever rendering stale data.
 #[derive(Debug, Clone, Copy)]
 pub struct MessageUpdatedEvent(pub Uuid);
-// implement `into` `AppEvent` AI!
 
 impl MessageUpdatedEvent {
     pub fn new(message_id: Uuid) -> Self {
         Self (message_id)
+    }
+}
+
+impl From<MessageUpdatedEvent> for AppEvent {
+    fn from(event: MessageUpdatedEvent) -> Self {
+        AppEvent::MessageUpdated(event)
     }
 }
 
