@@ -2312,6 +2312,7 @@ dependencies = [
  "flume",
  "futures",
  "log",
+ "num_cpus",
  "ploke-error",
  "ratatui",
  "reqwest",
