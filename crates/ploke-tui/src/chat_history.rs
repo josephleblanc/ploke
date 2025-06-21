@@ -59,7 +59,7 @@ pub enum MessageStatus {
 }
 
 /// Validation errors for message updates
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq, Clone)]
 pub enum UpdateError {
     #[error("Cannot append content when replacing entire message")]
     ContentConflict,
@@ -91,15 +91,12 @@ impl MessageUpdate {
     /// Validates the update against current message state
     pub fn validate(&self, current_status: &MessageStatus) -> Result<(), UpdateError> {
         // Completed messages are immutable
-        if matches!(current_status, MessageStatus::Completed) {
-            if self.content.is_some() 
+        if matches!(current_status, MessageStatus::Completed) && (self.content.is_some() 
                 || self.append_content.is_some()
                 || self.status.is_some()
-                || self.metadata.is_some()
-            {
+                || self.metadata.is_some()) {
                 return Err(UpdateError::ImmutableMessage);
             }
-        }
         
         // Check for content conflict
         if self.content.is_some() && self.append_content.is_some() {
@@ -136,6 +133,24 @@ impl MessageUpdate {
     }
 }
 
+/// Event fired when a MessageUpdate command fails validation.
+///
+/// Contains the ID of the message that was targeted and the specific
+/// validation error that occurred. This is crucial for providing
+/// targeted feedback to the user and for telemetry.
+#[derive(Debug, Clone)]
+pub struct UpdateFailedEvent {
+    pub message_id: Uuid,
+    pub error: UpdateError, // The structured error from your previous code
+}
+// implement `into<AppEvent>` for `UpdateFailedEvent` AI!
+
+impl UpdateFailedEvent {
+    pub fn new(message_id: Uuid, error: UpdateError) -> Self {
+        Self { message_id, error }
+    }
+}
+
 /// Represents an individual message in the branching conversation tree.
 ///
 /// Each message forms a node in the hierarchical chat history with:
@@ -147,6 +162,8 @@ pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
     pub status: MessageStatus,
+    // TODO: Maybe change Message to be LLM/human, or create a wrapper to differentiate.
+    /// Metadata on LLM message
     pub metadata: Option<LLMMetadata>,
     /// Parent message UUID (None for root messages)
     pub parent: Option<Uuid>,
@@ -273,7 +290,7 @@ impl ChatHistory {
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
-    pub fn add_child(&mut self, parent_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
+    pub fn add_child(&mut self, parent_id: Uuid, content: &str, status: MessageStatus) -> Result<Uuid, ChatError> {
         let child_id = Uuid::new_v4();
         let child = Message {
             id: child_id,
@@ -281,6 +298,8 @@ impl ChatHistory {
             children: Vec::new(),
             selected_child: None,
             content: content.to_string(),
+            status,
+            metadata: None,
         };
 
         let parent = self
@@ -313,7 +332,7 @@ impl ChatHistory {
     /// # Errors
     /// Returns `ChatError::SiblingNotFound` if the reference sibling doesn't exist
     /// Returns `ChatError::RootHasNoSiblings` if trying to add siblings to root message
-    pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
+    pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str, status: MessageStatus) -> Result<Uuid, ChatError> {
         let sibling = self
             .messages
             .get(&sibling_id)
@@ -322,7 +341,7 @@ impl ChatHistory {
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent
-        self.add_child(parent_id, content)
+        self.add_child(parent_id, content, status)
     }
 
     /// Gets the index position of a message within its parent's children list
