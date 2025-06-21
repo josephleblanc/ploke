@@ -36,6 +36,7 @@ use uuid::Uuid;
 /// Represents the possible states of a message during its lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// Implement Display for `MessageStatus` AI!
 pub enum MessageStatus {
     /// The message is waiting to be processed by the LLM.
     Pending,
@@ -131,7 +132,7 @@ impl MessageUpdate {
 /// - Links to its parent message (if any)
 /// - List of child messages forming conversation branches
 /// - Unique identifier and content storage
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
