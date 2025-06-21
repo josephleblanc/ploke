@@ -72,6 +72,10 @@ pub struct App {
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
     branches: Vec<Vec<Uuid>>,
+    // NOTE: Potential problem/room for improvement:
+    //  The branch state is tracked here via `active_branch`, and in `ChatHistory` via `current`
+    //  and `selected_child`. Is this appropriate?
+    //  Possible better design: Having a central `Branch` struct - but where would this go?
     active_branch: usize,
 }
 
@@ -124,7 +128,7 @@ impl App {
         // Render message tree
         let messages: Vec<ListItem> = self
             .chat_history
-            .get_current_path()
+            .get_full_path()
             .iter()
             .map(
                 |msg| {
@@ -184,7 +188,7 @@ impl App {
     fn move_selection_up(&mut self) {
         self.list.select_previous();
         if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_current_path();
+            let path = self.chat_history.get_full_path();
             self.chat_history.current = path[selected].id; // Sync tree position
         }
     }
@@ -195,7 +199,7 @@ impl App {
         // if let Some(child_id) = current_msg.map(|m| m.selected_child) {
         // };
         if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_current_path();
+            let path = self.chat_history.get_full_path();
             self.chat_history.current = path[selected].id; // Sync tree position
         }
         self.list.select_next();
@@ -204,7 +208,7 @@ impl App {
     fn move_to_first(&mut self) {
         self.list.select_first();
         if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_current_path();
+            let path = self.chat_history.get_full_path();
             self.chat_history.current = path[selected].id;
         }
     }
@@ -212,7 +216,7 @@ impl App {
     fn move_to_last(&mut self) {
         self.list.select_last();
         if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_current_path();
+            let path = self.chat_history.get_full_path();
             self.chat_history.current = path[selected].id;
         }
     }
@@ -283,7 +287,7 @@ impl App {
     }
 
     fn sync_list_selection(&mut self) {
-        let path = self.chat_history.get_current_path();
+        let path = self.chat_history.get_full_path();
         if let Some(current_index) = path
             .iter()
             .position(|msg| msg.id == self.chat_history.current)

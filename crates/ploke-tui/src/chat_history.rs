@@ -150,8 +150,44 @@ impl ChatHistory {
         self.add_child(parent_id, content)
     }
 
+    // Add documentation AI
+    fn get_sibling_index(&self, message_id: Uuid) -> Option<usize> {
+        self.get_parent(message_id).and_then(|parent_id| {
+            self.messages[&parent_id]
+                .children
+                .iter()
+                .position(|&id| id == message_id)
+        })
+    }
 
-    /// Returns an iterator of UUIDs in the current path from root to current message
+    /// Returns an iterator of UUIDs in the full path from root to current message
+    pub fn full_path_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        let mut tail = Some(self.current);
+        std::iter::from_fn(move || {
+            let id = tail?;
+            tail = self.messages.get(&id).and_then(|m| m.parent);
+            Some(id)
+        })
+        .collect::<Vec<_>>() // Collect to reverse order
+        .into_iter()
+        .rev()
+    }
+
+    /// Gets the full conversation path from root to tail message.
+    ///
+    /// Traverses the message hierarchy from the currently active message
+    /// back to the root, then reverses the order for display purposes.
+    ///
+    /// # Example
+    /// For a conversation path A -> B -> C (where C is tail):
+    /// Returns [A, B, C]
+    pub fn get_full_path(&self) -> Vec<&Message> {
+        self.full_path_ids()
+            .filter_map(|id| self.messages.get(&id))
+            .collect()
+    }
+
+    /// Returns an iterator of UUIDs in the full path from root to current message
     pub fn current_path_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
         let mut current = Some(self.current);
         std::iter::from_fn(move || {
@@ -164,13 +200,13 @@ impl ChatHistory {
         .rev()
     }
 
-    /// Gets the current conversation path from root to active message.
+    /// Gets the full conversation path from root to tail message.
     ///
     /// Traverses the message hierarchy from the currently active message
     /// back to the root, then reverses the order for display purposes.
     ///
     /// # Example
-    /// For a conversation path A -> B -> C (where C is current):
+    /// For a conversation path A -> B -> C (where C is tail):
     /// Returns [A, B, C]
     pub fn get_current_path(&self) -> Vec<&Message> {
         self.current_path_ids()
