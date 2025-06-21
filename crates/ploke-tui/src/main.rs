@@ -9,9 +9,12 @@
 mod chat_history;
 mod utils;
 mod app;
+pub mod app_state;
 pub mod llm;
 
 use app::App;
+use app_state::AppState;
+use thiserror::Error;
 use tokio::sync::broadcast;
 use utils::layout::{self, layout_statusline};
 
@@ -49,6 +52,7 @@ async fn main() -> color_eyre::Result<()> {
         .build()?;
 
     let event_bus = Arc::new(EventBus::new(100, 1000));
+    let state = Arc::new(AppState::new());
     todo!()
 }
 
@@ -65,6 +69,17 @@ pub mod ui {
     }
 }
 
+#[derive(Debug, Clone, Error)]
+pub enum UiError {
+    ExampleError
+}
+
+pub mod system {
+    pub enum Event {
+        MutationFailed(UiError)
+    }
+}
+
 
 // Other domains: file, rag, agent, system, ...
 
@@ -76,14 +91,15 @@ pub enum AppEvent {
     // File(file::Event),
     // Rag(rag::Event),
     // Agent(agent::Event),
-    // System(system::Event),
+    System(system::Event),
 }
 
 impl AppEvent {
     pub fn priority(&self) -> EventPriority {
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
-            AppEvent::Llm(_) => EventPriority::Background
+            AppEvent::Llm(_) => EventPriority::Background,
+            AppEvent::System(_) => todo!(),
         }
     }
 }

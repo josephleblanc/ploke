@@ -1,3 +1,6 @@
+use crate::llm::LLMMetadata;
+use crate::app_state::StateError;
+
 use super::*;
 use std::fmt;
 
@@ -26,6 +29,102 @@ impl fmt::Display for ChatError {
 
 impl std::error::Error for ChatError {}
 
+use serde::{Serialize, Deserialize};
+use thiserror::Error;
+use uuid::Uuid;
+
+/// Represents the possible states of a message during its lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageStatus {
+    /// The message is waiting to be processed by the LLM.
+    Pending,
+    /// The LLM is actively generating a response for this message.
+    Generating,
+    /// The message is complete and the response was successful.
+    Completed,
+    /// An error occurred during generation.
+    Error { description: String },
+}
+
+/// Validation errors for message updates
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum UpdateError {
+    #[error("Cannot append content when replacing entire message")]
+    ContentConflict,
+    #[error("Cannot update completed message")]
+    ImmutableMessage,
+    #[error("Invalid status transition: {0} -> {1}")]
+    InvalidStatusTransition(MessageStatus, MessageStatus),
+    #[error("Completed message cannot have empty content")]
+    EmptyContentCompletion,
+}
+
+/// A structure containing optional fields to update on an existing Message.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MessageUpdate {
+    /// Replaces the entire content of the message (mutually exclusive with append)
+    pub content: Option<String>,
+    
+    /// Appends content to the existing message (mutually exclusive with content replacement)
+    pub append_content: Option<String>,
+    
+    /// Changes the status of the message
+    pub status: Option<MessageStatus>,
+    
+    /// Attaches or updates LLM execution metadata
+    pub metadata: Option<LLMMetadata>,
+}
+
+impl MessageUpdate {
+    /// Validates the update against current message state
+    pub fn validate(&self, current_status: &MessageStatus) -> Result<(), UpdateError> {
+        // Completed messages are immutable
+        if matches!(current_status, MessageStatus::Completed) {
+            if self.content.is_some() 
+                || self.append_content.is_some()
+                || self.status.is_some()
+                || self.metadata.is_some()
+            {
+                return Err(UpdateError::ImmutableMessage);
+            }
+        }
+        
+        // Check for content conflict
+        if self.content.is_some() && self.append_content.is_some() {
+            return Err(UpdateError::ContentConflict);
+        }
+        
+        // Validate status transitions
+        if let Some(new_status) = &self.status {
+            match (current_status, new_status) {
+                // Completed messages are terminal (handled above)
+                
+                // Can only complete generating messages
+                (_, MessageStatus::Completed) if !matches!(current_status, MessageStatus::Generating) => 
+                    return Err(UpdateError::InvalidStatusTransition(
+                        current_status.clone(),
+                        new_status.clone()
+                    )),
+                    
+                // Can only retry from error state
+                (MessageStatus::Error { .. }, MessageStatus::Pending) => (),
+                    
+                // Invalid transitions
+                (from, to) if from != to => 
+                    return Err(UpdateError::InvalidStatusTransition(
+                        from.clone(),
+                        to.clone()
+                    )),
+                    
+                _ => {}
+            }
+        }
+        
+        Ok(())
+    }
+}
+
 /// Represents an individual message in the branching conversation tree.
 ///
 /// Each message forms a node in the hierarchical chat history with:
@@ -36,6 +135,8 @@ impl std::error::Error for ChatError {}
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
+    pub status: MessageStatus,
+    pub metadata: Option<LLMMetadata>,
     /// Parent message UUID (None for root messages)
     pub parent: Option<Uuid>,
     /// Child message UUIDs forming conversation branches
@@ -45,6 +146,60 @@ pub struct Message {
     pub selected_child: Option<Uuid>,
     /// Text content of the message
     pub content: String,
+}
+
+impl Message {
+    /// Attempts to apply an update with validation
+    pub fn try_update(&mut self, update: MessageUpdate) -> Result<(), UpdateError> {
+        // Validate before applying
+        update.validate(&self.status)?;
+
+        // Apply updates
+        if let Some(content) = update.content {
+            self.content = content;
+        }
+        
+        if let Some(chunk) = update.append_content {
+            self.content.push_str(&chunk);
+        }
+        
+        if let Some(status) = update.status {
+            self.status = status;
+        }
+        
+        if let Some(metadata) = update.metadata {
+            self.merge_metadata(metadata);
+        }
+
+        // Post-update consistency check
+        self.enforce_consistency()
+    }
+
+    /// Merges new metadata with existing
+    fn merge_metadata(&mut self, new_metadata: LLMMetadata) {
+        if let Some(existing) = &mut self.metadata {
+            // Implementation depends on your metadata structure
+            existing.usage.prompt_tokens += new_metadata.usage.prompt_tokens;
+            existing.usage.completion_tokens += new_metadata.usage.completion_tokens;
+            existing.cost += new_metadata.cost;
+            // ... other fields
+        } else {
+            self.metadata = Some(new_metadata);
+        }
+    }
+
+    /// Enforces business rules after update
+    fn enforce_consistency(&mut self) -> Result<(), UpdateError> {
+        // Completed messages must have content
+        if matches!(self.status, MessageStatus::Completed) && self.content.is_empty() {
+            self.status = MessageStatus::Error {
+                description: "Empty content on completion".into(),
+            };
+            return Err(UpdateError::EmptyContentCompletion);
+        }
+        
+        Ok(())
+    }
 }
 
 /// Manages the complete branching conversation history using a tree structure.
@@ -85,6 +240,13 @@ impl ChatHistory {
             // new list has same root/tail
             tail: root_id,
         }
+    }
+
+
+    // TODO: Documentation
+    pub fn add_message(&mut self, parent_id: Uuid, content: String) -> Result<(), StateError> { 
+        todo!();
+        Ok(())
     }
 
     /// Adds a new child message to the conversation tree.
