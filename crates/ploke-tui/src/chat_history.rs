@@ -1,5 +1,5 @@
-use crate::llm::LLMMetadata;
 use crate::app_state::StateError;
+use crate::llm::LLMMetadata;
 
 use super::*;
 use std::fmt;
@@ -40,7 +40,7 @@ impl fmt::Display for MessageStatus {
     }
 }
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -76,13 +76,13 @@ pub enum UpdateError {
 pub struct MessageUpdate {
     /// Replaces the entire content of the message (mutually exclusive with append)
     pub content: Option<String>,
-    
+
     /// Appends content to the existing message (mutually exclusive with content replacement)
     pub append_content: Option<String>,
-    
+
     /// Changes the status of the message
     pub status: Option<MessageStatus>,
-    
+
     /// Attaches or updates LLM execution metadata
     pub metadata: Option<LLMMetadata>,
 }
@@ -91,44 +91,50 @@ impl MessageUpdate {
     /// Validates the update against current message state
     pub fn validate(&self, current_status: &MessageStatus) -> Result<(), UpdateError> {
         // Completed messages are immutable
-        if matches!(current_status, MessageStatus::Completed) && (self.content.is_some() 
+        if matches!(current_status, MessageStatus::Completed)
+            && (self.content.is_some()
                 || self.append_content.is_some()
                 || self.status.is_some()
-                || self.metadata.is_some()) {
-                return Err(UpdateError::ImmutableMessage);
-            }
-        
+                || self.metadata.is_some())
+        {
+            return Err(UpdateError::ImmutableMessage);
+        }
+
         // Check for content conflict
         if self.content.is_some() && self.append_content.is_some() {
             return Err(UpdateError::ContentConflict);
         }
-        
+
         // Validate status transitions
         if let Some(new_status) = &self.status {
             match (current_status, new_status) {
                 // Completed messages are terminal (handled above)
-                
+
                 // Can only complete generating messages
-                (_, MessageStatus::Completed) if !matches!(current_status, MessageStatus::Generating) => 
+                (_, MessageStatus::Completed)
+                    if !matches!(current_status, MessageStatus::Generating) =>
+                {
                     return Err(UpdateError::InvalidStatusTransition(
                         current_status.clone(),
-                        new_status.clone()
-                    )),
-                    
+                        new_status.clone(),
+                    ));
+                }
+
                 // Can only retry from error state
                 (MessageStatus::Error { .. }, MessageStatus::Pending) => (),
-                    
+
                 // Invalid transitions
-                (from, to) if from != to => 
+                (from, to) if from != to => {
                     return Err(UpdateError::InvalidStatusTransition(
                         from.clone(),
-                        to.clone()
-                    )),
-                    
+                        to.clone(),
+                    ));
+                }
+
                 _ => {}
             }
         }
-        
+
         Ok(())
     }
 }
@@ -190,15 +196,15 @@ impl Message {
         if let Some(content) = update.content {
             self.content = content;
         }
-        
+
         if let Some(chunk) = update.append_content {
             self.content.push_str(&chunk);
         }
-        
+
         if let Some(status) = update.status {
             self.status = status;
         }
-        
+
         if let Some(metadata) = update.metadata {
             self.merge_metadata(metadata);
         }
@@ -229,7 +235,7 @@ impl Message {
             };
             return Err(UpdateError::EmptyContentCompletion);
         }
-        
+
         Ok(())
     }
 }
@@ -276,9 +282,8 @@ impl ChatHistory {
         }
     }
 
-
     // TODO: Documentation
-    pub fn add_message(&mut self, parent_id: Uuid, content: String) -> Result<(), StateError> { 
+    pub fn add_message(&mut self, parent_id: Uuid, content: String) -> Result<(), StateError> {
         todo!();
         Ok(())
     }
@@ -294,7 +299,12 @@ impl ChatHistory {
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
-    pub fn add_child(&mut self, parent_id: Uuid, content: &str, status: MessageStatus) -> Result<Uuid, ChatError> {
+    pub fn add_child(
+        &mut self,
+        parent_id: Uuid,
+        content: &str,
+        status: MessageStatus,
+    ) -> Result<Uuid, ChatError> {
         let child_id = Uuid::new_v4();
         let child = Message {
             id: child_id,
@@ -336,7 +346,12 @@ impl ChatHistory {
     /// # Errors
     /// Returns `ChatError::SiblingNotFound` if the reference sibling doesn't exist
     /// Returns `ChatError::RootHasNoSiblings` if trying to add siblings to root message
-    pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str, status: MessageStatus) -> Result<Uuid, ChatError> {
+    pub fn add_sibling(
+        &mut self,
+        sibling_id: Uuid,
+        content: &str,
+        status: MessageStatus,
+    ) -> Result<Uuid, ChatError> {
         let sibling = self
             .messages
             .get(&sibling_id)
@@ -349,10 +364,10 @@ impl ChatHistory {
     }
 
     /// Gets the index position of a message within its parent's children list
-    /// 
+    ///
     /// # Arguments
     /// * `message_id` - UUID of the message to locate
-    /// 
+    ///
     /// # Returns
     /// `Some(usize)` with the index if message exists and has a parent,  
     /// `None` if message is root or parent not found

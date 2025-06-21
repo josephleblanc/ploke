@@ -1,3 +1,5 @@
+use crate::chat_history::MessageStatus;
+
 use super::*;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
@@ -238,7 +240,7 @@ impl App {
             //     .add_child(self.chat_history.current, &self.input_buffer)?;
             let new_message_id = self
                 .chat_history
-                .add_child(self.chat_history.current, &self.input_buffer)?;
+                .add_child(self.chat_history.current, &self.input_buffer, MessageStatus::Completed)?;
             self.chat_history.current = new_message_id;
             self.input_buffer.clear();
             self.sync_list_selection();

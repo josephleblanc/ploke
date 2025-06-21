@@ -13,9 +13,9 @@ pub mod app_state;
 pub mod llm;
 
 use app::App;
-use app_state::{AppState, MessageUpdatedEvent};
+use app_state::{state_manager, AppState, MessageUpdatedEvent, StateCommand};
 use thiserror::Error;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use utils::layout::{self, layout_statusline};
 
 use std::{collections::HashMap, sync::Arc, thread::current};
@@ -52,7 +52,25 @@ async fn main() -> color_eyre::Result<()> {
         .build()?;
 
     let event_bus = Arc::new(EventBus::new(100, 1000));
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::default());
+
+    // Create command channel with backpressure
+    let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+    // Sapwn state manager first
+    runtime.spawn(state_manager(
+        state.clone(),
+        cmd_rx,
+        event_bus.clone()
+    ));
+
+    // Spawn subsystems with backpressure-aware command sender
+    runtime.spawn(llm_manager(
+        event_bus.clone(),
+        state.clone(),
+        cmd_tx.clone() // Clone for each subsystem
+    ));
+    
     todo!()
 }
 
@@ -116,6 +134,8 @@ impl AppEvent {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
             AppEvent::System(_) => todo!(),
+            AppEvent::MessageUpdated(_) => EventPriority::Realtime,
+            AppEvent::UpdateFailed(_) => EventPriority::Background,
         }
     }
 }

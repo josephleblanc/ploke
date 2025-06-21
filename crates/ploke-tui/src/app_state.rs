@@ -16,9 +16,23 @@ pub struct AppState {
 
 // State access API (read-only)
 impl AppState {
+    pub fn new() -> Self {
+        Self {
+            chat_history: RwLock::new(ChatHistory::new()),
+            system_status: RwLock::new(SystemStatus::new()),
+            shutdown: tokio::sync::broadcast::channel(1).0,
+        }
+    }
+
     pub async fn with_history<R>(&self, f: impl FnOnce(&ChatHistory) -> R) -> R {
         let guard = self.chat_history.read().await;
         f(&guard)
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -27,6 +41,12 @@ pub struct SystemStatus {/* ... */}
 impl SystemStatus {
     pub fn new() -> Self {
         Self {}
+    }
+}
+
+impl Default for SystemStatus {
+    fn default() -> Self {
+        Self::new()
     }
 }
 pub enum StateError {/* ... */}
@@ -50,7 +70,7 @@ pub struct MessageUpdatedEvent(pub Uuid);
 
 impl MessageUpdatedEvent {
     pub fn new(message_id: Uuid) -> Self {
-        Self (message_id)
+        Self(message_id)
     }
 }
 
@@ -61,7 +81,7 @@ impl From<MessageUpdatedEvent> for AppEvent {
 }
 
 // State manager implementation
-async fn state_manager(
+pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
     event_bus: Arc<EventBus>,
@@ -78,7 +98,7 @@ async fn state_manager(
                             event_bus.send(MessageUpdatedEvent::new(id).into());
                         }
                         Err(e) => {
-                            event_bus.send(UpdateFailedEvent::new(id, e));
+                            event_bus.send(UpdateFailedEvent::new(id, e).into());
                         }
                     }
                 }
@@ -88,8 +108,8 @@ async fn state_manager(
                 let mut guard = state.chat_history.write().await;
                 guard.add_message(parent_id, content);
             }
-            StateCommand::PruneHistory { max_messages } => todo!(), // ... other commands
-                                                                    // ... other commands
+            StateCommand::PruneHistory { max_messages } => todo!(),
+            // ... other commands
         };
     }
 }
