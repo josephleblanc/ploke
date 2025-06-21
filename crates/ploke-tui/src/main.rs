@@ -7,6 +7,9 @@
 // 5 Add color coding for different message types (user vs assistant)
 
 mod chat_history;
+mod utils;
+
+use utils::layout::{self, layout_statusline};
 
 use std::{collections::HashMap, thread::current};
 
@@ -68,15 +71,15 @@ pub struct App {
     input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
-    /// Parent of the current branch in the conversation - this dictates where the next input
-    /// message will be added.
-    branch_parent: Option<Uuid>,
+    branches: Vec<Vec<Uuid>>,
+    active_branch: usize,
 }
 
 impl App {
     /// Construct a new instance of [`App`].
     pub fn new() -> Self {
         let chat_history = ChatHistory::new();
+        let root_id = chat_history.current;
         Self {
             running: false, // Will be set to true in run()
             event_stream: EventStream::new(),
@@ -84,7 +87,8 @@ impl App {
             chat_history,
             input_buffer: String::new(),
             mode: Mode::default(),
-            branch_parent: None,
+            branches: vec![vec![root_id]],
+            active_branch: 0
         }
     }
 
@@ -114,10 +118,7 @@ impl App {
             ])
             .split(frame.area());
 
-        let status_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(main_layout[2]);
+        let status_layout = layout_statusline(4, main_layout[2]);
 
         // ---------- Define widgets ----------
         // Render message tree
@@ -140,6 +141,7 @@ impl App {
             )
             .collect();
 
+        let list_len = messages.len();
         let list = List::new(messages)
             .block(Block::bordered().title("Conversation"))
             .highlight_style(Style::new().reversed())
@@ -160,6 +162,8 @@ impl App {
         let node_status = Paragraph::new(format!("Node: {}", current_node))
             .block(Block::default().borders(Borders::NONE))
             .style(Style::new().fg(Color::Blue));
+        let list_len = Paragraph::new(format!("List Len: {}", list_len));
+        let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
 
         // ---------- Render widgets in layout ----------
         // -- top level
@@ -169,6 +173,12 @@ impl App {
         // -- first nested
         frame.render_widget(status_bar, status_layout[0]);
         frame.render_widget(node_status, status_layout[1]);
+        frame.render_widget(list_len, status_layout[2]);
+        frame.render_widget(list_selected, status_layout[3]);
+    }
+
+    fn create_branch(&mut self) {
+        // let new_branch = self.chat_history.
     }
 
     fn move_selection_up(&mut self) {
@@ -180,11 +190,15 @@ impl App {
     }
 
     fn move_selection_down(&mut self) {
-        self.list.select_next();
+        // let current_id = self.chat_history.current;
+        // let current_msg = self.chat_history.messages.get(&current_id);
+        // if let Some(child_id) = current_msg.map(|m| m.selected_child) {
+        // };
         if let Some(selected) = self.list.selected() {
             let path = self.chat_history.get_current_path();
             self.chat_history.current = path[selected].id; // Sync tree position
         }
+        self.list.select_next();
     }
 
     fn move_to_first(&mut self) {

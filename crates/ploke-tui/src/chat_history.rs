@@ -40,6 +40,9 @@ pub struct Message {
     pub parent: Option<Uuid>,
     /// Child message UUIDs forming conversation branches
     pub children: Vec<Uuid>,
+    /// Selected Child is the default selection for the next navigation down
+    /// Useful for `move_selection_down`
+    pub selected_child: Option<Uuid>,
     /// Text content of the message
     pub content: String,
 }
@@ -54,6 +57,8 @@ pub struct ChatHistory {
     pub messages: HashMap<Uuid, Message>,
     /// UUID of the currently active message in the conversation flow
     pub current: Uuid,
+    /// Final message in the currently selected message list.
+    pub tail: Uuid,
 }
 
 impl ChatHistory {
@@ -62,10 +67,12 @@ impl ChatHistory {
     /// The root message serves as the starting point for all conversations.
     /// Its content is intentionally left empty to allow natural branching.
     pub fn new() -> Self {
+        let root_id = Uuid::new_v4();
         let root = Message {
-            id: Uuid::new_v4(),
+            id: root_id,
             parent: None,
             children: Vec::new(),
+            selected_child: None,
             content: String::new(),
         };
         let root_id = root.id;
@@ -75,6 +82,8 @@ impl ChatHistory {
         Self {
             messages,
             current: root_id,
+            // new list has same root/tail
+            tail: root_id,
         }
     }
 
@@ -95,6 +104,7 @@ impl ChatHistory {
             id: child_id,
             parent: Some(parent_id),
             children: Vec::new(),
+            selected_child: None,
             content: content.to_string(),
         };
 
@@ -104,7 +114,12 @@ impl ChatHistory {
             .ok_or(ChatError::ParentNotFound(parent_id))?;
 
         parent.children.push(child_id);
+        parent.selected_child = Some(child_id);
         self.messages.insert(child_id, child);
+        // NOTE: This could be problematic, maybe?
+        // Consider a case where multiple children are being added simultaneously.
+        // Forget it, we would likely need a different function for that.
+        self.tail = child_id;
         Ok(child_id)
     }
 
@@ -135,6 +150,20 @@ impl ChatHistory {
         self.add_child(parent_id, content)
     }
 
+
+    /// Returns an iterator of UUIDs in the current path from root to current message
+    pub fn current_path_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        let mut current = Some(self.current);
+        std::iter::from_fn(move || {
+            let id = current?;
+            current = self.messages.get(&id).and_then(|m| m.parent);
+            Some(id)
+        })
+        .collect::<Vec<_>>() // Collect to reverse order
+        .into_iter()
+        .rev()
+    }
+
     /// Gets the current conversation path from root to active message.
     ///
     /// Traverses the message hierarchy from the currently active message
@@ -144,21 +173,11 @@ impl ChatHistory {
     /// For a conversation path A -> B -> C (where C is current):
     /// Returns [A, B, C]
     pub fn get_current_path(&self) -> Vec<&Message> {
-        let mut path = Vec::new();
-        let mut current_id = Some(self.current);
-
-        while let Some(id) = current_id {
-            if let Some(msg) = self.messages.get(&id) {
-                path.push(msg);
-                current_id = msg.parent;
-            } else {
-                break;
-            }
-        }
-
-        path.reverse();
-        path
+        self.current_path_ids()
+            .filter_map(|id| self.messages.get(&id))
+            .collect()
     }
+
     /// Gets the parent UUID of a specified message if it exists.
     ///
     /// # Arguments
