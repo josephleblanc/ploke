@@ -159,12 +159,24 @@ impl ChatHistory {
         path.reverse();
         path
     }
-    // add documentation AI!
+    /// Gets the parent UUID of a specified message if it exists.
+    ///
+    /// # Arguments
+    /// * `id` - UUID of the message to check for a parent
+    ///
+    /// # Returns
+    /// `Some(Uuid)` if the message exists and has a parent, `None` otherwise
     pub fn get_parent(&self, id: Uuid) -> Option<Uuid> {
         self.messages.get(&id).and_then(|m| m.parent)
     }
 
-    // add documentation AI!
+    /// Gets the first child UUID of a specified message if it exists.
+    ///
+    /// # Arguments
+    /// * `id` - UUID of the message to check for children
+    ///
+    /// # Returns
+    /// `Some(Uuid)` if the message exists and has at least one child, `None` otherwise
     pub fn get_first_child(&self, id: Uuid) -> Option<Uuid> {
         self.messages
             .get(&id)
