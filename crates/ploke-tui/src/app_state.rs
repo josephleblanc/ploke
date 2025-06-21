@@ -1,6 +1,8 @@
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+use crate::chat_history::MessageUpdate;
+
 use super::*;
 
 /// AppState holds all shared application data.
@@ -37,6 +39,22 @@ pub enum StateCommand {
     // ...
 }
 
+/// Event fired when a message is successfully updated.
+///
+/// This is a "minimal" or "ID-based" event. It intentionally does not contain
+/// the new message data. Subscribers are expected to use the `message_id` to
+/// query the central `AppState` for the latest, guaranteed-to-be-fresh data.
+// This enforces a single source of truth and prevents UI from ever rendering stale data.
+#[derive(Debug, Clone, Copy)]
+pub struct MessageUpdatedEvent(pub Uuid);
+// implement `into` `AppEvent` AI!
+
+impl MessageUpdatedEvent {
+    pub fn new(message_id: Uuid) -> Self {
+        Self (message_id)
+    }
+}
+
 // State manager implementation
 async fn state_manager(
     state: Arc<AppState>,
@@ -48,11 +66,11 @@ async fn state_manager(
             StateCommand::UpdateMessage { id, update } => {
                 let mut guard = state.chat_history.write().await;
 
-                if let Some(message) = guard.get_message_mut(&id) {
+                if let Some(message) = guard.messages.get_mut(&id) {
                     match message.try_update(update) {
                         Ok(_) => {
                             // Notify UI of update
-                            event_bus.send(MessageUpdatedEvent::new(id));
+                            event_bus.send(MessageUpdatedEvent::new(id).into());
                         }
                         Err(e) => {
                             event_bus.send(UpdateFailedEvent::new(id, e));
