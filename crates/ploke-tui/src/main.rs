@@ -13,14 +13,14 @@ pub mod app_state;
 pub mod llm;
 
 use app::App;
-use app_state::AppState;
+use app_state::{AppState, MessageUpdatedEvent};
 use thiserror::Error;
 use tokio::sync::broadcast;
 use utils::layout::{self, layout_statusline};
 
 use std::{collections::HashMap, sync::Arc, thread::current};
 
-use chat_history::{ChatError, ChatHistory, NavigationDirection};
+use chat_history::{ChatError, ChatHistory, NavigationDirection, UpdateFailedEvent};
 use color_eyre::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::{FutureExt, StreamExt};
@@ -70,11 +70,15 @@ pub mod ui {
 }
 
 #[derive(Debug, Clone, Error)]
+// Implement Display for UiError AI!
 pub enum UiError {
     ExampleError
 }
 
 pub mod system {
+    use crate::UiError;
+
+    #[derive(Clone, Debug)]
     pub enum Event {
         MutationFailed(UiError)
     }
@@ -92,6 +96,11 @@ pub enum AppEvent {
     // Rag(rag::Event),
     // Agent(agent::Event),
     System(system::Event),
+    // A message was successfully updated. UI should refresh this message.
+    MessageUpdated(MessageUpdatedEvent),
+
+    // An attempt to update a message was rejected. UI should show an error.
+    UpdateFailed(UpdateFailedEvent),
 }
 
 impl AppEvent {
