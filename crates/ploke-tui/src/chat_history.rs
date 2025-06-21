@@ -29,6 +29,17 @@ impl fmt::Display for ChatError {
 
 impl std::error::Error for ChatError {}
 
+impl fmt::Display for MessageStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MessageStatus::Pending => write!(f, "Pending"),
+            MessageStatus::Generating => write!(f, "Generating"),
+            MessageStatus::Completed => write!(f, "Completed"),
+            MessageStatus::Error { .. } => write!(f, "Error"),
+        }
+    }
+}
+
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use uuid::Uuid;
@@ -36,7 +47,6 @@ use uuid::Uuid;
 /// Represents the possible states of a message during its lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-// Implement Display for `MessageStatus` AI!
 pub enum MessageStatus {
     /// The message is waiting to be processed by the LLM.
     Pending,
@@ -226,6 +236,8 @@ impl ChatHistory {
         let root_id = Uuid::new_v4();
         let root = Message {
             id: root_id,
+            status: MessageStatus::Completed,
+            metadata: None,
             parent: None,
             children: Vec::new(),
             selected_child: None,
@@ -313,7 +325,14 @@ impl ChatHistory {
         self.add_child(parent_id, content)
     }
 
-    // Add documentation AI
+    /// Gets the index position of a message within its parent's children list
+    /// 
+    /// # Arguments
+    /// * `message_id` - UUID of the message to locate
+    /// 
+    /// # Returns
+    /// `Some(usize)` with the index if message exists and has a parent,  
+    /// `None` if message is root or parent not found
     fn get_sibling_index(&self, message_id: Uuid) -> Option<usize> {
         self.get_parent(message_id).and_then(|parent_id| {
             self.messages[&parent_id]
