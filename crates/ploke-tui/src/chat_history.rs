@@ -143,7 +143,11 @@ pub struct UpdateFailedEvent {
     pub message_id: Uuid,
     pub error: UpdateError, // The structured error from your previous code
 }
-// implement `into<AppEvent>` for `UpdateFailedEvent` AI!
+impl From<UpdateFailedEvent> for AppEvent {
+    fn from(event: UpdateFailedEvent) -> Self {
+        AppEvent::UpdateFailed(event)
+    }
+}
 
 impl UpdateFailedEvent {
     pub fn new(message_id: Uuid, error: UpdateError) -> Self {
