@@ -124,11 +124,12 @@ impl ChatHistory {
     /// Returns `ChatError::SiblingNotFound` if the reference sibling doesn't exist
     /// Returns `ChatError::RootHasNoSiblings` if trying to add siblings to root message
     pub fn add_sibling(&mut self, sibling_id: Uuid, content: &str) -> Result<Uuid, ChatError> {
-        let sibling = self.messages.get(&sibling_id)
+        let sibling = self
+            .messages
+            .get(&sibling_id)
             .ok_or(ChatError::SiblingNotFound(sibling_id))?;
 
-        let parent_id = sibling.parent
-            .ok_or(ChatError::RootHasNoSiblings)?;
+        let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent
         self.add_child(parent_id, content)
@@ -157,5 +158,16 @@ impl ChatHistory {
 
         path.reverse();
         path
+    }
+    // add documentation AI!
+    pub fn get_parent(&self, id: Uuid) -> Option<Uuid> {
+        self.messages.get(&id).and_then(|m| m.parent)
+    }
+
+    // add documentation AI!
+    pub fn get_first_child(&self, id: Uuid) -> Option<Uuid> {
+        self.messages
+            .get(&id)
+            .and_then(|m| m.children.first().copied())
     }
 }
