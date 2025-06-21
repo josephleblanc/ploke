@@ -70,9 +70,16 @@ pub mod ui {
 }
 
 #[derive(Debug, Clone, Error)]
-// Implement Display for UiError AI!
 pub enum UiError {
     ExampleError
+}
+
+impl std::fmt::Display for UiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UiError::ExampleError => write!(f, "Example error occurred"),
+        }
+    }
 }
 
 pub mod system {
