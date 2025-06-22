@@ -14,6 +14,7 @@ flume = { workspace = true }
 num_cpus = "1.0"
 # network
 reqwest = { version = "0.11", features = ["json"] }
+governor = "0.1"
 # common
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

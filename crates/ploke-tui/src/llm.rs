@@ -1,12 +1,63 @@
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{self, error::TrySendError};
 use std::{sync::Arc, time::Duration};
+use tokio::sync::mpsc::{self, error::TrySendError};
 use uuid::Uuid;
 
 use crate::chat_history::MessageUpdate;
 
 use super::*;
 
+use tokio::sync::Semaphore;
+
+// Global rate limiter (10 concurrent requests max)
+static LLM_RATE_LIMITER: Lazy<Arc<Semaphore>> = Lazy::new(|| 
+    // TODO: Make configurable
+    Arc::new(Semaphore::new(10))
+);
+
+// With burst protection
+static LLM_BURST_LIMITER: Lazy<RateLimiter> = Lazy::new(|| {
+    let quota = governor::Quota::per_second(5).allow_burst(3);
+    governor::RateLimiter::direct(quota)
+});
+
+async fn llm_manager(mut rx: broadcast::Receiver<AppEvent>) {
+    while let Ok(event) = rx.recv().await {
+        if let AppEvent::Llm(llm::Event::Response {
+            request_id,
+            content,
+            ..
+        }) = event
+        {
+            println!("Received response for {request_id}: {content}");
+        }
+    }
+}
+
+async fn process_llm_request(
+    parent_id: Uuid,
+    prompt: String,
+    parameters: LLMParameters,
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>
+) {
+    // Rate-limited API call
+    let _permit = LLM_RATE_LIMITER.acquire().await; 
+    let response = call_llm_api(&prompt, parameters).await;
+    
+    // Update state
+    let mut history = state.chat_history.write().await;
+    history.add_response(parent_id, &response);
+    
+    // Emit event
+    event_bus.send(AppEvent::Llm(
+        llm::Event::Response {
+            parent_id,
+            content: response,
+            metadata: /*...*/
+        }
+    ));
+}
 
 // Backpressure-aware command sender
 struct CommandSender {
@@ -19,100 +70,24 @@ impl CommandSender {
         match self.inner.try_send(cmd) {
             Ok(_) => {}
             Err(TrySendError::Full(cmd)) => {
-                self.event_bus.send(AppEvent::System(
-                    SystemEvent::CommandDropped(cmd.discriminant())
-                ));
+                self.event_bus
+                    .send(AppEvent::System(SystemEvent::CommandDropped(
+                        cmd.discriminant(),
+                    )));
                 // Optional retry logic
                 tokio::time::sleep(Duration::from_millis(10)).await;
                 if let Err(e) = self.inner.send(cmd).await {
                     log::error!("Permanent send failure: {}", e);
+                    // possibly more logging here.
                 }
             }
             Err(TrySendError::Closed(_)) => {
+                // TODO: What should go here?
+                // check docs on ratatui? tokio?
                 // Shutting down
             }
         }
     }
-}
-
-/// Defines the complete set of possible state mutation operations for the application.
-///
-/// Each variant represents a unique, atomic command that can be sent to the central
-/// `state_manager` actor. This enum is the sole entry point for modifying `AppState`,
-/// embodying the Command-Query Responsibility Segregation (CQRS) pattern.
-#[derive(Debug)]
-pub enum StateCommand {
-    // --- Message and Chat History Commands ---
-
-    /// Adds a new message to a chat history. This is used for both user input
-    /// and for creating the initial placeholder for an assistant's response.
-    AddMessage {
-        /// The role of the message author (e.g., User or Assistant).
-        role: MessageRole,
-        /// The content of the message. Can be empty for an initial assistant message.
-        content: String,
-        /// The specific chat history (e.g., main, scratchpad) to add the message to.
-        target: ChatHistoryTarget,
-        /// The parent in the conversation tree where this message will be added
-        parent_id: Uuid,
-    },
-
-    /// Applies a set of partial updates to an existing message.
-    /// This is the primary command for streaming LLM responses, updating status,
-    /// and attaching metadata.
-    UpdateMessage {
-        /// The unique identifier of the message to update.
-        id: Uuid,
-        /// A struct containing optional fields for the update.
-        update: MessageUpdate,
-    },
-
-    /// Removes a specific message and all of its descendants from the history.
-    DeleteMessage {
-        /// The unique identifier of the message to delete.
-        id: Uuid,
-    },
-
-    /// Clears all messages from a specific chat history.
-    ClearHistory {
-        /// The target chat history to clear.
-        target: ChatHistoryTarget,
-    },
-
-    // --- Application and Session Commands ---
-
-    /// Creates a new, empty chat session, making it the active one.
-    NewSession,
-
-    /// Switches the active view to a different chat session.
-    SwitchSession {
-        /// The unique identifier of the session to switch to.
-        session_id: Uuid,
-    },
-
-    /// Saves the current state of the application to a file.
-    /// This is a "fire-and-forget" command that triggers a background task.
-    SaveState,
-
-    /// Loads application state from a file, replacing the current state.
-    LoadState,
-
-    // --- LLM and Agent Commands ---
-
-    /// Submits the current chat history to the LLM for a response.
-    /// The `state_manager` will prepare the prompt and dispatch it to the `llm_manager`.
-    GenerateLlmResponse {
-        /// The specific chat history to use as the context for the prompt.
-        target: ChatHistoryTarget,
-        /// Overrides for the default LLM parameters for this specific generation.
-        params_override: Option<LLMParameters>,
-    },
-
-    /// Cancels an in-progress LLM generation task.
-    CancelGeneration {
-        /// The ID of the assistant message whose generation should be cancelled.
-        message_id: Uuid,
-    },
 }
 
 // --- Supporting Types ---
@@ -142,43 +117,94 @@ pub enum ChatHistoryTarget {
 }
 
 // Usage in subsystems
-async fn llm_handler(
-    event: llm::Event,
-    cmd_sender: &CommandSender,
-    state: &AppState
-) {
+async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppState) {
     match event {
-        Event::Response { parent_id: pid, content: c, metadata } => {
-            cmd_sender.send(StateCommand::AddMessage {
-                parent_id: pid,
-                content: c,
-                role: MessageRole::Assistant,
-                target: ChatHistoryTarget::Main,
-            }).await;
+        Event::Response {
+            content: c,
+            parent_id: pid,
+            request_id,
+            model,
+            usage,
+        } => {
+            cmd_sender
+                .send(StateCommand::AddMessage {
+                    parent_id: pid,
+                    content: c,
+                    role: MessageRole::Assistant,
+                    target: ChatHistoryTarget::Main,
+                })
+                .await;
         }
         _ => {}
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Parameters {
+    pub temperature: f32,
+    pub max_tokens: usize,
+    pub top_p: f32,
+    // ... other LLM parameters
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// Request to generate content from an LLM
     Request {
-        parent_id: Uuid,
-        prompt: String,
-        parameters: LLMParameters,
+        request_id: Uuid,                // Unique tracking ID
+        parent_id: Uuid,                 // Message this responds to
+        prompt: String,                  // Input to LLM
+        parameters: Parameters,          // Generation settings
+        callback: Option<Sender<Event>>, // Optional direct response channel
     },
+
+    /// Successful LLM response
     Response {
+        request_id: Uuid,    // Matches Request ID
         parent_id: Uuid,
-        content: String,
+        content: String,     // Generated content
+        model: String,       // e.g., "gpt-4-turbo"
         metadata: LLMMetadata,
+        usage: UsageMetrics, // Tokens/timing
     },
+
+    /// Partial response (streaming)
+    PartialResponse {
+        request_id: Uuid,
+        delta: String, // Text chunk
+    },
+
+    /// Error during processing
+    Error {
+        request_id: Uuid,
+        error: LlmError, // Structured error type
+    },
+
+    /// Status update
+    Status {
+        active_requests: usize, // Current workload
+        queue_depth: usize,     // Pending requests
+    },
+
+    /// Configuration change
+    ModelChanged {
+        new_model: String, // e.g., "claude-3-opus"
+    },
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct UsageMetrics {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub latency_ms: u64,
 }
 
 impl Event {
     pub fn parent_id(&self) -> Uuid {
         match self {
             Event::Request { parent_id, .. } => *parent_id,
-            Event::Response {  parent_id, .. } => *parent_id,
+            Event::Response { parent_id, .. } => *parent_id,
         }
     }
 }

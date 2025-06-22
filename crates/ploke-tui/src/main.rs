@@ -70,8 +70,12 @@ async fn main() -> color_eyre::Result<()> {
         state.clone(),
         cmd_tx.clone() // Clone for each subsystem
     ));
-    
-    todo!()
+
+    let terminal = ratatui::init();
+    let app = App::new(state.clone(), event_bus.clone(), cmd_tx);
+    let result = app.run(terminal).await;
+    ratatui::restore();
+    result
 }
 
 pub mod ui {

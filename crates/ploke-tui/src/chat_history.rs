@@ -244,6 +244,7 @@ impl Message {
 ///
 /// Stores all messages in a HashMap for efficient lookup and maintains
 /// the current position in the conversation tree.
+// TODO: Needs updating for concurrency (DashMap? Something else?)
 #[derive(Debug, Default)]
 pub struct ChatHistory {
     /// All messages in the conversation history, indexed by UUID

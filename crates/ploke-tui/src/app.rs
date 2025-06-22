@@ -23,8 +23,9 @@ pub struct App {
     /// Is the application running?
     running: bool,
     /// Event stream.
+    // NOTE: Is this still needed?
     event_stream: EventStream,
-    //
+    /// Currently selected and displayed chat history
     list: ListState,
     /// Branching Chat History
     pub chat_history: ChatHistory,
