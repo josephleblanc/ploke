@@ -2,7 +2,7 @@ use crate::app_state::StateError;
 use crate::llm::LLMMetadata;
 
 use super::*;
-use std::fmt;
+use std::{fmt, path::Path};
 
 #[derive(Debug, Clone, Copy)]
 pub enum NavigationDirection {
@@ -42,6 +42,7 @@ impl fmt::Display for MessageStatus {
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::{fs::{self, File}, io::AsyncWriteExt};
 use uuid::Uuid;
 
 /// Represents the possible states of a message during its lifecycle.
@@ -283,7 +284,7 @@ impl ChatHistory {
         }
     }
 
-    // TODO: Documentation
+    // TODO: Documentation, actually implement this (needs async?)
     pub fn add_message(&mut self, parent_id: Uuid, content: String) -> Result<(), StateError> {
         todo!();
         Ok(())
@@ -457,5 +458,28 @@ impl ChatHistory {
         self.messages
             .get(&id)
             .and_then(|m| m.children.first().copied())
+    }
+
+    pub async fn persist(&self, path: &Path) -> Result<()> {
+        // NOTE: Assuming `tokio::fs` and `tokio::File` below are correct, need to confirm
+        let temp_path = path.with_extension(".tmp");
+        let mut file = File::create(&temp_path).await?;
+
+        for msg in self.get_full_path() {
+            file.write_all(
+                format!(
+                    "## [{}] {}\n{}\n",
+                    msg.role,
+                    // TODO: `Utc::now` does not exist, need to use a real function/crate instead
+                    Utc::now().to_rfc3339(),
+                    msg.content
+                )
+                .as_bytes(),
+            )
+            .await?;
+        }
+
+        fs::rename(temp_path, path).await?;
+        Ok(())
     }
 }

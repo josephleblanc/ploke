@@ -1,30 +1,54 @@
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-use crate::{chat_history::MessageUpdate, llm::{ChatHistoryTarget, LLMParameters, MessageRole}};
+use crate::{
+    chat_history::MessageUpdate,
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+};
 
 use super::*;
+
+// pub struct AppState {
+//     pub chat_history: RwLock<ChatHistory>,
+//     pub system_status: RwLock<SystemStatus>,
+//     /// Stores user config. Low write (if ever), higher read.
+//
+//     // A channel to signal application shutdown.
+//     pub shutdown: tokio::sync::broadcast::Sender<()>,
+// }
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
 pub struct AppState {
-    pub chat_history: RwLock<ChatHistory>,
-    pub system_status: RwLock<SystemStatus>,
-    // A channel to signal application shutdown.
-    pub shutdown: tokio::sync::broadcast::Sender<()>,
+    pub chat: ChatState,     // High-write frequency
+    pub config: ConfigState, // Read-heavy
+    pub system: SystemState, // Medium-write
+
+                             // TODO: Define the `RagContext` struct
+                             // pub rag_context: RwLock<RagContext>,
 }
+
+// TODO: Implement Deref for all three *State items below
+pub struct ChatState(RwLock<ChatHistory>);
+// TODO: Need to handle `Config`, either create struct or
+// use `config` crate
+pub struct ConfigState(RwLock<Config>); 
+pub struct SystemState(RwLock<SystemStatus>);
 
 // State access API (read-only)
 impl AppState {
     pub fn new() -> Self {
         Self {
-            chat_history: RwLock::new(ChatHistory::new()),
-            system_status: RwLock::new(SystemStatus::new()),
-            shutdown: tokio::sync::broadcast::channel(1).0,
+            chat: ChatState(RwLock::new(ChatHistory::new())),
+            config: todo!(),
+            system: SystemState(RwLock::new(SystemStatus::new())),
+            // TODO: This needs to be handled elsewhere if not handled in AppState
+            // shutdown: tokio::sync::broadcast::channel(1).0,
         }
     }
 
     pub async fn with_history<R>(&self, f: impl FnOnce(&ChatHistory) -> R) -> R {
+        // TODO: need to evaluate whether to keep or not, still has old pattern
         let guard = self.chat_history.read().await;
         f(&guard)
     }
@@ -37,6 +61,7 @@ impl Default for AppState {
 }
 
 // Placeholder
+// TODO: Decide if this is appropriately replaced by `SystemState` or not
 pub struct SystemStatus {/* ... */}
 impl SystemStatus {
     pub fn new() -> Self {
@@ -128,7 +153,9 @@ pub enum StateCommand {
     },
 
     // TODO: Documentation, look at this again, might need more fields
-    PruneHistory { max_messages: u16 }
+    PruneHistory {
+        max_messages: u16,
+    },
 }
 
 /// Event fired when a message is successfully updated.
@@ -176,9 +203,12 @@ pub async fn state_manager(
                 }
             }
 
-            StateCommand::AddMessage { parent_id, content, 
+            StateCommand::AddMessage {
+                parent_id,
+                content,
                 // TODO: Figure out if I should/need to do more with these
-                role, target 
+                role,
+                target,
             } => {
                 let mut guard = state.chat_history.write().await;
                 guard.add_message(parent_id, content);
@@ -186,7 +216,6 @@ pub async fn state_manager(
             StateCommand::PruneHistory { max_messages } => todo!(),
             // ... other commands
             // TODO: Fill out other fields
-            
             _ => {}
         };
     }

@@ -1,3 +1,5 @@
+use tokio::sync::RwLock;
+
 use crate::chat_history::MessageStatus;
 
 use super::*;
@@ -27,8 +29,17 @@ pub struct App {
     event_stream: EventStream,
     /// Currently selected and displayed chat history
     list: ListState,
-    /// Branching Chat History
-    pub chat_history: ChatHistory,
+    /// Branching Chat History. Frequent read due to re-drawing UI, occasional write for new
+    /// messages or editing messages.
+    /// The messages are parallel tracks that can be navigated with the `leftarrow`, `rightarrow`
+    /// keys across conversation tracks. New message tracks are created by the user whenever they
+    /// would like by selecting a previous message (navigating up/down the conversation track with
+    /// `uparrow` and `downarrow`).
+    /// New messages tracks are also created when multiple responses are desired to a user input.
+    pub chat_history: RwLock<ChatHistory>,
+    /// Stores user config. Low write (if ever), higher read.
+    // TODO: Define the `Config` struct or use the `config` crate
+    pub config: RwLock<Config>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
     input_buffer: String,
@@ -43,8 +54,13 @@ pub struct App {
 }
 
 impl App {
+
     /// Construct a new instance of [`App`].
-    pub fn new() -> Self {
+    pub fn new(
+        state: Arc<AppState>,
+        event_bus: Arc<EventBus>,
+        cmd_tx: mpsc::Sender<StateCommand>
+    ) -> Self {
         let chat_history = ChatHistory::new();
         let root_id = chat_history.current;
         Self {
@@ -55,7 +71,7 @@ impl App {
             input_buffer: String::new(),
             mode: Mode::default(),
             branches: vec![vec![root_id]],
-            active_branch: 0
+            active_branch: 0,
         }
     }
 
@@ -239,9 +255,11 @@ impl App {
             // let new_message_id = self
             //     .chat_history
             //     .add_child(self.chat_history.current, &self.input_buffer)?;
-            let new_message_id = self
-                .chat_history
-                .add_child(self.chat_history.current, &self.input_buffer, MessageStatus::Completed)?;
+            let new_message_id = self.chat_history.add_child(
+                self.chat_history.current,
+                &self.input_buffer,
+                MessageStatus::Completed,
+            )?;
             self.chat_history.current = new_message_id;
             self.input_buffer.clear();
             self.sync_list_selection();
@@ -349,3 +367,7 @@ impl App {
 fn truncate_uuid(id: Uuid) -> String {
     id.to_string().chars().take(8).collect()
 }
+
+
+
+

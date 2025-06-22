@@ -41,15 +41,6 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    // let terminal = ratatui::init();
-    // let result = App::new().run(terminal).await;
-    // ratatui::restore();
-    // result
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(num_cpus::get())
-        .max_blocking_threads(4)
-        .build()?;
 
     let event_bus = Arc::new(EventBus::new(100, 1000));
     let state = Arc::new(AppState::default());
@@ -58,16 +49,16 @@ async fn main() -> color_eyre::Result<()> {
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
     // Sapwn state manager first
-    runtime.spawn(state_manager(
+    tokio::spawn(state_manager(
         state.clone(),
         cmd_rx,
         event_bus.clone()
     ));
 
     // Spawn subsystems with backpressure-aware command sender
-    runtime.spawn(llm_manager(
+    tokio::spawn(llm_manager(
         event_bus.clone(),
-        state.clone(),
+           state.clone(),
         cmd_tx.clone() // Clone for each subsystem
     ));
 
@@ -130,6 +121,7 @@ pub enum AppEvent {
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
+    Error(ErrorEvent),
 }
 
 impl AppEvent {
@@ -140,8 +132,23 @@ impl AppEvent {
             AppEvent::System(_) => todo!(),
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
+            // TODO: Proper error handling
+            AppEvent::Error(e) => todo!(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorEvent {
+    pub message: String,
+    pub severity: ErrorSeverity,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ErrorSeverity {
+    Warning, // simple warning
+    Error, // recoverable error
+    Fatal // indicates invalid state
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,6 +160,7 @@ pub enum EventPriority {
 pub struct EventBus {
     realtime_tx: broadcast::Sender<AppEvent>,
     background_tx: broadcast::Sender<AppEvent>
+    error_tx: todo!(),
 }
 
 impl EventBus {
@@ -170,6 +178,10 @@ impl EventBus {
             EventPriority::Background => &self.background_tx,
         };
         let _ = tx.send(event); // Ignore receiver count
+    }
+
+    pub fn send_error(&self, message: String, severity: ErrorSeverity) {
+        let _ = self.error_tx.send(ErrorEvent {message, severity});
     }
     
     pub fn subscribe(&self, priority: EventPriority) -> broadcast::Receiver<AppEvent> {
