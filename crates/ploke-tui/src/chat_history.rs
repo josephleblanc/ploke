@@ -1,4 +1,4 @@
-use crate::app_state::StateError;
+use crate::app_state::{ListNavigation, StateError};
 use crate::llm::LLMMetadata;
 
 use super::*;
@@ -245,6 +245,13 @@ impl Message {
 ///
 /// Stores all messages in a HashMap for efficient lookup and maintains
 /// the current position in the conversation tree.
+///
+/// Description:
+/// The messages are parallel tracks that can be navigated with the `leftarrow`, `rightarrow`
+/// keys across conversation tracks. New message tracks are created by the user whenever they
+/// would like by selecting a previous message (navigating up/down the conversation track with
+/// `uparrow` and `downarrow`).
+/// New messages tracks are also created when multiple responses are desired to a user input.
 // TODO: Needs updating for concurrency (DashMap? Something else?)
 #[derive(Debug, Default)]
 pub struct ChatHistory {
@@ -482,4 +489,23 @@ impl ChatHistory {
         fs::rename(temp_path, path).await?;
         Ok(())
     }
+
+     /// Navigates the current path and updates the `current` message ID.
+     pub fn navigate_list(&mut self, direction: ListNavigation) {
+         let path_ids: Vec<Uuid> = self.get_full_path().iter().map(|m| m.id).collect();
+         if path_ids.is_empty() {
+             return;
+         }
+
+         let current_index = path_ids.iter().position(|&id| id == self.current);
+
+         let new_index = match direction {
+             ListNavigation::Up => current_index.map_or(0, |i| i.saturating_sub(1)),
+             ListNavigation::Down => current_index.map_or(0, |i| (i + 1).min(path_ids.len() - 1)),
+             ListNavigation::Top => 0,
+             ListNavigation::Bottom => path_ids.len() - 1,
+         };
+
+         self.current = path_ids[new_index];
+     }
 }

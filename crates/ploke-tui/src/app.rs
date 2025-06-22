@@ -1,6 +1,6 @@
 use tokio::sync::RwLock;
 
-use crate::chat_history::MessageStatus;
+use crate::{app_state::ListNavigation, chat_history::{Message, MessageStatus}};
 
 use super::*;
 
@@ -20,67 +20,99 @@ impl std::fmt::Display for Mode {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
     /// Is the application running?
     running: bool,
-    /// Event stream.
-    // NOTE: Is this still needed?
-    event_stream: EventStream,
-    /// Currently selected and displayed chat history
+    /// Ui-specific state for the message list (scroll position, selection)
+    // Question: should `ListState` be constructed each frame, or should it persist?
     list: ListState,
-    /// Branching Chat History. Frequent read due to re-drawing UI, occasional write for new
-    /// messages or editing messages.
-    /// The messages are parallel tracks that can be navigated with the `leftarrow`, `rightarrow`
-    /// keys across conversation tracks. New message tracks are created by the user whenever they
-    /// would like by selecting a previous message (navigating up/down the conversation track with
-    /// `uparrow` and `downarrow`).
-    /// New messages tracks are also created when multiple responses are desired to a user input.
-    pub chat_history: RwLock<ChatHistory>,
-    /// Stores user config. Low write (if ever), higher read.
-    // TODO: Define the `Config` struct or use the `config` crate
-    pub config: RwLock<Config>,
+    /// A read-only handle to the shared application state.
+    state: Arc<AppState>,
+    /// A channel to send commands to the state manager.
+    cmd_tx: mpsc::Sender<StateCommand>,
+    /// A channel to receive broadcasted application events.
+    event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
     input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
-    branches: Vec<Vec<Uuid>>,
-    // NOTE: Potential problem/room for improvement:
-    //  The branch state is tracked here via `active_branch`, and in `ChatHistory` via `current`
-    //  and `selected_child`. Is this appropriate?
-    //  Possible better design: Having a central `Branch` struct - but where would this go?
-    active_branch: usize,
 }
 
 impl App {
-
     /// Construct a new instance of [`App`].
     pub fn new(
         state: Arc<AppState>,
-        event_bus: Arc<EventBus>,
-        cmd_tx: mpsc::Sender<StateCommand>
+        cmd_tx: mpsc::Sender<StateCommand>,
+        event_bus: &EventBus, // reference non-Arc OK because only created at startup
     ) -> Self {
-        let chat_history = ChatHistory::new();
-        let root_id = chat_history.current;
         Self {
             running: false, // Will be set to true in run()
-            event_stream: EventStream::new(),
             list: ListState::default(),
-            chat_history,
+            state,
+            cmd_tx,
+            event_rx: event_bus.subscribe(EventPriority::Realtime),
             input_buffer: String::new(),
             mode: Mode::default(),
-            branches: vec![vec![root_id]],
-            active_branch: 0,
+        }
+    }
+
+    fn send_cmd(&self, cmd: StateCommand) {
+        // Use try_send to prevent the UI from blocking
+        if let Err(e) = self.cmd_tx.try_send(cmd) {
+            eprintln!("Failed to send command: {}", e);
         }
     }
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
+        let mut crossterm_events = crossterm::event::EventStream::new();
+
+        // Initialize the UI selection base on the initial state.
+        self.sync_list_selection().await;
+
         while self.running {
-            terminal.draw(|frame| self.draw(frame))?;
-            self.handle_crossterm_events().await?;
+            // 1. Prepare data for this frame by reading from AppState.
+            let history_guard = self.state.chat.0.read().await;
+            let current_path = history_guard.get_full_path();
+            let current_id = history_guard.current;
+            drop(history_guard);
+
+            // 2. Draw the UI with the prepared data.
+            terminal.draw(|frame| self.draw(frame, &current_path, current_id))?;
+
+            // 3. Handle all incoming events (user input, state changes).
+            tokio::select! {
+                // Prioritize Ui responsiveness
+                biased;
+
+                // User input
+                maybe_event = crossterm_events.next().fuse() => {
+                    if let Some(Ok(event)) = maybe_event {
+                        match event {
+                            Event::Key(key_event) =>{ self.on_key_event(key_event); }
+                            // Event::FocusGained => {},
+                            // Event::FocusLost => {},
+                            // Event::Mouse(mouse_event) => {},
+                            // Event::Paste(_) => {},
+                            // Event::Resize(_, _) => {},
+                            _ => {}
+                        }
+                    }
+                }
+
+                // Application events
+                Ok(app_event) = self.event_rx.recv() => {
+                    match app_event {
+                        AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
+                            self.sync_list_selection().await;
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -90,8 +122,8 @@ impl App {
     /// This is where you add new widgets. See the following resources for more information:
     /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
     /// - <https://github.com/ratatui/ratatui/tree/master/examples>
-    fn draw(&mut self, frame: &mut Frame) {
-        // ---------- Define layout ----------
+    fn draw(&mut self, frame: &mut Frame, path: &[&Message], current_id: Uuid) {
+        // ---------- Define Layout ----------
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
@@ -103,25 +135,10 @@ impl App {
 
         let status_layout = layout_statusline(4, main_layout[2]);
 
-        // ---------- Define widgets ----------
+        // ---------- Prepare Widgets ----------
         // Render message tree
-        let messages: Vec<ListItem> = self
-            .chat_history
-            .get_full_path()
-            .iter()
-            .map(
-                |msg| {
-                    let parent_id = msg
-                        .parent
-                        .map(|id| format!("←{}", truncate_uuid(id)))
-                        .unwrap_or_default();
-                    ListItem::new(Line::from(vec![
-                        Span::raw(&msg.content),
-                        Span::styled(parent_id, Style::new().dim()),
-                    ]))
-                }, // old version, trying something new above
-                   // ListItem::new(Line::from(vec![Span::raw(&msg.content)]))
-            )
+        let messages: Vec<ListItem> = path.iter()
+            .map(|msg| ListItem::new(Line::from(Span::raw(msg.content.clone()))))
             .collect();
 
         let list_len = messages.len();
@@ -134,15 +151,17 @@ impl App {
         // Render input area
         let input = Paragraph::new(self.input_buffer.as_str())
             .block(Block::bordered().title("Input"))
-            .style(Style::new().fg(Color::Yellow));
+            .style(match self.mode {
+                Mode::Normal => Style::default(),
+                Mode::Insert => Style::default().fg(Color::Yellow)
+            });
 
         // Render Mode to text
         let status_bar = Block::default()
             .title(self.mode.to_string())
             .borders(Borders::NONE)
             .padding(Padding::vertical(1));
-        let current_node = truncate_uuid(self.chat_history.current);
-        let node_status = Paragraph::new(format!("Node: {}", current_node))
+        let node_status = Paragraph::new(format!("Node: {}", truncate_uuid(current_id)))
             .block(Block::default().borders(Borders::NONE))
             .style(Style::new().fg(Color::Blue));
         let list_len = Paragraph::new(format!("List Len: {}", list_len));
@@ -162,42 +181,6 @@ impl App {
 
     fn create_branch(&mut self) {
         // let new_branch = self.chat_history.
-    }
-
-    fn move_selection_up(&mut self) {
-        self.list.select_previous();
-        if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_full_path();
-            self.chat_history.current = path[selected].id; // Sync tree position
-        }
-    }
-
-    fn move_selection_down(&mut self) {
-        // let current_id = self.chat_history.current;
-        // let current_msg = self.chat_history.messages.get(&current_id);
-        // if let Some(child_id) = current_msg.map(|m| m.selected_child) {
-        // };
-        if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_full_path();
-            self.chat_history.current = path[selected].id; // Sync tree position
-        }
-        self.list.select_next();
-    }
-
-    fn move_to_first(&mut self) {
-        self.list.select_first();
-        if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_full_path();
-            self.chat_history.current = path[selected].id;
-        }
-    }
-
-    fn move_to_last(&mut self) {
-        self.list.select_last();
-        if let Some(selected) = self.list.selected() {
-            let path = self.chat_history.get_full_path();
-            self.chat_history.current = path[selected].id;
-        }
     }
 
     /// Navigates between sibling messages sharing the same parent
@@ -302,60 +285,34 @@ impl App {
         Ok(())
     }
 
-    /// Handles the key events and updates the state of [`App`].
-    fn on_key_event(&mut self, key: KeyEvent) {
-        let mode = self.mode;
+    fn handle_normal_mode(&mut self, key: KeyEvent) {
+        use chat_history::NavigationDirection::{Next, Previous};
 
-        match mode {
-            Mode::Normal => match (key.modifiers, key.code) {
-                (_, KeyCode::Char('i')) => self.mode = Mode::Insert,
+        match key.code {
+            KeyCode::Char('q') => self.quit(),
+            KeyCode::Char('i') => self.mode = Mode::Insert,
 
-                // navigate messages in conversation
-                (_, KeyCode::Up | KeyCode::Char('k')) => self.move_selection_up(),
-                (_, KeyCode::Down | KeyCode::Char('j')) => self.move_selection_down(),
-                (_, KeyCode::Char('K')) => self.move_to_first(),
-                (_, KeyCode::Char('J')) => self.move_to_last(),
-
-                // Navigation
-                // Sibling navigation
-                (_, KeyCode::Char('h') | KeyCode::Left) => {
-                    self.navigate_sibling(NavigationDirection::Previous).ok();
-                }
-                (_, KeyCode::Char('l') | KeyCode::Right) => {
-                    self.navigate_sibling(NavigationDirection::Next).ok();
-                }
-
-                _ => {}
-            },
-            Mode::Insert => match (key.modifiers, key.code) {
-                (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => {
-                    todo!("Add way to cancel waiting for response")
-                }
-                (KeyModifiers::CONTROL, KeyCode::Char('j') | KeyCode::Char('k')) => {
-                    self.mode = Mode::Normal;
-                }
-                (_, KeyCode::Esc) => self.mode = Mode::Normal,
-
-                // Input handling
-                (_, KeyCode::Char(c)) => self.input_buffer.push(c),
-                (_, KeyCode::Backspace) => {
-                    self.input_buffer.pop();
-                }
-                (_, KeyCode::Enter) => {
-                    if let Err(e) = self.add_user_message_safe() {
-                        // Could log error or show in UI
-                        eprintln!("Error adding message: {}", e);
-                    }
-                }
-                _ => {}
-            },
-        }
-        match (key.modifiers, key.code) {
-            // How to quit application
-            (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
-
-            // Add other key handlers here.
-            _ => {}
+            // --- NAVIGATION ---
+            // Send commands instead of calling local methods
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.send_cmd(StateCommand::NavigateList {direction: ListNavigation::Up });
+            }
+             KeyCode::Char('j') | KeyCode::Down => {
+                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Down });
+             }
+             KeyCode::Char('K') => { // Shift-K for Top
+                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Top });
+             }
+             KeyCode::Char('J') => { // Shift-J for Bottom
+                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Bottom });
+             }
+             KeyCode::Char('h') | KeyCode::Left => {
+                 self.send_cmd(StateCommand::NavigateBranch { direction: Previous })
+             }
+             KeyCode::Char('l') | KeyCode::Right => {
+                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+             }
+             _ => {}
         }
     }
 
@@ -367,7 +324,3 @@ impl App {
 fn truncate_uuid(id: Uuid) -> String {
     id.to_string().chars().take(8).collect()
 }
-
-
-
-

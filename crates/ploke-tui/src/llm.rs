@@ -205,6 +205,10 @@ impl Event {
         match self {
             Event::Request { parent_id, .. } => *parent_id,
             Event::Response { parent_id, .. } => *parent_id,
+            Event::PartialResponse { request_id, delta } => todo!(),
+            Event::Error { request_id, error } => todo!(),
+            Event::Status { active_requests, queue_depth } => todo!(),
+            Event::ModelChanged { new_model } => todo!(),
         }
     }
 }

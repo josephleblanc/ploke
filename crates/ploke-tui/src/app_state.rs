@@ -19,49 +19,59 @@ use super::*;
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
+// TODO: Define the `RagContext` struct
+// pub rag_context: RwLock<RagContext>,
+#[derive(Debug)]
 pub struct AppState {
     pub chat: ChatState,     // High-write frequency
     pub config: ConfigState, // Read-heavy
     pub system: SystemState, // Medium-write
-
-                             // TODO: Define the `RagContext` struct
-                             // pub rag_context: RwLock<RagContext>,
 }
 
 // TODO: Implement Deref for all three *State items below
-pub struct ChatState(RwLock<ChatHistory>);
+
+#[derive(Debug)]
+pub struct ChatState(pub RwLock<ChatHistory>);
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
-pub struct ConfigState(RwLock<Config>); 
+#[derive(Debug)]
+pub struct ConfigState(RwLock<Config>);
+#[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
+
+#[derive(Debug, Default)]
+pub struct Config {
+    pub llm_params: LLMParameters,
+    // ... other config fields
+}
 
 // State access API (read-only)
 impl AppState {
     pub fn new() -> Self {
-        Self {
-            chat: ChatState(RwLock::new(ChatHistory::new())),
-            config: todo!(),
-            system: SystemState(RwLock::new(SystemStatus::new())),
-            // TODO: This needs to be handled elsewhere if not handled in AppState
-            // shutdown: tokio::sync::broadcast::channel(1).0,
-        }
+        Self::default()
     }
 
     pub async fn with_history<R>(&self, f: impl FnOnce(&ChatHistory) -> R) -> R {
         // TODO: need to evaluate whether to keep or not, still has old pattern
-        let guard = self.chat_history.read().await;
+        let guard = self.chat.0.read().await;
         f(&guard)
     }
 }
 
 impl Default for AppState {
     fn default() -> Self {
-        Self::new()
+        Self {
+            chat: ChatState(RwLock::new(ChatHistory::new())),
+            config: ConfigState(RwLock::new(Config::default())),
+            system: SystemState(RwLock::new(SystemStatus::default())),
+            // TODO: This needs to be handled elsewhere if not handled in AppState
+            // shutdown: tokio::sync::broadcast::channel(1).0,
+        }
     }
 }
 
 // Placeholder
-// TODO: Decide if this is appropriately replaced by `SystemState` or not
+#[derive(Debug)]
 pub struct SystemStatus {/* ... */}
 impl SystemStatus {
     pub fn new() -> Self {
@@ -75,6 +85,17 @@ impl Default for SystemStatus {
     }
 }
 pub enum StateError {/* ... */}
+
+/// Directions which can be taken when selecting an item in a list.
+/// Note that `left` and `right` are not included, because rather than moving `left` or `right` in
+/// the list, we are swapping to the right or left.
+#[derive(Debug, Clone, Copy)]
+pub enum ListNavigation {
+    Up,
+    Down,
+    Top,
+    Bottom,
+}
 
 /// Defines the complete set of possible state mutation operations for the application.
 ///
@@ -97,6 +118,11 @@ pub enum StateCommand {
         parent_id: Uuid,
     },
 
+    /// Adds a new user message and sets it as the current message.
+    // TODO: consider if this needs more fields, or if it can/should be folded into the
+    // `AddMessage` above
+    AddUserMessage { content: String },
+
     /// Applies a set of partial updates to an existing message.
     /// This is the primary command for streaming LLM responses, updating status,
     /// and attaching metadata.
@@ -107,7 +133,8 @@ pub enum StateCommand {
         update: MessageUpdate,
     },
 
-    /// Removes a specific message and all of its descendants from the history.
+    /// Removes a specific message.
+    /// **Does not** delete following messages.
     DeleteMessage {
         /// The unique identifier of the message to delete.
         id: Uuid,
@@ -156,6 +183,17 @@ pub enum StateCommand {
     PruneHistory {
         max_messages: u16,
     },
+
+    // --- Navigate the List ---
+    /// Navigates the primary message list (up, down, top, bottom).
+    NagivateList {
+        direction: ListNavigation,
+    },
+
+    /// Navigates between sibling message branches (left/right).
+    NavigateBranch {
+        direction: chat_history::NavigationDirection,
+    },
 }
 
 /// Event fired when a message is successfully updated.
@@ -188,9 +226,9 @@ pub async fn state_manager(
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
-                let mut guard = state.chat_history.write().await;
+                let mut chat_guard = state.chat.0.write().await;
 
-                if let Some(message) = guard.messages.get_mut(&id) {
+                if let Some(message) = chat_guard.messages.get_mut(&id) {
                     match message.try_update(update) {
                         Ok(_) => {
                             // Notify UI of update
@@ -210,10 +248,16 @@ pub async fn state_manager(
                 role,
                 target,
             } => {
-                let mut guard = state.chat_history.write().await;
-                guard.add_message(parent_id, content);
+                let mut chat_guard = state.chat.0.write().await;
+                chat_guard.add_message(parent_id, content);
             }
             StateCommand::PruneHistory { max_messages } => todo!(),
+
+            StateCommand::NagivateList { direction } => {
+                let mut chat_guard = state.chat.0.write().await;
+                chat_guard.navigate_list(direction);
+                event_bus.send(MessageUpdatedEvent(chat_guard.current).into())
+            }
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
