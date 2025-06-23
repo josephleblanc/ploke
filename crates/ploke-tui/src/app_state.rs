@@ -2,7 +2,7 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use crate::{
-    chat_history::MessageUpdate,
+    chat_history::{MessageStatus, MessageUpdate},
     llm::{ChatHistoryTarget, LLMParameters, MessageRole},
 };
 
@@ -121,7 +121,9 @@ pub enum StateCommand {
     /// Adds a new user message and sets it as the current message.
     // TODO: consider if this needs more fields, or if it can/should be folded into the
     // `AddMessage` above
-    AddUserMessage { content: String },
+    AddUserMessage {
+        content: String,
+    },
 
     /// Applies a set of partial updates to an existing message.
     /// This is the primary command for streaming LLM responses, updating status,
@@ -186,7 +188,7 @@ pub enum StateCommand {
 
     // --- Navigate the List ---
     /// Navigates the primary message list (up, down, top, bottom).
-    NagivateList {
+    NavigateList {
         direction: ListNavigation,
     },
 
@@ -194,6 +196,28 @@ pub enum StateCommand {
     NavigateBranch {
         direction: chat_history::NavigationDirection,
     },
+}
+
+impl StateCommand {
+    pub fn discriminant(&self) -> &'static str {
+        match self {
+            StateCommand::AddMessage { .. } => "AddMessage",
+            StateCommand::DeleteMessage { .. } => "DeleteMessage",
+            StateCommand::AddUserMessage { .. } => "AddUserMessage",
+            StateCommand::UpdateMessage { .. } => "UpdateMessage",
+            StateCommand::ClearHistory { .. } => "ClearHistory",
+            StateCommand::NewSession => "NewSession",
+            StateCommand::SwitchSession { .. } => "SwitchSession",
+            StateCommand::SaveState => "SaveState",
+            StateCommand::LoadState => "LoadState",
+            StateCommand::GenerateLlmResponse { .. } => "GenerateLlmResponse",
+            StateCommand::CancelGeneration { .. } => "CancelGeneration",
+            StateCommand::PruneHistory { .. } => "PruneHistory",
+            StateCommand::NavigateList { .. } => "NavigateList",
+            StateCommand::NavigateBranch { .. } => "NavigateBranch",
+            // ... other variants
+        }
+    }
 }
 
 /// Event fired when a message is successfully updated.
@@ -240,7 +264,30 @@ pub async fn state_manager(
                     }
                 }
             }
+            StateCommand::AddUserMessage { content } => {
+                let mut chat_guard = state.chat.0.write().await;
+                let parent_id = chat_guard.current;
 
+                // Add the user's message to the history
+                if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, content.clone())
+                {
+                    // Update the current message to the one we just added
+                    chat_guard.current = user_message_id;
+
+                    // Notify the UI that the state has changed
+                    event_bus.send(MessageUpdatedEvent::new(user_message_id).into());
+
+                    // Trigger the LLM to generate a response to the user's message
+                    let llm_request = AppEvent::Llm(llm::Event::Request {
+                        request_id: Uuid::new_v4(),
+                        parent_id: user_message_id,
+                        prompt: content,
+                        parameters: Default::default(), // Using mock/default param
+                    });
+                    event_bus.send(llm_request);
+                }
+                // Note: We should probably log if add_message fails
+            }
             StateCommand::AddMessage {
                 parent_id,
                 content,
@@ -249,11 +296,24 @@ pub async fn state_manager(
                 target,
             } => {
                 let mut chat_guard = state.chat.0.write().await;
-                chat_guard.add_message(parent_id, content);
+                // For assistant messages, lthe status will be Generating initially
+                let status = if matches!(role, MessageRole::Assistant) {
+                    MessageStatus::Generating
+                } else {
+                    MessageStatus::Completed
+                };
+
+                if let Ok(new_message_id) =
+                    chat_guard.add_child(parent_id, &content, status, role.into())
+                {
+                    chat_guard.current = new_message_id;
+                    event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
+                }
+                // chat_guard.add_message(parent_id, content);
             }
             StateCommand::PruneHistory { max_messages } => todo!(),
 
-            StateCommand::NagivateList { direction } => {
+            StateCommand::NavigateList { direction } => {
                 let mut chat_guard = state.chat.0.write().await;
                 chat_guard.navigate_list(direction);
                 event_bus.send(MessageUpdatedEvent(chat_guard.current).into())

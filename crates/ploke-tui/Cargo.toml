@@ -12,9 +12,10 @@ tokio = { workspace = true }                                           # "full" 
 tokio-utils = "0.1"
 flume = { workspace = true }
 num_cpus = "1.0"
+nonzero_ext = "0.3"
 # network
 reqwest = { version = "0.11", features = ["json"] }
-governor = "0.1"
+governor = "0.10"
 # common
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

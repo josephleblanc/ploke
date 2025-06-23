@@ -1,6 +1,9 @@
 use tokio::sync::RwLock;
 
-use crate::{app_state::ListNavigation, chat_history::{Message, MessageStatus}};
+use crate::{
+    app_state::ListNavigation,
+    chat_history::{Message, MessageStatus},
+};
 
 use super::*;
 
@@ -78,10 +81,15 @@ impl App {
             let history_guard = self.state.chat.0.read().await;
             let current_path = history_guard.get_full_path();
             let current_id = history_guard.current;
+
+            let renderable_messages = current_path.iter().map(|m| RenderableMessage {
+                id: m.id,
+                content: m.content.clone()
+            }).collect::<Vec<RenderableMessage>>();
             drop(history_guard);
 
             // 2. Draw the UI with the prepared data.
-            terminal.draw(|frame| self.draw(frame, &current_path, current_id))?;
+            terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
 
             // 3. Handle all incoming events (user input, state changes).
             tokio::select! {
@@ -122,7 +130,7 @@ impl App {
     /// This is where you add new widgets. See the following resources for more information:
     /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
     /// - <https://github.com/ratatui/ratatui/tree/master/examples>
-    fn draw(&mut self, frame: &mut Frame, path: &[&Message], current_id: Uuid) {
+    fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
         // ---------- Define Layout ----------
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -137,7 +145,8 @@ impl App {
 
         // ---------- Prepare Widgets ----------
         // Render message tree
-        let messages: Vec<ListItem> = path.iter()
+        let messages: Vec<ListItem> = path
+            .iter()
             .map(|msg| ListItem::new(Line::from(Span::raw(msg.content.clone()))))
             .collect();
 
@@ -153,7 +162,7 @@ impl App {
             .block(Block::bordered().title("Input"))
             .style(match self.mode {
                 Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow)
+                Mode::Insert => Style::default().fg(Color::Yellow),
             });
 
         // Render Mode to text
@@ -183,106 +192,65 @@ impl App {
         // let new_branch = self.chat_history.
     }
 
-    /// Navigates between sibling messages sharing the same parent
+    /// Synchronizes the UI's list selection with the currently selected message in AppState.
     ///
-    /// # Arguments
-    /// * `direction` - NavigationDirection::Next/Previous to move through siblings
-    ///
-    /// # Returns
-    /// Result containing UUID of new current message if successful
-    ///
-    /// # Errors
-    /// Returns `ChatError::RootHasNoSiblings` if trying to navigate from root
-    /// Returns `ChatError::SiblingNotFound` if no siblings available
-    pub fn navigate_sibling(&mut self, direction: NavigationDirection) -> Result<(), ChatError> {
-        let current_id = self.chat_history.current;
-        let current_msg = self
-            .chat_history
-            .messages
-            .get(&current_id)
-            .ok_or(ChatError::SiblingNotFound(current_id))?;
+    /// This is an `async` function because it needs to acquire a read lock on the
+    /// shared `AppState`.
+    /// This changes in reaction to the change in the state of the `AppState`.
+    async fn sync_list_selection(&mut self) {
+        // Acquire a read lock on the chat history.
+        let guard = self.state.chat.0.read().await;
 
-        let parent_id = current_msg.parent.ok_or(ChatError::RootHasNoSiblings)?;
+        // Get the current path of messages from the single source of truth.
+        let path = guard.get_full_path();
 
-        let parent = self
-            .chat_history
-            .messages
-            .get(&parent_id)
-            .ok_or(ChatError::ParentNotFound(parent_id))?;
-
-        // Get all siblings including current message
-        let siblings = &parent.children;
-        let current_idx = siblings
-            .iter()
-            .position(|&id| id == current_id)
-            .unwrap_or(siblings.len() - 1);
-
-        let new_idx = match direction {
-            NavigationDirection::Next => (current_idx + 1) % siblings.len(),
-            NavigationDirection::Previous => {
-                if current_idx == 0 {
-                    siblings.len() - 1
-                } else {
-                    current_idx - 1
-                }
-            }
-        };
-
-        self.chat_history.current = siblings[new_idx];
-        self.sync_list_selection();
-        Ok(())
-    }
-
-    fn add_user_message_safe(&mut self) -> Result<(), chat_history::ChatError> {
-        if !self.input_buffer.is_empty() {
-            // let new_message_id = self
-            //     .chat_history
-            //     .add_child(self.chat_history.current, &self.input_buffer)?;
-            let new_message_id = self.chat_history.add_child(
-                self.chat_history.current,
-                &self.input_buffer,
-                MessageStatus::Completed,
-            )?;
-            self.chat_history.current = new_message_id;
-            self.input_buffer.clear();
-            self.sync_list_selection();
-        }
-        Ok(())
-    }
-
-    fn sync_list_selection(&mut self) {
-        let path = self.chat_history.get_full_path();
-        if let Some(current_index) = path
-            .iter()
-            .position(|msg| msg.id == self.chat_history.current)
-        {
+        if let Some(current_index) = path.iter().position(|msg| msg.id == guard.current) {
             self.list.select(Some(current_index));
+        } else {
+            // If the current message isn't in the path for some reason, select nothing.
+            self.list.select(None);
+        }
+    } // The read lock `guard` is dropped here.
+
+    /// Handles the key events and updates the state of [`App`]
+    fn on_key_event(&mut self, key: KeyEvent) {
+        // Global quit command - this is a UI-local action
+        // Question: Why is this a UI-local action? Shouldn't this send a message to the rest of
+        // the application to shut down, e.g. the other tokio runtimes?
+        if key.modifiers == KeyModifiers::CONTROL && key.code == KeyCode::Char('c') {
+            self.quit();
+            return;
+        }
+
+        match self.mode {
+            Mode::Normal => self.handle_normal_mode(key),
+            Mode::Insert => self.handle_insert_mode(key),
         }
     }
 
-    /// Reads the crossterm events and updates the state of [`App`].
-    async fn handle_crossterm_events(&mut self) -> Result<()> {
-        tokio::select! {
-            event = self.event_stream.next().fuse() => {
-                match event {
-                    Some(Ok(evt)) => {
-                        match evt {
-                            Event::Key(key)
-                                if key.kind == KeyEventKind::Press
-                                    => self.on_key_event(key),
-                            Event::Mouse(_) => {}
-                            Event::Resize(_, _) => {}
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+    fn handle_insert_mode(&mut self, key: KeyEvent) {
+        match key.code {
+            // 1. UI-Local State Change: Switch mode
+            KeyCode::Esc => self.mode = Mode::Normal,
+
+            // 2. Shared State Change: Send a command
+            KeyCode::Enter => {
+                if !self.input_buffer.is_empty() {
+                    self.send_cmd(StateCommand::AddUserMessage {
+                        content: self.input_buffer.clone(),
+                    });
+                    // Clear the UI-local buffer after sending the command
+                    self.input_buffer.clear();
                 }
             }
-            _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
-                // Sleep for a short duration to avoid busy waiting.
+
+            // 3. UI-Local State Change: Modify input buffer
+            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Backspace => {
+                self.input_buffer.pop();
             }
+            _ => {}
         }
-        Ok(())
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
@@ -295,24 +263,34 @@ impl App {
             // --- NAVIGATION ---
             // Send commands instead of calling local methods
             KeyCode::Char('k') | KeyCode::Up => {
-                self.send_cmd(StateCommand::NavigateList {direction: ListNavigation::Up });
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Up,
+                });
             }
-             KeyCode::Char('j') | KeyCode::Down => {
-                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Down });
-             }
-             KeyCode::Char('K') => { // Shift-K for Top
-                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Top });
-             }
-             KeyCode::Char('J') => { // Shift-J for Bottom
-                 self.send_cmd(StateCommand::NavigateList { direction: ListNavigation::Bottom });
-             }
-             KeyCode::Char('h') | KeyCode::Left => {
-                 self.send_cmd(StateCommand::NavigateBranch { direction: Previous })
-             }
-             KeyCode::Char('l') | KeyCode::Right => {
-                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
-             }
-             _ => {}
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Down,
+                });
+            }
+            KeyCode::Char('K') => {
+                // Shift-K for Top
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Top,
+                });
+            }
+            KeyCode::Char('J') => {
+                // Shift-J for Bottom
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Bottom,
+                });
+            }
+            KeyCode::Char('h') | KeyCode::Left => self.send_cmd(StateCommand::NavigateBranch {
+                direction: Previous,
+            }),
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+            }
+            _ => {}
         }
     }
 
@@ -321,6 +299,14 @@ impl App {
         self.running = false;
     }
 }
+
+#[derive(Debug, Clone)]
+struct RenderableMessage {
+    id: Uuid,
+    content: String
+    // Add other fields if needed for drawing, e.g. status
+}
+
 fn truncate_uuid(id: Uuid) -> String {
     id.to_string().chars().take(8).collect()
 }

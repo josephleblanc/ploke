@@ -6,23 +6,24 @@
 // 4 Implement sibling navigation (up/down between children of same parent)
 // 5 Add color coding for different message types (user vs assistant)
 
-mod chat_history;
-mod utils;
 mod app;
 pub mod app_state;
+mod chat_history;
 pub mod llm;
+mod utils;
 
 use app::App;
-use app_state::{state_manager, AppState, MessageUpdatedEvent, StateCommand};
+use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
+use llm::llm_manager;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
-use utils::layout::{self, layout_statusline};
+use utils::layout::layout_statusline;
 
-use std::{collections::HashMap, sync::Arc, thread::current};
+use std::{collections::HashMap, sync::Arc};
 
-use chat_history::{ChatError, ChatHistory, NavigationDirection, UpdateFailedEvent};
+use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use ratatui::{
     DefaultTerminal, Frame,
@@ -34,7 +35,7 @@ use ratatui::{
 use ratatui::prelude::*;
 use ratatui::{
     style::Style,
-    widgets::{List, ListDirection},
+    widgets::List,
 };
 use uuid::Uuid;
 
@@ -42,28 +43,24 @@ use uuid::Uuid;
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
 
-    let event_bus = Arc::new(EventBus::new(100, 1000));
+    let event_bus = Arc::new(EventBus::new(100, 1000, 100));
     let state = Arc::new(AppState::default());
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
     // Sapwn state manager first
-    tokio::spawn(state_manager(
-        state.clone(),
-        cmd_rx,
-        event_bus.clone()
-    ));
+    tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));
 
     // Spawn subsystems with backpressure-aware command sender
     tokio::spawn(llm_manager(
-        event_bus.clone(),
-           state.clone(),
-        cmd_tx.clone() // Clone for each subsystem
+        event_bus.subscribe(EventPriority::Background),
+        state.clone(),
+        cmd_tx.clone(), // Clone for each subsystem
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(state.clone(), event_bus.clone(), cmd_tx);
+    let app = App::new(state.clone(), cmd_tx, &event_bus);
     let result = app.run(terminal).await;
     ratatui::restore();
     result
@@ -78,13 +75,13 @@ pub mod ui {
     pub enum Event {
         Navigate(NavigationDirection),
         MessageSelected(Uuid),
-        InputSubmitted(String)
+        InputSubmitted(String),
     }
 }
 
 #[derive(Debug, Clone, Error)]
 pub enum UiError {
-    ExampleError
+    ExampleError,
 }
 
 impl std::fmt::Display for UiError {
@@ -99,11 +96,11 @@ pub mod system {
     use crate::UiError;
 
     #[derive(Clone, Debug)]
-    pub enum Event {
-        MutationFailed(UiError)
+    pub enum SystemEvent {
+        MutationFailed(UiError),
+        CommandDropped(&'static str)
     }
 }
-
 
 // Other domains: file, rag, agent, system, ...
 
@@ -115,7 +112,7 @@ pub enum AppEvent {
     // File(file::Event),
     // Rag(rag::Event),
     // Agent(agent::Event),
-    System(system::Event),
+    System(system::SystemEvent),
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
 
@@ -129,11 +126,10 @@ impl AppEvent {
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
-            AppEvent::System(_) => todo!(),
+            AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
-            // TODO: Proper error handling
-            AppEvent::Error(e) => todo!(),
+            AppEvent::Error(_) => EventPriority::Background,
         }
     }
 }
@@ -147,30 +143,31 @@ pub struct ErrorEvent {
 #[derive(Debug, Clone, Copy)]
 pub enum ErrorSeverity {
     Warning, // simple warning
-    Error, // recoverable error
-    Fatal // indicates invalid state
+    Error,   // recoverable error
+    Fatal,   // indicates invalid state
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
     Realtime,
-    Background
+    Background,
 }
 
 pub struct EventBus {
     realtime_tx: broadcast::Sender<AppEvent>,
-    background_tx: broadcast::Sender<AppEvent>
-    error_tx: todo!(),
+    background_tx: broadcast::Sender<AppEvent>,
+    error_tx: broadcast::Sender<ErrorEvent>,
 }
 
 impl EventBus {
-    pub fn new(realtime_cap: usize, background_cap: usize) -> Self {
+    pub fn new(realtime_cap: usize, background_cap: usize, error_cap: usize) -> Self {
         Self {
             realtime_tx: broadcast::channel(realtime_cap).0,
             background_tx: broadcast::channel(background_cap).0,
+            error_tx: broadcast::channel(error_cap).0,
         }
     }
-    
+
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
         let tx = match priority {
@@ -181,9 +178,9 @@ impl EventBus {
     }
 
     pub fn send_error(&self, message: String, severity: ErrorSeverity) {
-        let _ = self.error_tx.send(ErrorEvent {message, severity});
+        let _ = self.error_tx.send(ErrorEvent { message, severity });
     }
-    
+
     pub fn subscribe(&self, priority: EventPriority) -> broadcast::Receiver<AppEvent> {
         match priority {
             EventPriority::Realtime => self.realtime_tx.subscribe(),
@@ -191,5 +188,3 @@ impl EventBus {
         }
     }
 }
-
-

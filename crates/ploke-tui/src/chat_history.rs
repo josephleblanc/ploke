@@ -42,7 +42,10 @@ impl fmt::Display for MessageStatus {
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::{fs::{self, File}, io::AsyncWriteExt};
+use tokio::{
+    fs::{self, File},
+    io::AsyncWriteExt,
+};
 use uuid::Uuid;
 
 /// Represents the possible states of a message during its lifecycle.
@@ -185,6 +188,26 @@ pub struct Message {
     pub selected_child: Option<Uuid>,
     /// Text content of the message
     pub content: String,
+    /// The role of the message's speaker, e.g. User, Assistant, System, etc
+    pub role: Role,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum Role {
+    User,
+    Assistant,
+    System,
+    // possibly more
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Role::User => write!(f, "User"),
+            Role::Assistant => write!(f, "Assistant"),
+            Role::System => write!(f, "System"),
+        }
+    }
 }
 
 impl Message {
@@ -278,6 +301,7 @@ impl ChatHistory {
             children: Vec::new(),
             selected_child: None,
             content: String::new(),
+            role: Role::System,
         };
         let root_id = root.id;
 
@@ -292,9 +316,15 @@ impl ChatHistory {
     }
 
     // TODO: Documentation, actually implement this (needs async?)
-    pub fn add_message(&mut self, parent_id: Uuid, content: String) -> Result<(), StateError> {
-        todo!();
-        Ok(())
+    pub fn add_message_user(&mut self, parent_id: Uuid, content: String) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        let role = Role::User;
+        self.add_child(parent_id, &content, status, role)
+    }
+
+    pub fn add_message_llm(&mut self, parent_id: Uuid, role: Role, content: String) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        self.add_child(parent_id, &content, status, role)
     }
 
     /// Adds a new child message to the conversation tree.
@@ -308,11 +338,13 @@ impl ChatHistory {
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
+    // TODO: Consider changing to builder pattern
     pub fn add_child(
         &mut self,
         parent_id: Uuid,
         content: &str,
         status: MessageStatus,
+        role: Role
     ) -> Result<Uuid, ChatError> {
         let child_id = Uuid::new_v4();
         let child = Message {
@@ -323,6 +355,7 @@ impl ChatHistory {
             content: content.to_string(),
             status,
             metadata: None,
+            role,
         };
 
         let parent = self
@@ -369,7 +402,8 @@ impl ChatHistory {
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent
-        self.add_child(parent_id, content, status)
+        // NOTE: Assumes the same role (safe for sibling of message)
+        self.add_child(parent_id, content, status, sibling.role)
     }
 
     /// Gets the index position of a message within its parent's children list
@@ -475,10 +509,10 @@ impl ChatHistory {
         for msg in self.get_full_path() {
             file.write_all(
                 format!(
-                    "## [{}] {}\n{}\n",
+                    "## [{}] {}\n",
                     msg.role,
                     // TODO: `Utc::now` does not exist, need to use a real function/crate instead
-                    Utc::now().to_rfc3339(),
+                    // Utc::now().to_rfc3339(),
                     msg.content
                 )
                 .as_bytes(),
@@ -490,22 +524,62 @@ impl ChatHistory {
         Ok(())
     }
 
-     /// Navigates the current path and updates the `current` message ID.
-     pub fn navigate_list(&mut self, direction: ListNavigation) {
-         let path_ids: Vec<Uuid> = self.get_full_path().iter().map(|m| m.id).collect();
-         if path_ids.is_empty() {
-             return;
-         }
+    /// Navigates the current path and updates the `current` message ID.
+    pub fn navigate_list(&mut self, direction: ListNavigation) {
+        let path_ids: Vec<Uuid> = self.get_full_path().iter().map(|m| m.id).collect();
+        if path_ids.is_empty() {
+            return;
+        }
 
-         let current_index = path_ids.iter().position(|&id| id == self.current);
+        let current_index = path_ids.iter().position(|&id| id == self.current);
 
-         let new_index = match direction {
-             ListNavigation::Up => current_index.map_or(0, |i| i.saturating_sub(1)),
-             ListNavigation::Down => current_index.map_or(0, |i| (i + 1).min(path_ids.len() - 1)),
-             ListNavigation::Top => 0,
-             ListNavigation::Bottom => path_ids.len() - 1,
-         };
+        let new_index = match direction {
+            ListNavigation::Up => current_index.map_or(0, |i| i.saturating_sub(1)),
+            ListNavigation::Down => current_index.map_or(0, |i| (i + 1).min(path_ids.len() - 1)),
+            ListNavigation::Top => 0,
+            ListNavigation::Bottom => path_ids.len() - 1,
+        };
 
-         self.current = path_ids[new_index];
-     }
+        self.current = path_ids[new_index];
+    }
+
+    /// Navigates between sibling messages sharing the same parent
+    ///
+    /// # Arguments
+    /// * `direction` - NavigationDirection::Next/Previous to move through siblings
+    ///
+    /// # Returns
+    /// Result containing UUID of new current message if successful
+    ///
+    /// # Errors
+    /// Returns `ChatError::RootHasNoSiblings` if trying to navigate from root
+    /// Returns `ChatError::SiblingNotFound` if no siblings available
+    pub fn navigate_sibling(&mut self, direction: NavigationDirection) -> Result<Uuid, ChatError> {
+        let current_msg = self
+            .messages
+            .get(&self.current)
+            .ok_or(ChatError::SiblingNotFound(self.current))?;
+
+        let parent_id = current_msg.parent.ok_or(ChatError::RootHasNoSiblings)?;
+
+        let parent = self
+            .messages
+            .get(&parent_id)
+            .ok_or(ChatError::ParentNotFound(parent_id))?;
+
+        let siblings = &parent.children;
+        if siblings.len() < 2 {
+            return Err(ChatError::SiblingNotFound(self.current)); // No other siblings navigate to
+        }
+
+        let current_idx = siblings.iter().position(|&id| id == self.current).unwrap();
+
+        let new_idx = match direction {
+            NavigationDirection::Next => (current_idx + 1) % siblings.len(),
+            NavigationDirection::Previous => (current_idx + siblings.len() - 1) % siblings.len(),
+        };
+
+        self.current = siblings[new_idx];
+        Ok(self.current)
+    }
 }

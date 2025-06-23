@@ -3,60 +3,89 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use uuid::Uuid;
 
-use crate::chat_history::MessageUpdate;
+use crate::{
+    chat_history::{MessageStatus, MessageUpdate, Role},
+    system::SystemEvent,
+};
 
 use super::*;
 
-use tokio::sync::Semaphore;
-
-// Global rate limiter (10 concurrent requests max)
-static LLM_RATE_LIMITER: Lazy<Arc<Semaphore>> = Lazy::new(|| 
-    // TODO: Make configurable
-    Arc::new(Semaphore::new(10))
-);
-
-// With burst protection
-static LLM_BURST_LIMITER: Lazy<RateLimiter> = Lazy::new(|| {
-    let quota = governor::Quota::per_second(5).allow_burst(3);
-    governor::RateLimiter::direct(quota)
-});
-
-async fn llm_manager(mut rx: broadcast::Receiver<AppEvent>) {
-    while let Ok(event) = rx.recv().await {
-        if let AppEvent::Llm(llm::Event::Response {
-            request_id,
-            content,
-            ..
-        }) = event
-        {
-            println!("Received response for {request_id}: {content}");
+pub async fn llm_manager(
+    mut event_rx: broadcast::Receiver<AppEvent>,
+    state: Arc<AppState>,
+    cmd_tx: mpsc::Sender<StateCommand>,
+) {
+    while let Ok(event) = event_rx.recv().await {
+        if let AppEvent::Llm(request @ llm::Event::Request { .. }) = event {
+            tokio::spawn(process_llm_request(
+                request,
+                Arc::clone(&state),
+                cmd_tx.clone(),
+            ));
         }
     }
 }
 
-async fn process_llm_request(
-    parent_id: Uuid,
-    prompt: String,
-    parameters: LLMParameters,
+// The worker function that processes a single LLM request.
+pub async fn process_llm_request(
+    request: llm::Event,
     state: Arc<AppState>,
-    event_bus: Arc<EventBus>
+    cmd_tx: mpsc::Sender<StateCommand>,
 ) {
-    // Rate-limited API call
-    let _permit = LLM_RATE_LIMITER.acquire().await; 
-    let response = call_llm_api(&prompt, parameters).await;
-    
-    // Update state
-    let mut history = state.chat_history.write().await;
-    history.add_response(parent_id, &response);
-    
-    // Emit event
-    event_bus.send(AppEvent::Llm(
-        llm::Event::Response {
-            parent_id,
-            content: response,
-            metadata: /*...*/
-        }
-    ));
+    let parent_id = match request {
+        llm::Event::Request { parent_id, .. } => parent_id,
+        _ => return, // Not a request, do nothing
+    };
+
+    // 1. Create a placeholder assistant message.
+    // We need to get the ID of this new message. We can't easily get it back
+    // from the state_manager, so for now, we'll have to find it.
+    // TODO: A better long-term solution is a request/response channel for commands.
+    let assistant_message_id = Uuid::new_v4(); // Let's pre-generate the ID.
+
+    // To do this properly, we'd need to modify AddMessage to accept an ID.
+    // For this mock, let's just create a new message and then update it.
+    // A simpler approach for the mock:
+    let assistant_placeholder_cmd = StateCommand::AddMessage {
+        parent_id,
+        content: String::new(), // Empty content initially
+        role: MessageRole::Assistant,
+        target: ChatHistoryTarget::Main,
+    };
+    if cmd_tx.send(assistant_placeholder_cmd).await.is_err() {
+        return; // Channel closed
+    }
+
+    // We need the ID of the message we just created. This is a limitation of the
+    // current fire-and-forget command system. Let's find it by looking at the
+    // parent's last child. This is brittle but works for the mock.
+    let assistant_message_id = {
+        let guard = state.chat.0.read().await;
+        guard
+            .messages
+            .get(&parent_id)
+            .and_then(|p| p.children.last().copied())
+        // guard dropped here
+    };
+
+    if let Some(id) = assistant_message_id {
+        // 2. Simulate work
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // 3. Send the final update with mock content and metadata.
+        let final_update = StateCommand::UpdateMessage {
+            id,
+            update: MessageUpdate {
+                append_content: Some(
+                    "This is a mocked response from the LLM."
+                        .to_string(),
+                ),
+                status: Some(MessageStatus::Completed),
+                ..Default::default()
+            },
+        };
+        let _ = cmd_tx.send(final_update).await;
+    }
 }
 
 // Backpressure-aware command sender
@@ -105,6 +134,18 @@ pub enum MessageRole {
     Tool,
 }
 
+// Add this conversion at the bottom of the file
+impl From<MessageRole> for Role {
+    fn from(role: MessageRole) -> Self {
+        match role {
+            MessageRole::User => Role::User,
+            MessageRole::Assistant => Role::Assistant,
+            MessageRole::System => Role::System,
+            MessageRole::Tool => Role::Assistant, // Or a new Role::Tool
+        }
+    }
+}
+
 /// Specifies which chat history a command should operate on.
 /// Useful for applications with multiple contexts (e.g., main chat, scratchpad).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -125,6 +166,7 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
             request_id,
             model,
             usage,
+            metadata,
         } => {
             cmd_sender
                 .send(StateCommand::AddMessage {
@@ -139,7 +181,7 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Parameters {
     pub temperature: f32,
     pub max_tokens: usize,
@@ -151,19 +193,19 @@ pub struct Parameters {
 pub enum Event {
     /// Request to generate content from an LLM
     Request {
-        request_id: Uuid,                // Unique tracking ID
-        parent_id: Uuid,                 // Message this responds to
-        prompt: String,                  // Input to LLM
-        parameters: Parameters,          // Generation settings
-        callback: Option<Sender<Event>>, // Optional direct response channel
+        request_id: Uuid, // Unique tracking ID
+        parent_id: Uuid,  // Message this responds to
+        prompt: String,   // Input to LLM
+        parameters: Parameters, // Generation settings
+                          // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
     /// Successful LLM response
     Response {
-        request_id: Uuid,    // Matches Request ID
+        request_id: Uuid, // Matches Request ID
         parent_id: Uuid,
-        content: String,     // Generated content
-        model: String,       // e.g., "gpt-4-turbo"
+        content: String, // Generated content
+        model: String,   // e.g., "gpt-4-turbo"
         metadata: LLMMetadata,
         usage: UsageMetrics, // Tokens/timing
     },
@@ -207,10 +249,53 @@ impl Event {
             Event::Response { parent_id, .. } => *parent_id,
             Event::PartialResponse { request_id, delta } => todo!(),
             Event::Error { request_id, error } => todo!(),
-            Event::Status { active_requests, queue_depth } => todo!(),
+            Event::Status {
+                active_requests,
+                queue_depth,
+            } => todo!(),
             Event::ModelChanged { new_model } => todo!(),
         }
     }
+}
+
+/// Represents errors that can occur during LLM interactions.
+#[derive(Debug, Clone, Error, Serialize, Deserialize)]
+pub enum LlmError {
+    /// Error related to network connectivity or the HTTP request itself.
+    #[error("Network request failed: {0}")]
+    Request(String),
+
+    /// The API provider returned a non-success status code.
+    #[error("API error (status {status}): {message}")]
+    Api { status: u16, message: String },
+
+    /// The request was rejected due to rate limiting.
+    #[error("Rate limit exceeded. Please wait and try again.")]
+    RateLimited,
+
+    /// The request failed due to invalid credentials.
+    #[error("Authentication failed. Please check your API key.")]
+    Authentication,
+
+    /// The request timed out.
+    #[error("The request to the LLM provider timed out.")]
+    Timeout,
+
+    /// The response from the LLM was blocked due to content safety filters.
+    #[error("Response blocked by content safety filter.")]
+    ContentFilter,
+
+    /// Failed to serialize the request payload.
+    #[error("Failed to serialize request data: {0}")]
+    Serialization(String),
+
+    /// Failed to deserialize the API response.
+    #[error("Failed to deserialize response data: {0}")]
+    Deserialization(String),
+
+    /// An unexpected or unknown error occurred.
+    #[error("An unknown error occurred: {0}")]
+    Unknown(String),
 }
 
 /// Parameters for controlling LLM generation behavior
