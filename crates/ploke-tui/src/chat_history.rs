@@ -423,9 +423,9 @@ impl ChatHistory {
         })
     }
 
-    /// Returns an iterator of UUIDs in the full path from root to current message
+    /// Returns an iterator of UUIDs in the full path from root to tail message
     pub fn full_path_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
-        let mut tail = Some(self.current);
+        let mut tail = Some(self.tail);
         std::iter::from_fn(move || {
             let id = tail?;
             tail = self.messages.get(&id).and_then(|m| m.parent);
