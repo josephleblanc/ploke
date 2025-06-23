@@ -93,6 +93,7 @@ pub struct MessageUpdate {
 
 impl MessageUpdate {
     /// Validates the update against current message state
+    // TODO: Add a path for MessageStatus::Generating => MessageStatus::Completed
     pub fn validate(&self, current_status: &MessageStatus) -> Result<(), UpdateError> {
         // Completed messages are immutable
         if matches!(current_status, MessageStatus::Completed)
@@ -316,25 +317,18 @@ impl ChatHistory {
     }
 
     // TODO: Documentation, actually implement this (needs async?)
-    pub fn add_message_user(&mut self, parent_id: Uuid, content: String) -> Result<Uuid, ChatError> {
+    pub fn add_message_user(&mut self, parent_id: Uuid, child_id: Uuid, content: String) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
         let role = Role::User;
-        self.add_child(parent_id, &content, status, role)
+        self.add_child(parent_id, child_id, &content, status, role)
     }
 
-    pub fn add_message_llm(&mut self, parent_id: Uuid, role: Role, content: String) -> Result<Uuid, ChatError> {
+    pub fn add_message_llm(&mut self, parent_id: Uuid, child_id: Uuid, role: Role, content: String) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, &content, status, role)
+        self.add_child(parent_id, child_id, &content, status, role)
     }
 
     /// Adds a new child message to the conversation tree.
-    ///
-    /// # Arguments
-    /// * `parent_id` - UUID of the parent message to attach to
-    /// * `content` - Text content for the new message
-    ///
-    /// # Returns
-    /// UUID of the newly created child message
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
@@ -342,11 +336,11 @@ impl ChatHistory {
     pub fn add_child(
         &mut self,
         parent_id: Uuid,
+        child_id: Uuid,
         content: &str,
         status: MessageStatus,
-        role: Role
+        role: Role,
     ) -> Result<Uuid, ChatError> {
-        let child_id = Uuid::new_v4();
         let child = Message {
             id: child_id,
             parent: Some(parent_id),
@@ -378,10 +372,6 @@ impl ChatHistory {
     /// Creates a new message that shares the same parent as the specified sibling,
     /// allowing for parallel conversation branches.
     ///
-    /// # Arguments
-    /// * `sibling_id` - UUID of an existing sibling message to reference
-    /// * `content` - Text content for the new sibling message
-    ///
     /// # Returns
     /// UUID of the newly created sibling message
     ///
@@ -403,7 +393,7 @@ impl ChatHistory {
 
         // Reuse add_child but with the sibling's parent
         // NOTE: Assumes the same role (safe for sibling of message)
-        self.add_child(parent_id, content, status, sibling.role)
+        self.add_child(parent_id, sibling_id, content, status, sibling.role)
     }
 
     /// Gets the index position of a message within its parent's children list

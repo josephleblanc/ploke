@@ -41,6 +41,8 @@ pub async fn process_llm_request(
     // We need to get the ID of this new message. We can't easily get it back
     // from the state_manager, so for now, we'll have to find it.
     // TODO: A better long-term solution is a request/response channel for commands.
+    // USER: Wait, what? Why is there a problem with getting the ID of the new message? Isn't creating
+    // it here fine? I don't understand the comment above.
     let assistant_message_id = Uuid::new_v4(); // Let's pre-generate the ID.
 
     // To do this properly, we'd need to modify AddMessage to accept an ID.
@@ -48,44 +50,45 @@ pub async fn process_llm_request(
     // A simpler approach for the mock:
     let assistant_placeholder_cmd = StateCommand::AddMessage {
         parent_id,
+        child_id: assistant_message_id,
         content: String::new(), // Empty content initially
         role: MessageRole::Assistant,
+        // Main - Representes the currently selected conversation branch.
         target: ChatHistoryTarget::Main,
     };
     if cmd_tx.send(assistant_placeholder_cmd).await.is_err() {
         return; // Channel closed
     }
 
+    // TODO: Delete this if the creation of `child_id: assistant_message_id` works for the
+    // `StateCommand::AddMessage` above
     // We need the ID of the message we just created. This is a limitation of the
     // current fire-and-forget command system. Let's find it by looking at the
     // parent's last child. This is brittle but works for the mock.
-    let assistant_message_id = {
-        let guard = state.chat.0.read().await;
-        guard
-            .messages
-            .get(&parent_id)
-            .and_then(|p| p.children.last().copied())
-        // guard dropped here
+    // USER: Why is this an issue? Using the `assistant_message_id` above works just fine, doesn't
+    // it? Why would we even need to read from the state caht after we sent the `AddMessage` above?
+    // let assistant_message_id = {
+    //     let guard = state.chat.0.read().await;
+    //     guard
+    //         .messages
+    //         .get(&parent_id)
+    //         .and_then(|p| p.children.last().copied())
+    //     // guard dropped here
+    // };
+
+    // 2. Simulate work
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // 3. Send the final update with mock content and metadata.
+    let final_update = StateCommand::UpdateMessage {
+        id: assistant_message_id,
+        update: MessageUpdate {
+            append_content: Some("This is a mocked response from the LLM.".to_string()),
+            status: Some(MessageStatus::Completed),
+            ..Default::default()
+        },
     };
-
-    if let Some(id) = assistant_message_id {
-        // 2. Simulate work
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // 3. Send the final update with mock content and metadata.
-        let final_update = StateCommand::UpdateMessage {
-            id,
-            update: MessageUpdate {
-                append_content: Some(
-                    "This is a mocked response from the LLM."
-                        .to_string(),
-                ),
-                status: Some(MessageStatus::Completed),
-                ..Default::default()
-            },
-        };
-        let _ = cmd_tx.send(final_update).await;
-    }
+    let _ = cmd_tx.send(final_update).await;
 }
 
 // Backpressure-aware command sender
@@ -168,9 +171,11 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
             usage,
             metadata,
         } => {
+            // TODO: Consider whether `child_id` should be created here or elsewhere.
             cmd_sender
                 .send(StateCommand::AddMessage {
                     parent_id: pid,
+                    child_id: Uuid::new_v4(),
                     content: c,
                     role: MessageRole::Assistant,
                     target: ChatHistoryTarget::Main,

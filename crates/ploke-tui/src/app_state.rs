@@ -116,6 +116,8 @@ pub enum StateCommand {
         target: ChatHistoryTarget,
         /// The parent in the conversation tree where this message will be added
         parent_id: Uuid,
+        /// The ID of the new message to be added as a child of the parent_id message
+        child_id: Uuid,
     },
 
     /// Adds a new user message and sets it as the current message.
@@ -267,9 +269,10 @@ pub async fn state_manager(
             StateCommand::AddUserMessage { content } => {
                 let mut chat_guard = state.chat.0.write().await;
                 let parent_id = chat_guard.current;
+                let child_id = Uuid::new_v4();
 
                 // Add the user's message to the history
-                if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, content.clone())
+                if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
                     // Update the current message to the one we just added
                     chat_guard.current = user_message_id;
@@ -290,6 +293,7 @@ pub async fn state_manager(
             }
             StateCommand::AddMessage {
                 parent_id,
+                child_id,
                 content,
                 // TODO: Figure out if I should/need to do more with these
                 role,
@@ -304,14 +308,14 @@ pub async fn state_manager(
                 };
 
                 if let Ok(new_message_id) =
-                    chat_guard.add_child(parent_id, &content, status, role.into())
+                    chat_guard.add_child(parent_id, child_id, &content, status, role.into())
                 {
                     chat_guard.current = new_message_id;
                     event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
                 }
                 // chat_guard.add_message(parent_id, content);
             }
-            StateCommand::PruneHistory { max_messages } => todo!(),
+            StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
 
             StateCommand::NavigateList { direction } => {
                 let mut chat_guard = state.chat.0.write().await;

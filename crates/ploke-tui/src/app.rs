@@ -237,6 +237,8 @@ impl App {
             KeyCode::Enter => {
                 if !self.input_buffer.is_empty() {
                     self.send_cmd(StateCommand::AddUserMessage {
+                        // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
+                        // instead.
                         content: self.input_buffer.clone(),
                     });
                     // Clear the UI-local buffer after sending the command

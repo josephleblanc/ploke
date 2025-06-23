@@ -49,7 +49,7 @@ async fn main() -> color_eyre::Result<()> {
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
-    // Sapwn state manager first
+    // Spawn state manager first
     tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));
 
     // Spawn subsystems with backpressure-aware command sender
@@ -60,7 +60,7 @@ async fn main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(state.clone(), cmd_tx, &event_bus);
+    let app = App::new(state, cmd_tx, &event_bus);
     let result = app.run(terminal).await;
     ratatui::restore();
     result
@@ -154,6 +154,9 @@ pub enum EventPriority {
 }
 
 pub struct EventBus {
+    // NOTE: `broadcast` is being used here for now, but may not be the best option long term. We
+    // are leaving it as-is for flexibility, but there may not be a need for there to be a multiple
+    // sender model for the `AppEvent` elements.
     realtime_tx: broadcast::Sender<AppEvent>,
     background_tx: broadcast::Sender<AppEvent>,
     error_tx: broadcast::Sender<ErrorEvent>,
