@@ -1,4 +1,4 @@
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use uuid::Uuid;
 
 use crate::{
@@ -198,6 +198,10 @@ pub enum StateCommand {
     NavigateBranch {
         direction: chat_history::NavigationDirection,
     },
+    CreateAssistantMessage {
+        parent_id: Uuid,
+        responder: oneshot::Sender<Uuid>
+    }
 }
 
 impl StateCommand {
@@ -217,6 +221,7 @@ impl StateCommand {
             StateCommand::PruneHistory { .. } => "PruneHistory",
             StateCommand::NavigateList { .. } => "NavigateList",
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
+            StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // ... other variants
         }
     }
@@ -321,6 +326,27 @@ pub async fn state_manager(
                 let mut chat_guard = state.chat.0.write().await;
                 chat_guard.navigate_list(direction);
                 event_bus.send(MessageUpdatedEvent(chat_guard.current).into())
+            }
+
+            StateCommand::CreateAssistantMessage { parent_id, responder } => {
+                let mut chat_guard = state.chat.0.write().await;
+                let child_id = Uuid::new_v4();
+                let status = MessageStatus::Generating;
+                let role = crate::chat_history::Role::Assistant;
+
+                if let Ok(new_id) = chat_guard.add_child(parent_id, child_id, "Pending...", status, role) {
+                    // update the state of the current id to the newly generated pending message.
+                    chat_guard.current = new_id;
+
+                    // Send the ID back to the requester.
+                    // Ignore error in case the requester timed out and dropped the receiver.
+                    let _ = responder.send(new_id);
+
+                    // Notify the UI to render the new placeholder message.
+                    event_bus.send(MessageUpdatedEvent::new(new_id).into());
+                }
+                // TODO: Consider if this is proper error handling or not.
+                // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
             // ... other commands
             // TODO: Fill out other fields

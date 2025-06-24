@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::sync::{
+    mpsc::{self, error::TrySendError},
+    oneshot,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -27,6 +30,7 @@ pub async fn llm_manager(
 }
 
 // The worker function that processes a single LLM request.
+// TODO: Add proper error handling if the `CreateAssistantMessage` fails
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
@@ -37,49 +41,32 @@ pub async fn process_llm_request(
         _ => return, // Not a request, do nothing
     };
 
-    // 1. Create a placeholder assistant message.
-    // We need to get the ID of this new message. We can't easily get it back
-    // from the state_manager, so for now, we'll have to find it.
-    // TODO: A better long-term solution is a request/response channel for commands.
-    // USER: Wait, what? Why is there a problem with getting the ID of the new message? Isn't creating
-    // it here fine? I don't understand the comment above.
-    let assistant_message_id = Uuid::new_v4(); // Let's pre-generate the ID.
+    // 1. Create a one-shot channel to get the new message's ID back.
+    let (responder_tx, responder_rx) = oneshot::channel();
 
-    // To do this properly, we'd need to modify AddMessage to accept an ID.
-    // For this mock, let's just create a new message and then update it.
-    // A simpler approach for the mock:
-    let assistant_placeholder_cmd = StateCommand::AddMessage {
+    // 2. Send a command to create the placeholder message.
+    let create_cmd = StateCommand::CreateAssistantMessage {
         parent_id,
-        child_id: assistant_message_id,
-        content: String::new(), // Empty content initially
-        role: MessageRole::Assistant,
-        // Main - Representes the currently selected conversation branch.
-        target: ChatHistoryTarget::Main,
+        responder: responder_tx,
     };
-    if cmd_tx.send(assistant_placeholder_cmd).await.is_err() {
-        return; // Channel closed
+    if cmd_tx.send(create_cmd).await.is_err() {
+        log::error!("Failed to create CreateAssistantMessage command: channel closed.");
+        return;
     }
 
-    // TODO: Delete this if the creation of `child_id: assistant_message_id` works for the
-    // `StateCommand::AddMessage` above
-    // We need the ID of the message we just created. This is a limitation of the
-    // current fire-and-forget command system. Let's find it by looking at the
-    // parent's last child. This is brittle but works for the mock.
-    // USER: Why is this an issue? Using the `assistant_message_id` above works just fine, doesn't
-    // it? Why would we even need to read from the state caht after we sent the `AddMessage` above?
-    // let assistant_message_id = {
-    //     let guard = state.chat.0.read().await;
-    //     guard
-    //         .messages
-    //         .get(&parent_id)
-    //         .and_then(|p| p.children.last().copied())
-    //     // guard dropped here
-    // };
+    // 3. Wait for the state_manager to confirm creation and send back the ID.
+    let assistant_message_id = match responder_rx.await {
+        Ok(id) => id,
+        Err(_) => {
+            log::error!("Failed to create assistant message: state_manager dropped responder.");
+            return;
+        }
+    };
 
-    // 2. Simulate work
+    // 4. Simulate work (e.g., the actual LLM API call).
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // 3. Send the final update with mock content and metadata.
+    // 5. Send the final update command using the confirmed ID.
     let final_update = StateCommand::UpdateMessage {
         id: assistant_message_id,
         update: MessageUpdate {
@@ -88,7 +75,9 @@ pub async fn process_llm_request(
             ..Default::default()
         },
     };
-    let _ = cmd_tx.send(final_update).await;
+    if cmd_tx.send(final_update).await.is_err() {
+        log::error!("Failed to send final UpdateMessage: channel closed.");
+    }
 }
 
 // Backpressure-aware command sender

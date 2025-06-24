@@ -73,6 +73,8 @@ pub enum UpdateError {
     InvalidStatusTransition(MessageStatus, MessageStatus),
     #[error("Completed message cannot have empty content")]
     EmptyContentCompletion,
+    #[error("Under development, add proper error handling")]
+    Placeholder,
 }
 
 /// A structure containing optional fields to update on an existing Message.
@@ -105,39 +107,43 @@ impl MessageUpdate {
             return Err(UpdateError::ImmutableMessage);
         }
 
+        // TODO: Consider whether this is a good idea or not - I like the idea of having some kind
+        // of message or spinner while we are waiting for the response, and don't want to have this
+        // be locked into an error state like the below commented out code.
         // Check for content conflict
-        if self.content.is_some() && self.append_content.is_some() {
-            return Err(UpdateError::ContentConflict);
-        }
+        // if self.content.is_some() && self.append_content.is_some() {
+        //     return Err(UpdateError::ContentConflict);
+        // }
 
         // Validate status transitions
         if let Some(new_status) = &self.status {
             match (current_status, new_status) {
                 // Completed messages are terminal (handled above)
 
+                (MessageStatus::Generating, MessageStatus::Completed) => Ok(()),
                 // Can only complete generating messages
                 (_, MessageStatus::Completed)
                     if !matches!(current_status, MessageStatus::Generating) =>
                 {
-                    return Err(UpdateError::InvalidStatusTransition(
+                    Err(UpdateError::InvalidStatusTransition(
                         current_status.clone(),
                         new_status.clone(),
-                    ));
+                    ))
                 }
 
                 // Can only retry from error state
-                (MessageStatus::Error { .. }, MessageStatus::Pending) => (),
+                (MessageStatus::Error { .. }, MessageStatus::Pending) => Err( UpdateError::Placeholder ),
 
                 // Invalid transitions
                 (from, to) if from != to => {
-                    return Err(UpdateError::InvalidStatusTransition(
+                    Err(UpdateError::InvalidStatusTransition(
                         from.clone(),
                         to.clone(),
-                    ));
+                    ))
                 }
 
-                _ => {}
-            }
+                _ => {Ok(())}
+            }?;
         }
 
         Ok(())
