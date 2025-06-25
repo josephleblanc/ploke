@@ -9,8 +9,8 @@ For a detailed overview of the project's architecture, components, and current s
 To see our policy on AI-collaboration on the use of AI in developing `ploke`, see the [Policy on AI Collaboration](https://github.com/josephleblanc/ploke?tab=readme-ov-file#policy-on-ai-collaboration) below.
 <!-- To see some of our design philosophy, see our ADR directory, design documentation, or detailed planning and testing documents. -->
 
+### Project Vision
 
-## Project Vision
  ploke aims to be a powerful RAG (Retrieval-Augmented Generation) system for code generation and refactoring. It provides developers with context-aware code suggestions by analyzing their codebase and using that knowledge to enhance LLM-based code generation. Our goal is to empower users with a tool to facilitate human-AI collaboration on even mid-to-large size projects by providing LLMs with the context required to be useful to capable rust developers by leveraging our custom built and highly granular code graph to provide LLMs with relevant code snippets to produce good rust code that integrates with your code base, correctly uses rapidly-developing dependencies, and adheres to project style and idioms.
 
 The longer-term vision of the `ploke` project is to leverage a combination of static analysis, detailed queries, and extensive user configuration options to find new ways for developers to utilize AI-generated code in new and engaging ways. We want to help contribute to a future in which developer-AI collaboration can extend a developer's capacity for high-quality, well-architected code. Many of the most popular developer tools today have created fluid experiences of engaging with AI, but have also uncovered problems that might degrade the quality, maintainability, and safety of generated code. 
@@ -141,6 +141,106 @@ We are deeply committed to creating a project that has clean, idiomatic rust tha
 
 1. **Investing in Upfront Design**: While our first prototyping of the parsing crate in our project was rapid, it introduced technical debt which later required significant effort to correct. We have found that prioritizing robust design documentation promoted thoughtful and effective long-term project architecture. This requires significant design effort, but due to LLM-assisted code generation, once a design is thoroughly documented, the implementation can be extremely rapid.
   - See [uuid_refactor] directory, including: [00_overview].., [01_phase1].., [02_phase2].., [03a_phase3].., and other planning documents in same directory.
+
+2. Importance of Testing: We have found thorough testing to be extremely important in LLM-assisted coding. 
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  As the sole developer of this project, I needed to both rapidly learn many new and highly technical, niche details of the rust language and ensure complete accuracy of implemented features for the parsing section of this project to avoid taking on technical debt when developing downstream consumers of the intermediate code graph structures. After the project's first major refactor, which was due in part to errors introduced at a design level due to unthinking acceptance of LLM-suggestions, heavy emphasis was places on constant and thorough testing, test planning and design, and test review and coverage.
+  - See [02b_phase2_testing].. for test planning and tracking. This document thoroughly details test coverage following a significant early refactor that replaced all previous tests and test fixtures (which were redundant, verbose, and used outdated methods following rapid development of new features). As such careful and comprehensive coverage was critical for ensuring future development was built on a firm foundation of correctness.
+  - See [02a_phase2_error_analysis] for a review of some AI-induced errors and analysis.
+  - See [module_node_tests] for an example of test coverage documentation.
+</details>
+
+3. Human Review is Critical: While testing is important, without human review of AI-generated testing, silent errors can easily be introduced into the code base. 
+
+<details>
+  <summary>
+    Details
+  </summary>
+  As an anecdote, while having a model generate a nearly 800-line comprehensive set of tests, I noticed that there was something off in the test methodology. The tests were supposed to check the uniqueness of generated Uuids created to track each node. However, rather than test for uniqueness, the LLM was generating tests that used the `.find()` iterator method to stop searching for the target Uuid after the first occurance, without checking remaining Ids. This kind of detail could easily have been overlooked in the massive block of code the AI was generating, and if it had, then a quiet error would have been introduced, which could have led to problems downstream, and been extremely difficult to pinpoint because all earlier tests would have failed to catch the problem. This point cannot be emphasized enough - **You must watch the LLM like a hawk** or it **will** introduce errors. Extensive testing helps, but especially in the case of AI-generated tests, human oversight must be extremely thorough and capable of comprehending everything the LLM is doing to avoid significant technical debt.
+</details>
+
+4. **Leveraging Type Safety and "Howard-Curry Correspondence"**: Carefully considered project architecture (i.e. make invalid states unrepresentable) can enable rapid development of high quality, correct code with LLM assistance. 
+
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  When dealing with an LLM, it is not uncommon for suggested code to compile, but fail to behave in an expected way. The burden placed on the developer to read and understand all LLM-generated code thoroughly, and not simply at a superficial level, becomes the bottleneck to more rapid development, or else subtle bugs and technical debt is introduced. By leaning on type-safe design patterns, and architecting code structures thoughtfully it becomes possible to make invalid states impossible (ideally) or at least very difficult to express. While an important consideration in producing a project structure that reflects the ideas the project attempts to model, this approach to systems design takes on greater significance when utilizing extensive LLM-generated code. If a given code structure cannot be expressed in a valid form, Rust's comprehensive developer tooling (`rust-analyzer`, `rustc`) will almost always catch this in a clearly identifiable way through linting errors even before the developer attempts to compile the code. This creates a profound effect on the confidence with which a developer can rapidly develop systems using LLM-generated code, as it significantly reduces the requirements for them to catch tiny mistakes, and allows them to confidently move forward with greater assurance that their systems are correct.
+
+  - See the following [adrs]:
+    - ADR-012-state-bearing-types.md
+    - ADR-013-typed-node-ids.md
+    - ADR-014-strict-private-typed-ids.md
+  - Note that rust has a perhaps underappreciated `PhantomData` type which greatly helps with leveraging type safety to support code validity while keeping data structures lean and efficient.
+</details>
+
+
+5. Decision Tracking: Decision tracking can be very helpful for a developer, but it is necessary when working with an LLM. 
+
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  One of the primary pain points in managing atomic conversations is needing to constantly be bringing the LLM up to speed on the wider context within which it is working. One concise way of tracking changes over time is using ADRs. When structured appropriately, these documents can be invaluable references as short, targeted guidance on what is being worked on now, what has already been done, and the reasoning behind the changes. Having an LLM produce these documents when making major changes, and then reading and editing them to ensure alignment with developer expectations, helps keep generated code aligned with the project's wider design philosophy. 
+  - See [adrs] directory.
+</details>
+
+
+6. Central design document: Managing atomic conversations with LLMs is significantly improved by maintaining an up-to-date, high-level project description. 
+
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  Keeping a central document that ties the different parts of a larger document together can be very helpful in reducing repetition in bringing LLMs up to speed and maintaining a continuous work flow while keeping LLM-generated code relevant to the project's overall goals. Providing details on the interaction between, for this project, the several crates, can be important for managing context windows and helping an LLM to design or implement the parts of a project that cross crate boundaries. However, please note that this is not perfect, and an LLM will often begin to ignore a design document like [PROPOSED_ARCH_V3] unless specifically reminded with some frequency, and developers must notice when the LLM begins to suffer from design drift in its implemented code or conversation and be prepared to remind and correct it, resetting the conversation when necessary.
+  - See [PROPOSED_ARCH_V3]
+</details>
+
+7. AI guidance on style and the AI contract: Having a few explicit documents that dictate your style guidelines is important for ongoing collaboration that has a consistent style, but it is not perfect. 
+
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  To maintain a unified code style, it helps to have a document which explicitly states the expectations you have for the AI's performance, when you want it to question you, when you want it to provide alternative suggestions, and what it should absolutely always or never do. However, there are still difficulties with the LLM failing to provide helpful suggestions when provided with too many restrictions to follow, e.g. a long bulletpointed list, as well as an extensive style document, as well as an extensive testing style document, etc, can be more harm than good and clutter the context window. One way to mitigate these difficulties is actually to converse with the LLM regarding these style guidance documents, ask if there are conflicts, question which rules it considers important or less important, and how likely it assesses itself to follow the guidelines. This may provide helpful feedback (e.g. pointing out conflicting guidelines), but must be taken with a large dose of salt, and then continuously be evaluated and refined by the developer moving forward. 
+  - See [idiomatic_rust]
+
+</details>
+
+8. Providing appropriate context of rapidly-developing technologies: Using rapidly developing dependencies, especially those with breaking changes, is possible but requires some setup.
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  LLM training times mean that their knowledge is essentially ancient compared to tech that lives on the cutting edge. Two years is usually the training cutoff date, and even when using an LLM that was made public within the week, there are still issues with having good advice on recently updated crates. This is one area where the Rust language's emphasis on open source, strong documentation, and strong developer tooling to view the source code of dependencies can be extremely helpful. Opening the source code relevant to the dependency the LLM is having trouble with, and adding those files to the chat, then having the LLM create summaries of `do`'s and `don't`s is a helpful workaround, as is cloning open source projects and similarly spending some time creating summaries of problematic methods or breaking changes can significantly improve LLM performance in this area. However, it is not perfect, and the developer must be capable of seeing misapplications of these updated crates and be ready and willing to step in to correct them. Similarly, the AI-generated summaries must be read and understood thoroughly to be helpful.
+</details>
+
+9. Error handling: Good practice always, but particularly relevant for LLM-assisted development.
+
+<details>
+  <summary>
+    Details
+  </summary>
+
+  Informative error handling, which the LLMs will almost never do without prompting and continued reinforcement, is a significant help in catching the errors that do inevitably slip through all other methods of prevention. Being able to quickly debug is always useful, but when working with an LLM, takes on greater importance. The rust language's emphasis on error handling, propagating errors, and homomorphic programming patterns streamline this process significantly. 
+  - See [parser_error_handling]
+</details>
+=======
 
 2. Importance of Testing: We have found thorough testing to be extremely important in LLM-assisted coding. 
 

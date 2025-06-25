@@ -33,7 +33,8 @@ members = [
     "proc_macros/syn_parser/syn_parser_macros",
     "proc_macros/syn_parser/ploke-test-macros",
     "proc_macros/syn_parser/derive_test_helpers",
-    "crates/ploke-error", "crates/ploke-ui",
+    "crates/ploke-error",
+    "crates/ploke-tui",
     # Add more modules as needed
 ]
 
@@ -57,7 +58,7 @@ dashmap = "6.1.0"
 
 # Data structures and algorithms
 cozo = "0.7.6"
-uuid = { version = "1.16.0", features = ["v5", "atomic"] }
+uuid = { version = "1.16.0", features = ["v5", "v4", "atomic"] }
 
 # Error handling
 thiserror = "2"

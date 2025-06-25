@@ -95,7 +95,7 @@ While we aim to provide a stream-lined developer experience, we also aim to make
  │   ├── context/              󰚩    # LLM context (Tokio)
  │   ├── llm/                  󰚩    # Local LLM integration (Tokio)
  │   ├── prompt/               󰚩    # Prompt engineering (Tokio)
- │   ├── ui/                   󰚩    # CLI/GUI (Tokio/EGUI)
+ │   ├── ploke-tui/            󰚩    # Terminal UI (Tokio)
  │   └── analyze/              󰆧    # Static analysis (Rayon)
  ├── examples/                      # Documentation examples
  └── benches/                       # Performance benchmarks

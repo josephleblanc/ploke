@@ -105,6 +105,12 @@ impl ParsedCodeGraph {
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(self);
+            log::debug!(target: "validate", 
+                "{}: {} <- {}",
+                "Validating".log_step(),
+                self.root_file().unwrap().display(),
+                other.root_file().unwrap().display()
+            );
             assert!(self.validate_unique_rels());
         }
         self.graph.functions.append(&mut other.graph.functions);
