@@ -1,3 +1,4 @@
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
@@ -7,23 +8,58 @@ use tokio::sync::{
 use uuid::Uuid;
 
 use crate::{
-    chat_history::{MessageStatus, MessageUpdate, Role},
+    chat_history::{Message, MessageStatus, MessageUpdate, Role},
     system::SystemEvent,
+    user_config::ProviderConfig,
 };
 
+// API and Config
+
 use super::*;
+
+#[derive(Serialize)]
+struct OpenAiRequest<'a> {
+    model: &'a str,
+    messages: Vec<RequestMessage<'a>>,
+}
+
+#[derive(Serialize)]
+pub struct RequestMessage<'a> {
+    role: &'a str,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct OpenAiResponse {
+    choices: Vec<Choice>,
+}
+
+#[derive(Deserialize)]
+struct Choice {
+    message: ResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ResponseMessage {
+    content: String,
+}
 
 pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
+    provider: ProviderConfig,
 ) {
+    let client = Client::new();
+
     while let Ok(event) = event_rx.recv().await {
         if let AppEvent::Llm(request @ llm::Event::Request { .. }) = event {
             tokio::spawn(process_llm_request(
                 request,
                 Arc::clone(&state),
                 cmd_tx.clone(),
+                client.clone(),
+                provider.clone(), // Clone the provider config
             ));
         }
     }
@@ -35,26 +71,26 @@ pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
+    client: Client,
+    provider: ProviderConfig,
 ) {
     let parent_id = match request {
         llm::Event::Request { parent_id, .. } => parent_id,
         _ => return, // Not a request, do nothing
     };
 
-    // 1. Create a one-shot channel to get the new message's ID back.
+    // This part remains the same: create a placeholder message first.
     let (responder_tx, responder_rx) = oneshot::channel();
-
-    // 2. Send a command to create the placeholder message.
     let create_cmd = StateCommand::CreateAssistantMessage {
         parent_id,
         responder: responder_tx,
     };
+
     if cmd_tx.send(create_cmd).await.is_err() {
-        log::error!("Failed to create CreateAssistantMessage command: channel closed.");
+        log::error!("Failed to send CreateAssistantMessage command: channel closed.");
         return;
     }
 
-    // 3. Wait for the state_manager to confirm creation and send back the ID.
     let assistant_message_id = match responder_rx.await {
         Ok(id) => id,
         Err(_) => {
@@ -63,21 +99,103 @@ pub async fn process_llm_request(
         }
     };
 
-    // 4. Simulate work (e.g., the actual LLM API call).
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // 5. Send the final update command using the confirmed ID.
-    let final_update = StateCommand::UpdateMessage {
-        id: assistant_message_id,
-        update: MessageUpdate {
-            append_content: Some("This is a mocked response from the LLM.".to_string()),
-            status: Some(MessageStatus::Completed),
-            ..Default::default()
+    // Prepare and execute the API call, then create the final update command.
+    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider).await {
+        Ok(content) => StateCommand::UpdateMessage {
+            id: assistant_message_id,
+            update: MessageUpdate {
+                content: Some(content),
+                status: Some(MessageStatus::Completed),
+                ..Default::default()
+            },
         },
+        Err(e) => {
+            log::error!("LLM API call failed: {}", e);
+            StateCommand::UpdateMessage {
+                id: assistant_message_id,
+                update: MessageUpdate {
+                    content: Some(format!("Error: {}", e)),
+                    status: Some(MessageStatus::Error {
+                        description: e.to_string(),
+                    }),
+                    ..Default::default()
+                },
+            }
+        }
     };
-    if cmd_tx.send(final_update).await.is_err() {
+
+    // Send the final update command to the state manager.
+    if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
+}
+
+async fn prepare_and_run_llm_call(
+    state: &Arc<AppState>,
+    client: &Client,
+    provider: &ProviderConfig,
+) -> Result<String, LlmError> {
+    // Get the conversation history from AppState
+    let history_guard = state.chat.0.read().await;
+    let path = history_guard.get_current_path();
+
+     let context_path = if path.len() > 1 {
+         &path[..path.len() - 1]
+     } else {
+         &path[..]
+     };
+
+    let messages: Vec<RequestMessage> = context_path
+        .iter()
+        .filter(|msg| !msg.content.is_empty())
+        .map(|msg| RequestMessage {
+            role: match msg.role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::System => "system",
+            },
+            content: msg.content.clone(), // can this clone be remove somehow?
+        })
+        .collect();
+
+    // Release the lock before the network call
+    drop(history_guard);
+
+    let request_payload = OpenAiRequest {
+        model: "mistralai/mistral-7b-instruct", // TODO: Make this configurable
+        messages,
+    };
+
+    let response = client
+        .post(format!("{}/chat/completions", provider.base_url))
+        .bearer_auth(&provider.api_key)
+        .json(&request_payload)
+        .send()
+        .await
+        .map_err(|e| LlmError::Request(e.to_string()))?;
+
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let message = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
+        return Err(LlmError::Api { status, message });
+    }
+
+    let response_body = response
+        .json::<OpenAiResponse>()
+        .await
+        .map_err(|e| LlmError::Deserialization(e.to_string()))?;
+
+    let content = response_body
+        .choices
+        .into_iter()
+        .next()
+        .map(|c| c.message.content)
+        .unwrap_or_else(|| "No content received from API.".to_string());
+
+    Ok(content)
 }
 
 // Backpressure-aware command sender

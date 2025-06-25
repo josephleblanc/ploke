@@ -10,6 +10,7 @@ mod app;
 pub mod app_state;
 mod chat_history;
 pub mod llm;
+mod user_config;
 mod utils;
 
 use app::App;
@@ -17,6 +18,7 @@ use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
 use llm::llm_manager;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
+use user_config::{ProviderConfig, DEFAULT_MODEL, OPENROUTER_URL};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
@@ -33,15 +35,37 @@ use ratatui::{
 };
 // for list
 use ratatui::prelude::*;
-use ratatui::{
-    style::Style,
-    widgets::List,
-};
+use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
+
+    // TODO: Add error handling
+    dotenvy::dotenv().ok();
+
+    let mut config = config::Config::builder()
+        .add_source(
+            config::File::with_name(
+                &dirs::config_dir()
+                    .unwrap() // TODO: add error handling
+                    .join("ploke/config.toml")
+                    .to_string_lossy(),
+            )
+            .required(false),
+        )
+        .add_source(config::Environment::default().separator("_"))
+        .build()?
+        .try_deserialize::<crate::user_config::Config>()?;
+
+    if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
+        config.provider = ProviderConfig {
+            api_key: openrouter_api_key,
+            base_url: OPENROUTER_URL.to_string(),
+            model: DEFAULT_MODEL.to_string(),
+        };
+    }
 
     let event_bus = Arc::new(EventBus::new(100, 1000, 100));
     let state = Arc::new(AppState::default());
@@ -57,6 +81,7 @@ async fn main() -> color_eyre::Result<()> {
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
+        config.provider.clone(),
     ));
 
     let terminal = ratatui::init();
@@ -98,7 +123,7 @@ pub mod system {
     #[derive(Clone, Debug)]
     pub enum SystemEvent {
         MutationFailed(UiError),
-        CommandDropped(&'static str)
+        CommandDropped(&'static str),
     }
 }
 

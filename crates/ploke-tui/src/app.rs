@@ -2,7 +2,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     app_state::ListNavigation,
-    chat_history::{Message, MessageStatus},
+    chat_history::{Message, MessageStatus, Role},
 };
 
 use super::*;
@@ -82,10 +82,14 @@ impl App {
             let current_path = history_guard.get_full_path();
             let current_id = history_guard.current;
 
-            let renderable_messages = current_path.iter().map(|m| RenderableMessage {
-                id: m.id,
-                content: m.content.clone()
-            }).collect::<Vec<RenderableMessage>>();
+            let renderable_messages = current_path
+                .iter()
+                .map(|m| RenderableMessage {
+                    id: m.id,
+                    role: m.role,
+                    content: m.content.clone(),
+                })
+                .collect::<Vec<RenderableMessage>>();
             drop(history_guard);
 
             // 2. Draw the UI with the prepared data.
@@ -126,10 +130,6 @@ impl App {
     }
 
     /// Renders the user interface.
-    ///
-    /// This is where you add new widgets. See the following resources for more information:
-    /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
-    /// - <https://github.com/ratatui/ratatui/tree/master/examples>
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
         // ---------- Define Layout ----------
         let main_layout = Layout::default()
@@ -145,18 +145,33 @@ impl App {
 
         // ---------- Prepare Widgets ----------
         // Render message tree
+        let conversation_width = main_layout[0].width.saturating_sub(6);
+
+        // Wrap text and create ListItems
         let messages: Vec<ListItem> = path
             .iter()
-            .map(|msg| ListItem::new(Line::from(Span::raw(msg.content.clone()))))
+            .map(|msg| {
+                let wrapped_text: String =
+                    textwrap::fill(&msg.content, conversation_width as usize);
+                match msg.role {
+                    Role::User => ListItem::new(wrapped_text).blue(),
+                    Role::Assistant => ListItem::new(wrapped_text).green(),
+                    Role::System => ListItem::new(wrapped_text).magenta(),
+                }
+                // ListItem::new(wrapped_text)
+            })
             .collect();
 
         let list_len = messages.len();
         let list = List::new(messages)
             .block(Block::bordered().title("Conversation"))
-            .highlight_style(Style::new().reversed())
             .highlight_symbol(">>");
         // .repeat_highlight_symbol(true);
 
+        let list = match self.mode {
+            Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
+            _ => list
+        };
         // Render input area
         let input = Paragraph::new(self.input_buffer.as_str())
             .block(Block::bordered().title("Input"))
@@ -305,8 +320,8 @@ impl App {
 #[derive(Debug, Clone)]
 struct RenderableMessage {
     id: Uuid,
-    content: String
-    // Add other fields if needed for drawing, e.g. status
+    role: Role,
+    content: String, // Add other fields if needed for drawing, e.g. status
 }
 
 fn truncate_uuid(id: Uuid) -> String {
