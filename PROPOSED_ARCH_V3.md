@@ -135,20 +135,22 @@ flowchart TD
 
 | Component | Status | Description |
 |-----------|--------|-------------|
+| core | ✅ Implemented | Core data types (NodeId, TrackingHash, TypeId..) |
 | syn_parser | ✅ Implemented | Core parsing logic using syn, visitor pattern, and code graph generation |
-| serialization | ✅ Implemented | RON serialization of CodeGraph |
-| channel | ✅ Implemented | Flume-based communication between components |
+| Incremental updates | 👷 Partial | Incremental parsing and updates to cozo database |
+| channel | 👷 Partial, pending others | Flume-based communication between components |
 | parallel processing | ✅ Implemented | Rayon-based parallel file processing |
 | embed | 🚧 Planned | Vector embeddings for code snippets |
-| graph | ✅ Implemented | Transformation of AST to graph database format (see current_progress/ploke_graph_coverage.md for details) |
-| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage |
+| transform | ✅ Implemented | Transformation of intermediate AST representation to graph database format |
+| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage (34 schema implemented and tested) |
 | watcher | 🚧 Planned | File system watcher for code changes |
 | writer | 🚧 Planned | Code generation and modification |
 | context | 🚧 Planned | Context building for LLM prompts |
 | llm | 🚧 Planned | LLM integration for code generation |
 | prompt | 🚧 Planned | Prompt engineering of user prompt |
-| ui | 🚧 Planned | User interface (CLI/GUI) |
-| analyze | 🚧 Planned | Static analysis of parsed code |
+| ui | 👷 In Progress | User interface (primary CLI, tools/customizations GUI) |
+| analyze | 🚧 Planned   Post-MVP | Static analysis of parsed code |
+| ploke-lsp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
 
 ### 4.4 Processing Pipeline
 
