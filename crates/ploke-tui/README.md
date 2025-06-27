@@ -112,3 +112,89 @@ flowchart TD
    - Auto-save interval configuration
    - Manual save shortcuts (Ctrl+S)
 
+### Message control flow
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+    'darkMode': true,
+    'background': '#0f172a',
+    'primaryColor': '#1e293b',
+    'primaryBorderColor': '#334155',
+    'secondaryColor': '#1e293b',
+    'lineColor': '#64748b',
+    'textColor': '#e2e8f0',
+    'actorBorder': '#94a3b8',
+    'actorBkg': '#1e293b',
+    'actorTextColor': '#f8fafc',
+    'actorLineColor': '#64748b',
+    'noteBkgColor': '#1e293b',
+    'noteTextColor': '#e2e8f0',
+    'noteBorderColor': '#334155'
+}}}%%
+
+sequenceDiagram
+    actor User
+    participant App as App (UI)
+    participant StateManager as State Manager
+    participant AppState as AppState (RwLock)
+    participant EventBus
+    participant LLMManager as LLM Manager
+
+    User->>App: Types message & presses Enter
+    App->>StateManager: send_cmd(AddUserMessage { content })
+    App->>App: clear_input_buffer()
+
+    activate StateManager
+    StateManager->>StateManager: Receives AddUserMessage
+    StateManager->>AppState: write().lock()
+    activate AppState
+    StateManager->>AppState: add_message(content, Role::User)
+    AppState-->>StateManager: Ok(user_message_id)
+    StateManager->>AppState: update_current(user_message_id)
+    AppState-->>StateManager: 
+    deactivate AppState
+
+    StateManager->>EventBus: send(MessageUpdatedEvent)
+    StateManager->>EventBus: send(Llm::Request)
+    deactivate StateManager
+
+    Note over App,EventBus: UI Update
+    EventBus->>App: event_rx.recv()
+    activate App
+    App->>AppState: read().lock()
+    activate AppState
+    App->>AppState: get_full_path()
+    AppState-->>App: returns new path
+    deactivate AppState
+    App->>App: sync_list_selection() & re-render
+    deactivate App
+
+    Note over LLMManager,EventBus: Async LLM Mock
+    EventBus->>LLMManager: event_rx.recv()
+    activate LLMManager
+    LLMManager->>StateManager: send_cmd(AddMessage { role: Assistant, content: "" })
+    
+    activate StateManager
+    StateManager->>AppState: write().lock()
+    activate AppState
+    StateManager->>AppState: add_child() → placeholder message
+    AppState-->>StateManager: 
+    deactivate AppState
+    StateManager->>EventBus: send(MessageUpdatedEvent)
+    deactivate StateManager
+    
+    LLMManager->>LLMManager: tokio::time::sleep(0.1s)
+    LLMManager->>StateManager: send_cmd(UpdateMessage { content: "mock response", status: Completed })
+    
+    activate StateManager
+    StateManager->>AppState: write().lock()
+    activate AppState
+    StateManager->>AppState: try_update() → final message
+    AppState-->>StateManager: 
+    deactivate AppState
+    StateManager->>EventBus: send(MessageUpdatedEvent)
+    deactivate StateManager
+    
+    deactivate LLMManager
+```
+

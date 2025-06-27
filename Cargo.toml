@@ -34,7 +34,7 @@ members = [
     "proc_macros/syn_parser/ploke-test-macros",
     "proc_macros/syn_parser/derive_test_helpers",
     "crates/ploke-error",
-    "crates/ploke-tui",
+    "crates/ploke-tui", "crates/ploke-rag",
     # Add more modules as needed
 ]
 
