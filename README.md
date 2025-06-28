@@ -1,5 +1,7 @@
 # ploke
 
+`ploke` aims to be a powerful LLM interface in the terminal (think aider) for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system designed specifically for Rust code generation and refactoring.
+
 ### When can I use it!?
 1-2 weeks: Early testing build ready
 
