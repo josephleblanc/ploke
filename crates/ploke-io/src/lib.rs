@@ -160,7 +160,7 @@ impl IoManager {
     ) -> Vec<Result<String, PlokeError>> {
         let total_requests = requests.len();
 
-        // 1. Assign original index to each request
+        // 1. Assign original index to each request (0-indexed)
         let ordered_requests = requests
             .into_iter()
             .enumerate()
@@ -176,6 +176,7 @@ impl IoManager {
         }
 
         // 3. Spawn a task for each file, processing them concurrently
+        // TODO: consider using `rayon` here instead of `tokio`. Might be worth benchmarking later.
         let file_tasks = requests_by_file.into_iter().map(|(path, reqs)| {
             let semaphore = semaphore.clone();
             tokio::spawn(async move { Self::process_file(path, reqs, semaphore).await })
@@ -193,6 +194,9 @@ impl IoManager {
         }
 
         // 5. Sort results by the original index to restore order
+        // TODO: Review the logic here. Not sure if it really makes sense to index the returned
+        // results and then sort them like this vs. using a `DashMap` or similar to handle each of
+        // the files separately, using a key of the `Uuid` of the nodes referencing the code snippet.
         indexed_results.sort_by_key(|(idx, _)| *idx);
 
         // 6. Create the final, ordered vector of results
@@ -523,19 +527,116 @@ mod tests {
             PlokeError::Fatal(FatalError::FileOperation { .. })
         ));
     }
+
     #[tokio::test]
-    async fn test_semaphore_enforcement() {
-        // Simulate soft rlimit = 20
-        let io_manager = IoManagerHandle::with_rlimit(20);
-        let mut handles = vec![];
+    async fn test_zero_length_snippet() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_zero_length.txt");
+        let content = "Hello, world!";
+        fs::write(&file_path, content).unwrap();
+        let hash = hash_content(content.as_bytes());
 
-        // Queue 30 requests to exceed limit
-        for _ in 0..30 {
-            handles.push(io_manager.get_snippets_batch(vec![valid_req.clone()]));
-        }
+        let requests = vec![SnippetRequest {
+            path: file_path.clone(),
+            content_hash: hash,
+            start: 5,
+            end: 5, // Zero-length snippet
+        }];
 
-        let results = futures::future::join_all(handles).await;
-        let success_rate = results.iter().filter(|r| r.is_ok()).count() / 30;
-        assert!(success_rate < 0.5); // Verify throttling
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].as_ref().unwrap(), ""); // Expect empty string for zero-length snippet
+    }
+
+    #[tokio::test]
+    async fn test_partial_failure_handling() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+
+        // Valid file and content
+        let file_path1 = dir.path().join("valid_file.txt");
+        let content1 = "This is valid content.";
+        fs::write(&file_path1, content1).unwrap();
+        let hash1 = hash_content(content1.as_bytes());
+
+        // Another valid file
+        let file_path2 = dir.path().join("another_valid_file.txt");
+        let content2 = "Another piece of valid content.";
+        fs::write(&file_path2, content2).unwrap();
+        let hash2 = hash_content(content2.as_bytes());
+
+        // Non-existent file
+        let non_existent_file = dir.path().join("non_existent.txt");
+
+        // Request with content mismatch
+        let file_path_mismatch = dir.path().join("mismatch_file.txt");
+        let content_mismatch = "Original content.";
+        fs::write(&file_path_mismatch, content_mismatch).unwrap();
+        let hash_mismatch = 12345; // Incorrect hash
+
+        let requests = vec![
+            // Valid request 1
+            SnippetRequest {
+                path: file_path1.clone(),
+                content_hash: hash1,
+                start: 0,
+                end: 4,
+            },
+            // Invalid request: non-existent file
+            SnippetRequest {
+                path: non_existent_file.clone(),
+                content_hash: 0,
+                start: 0,
+                end: 10,
+            },
+            // Valid request 2
+            SnippetRequest {
+                path: file_path2.clone(),
+                content_hash: hash2,
+                start: 9,
+                end: 13,
+            },
+            // Invalid request: content hash mismatch
+            SnippetRequest {
+                path: file_path_mismatch.clone(),
+                content_hash: hash_mismatch,
+                start: 0,
+                end: 10,
+            },
+            // Valid request 3 (from file1 again)
+            SnippetRequest {
+                path: file_path1.clone(),
+                content_hash: hash1,
+                start: 5,
+                end: 7,
+            },
+        ];
+
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert_eq!(results.len(), 5);
+
+        // Assert valid results
+        assert_eq!(results[0].as_ref().unwrap(), "This");
+        assert_eq!(results[2].as_ref().unwrap(), "iece");
+        assert_eq!(results[4].as_ref().unwrap(), "is");
+
+        // Assert failed results
+        assert!(matches!(
+            results[1].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::FileOperation {
+                operation: "open",
+                path,
+                ..
+            }) if path == &non_existent_file
+        ));
+        assert!(matches!(
+            results[3].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::ContentMismatch {
+                path,
+            }) if path == &file_path_mismatch
+        ));
     }
 }
