@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum WarningError {
     #[error("Unlinked modules detected: {modules:?}")]
     UnlinkedModules {

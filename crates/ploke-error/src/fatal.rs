@@ -1,16 +1,16 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FatalError {
     #[error("Invalid Rust syntax: {0}")]
-    SyntaxError(String), // Keeping string since syntax errors are message-based
+    SyntaxError(String),
 
     #[error("Duplicate module path")]
     DuplicateModulePath {
         path: Vec<String>,
         existing_id: String,
         conflicting_id: String,
-        // backtrace: Backtrace,
     },
 
     #[error("Unresolved re-export")]
@@ -29,8 +29,7 @@ pub enum FatalError {
     #[error("Path resolution failed for {path}")]
     PathResolution {
         path: String,
-        #[source]
-        source: Option<Box<dyn std::error::Error + Send + Sync>>,
+        source: Option<Arc<dyn std::error::Error + Send + Sync + 'static>>,
     },
 
     #[error("Database corruption detected: {0}")]
@@ -40,7 +39,7 @@ pub enum FatalError {
     FileOperation {
         operation: &'static str,
         path: PathBuf,
-        source: std::io::Error,
+        source: Arc<std::io::Error>,
     },
 
     #[error("Content changed for {path:?}")]
@@ -48,4 +47,48 @@ pub enum FatalError {
 
     #[error("Shutdown initiated")]
     ShutdownInitiated,
+
+    #[error("Invalid UTF-8 sequence in {path:?}: {source}")]
+    Utf8 {
+        path: PathBuf,
+        source: std::string::FromUtf8Error,
+    },
+}
+
+impl Clone for FatalError {
+    fn clone(&self) -> Self {
+        match self {
+            Self::SyntaxError(s) => Self::SyntaxError(s.clone()),
+            Self::DuplicateModulePath { path, existing_id, conflicting_id } => Self::DuplicateModulePath {
+                path: path.clone(),
+                existing_id: existing_id.clone(),
+                conflicting_id: conflicting_id.clone(),
+            },
+            Self::UnresolvedReExport { import_id, target_path } => Self::UnresolvedReExport {
+                import_id: import_id.clone(),
+                target_path: target_path.clone(),
+            },
+            Self::RecursionLimit { start_node, depth, limit } => Self::RecursionLimit {
+                start_node: start_node.clone(),
+                depth: *depth,
+                limit: *limit,
+            },
+            Self::PathResolution { path, source } => Self::PathResolution {
+                path: path.clone(),
+                source: source.clone(),
+            },
+            Self::DatabaseCorruption(s) => Self::DatabaseCorruption(s.clone()),
+            Self::FileOperation { operation, path, source } => Self::FileOperation {
+                operation: *operation,
+                path: path.clone(),
+                source: Arc::clone(source),
+            },
+            Self::ContentMismatch { path } => Self::ContentMismatch { path: path.clone() },
+            Self::ShutdownInitiated => Self::ShutdownInitiated,
+            Self::Utf8 { path, source } => Self::Utf8 {
+                path: path.clone(),
+                source: source.clone(),
+            },
+        }
+    }
 }

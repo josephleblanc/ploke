@@ -1,7 +1,7 @@
-mod context;
-mod fatal;
-mod internal;
-mod warning;
+pub mod context;
+pub mod fatal;
+pub mod internal;
+pub mod warning;
 
 // public exports
 pub use context::{ContextualError, ErrorContext};
@@ -12,7 +12,7 @@ pub use warning::WarningError;
 // common imports for submodules
 use std::path::PathBuf;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Fatal(#[from] FatalError),
