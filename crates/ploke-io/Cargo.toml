@@ -1,0 +1,16 @@
+[package]
+name = "ploke-io"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true }
+thiserror = "1.0"
+futures = "0.3"
+rlimit = "0.10"
+seahash = "4.1"
+ploke-error = { path = "../ploke-error" }
+
+[dev-dependencies]
+tempfile = "3.10.1"
+
