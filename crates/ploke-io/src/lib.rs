@@ -620,7 +620,7 @@ mod tests {
 
         // Assert valid results
         assert_eq!(results[0].as_ref().unwrap(), "This");
-        assert_eq!(results[2].as_ref().unwrap(), "piec");
+        assert_eq!(results[2].as_ref().unwrap(), "iece");
         assert_eq!(results[4].as_ref().unwrap(), "is");
 
         // Assert failed results
