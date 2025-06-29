@@ -1,9 +1,107 @@
 //! # ploke-io
 //!
-//! `ploke-io` is a dedicated crate for handling all I/O operations in the Ploke application.
-//! It is designed to run as a separate, non-blocking actor that communicates with the rest of
-//! the application via message-passing channels. This ensures that file system operations
-//! do not block the main UI thread or other critical components.
+//! `ploke-io` provides a high-performance, non-blocking I/O actor system for reading
+//! file snippets concurrently. It is designed for applications that need to read from
+//! many files without blocking critical threads, such as a UI or a request-response loop.
+//!
+//! ## Core Components
+//!
+//! The crate is built around a few key components:
+//!
+//! - **`IoManagerHandle`**: The public-facing API and the primary entry point for this crate.
+//!   It provides a simple, asynchronous interface to the I/O actor. It is a lightweight
+//!   handle that can be cloned and shared across threads.
+//!
+//! - **`IoManager`**: The internal actor that runs in a dedicated background thread. It listens
+//!   for requests, manages a pool of file handles, and executes file operations.
+//!
+//! - **`SnippetRequest`**: A struct that defines a request to read a specific byte range
+//!   (a "snippet") from a file. It includes data integrity checks to ensure that the
+//!   file content has not changed since it was indexed.
+//!
+//! ## Runtime Management
+//!
+//! The `IoManager` runs its own `tokio` runtime on a dedicated OS thread. This design
+//! choice offers several advantages:
+//!
+//! 1.  **Isolation**: I/O operations are completely isolated from the caller's execution
+//!     context. This is crucial for applications with their own async runtimes (like a GUI
+//!     or a web server), as it prevents I/O-intensive work from blocking the main event loop.
+//! 2.  **Dedicated Resources**: The I/O actor has its own set of resources, including a scheduler
+//!     and a thread pool, which can be optimized for file operations.
+//! 3.  **Simplified API**: Callers do not need to manage the lifecycle of the I/O runtime.
+//!     They simply create an `IoManagerHandle` and start sending requests.
+//!
+//! The `IoManagerHandle::new()` function spawns a new OS thread and initializes a
+//! `tokio::runtime::Builder` with `new_current_thread` and `enable_all`. This creates a
+//! single-threaded runtime that is efficient for managing a queue of I/O tasks.
+//!
+//! ## Usage Example
+//!
+//! Here's how to use `ploke-io` to read snippets from multiple files:
+//!
+//! ```rust,no_run
+//! use ploke_io::{IoManagerHandle, SnippetRequest};
+//! use std::fs;
+//! use std::path::PathBuf;
+//! use tempfile::tempdir;
+//! use seahash::SeaHasher;
+//! use std::hash::{Hash, Hasher};
+//!
+//! fn hash_content(content: &[u8]) -> u64 {
+//!     let mut hasher = SeaHasher::new();
+//!     hasher.write(content);
+//!     hasher.finish()
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     // 1. Create a temporary directory and some files for the example.
+//!     let dir = tempdir().unwrap();
+//!     let file_path1 = dir.path().join("test1.txt");
+//!     let content1 = "Hello, world!";
+//!     fs::write(&file_path1, content1).unwrap();
+//!
+//!     let file_path2 = dir.path().join("test2.txt");
+//!     let content2 = "This is a test.";
+//!     fs::write(&file_path2, content2).unwrap();
+//!
+//!     // 2. Create an IoManagerHandle. This spawns the actor in the background.
+//!     let io_manager = IoManagerHandle::new();
+//!
+//!     // 3. Create a batch of requests.
+//!     let requests = vec![
+//!         SnippetRequest {
+//!             path: file_path1.clone(),
+//!             content_hash: hash_content(content1.as_bytes()),
+//!             start: 7,
+//!             end: 12, // "world"
+//!         },
+//!         SnippetRequest {
+//!             path: file_path2.clone(),
+//!             content_hash: hash_content(content2.as_bytes()),
+//!             start: 0,
+//!             end: 4,  // "This"
+//!         },
+//!     ];
+//!
+//!     // 4. Send the requests and await the results.
+//!     match io_manager.get_snippets_batch(requests).await {
+//!         Ok(results) => {
+//!             assert_eq!(results.len(), 2);
+//!             assert_eq!(results[0].as_ref().unwrap(), "world");
+//!             assert_eq!(results[1].as_ref().unwrap(), "This");
+//!             println!("Successfully retrieved snippets!");
+//!         }
+//!         Err(e) => {
+//!             eprintln!("Failed to get snippets: {:?}", e);
+//!         }
+//!     }
+//!
+//!     // 5. The IoManager can be shut down gracefully.
+//!     io_manager.shutdown().await;
+//! }
+//! ```
 
 use futures::future::join_all;
 use ploke_error::fatal::FatalError;
@@ -40,24 +138,30 @@ pub struct IoManagerHandle {
     request_sender: mpsc::Sender<IoManagerMessage>,
 }
 
+impl Default for IoManagerHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IoManagerHandle {
     /// Spawns the IoManager and returns a handle to it.
     pub fn new() -> Self {
-        let (request_sender, request_receiver) = mpsc::channel(100);
+        let (tx, rx) = mpsc::channel(100);
 
         thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap();
+                .expect("Failed to build Tokio runtime"); // TODO: Add proper error handling
 
             rt.block_on(async {
-                let manager = IoManager::new(request_receiver);
+                let manager = IoManager::new(rx);
                 manager.run().await;
             });
         });
 
-        Self { request_sender }
+        Self { request_sender: tx }
     }
 
     /// Asynchronously requests a batch of code snippets.
@@ -107,7 +211,36 @@ enum IoRequest {
     },
 }
 
-/// The IoManager actor.
+/// The `IoManager` is a central actor responsible for handling all file I/O operations
+/// in a non-blocking manner. It runs in a dedicated thread and processes requests
+/// received through a message-passing channel.
+///
+/// ## Architecture
+///
+/// The `IoManager` follows the actor model. It is spawned by an `IoManagerHandle`,
+/// which provides a clean API for other parts of the application to send I/O requests.
+/// All communication happens through asynchronous channels, preventing the main application
+/// from blocking on file operations.
+///
+/// ## Concurrency
+///
+/// To avoid exhausting system resources, the `IoManager` uses a `Semaphore` to limit
+/// the number of concurrently open files. The limit is dynamically set based on the
+/// system's available file descriptors (via `rlimit`), ensuring robust performance
+/// without overwhelming the OS.
+///
+/// ## Request Handling
+///
+/// When a batch of snippet requests arrives, the `IoManager` performs the following steps:
+/// 1.  Groups requests by their file path to minimize the number of file open operations.
+/// 2.  For each file, it spawns a new asynchronous task.
+/// 3.  Before reading snippets, it verifies the file's content against a provided hash
+///     to ensure data integrity and prevent reading from stale files.
+/// 4.  It reads the requested byte ranges (snippets) from the file.
+/// 5.  The results, including any errors, are collected and returned to the original
+///     caller, preserving the order of the initial requests.
+///
+/// This design ensures that I/O is handled efficiently, concurrently, and safely.
 struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
@@ -638,5 +771,75 @@ mod tests {
                 path,
             }) if path == &file_path_mismatch
         ));
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_modification() {
+        use std::time::Duration;
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("modify_test.txt");
+        let initial_content = "Initial content";
+        fs::write(&file_path, initial_content).unwrap();
+        let initial_hash = hash_content(initial_content.as_bytes());
+
+        // Spawn file modifier task
+        let file_path_clone = file_path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let new_content = "Modified content";
+            fs::write(&file_path_clone, new_content).unwrap();
+        });
+
+        let results = io_manager
+            .get_snippets_batch(vec![SnippetRequest {
+                path: file_path.clone(),
+                content_hash: initial_hash,
+                start: 0,
+                end: 15,
+            }])
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            results[0].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::ContentMismatch { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_actor_shutdown_during_ops() {
+        use std::time::Duration;
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("slow_test.txt");
+
+        // Create large content (256KB)
+        let content = "X".repeat(262144);
+        fs::write(&file_path, &content).unwrap();
+        let hash = hash_content(content.as_bytes());
+
+        // Spawn a request that will take time to process
+        let handle = {
+            let io_manager = io_manager.clone();
+            tokio::spawn(async move {
+                io_manager
+                    .get_snippets_batch(vec![SnippetRequest {
+                        path: file_path,
+                        content_hash: hash,
+                        start: 0,
+                        end: 262144,
+                    }])
+                    .await
+            })
+        };
+
+        // Shutdown during processing
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        io_manager.shutdown().await;
+
+        // Should handle shutdown gracefully
+        let res = handle.await.unwrap();
+        assert!(matches!(res, Err(RecvError::RecvError)));
     }
 }
