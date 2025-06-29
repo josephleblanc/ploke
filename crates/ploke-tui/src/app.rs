@@ -307,6 +307,28 @@ impl App {
             KeyCode::Char('l') | KeyCode::Right => {
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
             }
+
+            // --- COMMANDS ---
+            KeyCode::Char(':') => {
+                // This is a placeholder for a more robust command input system.
+                // For now, we just check for the specific sequence ":index".
+                if self.input_buffer == ":" {
+                    self.input_buffer.push('i');
+                } else if self.input_buffer == ":i" {
+                    self.input_buffer.push('n');
+                } else if self.input_buffer == ":in" {
+                    self.input_buffer.push('d');
+                } else if self.input_buffer == ":ind" {
+                    self.input_buffer.push('e');
+                } else if self.input_buffer == ":inde" {
+                    self.input_buffer.push('x');
+                    self.send_cmd(StateCommand::IndexWorkspace);
+                    self.input_buffer.clear();
+                } else {
+                    self.input_buffer.clear();
+                    self.input_buffer.push(':');
+                }
+            }
             _ => {}
         }
     }
