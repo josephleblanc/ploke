@@ -167,6 +167,9 @@ pub enum StateCommand {
     /// Loads application state from a file, replacing the current state.
     LoadState,
 
+    /// Triggers a background task to index the entire workspace.
+    IndexWorkspace,
+
     // --- LLM and Agent Commands ---
     /// Submits the current chat history to the LLM for a response.
     /// The `state_manager` will prepare the prompt and dispatch it to the `llm_manager`.
@@ -222,6 +225,8 @@ impl StateCommand {
             StateCommand::NavigateList { .. } => "NavigateList",
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
+            // TODO: fill out the following
+            StateCommand::IndexWorkspace => todo!("Implement me!"),
             // ... other variants
         }
     }
@@ -347,6 +352,14 @@ pub async fn state_manager(
                 }
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
+            }
+
+            StateCommand::IndexWorkspace => {
+                // TODO: This is a mock implementation. We need to pass the correct handles
+                // to the real IndexerTask.
+                tokio::spawn(async move {
+                    tracing::info!("IndexerTask started");
+                });
             }
             // ... other commands
             // TODO: Fill out other fields

@@ -1,5 +1,5 @@
+use crate::embedding::EmbeddingNode;
 use crate::error::DbError;
-use crate::QueryBuilder;
 use crate::QueryResult;
 use cozo::Db;
 use cozo::MemStorage;
@@ -41,4 +41,24 @@ impl Database {
     // pub fn create_query_builder(&self) -> QueryBuilder {
     //     QueryBuilder::new(&self.db)
     // }
+
+    /// Fetches all primary nodes that do not yet have an embedding.
+    ///
+    /// This query retrieves the necessary information to fetch the node's content
+    /// and later associate the generated embedding with the correct node.
+    pub async fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
+        // TODO: The CozoScript query needs to be validated and might require adjustments
+        // based on the final schema. For now, we'll return mock data.
+        let mock_nodes = vec![
+            // Example node. In a real scenario, this would come from the database.
+            // EmbeddingNode {
+            //     id: Uuid::new_v4(),
+            //     path: PathBuf::from("/path/to/your/file.rs"),
+            //     content_hash: 123456789,
+            //     start_byte: 100,
+            //     end_byte: 500,
+            // },
+        ];
+        Ok(mock_nodes)
+    }
 }

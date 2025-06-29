@@ -1,7 +1,4 @@
-use crate::{
-    app_state::ListNavigation,
-    chat_history::Role,
-};
+use crate::{app_state::ListNavigation, chat_history::Role, user_config::CommandStyle};
 
 use super::*;
 
@@ -173,15 +170,15 @@ impl App {
 
         let list = match self.mode {
             Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
-            _ => list
+            _ => list,
         };
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
-            (Mode::Command, CommandStyle::Slash) => "Aider Mode",
+            (Mode::Command, CommandStyle::Slash) => "Slash Mode",
             _ => "Input",
         };
-            
+
         let input = Paragraph::new(self.input_buffer.as_str())
             .block(Block::bordered().title(input_title))
             .style(match self.mode {
@@ -275,6 +272,10 @@ impl App {
             // 3. UI-Local State Change: Modify input buffer
             KeyCode::Char(c) => {
                 // Handle command prefix for slash mode
+                // TODO: This will work for a command anywhere in the input. Is this what we want?
+                // I think probably not but it is a useful concept we will want to use elsewhere.
+                // Consider where the detection of keywords within the input buffer might be
+                // useful.
                 if self.command_style == CommandStyle::Slash && c == '/' {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
@@ -290,11 +291,13 @@ impl App {
     }
 
     fn handle_command_mode(&mut self, key: KeyEvent) {
+        // if !self.input_buffer.starts_with('/') {
+        //     self.mode = Mode::Normal;
+        // }
         match key.code {
-            KeyCode::Esc => {
-                self.input_buffer.clear();
-                self.mode = Mode::Normal;
-            }
+            // KeyCode::Esc => {
+            //     self.mode = Mode::Normal;
+            // }
             KeyCode::Enter => {
                 self.execute_command();
                 self.input_buffer.clear();
@@ -302,9 +305,20 @@ impl App {
             }
             KeyCode::Char(c) => self.input_buffer.push(c),
             KeyCode::Backspace => {
+                if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
+                    self.mode = Mode::Insert;
+                }
                 self.input_buffer.pop();
             }
             _ => {}
+        }
+
+    }
+    fn current_command_str(&self) -> &str {
+        let buf = self.input_buffer.as_str();
+        match self.command_style {
+            CommandStyle::NeoVim => buf.trim_start_matches(':').trim(),
+            CommandStyle::Slash => buf.trim_start_matches('/').trim(),
         }
     }
 
@@ -315,7 +329,7 @@ impl App {
             CommandStyle::NeoVim => cmd.trim_start_matches(':').trim(),
             CommandStyle::Slash => cmd.trim_start_matches('/').trim(),
         };
-        
+
         match cmd_str {
             "index" => self.send_cmd(StateCommand::IndexWorkspace),
             "help" => self.show_command_help(),
@@ -325,7 +339,7 @@ impl App {
             }
         }
     }
-    
+
     fn show_command_help(&self) {
         eprintln!("Available commands:");
         eprintln!("  index - Run workspace indexing");
