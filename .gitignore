@@ -47,3 +47,14 @@ ai_workflow
 
 # nvim degug log
 nvim_debug.log
+
+# gemini cli
+.gemini/
+GEMINI.md
+
+# opencode
+.opencode/
+OpenCode.md
+
+# diagrams
+.diagrams/

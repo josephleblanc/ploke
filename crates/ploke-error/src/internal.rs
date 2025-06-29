@@ -1,4 +1,4 @@
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum InternalError {
     #[error("Internal compiler error: {0}")]
     CompilerError(String),

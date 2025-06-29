@@ -2473,6 +2473,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-io"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "ploke-error",
+ "rlimit",
+ "seahash",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "ploke-rag"
+version = "0.1.0"
+
+[[package]]
 name = "ploke-test-macros"
 version = "0.1.0"
 dependencies = [
@@ -2880,6 +2897,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rlimit"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7043b63bd0cd1aaa628e476b80e6d4023a3b50eb32789f2728908107bd0c793a"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "rmp"
 version = "0.8.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3090,6 +3116,12 @@ dependencies = [
  "ring",
  "untrusted",
 ]
+
+[[package]]
+name = "seahash"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "security-framework"
