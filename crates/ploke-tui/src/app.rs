@@ -12,6 +12,7 @@ pub enum Mode {
     #[default]
     Normal,
     Insert,
+    Command,
 }
 
 impl std::fmt::Display for Mode {
@@ -240,6 +241,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_mode(key),
             Mode::Insert => self.handle_insert_mode(key),
+            Mode::Command => self.handle_command_mode(key),
         }
     }
 
@@ -267,6 +269,36 @@ impl App {
                 self.input_buffer.pop();
             }
             _ => {}
+        }
+    }
+
+    fn handle_command_mode(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.input_buffer.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                self.execute_command();
+                self.input_buffer.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Backspace => {
+                self.input_buffer.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_command(&mut self) {
+        let cmd = self.input_buffer.clone();
+        match cmd.trim() {
+            ":index" => self.send_cmd(StateCommand::IndexWorkspace),
+            cmd => {
+                // Placeholder for command error handling
+                eprintln!("Unknown command: {}", cmd);
+            }
         }
     }
 
@@ -310,24 +342,8 @@ impl App {
 
             // --- COMMANDS ---
             KeyCode::Char(':') => {
-                // This is a placeholder for a more robust command input system.
-                // For now, we just check for the specific sequence ":index".
-                if self.input_buffer == ":" {
-                    self.input_buffer.push('i');
-                } else if self.input_buffer == ":i" {
-                    self.input_buffer.push('n');
-                } else if self.input_buffer == ":in" {
-                    self.input_buffer.push('d');
-                } else if self.input_buffer == ":ind" {
-                    self.input_buffer.push('e');
-                } else if self.input_buffer == ":inde" {
-                    self.input_buffer.push('x');
-                    self.send_cmd(StateCommand::IndexWorkspace);
-                    self.input_buffer.clear();
-                } else {
-                    self.input_buffer.clear();
-                    self.input_buffer.push(':');
-                }
+                self.mode = Mode::Command;
+                self.input_buffer = ":".to_string();
             }
             _ => {}
         }
