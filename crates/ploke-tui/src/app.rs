@@ -41,11 +41,13 @@ pub struct App {
     input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
+    command_style: CommandStyle,
 }
 
 impl App {
     /// Construct a new instance of [`App`].
     pub fn new(
+        command_style: CommandStyle,
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
@@ -58,6 +60,7 @@ impl App {
             event_rx: event_bus.subscribe(EventPriority::Realtime),
             input_buffer: String::new(),
             mode: Mode::default(),
+            command_style,
         }
     }
 
@@ -293,13 +296,26 @@ impl App {
 
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.clone();
-        match cmd.trim() {
-            ":index" => self.send_cmd(StateCommand::IndexWorkspace),
+        // Remove command prefix for processing
+        let cmd_str = match self.command_style {
+            CommandStyle::NeoVim => cmd.trim_start_matches(':').trim(),
+            CommandStyle::Slash => cmd.trim_start_matches('/').trim(),
+        };
+        
+        match cmd_str {
+            "index" => self.send_cmd(StateCommand::IndexWorkspace),
+            "help" => self.show_command_help(),
             cmd => {
                 // Placeholder for command error handling
                 eprintln!("Unknown command: {}", cmd);
             }
         }
+    }
+    
+    fn show_command_help(&self) {
+        eprintln!("Available commands:");
+        eprintln!("  index - Run workspace indexing");
+        eprintln!("  help  - Show this help");
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
@@ -341,7 +357,7 @@ impl App {
             }
 
             // --- COMMANDS ---
-            KeyCode::Char(':') => {
+            KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
             }

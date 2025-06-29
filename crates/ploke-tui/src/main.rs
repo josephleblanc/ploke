@@ -86,7 +86,7 @@ async fn main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(state, cmd_tx, &event_bus);
+    let app = App::new(config.command_style, state, cmd_tx, &event_bus);
     let result = app.run(terminal).await;
     ratatui::restore();
     result
