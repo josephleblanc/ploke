@@ -3,7 +3,7 @@
 `ploke` aims to be a powerful LLM interface in the terminal (think aider) for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system designed specifically for Rust code generation and refactoring.
 
 ### When can I use it!?
-1-2 weeks: Early testing build ready
+1-2 weeks: Early testing build ready (aiming for July 12th, 2025)
 
 If you want to check out the project before then, you can download and run the `feature/ploke-ui` crate to test out the `cozo` database on the test fixtures (might break on larger projects), or the `feature/ploke-tui-concurrent` branch to see an early funcitoning version of the working terminal user interface (Accepts OpenRouter API keys as global shell variable only).
 
