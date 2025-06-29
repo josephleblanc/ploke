@@ -9,23 +9,21 @@ If you want to check out the project before then, you can download and run the `
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| core | ✅ Implemented | Core data types (NodeId, TrackingHash, TypeId..) |
-| syn_parser | ✅ Implemented | Core parsing logic using syn, visitor pattern, and code graph generation |
-| Incremental updates | 👷 Partial | Incremental parsing and updates to cozo database (groundwork laid, needs integration) |
+| ploke-core | ✅ Implemented | Core data types (NodeId, TrackingHash, TypeId..) |
+| syn_parser | ✅ Prototype Implemented | Core parsing logic using syn, visitor pattern, and code graph generation |
 | channel | 👷 Partial, pending others | Flume-based communication between components (switching to tokio) |
-| parallel processing | ✅ Implemented | Rayon-based parallel file processing |
-| embed | 👷 Planned | Vector embeddings for code snippets |
-| transform | ✅ Implemented | Transformation of intermediate AST representation to graph database format |
-| database | ✅ Implemented | CozoDB integration for hybrid vector-graph storage (34 schema implemented and tested) |
-| watcher | 🚧 Planned | File system watcher for code changes |
-| writer | 🚧 Planned | Code generation and modification |
+| ploke-embed | 👷 In Progress | Vector embeddings for code snippets |
+| ploke-transform | ✅ Implemented | Transformation of intermediate AST representation to graph database format (34 schema implemented and tested) |
+| ploke-db | ✅ Implemented | CozoDB query management for hybrid vector-graph storage |
+| ploke-io | 👷 Partial | I/O handler for reads/writes to file, including during vector embedding |
 | context | 🚧 Planned | Context building for LLM prompts |
 | llm | 🚧 Planned | LLM integration for code generation |
 | prompt | 🚧 Planned | Prompt engineering of user prompt |
-| gui | ✅ alpha prototype | User interface (primary TUI) |
-| gui | ✅ Dev tool only | Dev tool to experiment with `Datalog` queries on underlying `cozo` database |
+| ploke-tui | ✅ alpha prototype | User interface (primary TUI) |
+| ploke-gui | ✅ Dev tool only | Dev tool to experiment with `Datalog` queries on underlying `cozo` database |
 | analyze | 🚧 Planned   Post-MVP | Static analysis of parsed code |
 | ploke-lsp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
+| ploke-mcp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
 
 ### Intro
 
@@ -351,9 +349,9 @@ We are deeply committed to creating a project that has clean, idiomatic rust tha
   - See [parser_error_handling]
 </details>
 
-## Current Focus: CLI
+## Current Focus: TUI Prototype
 
-Our immediate focus is on the CLI that forms the primary user-facing interface with the LLM.
+Our immediate focus is on the Terminal User Interface that forms the primary user-facing interface with the LLM.
 
 [uuid_refactor]:./docs/plans/uuid_refactor
 [00_overview]:./docs/plans/uuid_refactor/00_overview_batch_processing_model.md
