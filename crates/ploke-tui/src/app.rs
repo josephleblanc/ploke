@@ -1,8 +1,6 @@
-use tokio::sync::RwLock;
-
 use crate::{
     app_state::ListNavigation,
-    chat_history::{Message, MessageStatus, Role},
+    chat_history::Role,
 };
 
 use super::*;
@@ -20,6 +18,7 @@ impl std::fmt::Display for Mode {
         match self {
             Mode::Normal => write!(f, "Normal"),
             Mode::Insert => write!(f, "Insert"),
+            Mode::Command => write!(f, "Command"),
         }
     }
 }
@@ -179,6 +178,7 @@ impl App {
             .style(match self.mode {
                 Mode::Normal => Style::default(),
                 Mode::Insert => Style::default().fg(Color::Yellow),
+                Mode::Command => Style::default().fg(Color::Cyan),
             });
 
         // Render Mode to text

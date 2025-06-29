@@ -12,6 +12,7 @@ mod chat_history;
 pub mod llm;
 mod user_config;
 mod utils;
+mod tracing_setup;
 
 use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
