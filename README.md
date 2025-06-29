@@ -23,7 +23,7 @@ If you want to check out the project before then, you can download and run the `
 | ploke-gui | ✅ Dev tool only | Dev tool to experiment with `Datalog` queries on underlying `cozo` database |
 | analyze | 🚧 Planned   Post-MVP | Static analysis of parsed code |
 | ploke-lsp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
-| ploke-mcp | 🚧 Planned   Post-MVP   | User interface (CLI/GUI) |
+| ploke-mcp | 🚧 Planned   Post-MVP   | MCP protocol integration |
 
 ### Intro
 
