@@ -175,9 +175,15 @@ impl App {
             Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
             _ => list
         };
-        // Render input area
+        // Render input area with dynamic title
+        let input_title = match (self.mode, self.command_style) {
+            (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
+            (Mode::Command, CommandStyle::Slash) => "Aider Mode",
+            _ => "Input",
+        };
+            
         let input = Paragraph::new(self.input_buffer.as_str())
-            .block(Block::bordered().title("Input"))
+            .block(Block::bordered().title(input_title))
             .style(match self.mode {
                 Mode::Normal => Style::default(),
                 Mode::Insert => Style::default().fg(Color::Yellow),
@@ -267,7 +273,15 @@ impl App {
             }
 
             // 3. UI-Local State Change: Modify input buffer
-            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Char(c) => {
+                // Handle command prefix for slash mode
+                if self.command_style == CommandStyle::Slash && c == '/' {
+                    self.mode = Mode::Command;
+                    self.input_buffer = "/".to_string();
+                } else {
+                    self.input_buffer.push(c);
+                }
+            }
             KeyCode::Backspace => {
                 self.input_buffer.pop();
             }
