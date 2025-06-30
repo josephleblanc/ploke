@@ -41,7 +41,7 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    tracing_setup::init_tracing();
+    let _guard = tracing_setup::init_tracing();
     let _panic_hook = color_eyre::config::HookBuilder::default()
         .display_location_section(false)
         .install()?;

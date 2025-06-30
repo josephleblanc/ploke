@@ -198,13 +198,17 @@ impl App {
             _ => "Input",
         };
 
-        let input = Paragraph::new(self.input_buffer.as_str())
-            .block(Block::bordered().title(input_title))
-            .style(match self.mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-                Mode::Command => Style::default().fg(Color::Cyan),
-            });
+        let input_width = main_layout[1].width.saturating_sub(2);
+        let input = Paragraph::new(textwrap::fill(
+            self.input_buffer.as_str(),
+            input_width as usize,
+        ))
+        .block(Block::bordered().title(input_title))
+        .style(match self.mode {
+            Mode::Normal => Style::default(),
+            Mode::Insert => Style::default().fg(Color::Yellow),
+            Mode::Command => Style::default().fg(Color::Cyan),
+        });
 
         // Render Mode to text
         let status_bar = Block::default()
