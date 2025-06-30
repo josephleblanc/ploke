@@ -41,10 +41,20 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    // TODO: Add error handling
     tracing_setup::init_tracing();
-    color_eyre::install()?;
+    let _panic_hook = color_eyre::config::HookBuilder::default()
+        .display_location_section(false)
+        .install()?;
 
+    if let Err(e) = try_main().await {
+        tracing::error!(error = %e, "Application error");
+        return Err(e);
+    }
+    tracing::info!("Application exited normally");
+    Ok(())
+}
+
+async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
 
     let mut config = config::Config::builder()

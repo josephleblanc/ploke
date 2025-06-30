@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 // logging
 use tracing::instrument;
+use std::cmp::min;
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
@@ -258,18 +259,34 @@ impl From<MessageUpdatedEvent> for AppEvent {
 }
 
 // State manager implementation
-#[instrument(skip(state, cmd_rx, event_bus))]
+#[tracing::instrument(
+    skip_all,
+    fields(
+        cmd = %cmd.discriminant(),
+        msg_id = tracing::field::Empty
+    )
+)]
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
     event_bus: Arc<EventBus>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
-        let span = tracing::info_span!("state_manager_command", cmd = ?cmd.discriminant());
+        // Update the span with the command discriminant
+        let span = tracing::debug_span!(
+            "processing",
+            cmd = %cmd.discriminant(),
+        );
         let _enter = span.enter();
+
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
-                tracing::info!("Updating Message | id: {}, update: {:#?}", id, update);
+                tracing::Span::current()
+                    .record("msg_id", &format!("{}", id));
+                tracing::debug!(
+                    content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
+                    "Updating message"
+                );
                 let mut chat_guard = state.chat.0.write().await;
 
                 if let Some(message) = chat_guard.messages.get_mut(&id) {
@@ -285,7 +302,6 @@ pub async fn state_manager(
                 }
             }
             StateCommand::AddUserMessage { content } => {
-                tracing::info!("Adding user message: {}", content);
                 let mut chat_guard = state.chat.0.write().await;
                 let parent_id = chat_guard.current;
                 let child_id = Uuid::new_v4();
@@ -293,6 +309,14 @@ pub async fn state_manager(
                 // Add the user's message to the history
                 if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
+                    tracing::Span::current()
+                        .record("msg_id", &format!("{}", user_message_id));
+                    tracing::info!(
+                        content = %truncate_string(&content, 20),
+                        parent_id = %parent_id,
+                        "Adding user message"
+                    );
+
                     // Update the current message to the one we just added
                     chat_guard.current = user_message_id;
 
@@ -307,8 +331,9 @@ pub async fn state_manager(
                         parameters: Default::default(), // Using mock/default param
                     });
                     event_bus.send(llm_request);
+                } else {
+                    tracing::error!("Failed to add user message");
                 }
-                // Note: We should probably log if add_message fails
             }
             StateCommand::AddMessage {
                 parent_id,

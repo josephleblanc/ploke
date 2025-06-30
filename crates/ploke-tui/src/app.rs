@@ -237,6 +237,14 @@ impl App {
         }
     } // The read lock `guard` is dropped here.
 
+    fn truncate_string(s: &str, max: usize) -> String {
+        if s.len() > max {
+            format!("{}...", &s[..min(s.len(), max)])
+        } else {
+            s.to_string()
+        }
+    }
+
     /// Handles the key events and updates the state of [`App`]
     fn on_key_event(&mut self, key: KeyEvent) {
         // Global quit command - this is a UI-local action
