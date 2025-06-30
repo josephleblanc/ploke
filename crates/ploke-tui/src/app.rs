@@ -77,6 +77,9 @@ impl App {
         self.sync_list_selection().await;
 
         while self.running {
+            let frame_span = tracing::trace_span!("ui_frame");
+            let _frame_span_guard = frame_span.enter();
+
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
             let current_path = history_guard.get_full_path();
@@ -272,11 +275,7 @@ impl App {
             // 3. UI-Local State Change: Modify input buffer
             KeyCode::Char(c) => {
                 // Handle command prefix for slash mode
-                // TODO: This will work for a command anywhere in the input. Is this what we want?
-                // I think probably not but it is a useful concept we will want to use elsewhere.
-                // Consider where the detection of keywords within the input buffer might be
-                // useful.
-                if self.command_style == CommandStyle::Slash && c == '/' {
+                if self.command_style == CommandStyle::Slash && c == '/' && self.input_buffer.is_empty() {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
                 } else {
@@ -295,9 +294,9 @@ impl App {
         //     self.mode = Mode::Normal;
         // }
         match key.code {
-            // KeyCode::Esc => {
-            //     self.mode = Mode::Normal;
-            // }
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
             KeyCode::Enter => {
                 self.execute_command();
                 self.input_buffer.clear();
@@ -314,13 +313,6 @@ impl App {
         }
 
     }
-    fn current_command_str(&self) -> &str {
-        let buf = self.input_buffer.as_str();
-        match self.command_style {
-            CommandStyle::NeoVim => buf.trim_start_matches(':').trim(),
-            CommandStyle::Slash => buf.trim_start_matches('/').trim(),
-        }
-    }
 
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.clone();
@@ -334,6 +326,7 @@ impl App {
             "index" => self.send_cmd(StateCommand::IndexWorkspace),
             "help" => self.show_command_help(),
             cmd => {
+                // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
                 eprintln!("Unknown command: {}", cmd);
             }
@@ -341,6 +334,7 @@ impl App {
     }
 
     fn show_command_help(&self) {
+        // TODO: Add these as system messages.
         eprintln!("Available commands:");
         eprintln!("  index - Run workspace indexing");
         eprintln!("  help  - Show this help");

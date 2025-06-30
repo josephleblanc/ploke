@@ -41,9 +41,10 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
+    // TODO: Add error handling
+    tracing_setup::init_tracing();
     color_eyre::install()?;
 
-    // TODO: Add error handling
     dotenvy::dotenv().ok();
 
     let mut config = config::Config::builder()

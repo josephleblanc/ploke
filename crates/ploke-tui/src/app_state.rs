@@ -1,6 +1,9 @@
 use tokio::sync::{mpsc, oneshot, RwLock};
 use uuid::Uuid;
 
+// logging
+use tracing::instrument;
+
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
     llm::{ChatHistoryTarget, LLMParameters, MessageRole},
@@ -107,6 +110,7 @@ pub enum StateCommand {
     // --- Message and Chat History Commands ---
     /// Adds a new message to a chat history. This is used for both user input
     /// and for creating the initial placeholder for an assistant's response.
+    // TODO: Fold the `AddUserMessage` into `AddMessage`
     AddMessage {
         /// The role of the message author (e.g., User or Assistant).
         role: MessageRole,
@@ -254,14 +258,18 @@ impl From<MessageUpdatedEvent> for AppEvent {
 }
 
 // State manager implementation
+#[instrument(skip(state, cmd_rx, event_bus))]
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
     event_bus: Arc<EventBus>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
+        let span = tracing::info_span!("state_manager_command", cmd = ?cmd.discriminant());
+        let _enter = span.enter();
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
+                tracing::info!("Updating Message | id: {}, update: {:#?}", id, update);
                 let mut chat_guard = state.chat.0.write().await;
 
                 if let Some(message) = chat_guard.messages.get_mut(&id) {
@@ -277,6 +285,7 @@ pub async fn state_manager(
                 }
             }
             StateCommand::AddUserMessage { content } => {
+                tracing::info!("Adding user message: {}", content);
                 let mut chat_guard = state.chat.0.write().await;
                 let parent_id = chat_guard.current;
                 let child_id = Uuid::new_v4();
