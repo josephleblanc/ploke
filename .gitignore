@@ -58,3 +58,6 @@ OpenCode.md
 
 # diagrams
 .diagrams/
+
+# logging
+logs/
