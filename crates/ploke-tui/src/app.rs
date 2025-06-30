@@ -1,6 +1,11 @@
 use crate::{app_state::ListNavigation, chat_history::Role, user_config::CommandStyle};
 
 use super::*;
+use std::time::{Duration, Instant};
+
+use app_state::{AppState, StateCommand};
+use color_eyre::Result;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -76,15 +81,18 @@ impl App {
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
 
+        let mut frame_counter = 0;
         while self.running {
-            let frame_span = tracing::trace_span!("ui_frame");
-            let _frame_span_guard = frame_span.enter();
+            let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
+            let frame_start = Instant::now();
 
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
             let current_path = history_guard.get_full_path();
             let current_id = history_guard.current;
 
+            // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
+            // Could it be made to?
             let renderable_messages = current_path
                 .iter()
                 .map(|m| RenderableMessage {
@@ -128,6 +136,14 @@ impl App {
                     }
                 }
             }
+            let frame_duration = frame_start.elapsed();
+            if frame_duration > Duration::from_millis(16) {
+                tracing::warn!(
+                    frame_duration_ms = frame_duration.as_millis(),
+                    "Frame budget exceeded"
+                );
+            }
+            frame_counter += 1;
         }
         Ok(())
     }
@@ -237,14 +253,6 @@ impl App {
         }
     } // The read lock `guard` is dropped here.
 
-    fn truncate_string(s: &str, max: usize) -> String {
-        if s.len() > max {
-            format!("{}...", &s[..min(s.len(), max)])
-        } else {
-            s.to_string()
-        }
-    }
-
     /// Handles the key events and updates the state of [`App`]
     fn on_key_event(&mut self, key: KeyEvent) {
         // Global quit command - this is a UI-local action
@@ -283,7 +291,10 @@ impl App {
             // 3. UI-Local State Change: Modify input buffer
             KeyCode::Char(c) => {
                 // Handle command prefix for slash mode
-                if self.command_style == CommandStyle::Slash && c == '/' && self.input_buffer.is_empty() {
+                if self.command_style == CommandStyle::Slash
+                    && c == '/'
+                    && self.input_buffer.is_empty()
+                {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
                 } else {
@@ -319,7 +330,6 @@ impl App {
             }
             _ => {}
         }
-
     }
 
     fn execute_command(&mut self) {

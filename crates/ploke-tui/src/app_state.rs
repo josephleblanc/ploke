@@ -2,12 +2,10 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 use uuid::Uuid;
 
 // logging
-use tracing::instrument;
-use std::cmp::min;
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole}, utils::helper::truncate_string,
 };
 
 use super::*;
@@ -259,13 +257,13 @@ impl From<MessageUpdatedEvent> for AppEvent {
 }
 
 // State manager implementation
-#[tracing::instrument(
-    skip_all,
-    fields(
-        cmd = %cmd.discriminant(),
-        msg_id = tracing::field::Empty
-    )
-)]
+// #[tracing::instrument(
+//     skip_all,
+//     fields(
+//         cmd = %cmd.discriminant(),
+//         msg_id = tracing::field::Empty
+//     )
+// )]
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,

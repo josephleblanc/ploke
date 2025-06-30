@@ -1,6 +1,5 @@
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use fmt::format::FmtSpan;
-use std::io;
 
 pub fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
@@ -19,13 +18,6 @@ pub fn init_tracing() {
         .with_thread_ids(true)
         .with_span_events(FmtSpan::CLOSE);  // Capture span durations
     
-    // Only use ANSI formatting in TTY environment
-    let is_tty = io::stdout().is_terminal();
-    let stdout_subscriber = fmt_layer
-        .clone()
-        .with_writer(io::stdout)
-        .with_ansi(is_tty);
-
     let file_subscriber = fmt_layer
         .with_writer(non_blocking_file)
         .with_ansi(false)
@@ -33,7 +25,6 @@ pub fn init_tracing() {
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(stdout_subscriber)
         .with(file_subscriber)
         .init();
 }
