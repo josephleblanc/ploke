@@ -44,6 +44,8 @@ crates/ingest/syn_parser/code_graph.ron
 
 # ai workflow documents
 ai_workflow
+# un-ignore the current planning document.
+!ai_workflow/plans/embed_pipeline.md
 
 # nvim degug log
 nvim_debug.log
