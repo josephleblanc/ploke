@@ -177,7 +177,7 @@ impl QueryBuilder {
     /// let schema = &FunctionNodeSchema::SCHEMA;
     /// let name_field = schema.name();
     ///
-    /// let builder = QueryBuilder::new(&db)
+    /// let builder = QueryBuilder::new()
     ///     .structs()
     ///     .add_lhs(name_field);
     ///

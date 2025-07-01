@@ -1,8 +1,14 @@
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
 use crate::embedding::EmbeddingNode;
 use crate::error::DbError;
+use crate::NodeType;
 use crate::QueryResult;
+use cozo::DataValue;
 use cozo::Db;
 use cozo::MemStorage;
+use cozo::UuidWrapper;
 
 /// Main database connection and query interface
 #[derive(Debug)]
@@ -42,11 +48,7 @@ impl Database {
     //     QueryBuilder::new(&self.db)
     // }
 
-    /// Fetches all primary nodes that do not yet have an embedding.
-    ///
-    /// This query retrieves the necessary information to fetch the node's content
-    /// and later associate the generated embedding with the correct node.
-    pub async fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
+    pub async fn mock_get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
         // TODO: The CozoScript query needs to be validated and might require adjustments
         // based on the final schema. For now, we'll return mock data.
         let mock_nodes = vec![
@@ -60,5 +62,154 @@ impl Database {
             // },
         ];
         Ok(mock_nodes)
+    }
+
+    pub async fn generate_embeddings(
+        &mut self,
+        node_type: NodeType,
+        dim: usize,
+    ) -> Result<(), DbError> {
+        // TODO: This is so dirty.
+        // I know there is a better way to do this with cozo using the BTreeMap approach.
+        // Figure it out.
+        let dim_string = dim.to_string();
+        let embedding_query: [&str; 8] = [
+            r#"::hnsw create"#,
+            node_type.relation_str(), 
+            r#":embedding_idx { "#,
+            dim_string.as_str(),
+            r#": "#,
+            r#"fields: [embedding"#,
+            // embedding
+            r#"],
+        distance: Cosine,
+        filter: !is_null(embedding
+        "#,
+            // embedding
+            r#"
+        )
+}
+"#,
+        ];
+        let query_string = embedding_query.concat();
+        let rows = self
+            .run_script(
+                query_string.as_str(),
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        rows.into_iter().map(|r| r);
+
+        Ok(())
+    }
+
+    /// Fetches all primary nodes that do not yet have an embedding.
+    ///
+    /// This query retrieves the necessary information to fetch the node's content
+    /// and later associate the generated embedding with the correct node.
+    // In your impl Database block
+    pub fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
+        // Rule 1: Define direct parent->child 'Contains' relationships.
+        // - parent_of
+        //
+        // Rule 2: Recursively define an ancestor relationship.
+        // - ancestor[desc, asc]
+        // - ancestor[desc, asc]
+        //
+        // Rule 3: Find all function nodes that have a null 'embedding' field.
+        // - needs_embedding
+        //
+        // Rule 4: Identify root modules (files) as modules that are not contained by any other module.
+        // - is_root_module[id]
+        let script = r#"
+        parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+        ancestor[desc, asc] := parent_of[desc, asc]
+        ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+        needs_embedding[id, hash, span] := *function{id, tracking_hash: hash, span, embedding}, is_null(embedding)
+
+        is_root_module[id] := *module{id}, NOT parent_of[id, _]
+
+        ?[func_id, path, hash, span] :=
+            needs_embedding[func_id, hash, span],
+            ancestor[func_id, mod_id],
+            is_root_module[mod_id],
+            *module{id: mod_id, path}
+    "#;
+
+        let query_result = self.raw_query(script)?;
+
+        let mut nodes = vec![];
+        for row in query_result.rows {
+            if row.len() != 4 {
+                continue;
+            } // Or return an error
+
+            // TODO: consider making these typed IDs and a PathBuf,
+            //  PathBuf needs verification as well.
+            let id = to_uuid(&row[0])?;
+            let path_str = to_string(&row[1])?;
+            let content_hash = to_uuid(&row[2])?;
+
+            // Correctly parse the span vector
+            let span_vec = if let DataValue::List(v) = &row[3] {
+                v
+            } else {
+                return Err(DbError::Cozo("Expected Vec for span".to_string()));
+            };
+
+            if span_vec.len() != 2 {
+                return Err(DbError::Cozo(
+                    "Span vector must have two elements".to_string(),
+                ));
+            }
+            let start_byte = to_usize(&span_vec[0])?;
+            let end_byte = to_usize(&span_vec[1])?;
+
+            nodes.push(EmbeddingNode {
+                id,
+                path: PathBuf::from(path_str),
+                content_hash,
+                start_byte,
+                end_byte,
+            });
+        }
+
+        Ok(nodes)
+    }
+}
+
+/// Safely converts a Cozo DataValue to a Uuid.
+pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
+    if let DataValue::Uuid(UuidWrapper(uuid)) = val {
+        Ok(*uuid)
+    } else {
+        Err(DbError::Cozo(format!("Expected Uuid, found {:?}", val)))
+    }
+}
+
+/// Safely converts a Cozo DataValue to a String.
+pub fn to_string(val: &DataValue) -> Result<String, DbError> {
+    if let DataValue::Str(s) = val {
+        Ok(s.to_string())
+    } else {
+        Err(DbError::Cozo(format!("Expected String, found {:?}", val)))
+    }
+}
+
+/// Safely converts a Cozo DataValue to a usize.
+pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
+    if let DataValue::Num(cozo::Num::Int(n)) = val {
+        // Cozo stores numbers that can be i64, u64, or f64. Safest to try as i64 for span.
+        usize::try_from(*n).map_err(|e| {
+            DbError::Cozo(format!(
+                "Could not convert Num::Int to i64 for usize: {:?}, original error {}",
+                n, e
+            ))
+        })
+    } else {
+        Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
     }
 }
