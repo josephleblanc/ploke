@@ -38,18 +38,29 @@ impl TryInto<CollectedEmbeddings> for cozo::NamedRows {
         let start_byte_index: usize = get_pos(&self.headers, "start_byte")?;
         let end_byte_index: usize = get_pos(&self.headers, "end_byte")?;
 
-        self.rows.into_iter().map(|r| EmbeddingNode {
-            // I'd like you to look at the following and try to get this to work. The problem is
-            // that the most of the below functions are returning `Result`. What is a good way that
-            // we can handle this while also doing proper error handling?
-            // Show me an implementation AI!
-            id: to_uuid(r[id_index]),
-            path: PathBuf::from(to_string(r[path_index])),
-            content_hash: to_uuid(r[content_hash_index]),
-            start_byte: to_usize(r[start_byte_index]),
-            end_byte: to_usize(r[end_byte_index]),
-        });
+        let map_err = |e: DbError| ploke_error::Error::Internal(
+            ploke_error::InternalError::CompilerError(e.to_string())
+        );
 
-        todo!("Implement me!")
+        let embeddings = self.rows
+            .into_iter()
+            .map(|row| {
+                let id = to_uuid(&row[id_index]).map_err(&map_err)?;
+                let path_str = to_string(&row[path_index]).map_err(&map_err)?;
+                let content_hash = to_uuid(&row[content_hash_index]).map_err(&map_err)?;
+                let start_byte = to_usize(&row[start_byte_index]).map_err(&map_err)?;
+                let end_byte = to_usize(&row[end_byte_index]).map_err(&map_err)?;
+
+                Ok(EmbeddingNode {
+                    id,
+                    path: PathBuf::from(path_str),
+                    content_hash,
+                    start_byte,
+                    end_byte,
+                })
+            })
+            .collect::<Result<Vec<_>, ploke_error::Error>>()?;
+
+        Ok(CollectedEmbeddings { embeddings })
     }
 }
