@@ -39,7 +39,10 @@ impl TryInto<CollectedEmbeddings> for cozo::NamedRows {
         let end_byte_index: usize = get_pos(&self.headers, "end_byte")?;
 
         self.rows.into_iter().map(|r| EmbeddingNode {
-            // 
+            // I'd like you to look at the following and try to get this to work. The problem is
+            // that the most of the below functions are returning `Result`. What is a good way that
+            // we can handle this while also doing proper error handling?
+            // Show me an implementation AI!
             id: to_uuid(r[id_index]),
             path: PathBuf::from(to_string(r[path_index])),
             content_hash: to_uuid(r[content_hash_index]),
