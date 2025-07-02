@@ -123,8 +123,8 @@ use uuid::Uuid;
 pub struct SnippetRequest {
     /// The path to the file.
     pub path: PathBuf,
-    /// The hash of the file content at the time of indexing.
-    pub content_hash: TrackingHash,
+    /// The tracking hash of the entire file content at the time of indexing.
+    pub file_tracking_hash: TrackingHash,
     /// The start byte of the snippet.
     pub start: usize,
     /// The end byte of the snippet.
@@ -368,16 +368,16 @@ impl IoManager {
 
         let mut results = Vec::new();
 
-        // Open the file just once.
-        let mut file = match File::open(&path).await {
-            Ok(file) => file,
+        // Read the entire file content once
+        let file_content = match tokio::fs::read_to_string(&path).await {
+            Ok(content) => content,
             Err(e) => {
                 let arced_error = Arc::new(e);
                 for req in requests {
                     results.push((
                         req.idx,
                         Err(FatalError::FileOperation {
-                            operation: "open",
+                            operation: "read",
                             path: path.clone(),
                             source: Arc::clone(&arced_error),
                         }
@@ -388,18 +388,16 @@ impl IoManager {
             }
         };
 
-        // Calculate the file's UUID and compare to the expected TrackingHash
-        let expected_uuid = requests[0].request.content_hash.0;
-        let file_uuid = match calculate_file_uuid(&mut file).await {
-            Ok(uuid) => uuid,
+        // Parse the file content to a token stream
+        let file_tokens = match syn::parse_file(&file_content) {
+            Ok(parsed) => parsed.into_token_stream(),
             Err(e) => {
                 for req in requests {
                     results.push((
                         req.idx,
-                        Err(FatalError::FileOperation {
-                            operation: "hash validation",
+                        Err(FatalError::ParseError {
                             path: path.clone(),
-                            source: e.clone().into(),
+                            source: e.to_string(),
                         }
                         .into()),
                     ));
@@ -408,7 +406,15 @@ impl IoManager {
             }
         };
 
-        if file_uuid != expected_uuid {
+        // Generate tracking hash from token stream
+        let actual_tracking_hash = TrackingHash::generate(
+            Uuid::nil(), // crate_namespace not needed for file-level hash
+            &path,
+            &file_tokens,
+        );
+
+        // Verify against the expected tracking hash
+        if actual_tracking_hash != requests[0].request.file_tracking_hash {
             for req in requests {
                 results.push((
                     req.idx,
@@ -421,61 +427,29 @@ impl IoManager {
             return results;
         }
 
-        // Now, read all snippets from the single open file handle
+        // Extract snippets from the in-memory content
         for req in requests {
-            let mut buffer = vec![0; req.request.end - req.request.start];
-            let result = match file.seek(SeekFrom::Start(req.request.start as u64)).await {
-                Ok(_) => match file.read_exact(&mut buffer).await {
-                    Ok(_) => String::from_utf8(buffer).map_err(|e| {
-                        FatalError::Utf8 {
-                            path: path.clone(),
-                            source: e,
-                        }
-                        .into()
-                    }),
-                    Err(e) => Err(FatalError::FileOperation {
-                        operation: "read",
+            if req.request.end > file_content.len() {
+                results.push((
+                    req.idx,
+                    Err(FatalError::OutOfRange {
                         path: path.clone(),
-                        source: e.into(),
+                        start: req.request.start,
+                        end: req.request.end,
+                        file_len: file_content.len(),
                     }
                     .into()),
-                },
-                Err(e) => Err(FatalError::FileOperation {
-                    operation: "seek",
-                    path: path.clone(),
-                    source: e.into(),
-                }
-                .into()),
-            };
-            results.push((req.idx, result));
+                ));
+            } else {
+                let snippet = file_content[req.request.start..req.request.end].to_string();
+                results.push((req.idx, Ok(snippet)));
+            }
         }
 
         results
     }
 }
 
-// Implement proper error handling, creating new error types as necessary AI!
-/// Reads the entire file to compute its UUID for integrity.
-async fn calculate_file_uuid(file: &mut File) -> Result<Uuid, PlokeError> {
-    file.rewind().await?;
-    let mut hasher = SeaHasher::new();
-    let mut buffer = [0; 8192]; // 8KB buffer
-
-    loop {
-        let n = file.read(&mut buffer).await?;
-        if n == 0 {
-            break;
-        }
-        hasher.write(&buffer[..n]);
-    }
-
-    // Rewind so the file is ready for further reading
-    file.rewind().await?;
-
-    let hash = hasher.finish();
-    let hash_bytes = hash.to_ne_bytes();
-    Ok(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_bytes))
-}
 
 #[derive(Debug, Error)]
 pub enum RecvError {
@@ -491,13 +465,11 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn tracking_hash(content: &[u8]) -> TrackingHash {
-        let mut hasher = SeaHasher::new();
-        hasher.write(content);
-        let hash_value = hasher.finish();
-        let hash_bytes = hash_value.to_ne_bytes();
-        let uuid = Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_bytes);
-        TrackingHash(uuid)
+    fn tracking_hash(content: &str) -> TrackingHash {
+        let tokens = syn::parse_file(content)
+            .expect("Failed to parse test content")
+            .into_token_stream();
+        TrackingHash::generate(Uuid::nil(), &PathBuf::from("test.txt"), &tokens)
     }
 
     #[tokio::test]
