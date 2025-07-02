@@ -1,3 +1,8 @@
+pub mod indexer;
+pub mod embedding_service;
+pub mod events;
+pub mod error;
+
 // ploke-embed
 //
 // This crate is mostly a stub for now. It's role in the overall structure is to manage the
