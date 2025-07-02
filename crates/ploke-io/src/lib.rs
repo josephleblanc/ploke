@@ -389,16 +389,37 @@ impl IoManager {
             }
         };
 
-        // Verify content hash by streaming the file
-        let expected_hash = requests[0].request.content_hash;
-        match verify_hash(&mut file, expected_hash, path.clone()).await {
-            Ok(_) => {}
+        // Calculate the file's UUID and compare to the expected TrackingHash
+        let expected_uuid = requests[0].request.content_hash.0;
+        let file_uuid = match calculate_file_uuid(&mut file).await {
+            Ok(uuid) => uuid,
             Err(e) => {
                 for req in requests {
-                    results.push((req.idx, Err(e.clone())));
+                    results.push((
+                        req.idx,
+                        Err(FatalError::FileOperation {
+                            operation: "hash validation",
+                            path: path.clone(),
+                            source: e.clone().into(),
+                        }
+                        .into()),
+                    ));
                 }
                 return results;
             }
+        };
+
+        if file_uuid != expected_uuid {
+            for req in requests {
+                results.push((
+                    req.idx,
+                    Err(FatalError::ContentMismatch {
+                        path: path.clone(),
+                    }
+                    .into()),
+                ));
+            }
+            return results;
         }
 
         // Now, read all snippets from the single open file handle
@@ -435,19 +456,26 @@ impl IoManager {
 }
 
 // Implement proper error handling, creating new error types as necessary AI!
-/// Reads the file to verify its hash against the expected value.
-async fn verify_file(file: &mut File, expected: TrackingHash) -> Result<(), ploke_error::Error> {
+/// Reads the entire file to compute its UUID for integrity.
+async fn calculate_file_uuid(file: &mut File) -> Result<Uuid, PlokeError> {
     file.rewind().await?;
-    // let mut hasher = Sha256::new();
-    let mut buffer = [0; 8192];
+    let mut hasher = SeaHasher::new();
+    let mut buffer = [0; 8192]; // 8KB buffer
 
-    let file_contents = file.read(&mut buffer).await?;
-
-    if expected.0 == Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &buffer) {
-        Ok(())
-    } else {
-        Err(FatalError::ContentMismatch { path }.into())
+    loop {
+        let n = file.read(&mut buffer).await?;
+        if n == 0 {
+            break;
+        }
+        hasher.write(&buffer[..n]);
     }
+
+    // Rewind so the file is ready for further reading
+    file.rewind().await?;
+
+    let hash = hasher.finish();
+    let hash_bytes = hash.to_ne_bytes();
+    Ok(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_bytes))
 }
 
 #[derive(Debug, Error)]
@@ -464,10 +492,13 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    fn hash_content(content: &[u8]) -> u64 {
+    fn tracking_hash(content: &[u8]) -> TrackingHash {
         let mut hasher = SeaHasher::new();
         hasher.write(content);
-        hasher.finish()
+        let hash_value = hasher.finish();
+        let hash_bytes = hash_value.to_ne_bytes();
+        let uuid = Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_bytes);
+        TrackingHash(uuid)
     }
 
     #[tokio::test]
@@ -488,19 +519,19 @@ mod tests {
         let requests = vec![
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: hash_content(content1.as_bytes()),
+                content_hash: tracking_hash(content1.as_bytes()),
                 start: 7,
                 end: 12,
             },
             SnippetRequest {
                 path: file_path2.clone(),
-                content_hash: hash_content(content2.as_bytes()),
+                content_hash: tracking_hash(content2.as_bytes()),
                 start: 0,
                 end: 4,
             },
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: hash_content(content1.as_bytes()),
+                content_hash: tracking_hash(content1.as_bytes()),
                 start: 0,
                 end: 5,
             },
@@ -528,7 +559,7 @@ mod tests {
 
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            content_hash: 12345, // Incorrect hash
+            content_hash: TrackingHash(Uuid::new_v4()), // random non-matching UUID
             start: 0,
             end: 7,
         }];
@@ -549,7 +580,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: PathBuf::from("/non/existent"),
-                content_hash: 0,
+                content_hash: TrackingHash(Uuid::nil()), // arbitrary UUID
                 start: 0,
                 end: 10,
             }])
@@ -577,7 +608,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.to_owned(),
-                content_hash: hash,
+                content_hash: tracking_hash(content.as_ref()),
                 start: 0,
                 end: 8,
             }])
@@ -603,7 +634,7 @@ mod tests {
                 fs::write(&path, &content).unwrap();
                 SnippetRequest {
                     path: path.to_owned(),
-                    content_hash: hash_content(content.as_bytes()),
+                    content_hash: tracking_hash(content.as_bytes()),
                     start: 0,
                     end: content.len(),
                 }
@@ -629,7 +660,7 @@ mod tests {
         let binding = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.to_owned(),
-                content_hash: hash,
+                content_hash: tracking_hash(content),
                 start: 0,
                 // Ends past EOF
                 end: 20,
@@ -655,7 +686,7 @@ mod tests {
 
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            content_hash: hash,
+            content_hash: tracking_hash(content.as_bytes()),
             start: 5,
             end: 5, // Zero-length snippet
         }];
@@ -690,7 +721,7 @@ mod tests {
         let file_path_mismatch = dir.path().join("mismatch_file.txt");
         let content_mismatch = "Original content.";
         fs::write(&file_path_mismatch, content_mismatch).unwrap();
-        let hash_mismatch = 12345; // Incorrect hash
+        let hash_mismatch = TrackingHash(Uuid::new_v4()); // random non-matching UUID
 
         let requests = vec![
             // Valid request 1
