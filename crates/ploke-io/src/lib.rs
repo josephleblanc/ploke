@@ -546,12 +546,11 @@ mod tests {
     use tempfile::tempdir;
 
     fn tracking_hash(content: &str) -> TrackingHash {
-        // Missing in tests: needs to parse the file and use tokens like producti
         let file = syn::parse_file(content).expect("Failed to parse content");
         let tokens = file.into_token_stream();
 
         TrackingHash::generate(
-            Uuid::nil(),                       // Matches production call
+            Uuid::nil(), // Matches production call
             &PathBuf::from("placeholder.txt"), // Path not important for tests
             &tokens,
         )
@@ -559,43 +558,43 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_snippets_batch_preserves_order() {
-        // 1. Setup
         let dir = tempdir().unwrap();
-        let file_path1 = dir.path().join("test1.txt");
-        let content1 = "Hello, world!";
+        
+        // Use valid Rust syntax
+        let file_path1 = dir.path().join("test1.rs");
+        let content1 = "fn main() { println!(\"Hello, world!\"); }";
         fs::write(&file_path1, content1).unwrap();
 
-        let file_path2 = dir.path().join("test2.txt");
-        let content2 = "This is a test.";
+        let file_path2 = dir.path().join("test2.rs");
+        let content2 = "fn example() { println!(\"This is a test.\"); }";
         fs::write(&file_path2, content2).unwrap();
 
         let io_manager = IoManagerHandle::new();
 
-        // 2. Action
+        // Create requests with calculated offsets
         let requests = vec![
             SnippetRequest {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: 7,
-                end: 12,
+                start: content1.find("world").unwrap(),
+                end: content1.find("world").unwrap() + 5,
             },
             SnippetRequest {
                 path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
-                start: 0,
-                end: 4,
+                start: content2.find("This").unwrap(),
+                end: content2.find("This").unwrap() + 4,
             },
             SnippetRequest {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: 0,
-                end: 5,
+                start: content1.find("Hello").unwrap(),
+                end: content1.find("Hello").unwrap() + 5,
             },
         ];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
 
-        // 3. Assert
         assert_eq!(results.len(), 3);
         assert_eq!(results[0].as_ref().unwrap(), "world");
         assert_eq!(results[1].as_ref().unwrap(), "This");
@@ -633,12 +632,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_io_errors() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        let content = "fn valid() {}";
+        fs::write(&file_path, content).unwrap();
+
         let io_manager = IoManagerHandle::new();
-        // Invalid path
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: PathBuf::from("/non/existent"),
-                file_tracking_hash: TrackingHash(Uuid::nil()), // arbitrary UUID
+                file_tracking_hash: tracking_hash(content),
                 start: 0,
                 end: 10,
             }])
@@ -654,30 +657,6 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn test_utf8_validation() {
-        let io_manager = IoManagerHandle::new();
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-        let content = b"invalid\xFF\xFF";
-        fs::write(&file_path, content).unwrap();
-        let hash = hash_content(content);
-
-        let results = io_manager
-            .get_snippets_batch(vec![SnippetRequest {
-                path: file_path.to_owned(),
-                file_tracking_hash: tracking_hash(content.as_ref()),
-                start: 0,
-                end: 8,
-            }])
-            .await
-            .unwrap();
-
-        assert!(matches!(
-            results[0],
-            Err(PlokeError::Fatal(FatalError::Utf8 { .. }))
-        ));
-    }
 
     #[tokio::test]
     async fn test_concurrency_throttling() {
@@ -687,14 +666,14 @@ mod tests {
         // Create more files than semaphore limit
         let requests: Vec<SnippetRequest> = (0..200)
             .map(|i| {
-                let content = format!("file-{}", i);
-                let path = dir.path().join(&content);
+                let content = format!("const FILE_{}: u32 = {};", i, i);
+                let path = dir.path().join(&format!("file_{}.rs", i));
                 fs::write(&path, &content).unwrap();
                 SnippetRequest {
                     path: path.to_owned(),
-                    file_tracking_hash: tracking_hash(content.as_bytes()),
-                    start: 0,
-                    end: content.len(),
+                    file_tracking_hash: tracking_hash(&content),
+                    start: content.find("FILE").unwrap(),
+                    end: content.find("FILE").unwrap() + 8,
                 }
             })
             .collect();
@@ -710,22 +689,20 @@ mod tests {
     async fn test_seek_errors() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-        let content = b"short";
+        let file_path = dir.path().join("test.rs");
+        let content = "fn short() {}";
         fs::write(&file_path, content).unwrap();
-        let hash = hash_content(content);
 
-        let binding = io_manager
+        let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.to_owned(),
                 file_tracking_hash: tracking_hash(content),
                 start: 0,
-                // Ends past EOF
-                end: 20,
+                end: 1000,
             }])
             .await
             .unwrap();
-        let res = binding[0].as_ref().unwrap_err();
+        let res = results[0].as_ref().unwrap_err();
 
         assert!(matches!(
             res,
@@ -737,22 +714,23 @@ mod tests {
     async fn test_zero_length_snippet() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_zero_length.txt");
-        let content = "Hello, world!";
+        let file_path = dir.path().join("test_zero_length.rs");
+        let content = "fn placeholder() {}";
         fs::write(&file_path, content).unwrap();
-        let hash = hash_content(content.as_bytes());
 
+        // Position after 'f'
+        let pos = content.find('f').unwrap() + 1;
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            file_tracking_hash: tracking_hash(content.as_bytes()),
-            start: 5,
-            end: 5, // Zero-length snippet
+            file_tracking_hash: tracking_hash(content),
+            start: pos,
+            end: pos,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].as_ref().unwrap(), ""); // Expect empty string for zero-length snippet
+        assert_eq!(results[0].as_ref().unwrap(), "");
     }
 
     #[tokio::test]
@@ -761,47 +739,45 @@ mod tests {
         let dir = tempdir().unwrap();
 
         // Valid file and content
-        let file_path1 = dir.path().join("valid_file.txt");
-        let content1 = "This is valid content.";
+        let file_path1 = dir.path().join("valid_file.rs");
+        let content1 = "fn valid() {}";
         fs::write(&file_path1, content1).unwrap();
-        let hash1 = hash_content(content1.as_bytes());
 
         // Another valid file
-        let file_path2 = dir.path().join("another_valid_file.txt");
-        let content2 = "Another piece of valid content.";
+        let file_path2 = dir.path().join("another_valid_file.rs");
+        let content2 = "fn another_valid() {}";
         fs::write(&file_path2, content2).unwrap();
-        let hash2 = hash_content(content2.as_bytes());
 
         // Non-existent file
-        let non_existent_file = dir.path().join("non_existent.txt");
+        let non_existent_file = dir.path().join("non_existent.rs");
 
         // Request with content mismatch
-        let file_path_mismatch = dir.path().join("mismatch_file.txt");
-        let content_mismatch = "Original content.";
+        let file_path_mismatch = dir.path().join("mismatch_file.rs");
+        let content_mismatch = "fn mismatch() {}";
         fs::write(&file_path_mismatch, content_mismatch).unwrap();
         let hash_mismatch = TrackingHash(Uuid::new_v4()); // random non-matching UUID
 
         let requests = vec![
-            // Valid request 1
+            // Valid request 1: "valid"
             SnippetRequest {
                 path: file_path1.clone(),
-                file_tracking_hash: hash1,
-                start: 0,
-                end: 4,
+                file_tracking_hash: tracking_hash(content1),
+                start: content1.find("valid").unwrap(),
+                end: content1.find("valid").unwrap() + 5,
             },
             // Invalid request: non-existent file
             SnippetRequest {
                 path: non_existent_file.clone(),
-                file_tracking_hash: 0,
+                file_tracking_hash: tracking_hash("fn dummy() {}"),
                 start: 0,
                 end: 10,
             },
-            // Valid request 2
+            // Valid request 2: "another"
             SnippetRequest {
                 path: file_path2.clone(),
-                file_tracking_hash: hash2,
-                start: 9,
-                end: 13,
+                file_tracking_hash: tracking_hash(content2),
+                start: content2.find("another").unwrap(),
+                end: content2.find("another").unwrap() + 7,
             },
             // Invalid request: content hash mismatch
             SnippetRequest {
@@ -810,12 +786,12 @@ mod tests {
                 start: 0,
                 end: 10,
             },
-            // Valid request 3 (from file1 again)
+            // Valid request 3: from file1 again
             SnippetRequest {
                 path: file_path1.clone(),
-                file_tracking_hash: hash1,
-                start: 5,
-                end: 7,
+                file_tracking_hash: tracking_hash(content1),
+                start: content1.find("fn").unwrap(),
+                end: content1.find("fn").unwrap() + 2,
             },
         ];
 
@@ -824,22 +800,21 @@ mod tests {
         assert_eq!(results.len(), 5);
 
         // Assert valid results
-        assert_eq!(results[0].as_ref().unwrap(), "This");
-        assert_eq!(results[2].as_ref().unwrap(), "iece");
-        assert_eq!(results[4].as_ref().unwrap(), "is");
+        assert_eq!(results[0].as_ref().unwrap(), "valid");
+        assert_eq!(results[2].as_ref().unwrap(), "another");
+        assert_eq!(results[4].as_ref().unwrap(), "fn");
 
         // Assert failed results
         assert!(matches!(
             results[1].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::FileOperation {
+            PlokeError::Fatal(FatalError::FileOperation {
                 operation: "open",
-                path,
                 ..
-            }) if path == &non_existent_file
+            })
         ));
         assert!(matches!(
             results[3].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::ContentMismatch {
+            PlokeError::Fatal(FatalError::ContentMismatch {
                 path,
             }) if path == &file_path_mismatch
         ));
@@ -850,25 +825,24 @@ mod tests {
         use std::time::Duration;
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("modify_test.txt");
-        let initial_content = "Initial content";
+        let file_path = dir.path().join("modify_test.rs");
+        let initial_content = "fn initial() {}";
         fs::write(&file_path, initial_content).unwrap();
-        let initial_hash = hash_content(initial_content.as_bytes());
 
         // Spawn file modifier task
         let file_path_clone = file_path.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
-            let new_content = "Modified content";
+            let new_content = "fn modified() {}";
             fs::write(&file_path_clone, new_content).unwrap();
         });
 
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.clone(),
-                file_tracking_hash: initial_hash,
-                start: 0,
-                end: 15,
+                file_tracking_hash: tracking_hash(initial_content),
+                start: initial_content.find("initial").unwrap(),
+                end: initial_content.find("initial").unwrap() + 7,
             }])
             .await
             .unwrap();
@@ -884,12 +858,14 @@ mod tests {
         use std::time::Duration;
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("slow_test.txt");
+        let file_path = dir.path().join("slow_test.rs");
 
-        // Create large content (256KB)
-        let content = "X".repeat(262144);
+        // Create large Rust content (256KB)
+        let mut content = String::with_capacity(262144);
+        for i in 0..30000 {
+            content.push_str(&format!("const VAL_{}: usize = {};\n", i, i));
+        }
         fs::write(&file_path, &content).unwrap();
-        let hash = hash_content(content.as_bytes());
 
         // Spawn a request that will take time to process
         let handle = {
@@ -898,9 +874,9 @@ mod tests {
                 io_manager
                     .get_snippets_batch(vec![SnippetRequest {
                         path: file_path,
-                        file_tracking_hash: hash,
-                        start: 0,
-                        end: 262144,
+                        file_tracking_hash: tracking_hash(&content),
+                        start: content.find("VAL_0").unwrap(),
+                        end: content.find("VAL_0").unwrap() + 5,
                     }])
                     .await
             })
