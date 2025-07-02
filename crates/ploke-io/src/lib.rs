@@ -107,7 +107,6 @@ use futures::future::join_all;
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
-use seahash::SeaHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::path::PathBuf;
