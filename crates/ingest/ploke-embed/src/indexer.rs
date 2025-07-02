@@ -45,7 +45,7 @@ impl EmbeddingProcessor {
         match &self.local_backend {
             Some(backend) => backend.compute_batch(snippets).await,
             None => Err(ploke_error::Error::Internal(
-                ploke_error::InternalError::Generic("No embedding backend configured".into()),
+                BatchError::Generic("No embedding backend configured".into()),
             )),
         }
     }
@@ -86,20 +86,6 @@ impl IndexerTask {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum BatchError {
-    #[error("Snippet fetch error: {0}")]
-    SnippetFetch(#[from] ploke_error::Error),
-    #[error("Embedding generation error: {0}")]
-    Embedding(#[from] ploke_error::Error),
-    #[error("Database error: {0}")]
-    Database(String),
-    #[error("Dimension mismatch: expected {expected}, actual {actual}")]
-    DimensionMismatch {
-        expected: usize,
-        actual: usize,
-    },
-}
 
 /// Processes a batch of nodes for embedding generation
 #[instrument(skip_all, fields(batch_size = nodes.len()))]
@@ -125,6 +111,7 @@ pub async fn process_batch(
         .collect::<Vec<_>>();
 
     // Fetch snippets
+    // Solve the below problem on the `into` below AI!
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await

@@ -29,9 +29,9 @@ pub enum Error {
     TransformError(String),
 }
 
-// Add conversion for IO errors
-impl From<ploke_io::RecvError> for Error {
-    fn from(e: ploke_io::RecvError) -> Self {
-        Self::Internal(InternalError::Generic(format!("IO recv error: {}", e)))
-    }
-}
+// // Add conversion for IO errors
+// impl From<ploke_io::RecvError> for Error {
+//     fn from(e: ploke_io::RecvError) -> Self {
+//         Self::Internal(InternalError::Generic(format!("IO recv error: {}", e)))
+//     }
+// }
