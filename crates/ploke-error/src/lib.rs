@@ -27,9 +27,11 @@ pub enum Error {
     UiError(String),
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
-    // #[error("{msg} {0}", msg = "PlokeDbError: ")]
-    // DbError(String)
 }
 
-
-// Remove test function
+// Add conversion for IO errors
+impl From<ploke_io::RecvError> for Error {
+    fn from(e: ploke_io::RecvError) -> Self {
+        Self::Internal(InternalError::Generic(format!("IO recv error: {}", e)))
+    }
+}
