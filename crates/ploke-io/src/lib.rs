@@ -104,6 +104,7 @@
 //! ```
 
 use futures::future::join_all;
+use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
 use seahash::SeaHasher;
@@ -116,6 +117,7 @@ use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot, Semaphore};
+use uuid::Uuid;
 
 /// A request to read a specific snippet from a file.
 #[derive(Debug, Clone)]
@@ -123,7 +125,7 @@ pub struct SnippetRequest {
     /// The path to the file.
     pub path: PathBuf,
     /// The hash of the file content at the time of indexing.
-    pub content_hash: u64,
+    pub content_hash: TrackingHash,
     /// The start byte of the snippet.
     pub start: usize,
     /// The end byte of the snippet.
@@ -432,35 +434,16 @@ impl IoManager {
     }
 }
 
-/// Reads the file chunk by chunk to verify its hash against the expected value.
-async fn verify_hash(file: &mut File, expected_hash: u64, path: PathBuf) -> Result<(), PlokeError> {
-    file.seek(SeekFrom::Start(0))
-        .await
-        .map_err(|e| FatalError::FileOperation {
-            operation: "seek",
-            path: path.clone(),
-            source: e.into(),
-        })?;
-    let mut hasher = SeaHasher::new();
-    let mut buffer = [0; 1024 * 8]; // 8KB buffer
+// Implement proper error handling, creating new error types as necessary AI!
+/// Reads the file to verify its hash against the expected value.
+async fn verify_file(file: &mut File, expected: TrackingHash) -> Result<(), ploke_error::Error> {
+    file.rewind().await?;
+    // let mut hasher = Sha256::new();
+    let mut buffer = [0; 8192];
 
-    loop {
-        let n = file
-            .read(&mut buffer)
-            .await
-            .map_err(|e| FatalError::FileOperation {
-                operation: "read",
-                path: path.clone(),
-                source: e.into(),
-            })?;
-        if n == 0 {
-            break;
-        }
-        hasher.write(&buffer[..n]);
-    }
+    let file_contents = file.read(&mut buffer).await?;
 
-    let actual_hash = hasher.finish();
-    if actual_hash == expected_hash {
+    if expected.0 == Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &buffer) {
         Ok(())
     } else {
         Err(FatalError::ContentMismatch { path }.into())
