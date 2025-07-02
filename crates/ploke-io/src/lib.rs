@@ -542,15 +542,15 @@ impl Into<ploke_error::Error> for IoError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use seahash::SeaHasher;
     use std::fs;
     use tempfile::tempdir;
 
-    // fix this one AI!
     fn tracking_hash(content: &str) -> TrackingHash {
-        let tokens = syn::parse_file(content)
-            .expect("Failed to parse test content")
-            .into_token_stream();
-        TrackingHash::generate(Uuid::nil(), &PathBuf::from("test.txt"), &tokens)
+        let mut hasher = SeaHasher::new();
+        hasher.write(content.as_bytes());
+        let hash_value = hasher.finish();
+        TrackingHash(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_value.to_le_bytes()))
     }
 
     #[tokio::test]
