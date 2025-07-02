@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use ploke_core::TrackingHash;
 use ploke_db::{embedding::EmbeddingNode, Database};
 use ploke_io::{IoManagerHandle, SnippetRequest};
+use std::sync::Arc;
 use tracing::{info_span, instrument};
 
 use crate::error::BatchError;
@@ -18,7 +18,9 @@ pub struct LocalModelBackend {
 
 impl LocalModelBackend {
     pub fn dummy() -> Self {
-        Self { dummy_dimensions: 384 }
+        Self {
+            dummy_dimensions: 384,
+        }
     }
 
     pub fn dimensions(&self) -> usize {
@@ -44,9 +46,7 @@ impl EmbeddingProcessor {
     ) -> Result<Vec<Vec<f32>>, ploke_error::Error> {
         match &self.local_backend {
             Some(backend) => backend.compute_batch(snippets).await,
-            None => Err(ploke_error::Error::Internal(
-                BatchError::Generic("No embedding backend configured".into()),
-            )),
+            None => Err(BatchError::Generic("No embedding backend configured".into()).into()),
         }
     }
 
@@ -67,7 +67,7 @@ pub struct IndexerTask {
 }
 
 impl IndexerTask {
-    async fn run(&self) -> Result<(), BatchError> {
+    async fn run(&self) -> Result<(), ploke_error::Error> {
         while let Some(batch) = self.next_batch().await? {
             process_batch(
                 &self.db,
@@ -86,7 +86,6 @@ impl IndexerTask {
     }
 }
 
-
 /// Processes a batch of nodes for embedding generation
 #[instrument(skip_all, fields(batch_size = nodes.len()))]
 pub async fn process_batch(
@@ -95,7 +94,7 @@ pub async fn process_batch(
     embedding_processor: &EmbeddingProcessor,
     nodes: Vec<EmbeddingNode>,
     report_progress: impl Fn(usize, usize) + Send + Sync,
-) -> Result<(), BatchError> {
+) -> Result<(), ploke_error::Error> {
     let ctx_span = info_span!("process_batch");
     let _guard = ctx_span.enter();
 
@@ -114,7 +113,7 @@ pub async fn process_batch(
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await
-        .map_err(|e| BatchError::SnippetFetch(e))?;
+        .map_err(ploke_io::IoError::Recv)?;
 
     // Batch snippets and nodes for efficiency
     let mut valid_snippets = Vec::new();
@@ -147,7 +146,7 @@ pub async fn process_batch(
             return Err(BatchError::DimensionMismatch {
                 expected: dims,
                 actual: embedding.len(),
-            });
+            }.into());
         }
         report_progress(valid_indices[i], total_nodes);
     }
@@ -162,7 +161,7 @@ pub async fn process_batch(
     // Update database in bulk
     db.update_embeddings_batch(updates)
         .await
-        .map_err(|e| BatchError::Database(format!("{:?}", e)))?;
+        .map_err(|e| BatchError::Database(e))?;
 
     report_progress(total_nodes, total_nodes);
     Ok(())

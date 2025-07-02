@@ -46,16 +46,16 @@ impl QueryResult {
             .map(|row| {
                 let id = to_uuid(&row[id_index]).map_err(map_err)?;
                 let path_str = to_string(&row[path_index]).map_err(map_err)?;
-                let content_hash = to_uuid(&row[content_hash_index]).map_err(map_err)?;
+                let file_tracking_hash = to_uuid(&row[content_hash_index]).map_err(map_err)?;
                 let start_byte = to_usize(&row[start_byte_index]).map_err(map_err)?;
                 let end_byte = to_usize(&row[end_byte_index]).map_err(map_err)?;
 
                 Ok(EmbeddingNode {
                     id,
                     path: PathBuf::from(path_str),
-                    content_hash,
                     start_byte,
                     end_byte,
+                    file_tracking_hash,
                 })
             })
             .collect::<Result<Vec<_>, ploke_error::Error>>()?;

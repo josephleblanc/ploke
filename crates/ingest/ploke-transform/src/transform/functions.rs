@@ -131,6 +131,7 @@ fn process_func(
         // May remove this. Might be useful for debugging, less sure about in queries vs. the
         // `Contains` edge. Needs testing in `ploke-db`
         (schema.module_id().to_string(), module_id.into()),
+        (schema.embedding().to_string(), DataValue::Null)
     ]);
     func_params
 }

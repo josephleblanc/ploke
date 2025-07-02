@@ -100,6 +100,16 @@ impl Database {
 
         Ok(())
     }
+    pub async fn update_embeddings_batch(
+        &self,
+        // TODO: Update with a better type maybe? Might want to parse the nodes into typed IDs
+        // earlier in the process, actually.
+        updates: Vec<(uuid::Uuid, Vec<f32>)>,
+    ) -> Result<(), DbError> {
+        // Placeholder implementation
+        // TODO: Add actual CozoDB update logic, use the batch inserts if possible.
+        Ok(())
+    }
 
     /// Fetches all primary nodes that do not yet have an embedding.
     ///

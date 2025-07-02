@@ -91,20 +91,14 @@ macro_rules! common_fields {
             }
 
             fn cozo_tracking_hash(&self) -> DataValue {
-                match self.any_id() {
-                    AnyNodeId::Module(_) => DataValue::Null,
-                    _ => {
-                        DataValue::Uuid(cozo::UuidWrapper(
-                            self.tracking_hash
-                                .as_ref()
-                                .unwrap_or_else(|| {
-                            panic!(
-                                "Invariant Violated: Node must have TrackingHash upon database insertion"
-                            )}).0,
-                        ))
-
-                    }
-                }
+                 DataValue::Uuid(cozo::UuidWrapper(
+                     self.tracking_hash
+                         .as_ref()
+                         .unwrap_or_else(|| {
+                     panic!(
+                         "Invariant Violated: Node must have TrackingHash upon database insertion"
+                     )}).0,
+                 ))
             }
 
             fn cozo_cfgs(&self) -> DataValue {
@@ -144,8 +138,11 @@ macro_rules! common_fields {
                     (schema.tracking_hash().to_string(), self.cozo_tracking_hash()),
                     (schema.cfgs().to_string(), self.cozo_cfgs()),
                     (schema.vis_kind().to_string(), vis_kind),
-                    (schema.vis_path().to_string(), vis_path.unwrap_or(DataValue::Null),
+                    (
+                        schema.vis_path().to_string(),
+                        vis_path.unwrap_or(DataValue::Null),
                     ),
+                    (schema.embedding().to_string(), DataValue::Null),
                 ])
             }
         }

@@ -28,10 +28,3 @@ pub enum Error {
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
 }
-
-// Add conversion for ploke_io errors
-impl From<ploke_io::IoError> for Error {
-    fn from(e: ploke_io::IoError) -> Self {
-        Self::Internal(InternalError::Generic(format!("IO error: {}", e)))
-    }
-}

@@ -104,18 +104,15 @@
 //! ```
 
 use futures::future::join_all;
-use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
+use ploke_core::TrackingHash;
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
 use quote::ToTokens;
 use std::collections::HashMap;
-use std::hash::Hasher;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
-use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use uuid::Uuid;
 
@@ -398,7 +395,7 @@ impl IoManager {
                         req.idx,
                         Err(IoError::ParseError {
                             path: path.clone(),
-                            source: e.to_string(),
+                            message: e.to_string(),
                         }
                         .into()),
                     ));
@@ -456,14 +453,23 @@ pub enum RecvError {
     RecvError,
 }
 
+// impl From<RecvError> for IoError {
+//     fn from(e: RecvError) -> Self {
+//         IoError::Recv(e);
+//     }
+// }
+
 // Define the additional error variants locally since we can't edit ploke-error
 #[derive(Debug, Error)]
 pub enum IoError {
+    #[error("IO channel error")]
+    Recv(#[from] RecvError),
+
     #[error("File content changed since indexing: {path}")]
     ContentMismatch { path: PathBuf },
 
-    #[error("Parse error in {path}: {source}")]
-    ParseError { path: PathBuf, source: String },
+    #[error("Parse error in {path}: {message}")]
+    ParseError { path: PathBuf, message: String },
 
     #[error(
         "Requested byte range {start}..{end} out of range for file {path} (length {file_len})"
@@ -493,16 +499,16 @@ pub enum IoError {
     },
 }
 
-impl Into<ploke_error::Error> for IoError {
-    fn into(self) -> ploke_error::Error {
+impl From<IoError> for ploke_error::Error {
+    fn from(e: IoError) -> ploke_error::Error {
         use IoError::*;
-        match self {
+        match e {
             ContentMismatch { path } => {
                 ploke_error::Error::Fatal(FatalError::ContentMismatch { path })
             }
 
-            ParseError { path, source } => ploke_error::Error::Fatal(FatalError::SyntaxError(
-                format!("Parse error in {}: {}", path.display(), source),
+            ParseError { path, message } => ploke_error::Error::Fatal(FatalError::SyntaxError(
+                format!("Parse error in {}: {}", path.display(), message),
             )),
 
             OutOfRange {
@@ -535,6 +541,9 @@ impl Into<ploke_error::Error> for IoError {
             }),
 
             Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { path, source }),
+            Recv(recv_error) => ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(recv_error.to_string())
+            ),
         }
     }
 }
@@ -611,7 +620,7 @@ mod tests {
         fs::write(&file_path, content).unwrap();
 
         // Generate hash with production method
-        let valid_hash = tracking_hash(content);
+        // let valid_hash = tracking_hash(content);
 
         let io_manager = IoManagerHandle::new();
         let requests = vec![SnippetRequest {
@@ -667,7 +676,7 @@ mod tests {
         let requests: Vec<SnippetRequest> = (0..200)
             .map(|i| {
                 let content = format!("const FILE_{}: u32 = {};", i, i);
-                let path = dir.path().join(&format!("file_{}.rs", i));
+                let path = dir.path().join(format!("file_{}.rs", i));
                 fs::write(&path, &content).unwrap();
                 SnippetRequest {
                     path: path.to_owned(),
@@ -849,7 +858,7 @@ mod tests {
 
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::ContentMismatch { .. })
+            PlokeError::Fatal(FatalError::ContentMismatch { .. })
         ));
     }
 

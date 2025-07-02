@@ -2500,9 +2500,14 @@ name = "ploke-embed"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "ploke-core",
+ "ploke-db",
+ "ploke-error",
+ "ploke-io",
  "ploke-transform",
  "serde",
- "syn_parser",
+ "thiserror 2.0.12",
+ "tracing",
 ]
 
 [[package]]
@@ -2518,12 +2523,16 @@ name = "ploke-io"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "ploke-core",
  "ploke-error",
+ "proc-macro2",
+ "quote",
  "rlimit",
- "seahash",
+ "syn 2.0.100",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -3182,12 +3191,6 @@ dependencies = [
  "ring",
  "untrusted",
 ]
-
-[[package]]
-name = "seahash"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c107b6f4780854c8b126e228ea8869f4d7b71260f962fefb57b996b8959ba6b"
 
 [[package]]
 name = "security-framework"
