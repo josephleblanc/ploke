@@ -545,6 +545,7 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    // fix this one AI!
     fn tracking_hash(content: &str) -> TrackingHash {
         let tokens = syn::parse_file(content)
             .expect("Failed to parse test content")
@@ -643,11 +644,11 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::FileOperation {
+            results[0],
+            Err(PlokeError::Fatal(FatalError::FileOperation {
                 operation: "open",
                 ..
-            })
+            }))
         ));
     }
 
@@ -726,7 +727,7 @@ mod tests {
 
         assert!(matches!(
             res,
-            PlokeError::Fatal(IoError::FileOperation { .. })
+            PlokeError::Fatal(FatalError::FileOperation { .. })
         ));
     }
 
