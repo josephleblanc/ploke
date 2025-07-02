@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use crate::embedding::EmbeddingNode;
 use crate::error::DbError;
@@ -64,7 +63,7 @@ impl Database {
         Ok(mock_nodes)
     }
 
-    pub async fn generate_embeddings(
+    pub async fn index_embeddings(
         &mut self,
         node_type: NodeType,
         dim: usize,
@@ -75,7 +74,7 @@ impl Database {
         let dim_string = dim.to_string();
         let embedding_query: [&str; 8] = [
             r#"::hnsw create"#,
-            node_type.relation_str(), 
+            node_type.relation_str(),
             r#":embedding_idx { "#,
             dim_string.as_str(),
             r#": "#,
@@ -92,14 +91,12 @@ impl Database {
 "#,
         ];
         let query_string = embedding_query.concat();
-        let rows = self
-            .run_script(
-                query_string.as_str(),
-                BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
-            )
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-        rows.into_iter().map(|r| r);
+        self.run_script(
+            query_string.as_str(),
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
     }
@@ -109,7 +106,7 @@ impl Database {
     /// This query retrieves the necessary information to fetch the node's content
     /// and later associate the generated embedding with the correct node.
     // In your impl Database block
-    pub fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
+    pub fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, ploke_error::Error> {
         // Rule 1: Define direct parent->child 'Contains' relationships.
         // - parent_of
         //
@@ -140,44 +137,9 @@ impl Database {
     "#;
 
         let query_result = self.raw_query(script)?;
+        let embedding_nodes = query_result.to_embedding_nodes()?;
 
-        let mut nodes = vec![];
-        for row in query_result.rows {
-            if row.len() != 4 {
-                continue;
-            } // Or return an error
-
-            // TODO: consider making these typed IDs and a PathBuf,
-            //  PathBuf needs verification as well.
-            let id = to_uuid(&row[0])?;
-            let path_str = to_string(&row[1])?;
-            let content_hash = to_uuid(&row[2])?;
-
-            // Correctly parse the span vector
-            let span_vec = if let DataValue::List(v) = &row[3] {
-                v
-            } else {
-                return Err(DbError::Cozo("Expected Vec for span".to_string()));
-            };
-
-            if span_vec.len() != 2 {
-                return Err(DbError::Cozo(
-                    "Span vector must have two elements".to_string(),
-                ));
-            }
-            let start_byte = to_usize(&span_vec[0])?;
-            let end_byte = to_usize(&span_vec[1])?;
-
-            nodes.push(EmbeddingNode {
-                id,
-                path: PathBuf::from(path_str),
-                content_hash,
-                start_byte,
-                end_byte,
-            });
-        }
-
-        Ok(nodes)
+        Ok(embedding_nodes)
     }
 }
 
