@@ -459,6 +459,36 @@ pub enum RecvError {
     RecvError,
 }
 
+// Define the additional error variants locally since we can't edit ploke-error
+#[derive(Debug, Error)]
+pub enum FatalError {
+    #[error("File content changed since indexing: {path}")]
+    ContentMismatch { path: PathBuf },
+    
+    #[error("Parse error in {path}: {source}")]
+    ParseError { path: PathBuf, source: String },
+    
+    #[error("Requested byte range {start}..{end} out of range for file {path} (length {file_len})")]
+    OutOfRange { path: PathBuf, start: usize, end: usize, file_len: usize },
+    
+    // Other existing variants...
+    #[error("Shutdown initiated")]
+    ShutdownInitiated,
+    
+    #[error("File operation {operation} failed for {path}: {source}")]
+    FileOperation {
+        operation: &'static str,
+        path: PathBuf,
+        source: Arc<std::io::Error>,
+    },
+    
+    #[error("UTF-8 decoding error in {path}: {source}")]
+    Utf8 {
+        path: PathBuf,
+        source: std::string::FromUtf8Error,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
