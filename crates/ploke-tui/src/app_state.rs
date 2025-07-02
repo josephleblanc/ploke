@@ -1,9 +1,11 @@
 use tokio::sync::{mpsc, oneshot, RwLock};
 use uuid::Uuid;
 
+// logging
+
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole}, utils::helper::truncate_string,
 };
 
 use super::*;
@@ -107,6 +109,7 @@ pub enum StateCommand {
     // --- Message and Chat History Commands ---
     /// Adds a new message to a chat history. This is used for both user input
     /// and for creating the initial placeholder for an assistant's response.
+    // TODO: Fold the `AddUserMessage` into `AddMessage`
     AddMessage {
         /// The role of the message author (e.g., User or Assistant).
         role: MessageRole,
@@ -167,6 +170,9 @@ pub enum StateCommand {
     /// Loads application state from a file, replacing the current state.
     LoadState,
 
+    /// Triggers a background task to index the entire workspace.
+    IndexWorkspace,
+
     // --- LLM and Agent Commands ---
     /// Submits the current chat history to the LLM for a response.
     /// The `state_manager` will prepare the prompt and dispatch it to the `llm_manager`.
@@ -222,6 +228,8 @@ impl StateCommand {
             StateCommand::NavigateList { .. } => "NavigateList",
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
+            // TODO: fill out the following
+            StateCommand::IndexWorkspace => todo!("Implement me!"),
             // ... other variants
         }
     }
@@ -249,14 +257,34 @@ impl From<MessageUpdatedEvent> for AppEvent {
 }
 
 // State manager implementation
+// #[tracing::instrument(
+//     skip_all,
+//     fields(
+//         cmd = %cmd.discriminant(),
+//         msg_id = tracing::field::Empty
+//     )
+// )]
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
     event_bus: Arc<EventBus>,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
+        // Update the span with the command discriminant
+        let span = tracing::debug_span!(
+            "processing",
+            cmd = %cmd.discriminant(),
+        );
+        let _enter = span.enter();
+
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
+                tracing::Span::current()
+                    .record("msg_id", &format!("{}", id));
+                tracing::debug!(
+                    content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
+                    "Updating message"
+                );
                 let mut chat_guard = state.chat.0.write().await;
 
                 if let Some(message) = chat_guard.messages.get_mut(&id) {
@@ -279,6 +307,14 @@ pub async fn state_manager(
                 // Add the user's message to the history
                 if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
+                    tracing::Span::current()
+                        .record("msg_id", &format!("{}", user_message_id));
+                    tracing::info!(
+                        content = %truncate_string(&content, 20),
+                        parent_id = %parent_id,
+                        "Adding user message"
+                    );
+
                     // Update the current message to the one we just added
                     chat_guard.current = user_message_id;
 
@@ -293,8 +329,9 @@ pub async fn state_manager(
                         parameters: Default::default(), // Using mock/default param
                     });
                     event_bus.send(llm_request);
+                } else {
+                    tracing::error!("Failed to add user message");
                 }
-                // Note: We should probably log if add_message fails
             }
             StateCommand::AddMessage {
                 parent_id,
@@ -347,6 +384,52 @@ pub async fn state_manager(
                 }
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
+            }
+
+            StateCommand::IndexWorkspace => {
+                // TODO: This is a mock implementation. We need to pass the correct handles
+                // to the real IndexerTask.
+                // What is the difference between a blocking and non-blocking task? What are the
+                // tradeoffs? Would I want to use a blocking or non-blocking task here, do you
+                // think?
+                // Why do you think I should or shouldn't make an `IndexerTask` struct, as opposed
+                // to just having a function `indexer_task` instead? What are the tradeoffs?
+                // We've already implemented the `get_nodes_for_embedding` function in
+                // `database.rs`, and we have a way to retrieve the code snippets at the byte
+                // start/end locations in the stored files through the `ploke-io`.
+                // Our next step is likely to start filling out a newly created `ploke-embed`.
+                // I'm thinking that `ploke-embed` might be a good choice for where to put the
+                // function that will orchestrate the process of:
+                // 1. calling the database to get the non-indexed nodes in the graph using
+                //    `get_nodes_for_embedding`
+                // 2. calling the `get_snippets_batch` function to retrieve the code snippets from
+                //    the target location
+                // 3. then either:
+                //      a. processing the embeddings locally, likely using `candle` or an
+                //      alternative
+                //      b. sending the embeddings to a remote API that can process the code
+                //      snippets into embeddings.
+                // 4. calling the `index_embeddings` function to create the hnsw index for the
+                //    embeddings.
+                // 5. return here and likely sending some kind of event to alert the rest of the
+                //    systems, either through events or by changing state, that the embeddings are
+                //    finished.
+                // - Note that we will want to ensure there are some other features built in as
+                // well, such as a progress bar in the TUI that shows the ongoing progress of the
+                // embeddings and ways to fail gracefully if the program is terminated early, and
+                // ways to save our progress in processing the embeddings if possible, perhaps
+                // through some kind of streaming mechanism or something, I don't know very much
+                // about how vector embeddings are handled remotely or locally, and don't know if
+                // there are streaming options available for vector embeddings services
+                // specifically or through the `candle` crate, which I've never used.
+                //
+                // Now I'd like you to provide a thorough review of the above plan, given your
+                // access to most (if not all) of the files involved, and provide critical
+                // feedback. Answer all of my questions thoroughly. Consider concurrency and how we
+                // can create an efficient, robust, and resilient system.
+                tokio::spawn(async move {
+                    tracing::info!("IndexerTask started");
+                });
             }
             // ... other commands
             // TODO: Fill out other fields

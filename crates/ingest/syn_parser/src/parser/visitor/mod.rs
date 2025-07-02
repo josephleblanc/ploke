@@ -1,6 +1,7 @@
 use colored::Colorize;
 use ploke_core::byte_hasher::ByteHasher;
 use ploke_core::ItemKind;
+use quote::ToTokens;
 use std::{collections::HashMap, hash::Hasher};
 use syn::visit::Visit;
 mod attribute_processing;
@@ -174,8 +175,8 @@ pub fn analyze_file_phase2(
         imports: Vec::new(),
         exports: Vec::new(),
         path: logical_module_path.clone(), // Use derived path
-        span: (0, 0), // NOTE: Not generally good practice, we may wish to make this the start/end of the file's bytes.
-        tracking_hash: None, // Root module conceptual, no specific content hash
+        span: (0, file_content.len()),
+        tracking_hash: Some(state.generate_tracking_hash(&file.to_token_stream())),
         module_def: ModuleKind::FileBased {
             items: Vec::new(),
             file_path: file_path.clone(),

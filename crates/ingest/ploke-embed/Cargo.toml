@@ -4,10 +4,20 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-cozo = { workspace = true }
-syn_parser = { path = "../syn_parser" }
-ploke-transform = { path = "../ploke-transform" }
+ploke-db = { path = "../../ploke-db" }
+ploke-io = { path = "../../ploke-io" }
+ploke-core = { path = "../../ploke-core" }
 serde = { workspace = true }
+
+# temporary, for testing, maybe remove later when we have more integration tests?
+# maybe use ploke-db instead?
+cozo = { workspace = true }
+ploke-transform = { path = "../ploke-transform" }
+
+# error handling
+thiserror = { workspace = true }
+ploke-error = { path = "../../ploke-error" }
+tracing = { workspace = true }
 
 [features]
 default = ["debug"]

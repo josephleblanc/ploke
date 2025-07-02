@@ -19,4 +19,5 @@ define_schema!(MethodNodeSchema {
     tracking_hash: "Uuid",
     cfgs: "[String]",
     owner_id: "Uuid",
+    embedding: "<F32; 384>?"
 });

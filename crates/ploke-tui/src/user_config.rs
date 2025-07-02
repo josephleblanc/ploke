@@ -6,11 +6,20 @@ use crate::llm::RequestMessage;
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
 pub const DEFAULT_MODEL: &str = "qwen/qwq-32b:free";
 
+#[derive(Debug, Clone, Deserialize, Copy, PartialEq, Eq, Default)]
+pub enum CommandStyle {
+    NeoVim,
+    #[default]
+    Slash,
+}
+
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub provider: ProviderConfig,
+    #[serde(default)]
+    pub command_style: CommandStyle,
 }
 
 #[derive(Debug, Clone, Deserialize)]

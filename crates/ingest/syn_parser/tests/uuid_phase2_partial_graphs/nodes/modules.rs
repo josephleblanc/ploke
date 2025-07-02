@@ -126,7 +126,7 @@ lazy_static! {
             docstring: None,
             imports_count: 0, // No imports directly in top_pub_mod.rs
             exports_count: 0,
-            tracking_hash_check: false, // File-level root module definitions don't have a separate tracking hash in current impl
+            tracking_hash_check: true, // File-level root module definitions don't have a separate tracking hash in current impl
             mod_disc: ModDisc::FileBased,
             expected_file_path_suffix: Some("file_dir_detection/src/top_pub_mod.rs"), // Relative to fixture root
             items_count: 6, // top_pub_func, duplicate_name, top_pub_priv_func, mod nested_pub, mod nested_priv, mod path_visible_mod
@@ -207,7 +207,7 @@ lazy_static! {
             name: "top_priv_mod",
             path: &["crate", "top_priv_mod"],
             visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
-            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/top_priv_mod.rs"),
             items_count: 4, // nested_pub_in_priv decl, nested_priv_in_priv decl, top_priv_func, top_priv_priv_func
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
@@ -216,7 +216,7 @@ lazy_static! {
             name: "crate_visible_mod",
             path: &["crate", "crate_visible_mod"],
             visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
-            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/crate_visible_mod.rs"),
             items_count: 3, // crate_vis_func, nested_priv decl, nested_crate_vis decl
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
@@ -225,7 +225,7 @@ lazy_static! {
             name: "real_file", // Name from file stem due to #[path]
             path: &["crate", "custom_path", "real_file"], // Path from file system
             visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
-            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/custom_path/real_file.rs"),
             items_count: 2, // item_in_real_file, nested_in_real_file decl
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
@@ -234,7 +234,7 @@ lazy_static! {
             name: "example_mod",
             path: &["crate", "example_mod"],
             visibility: VisibilityKind::Inherited, attributes: vec![], docstring: None,
-            imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/mod.rs"),
             items_count: 6, // example_submod decl, example_private_submod decl, mod_sibling_one decl, mod_sibling_two decl, mod mod_sibling_private, item_in_example_mod
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
@@ -257,7 +257,7 @@ lazy_static! {
         // --- example_mod/example_submod/mod.rs definition ---
         m.insert("file::example_mod_example_submod_mod_rs::example_submod", ExpectedModuleNode {
             name: "example_submod", path: &["crate", "example_mod", "example_submod"], visibility: VisibilityKind::Inherited,
-            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased, expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_submod/mod.rs"),
             items_count: 4, // submod_sibling_one, submod_sibling_private, submod_sibling_two, item_in_example_submod
             file_attrs_count: 0, file_docs_is_some: false, cfgs: vec![],
@@ -273,7 +273,7 @@ lazy_static! {
             docstring: None, // Crate-level docstring is on file_docs
             imports_count: 2, // use std::path::Path; pub use ... as reexported_func;
             exports_count: 0, // Phase 2, exports not populated yet
-            tracking_hash_check: false, // File-level root
+            tracking_hash_check: true, // File-level root
             mod_disc: ModDisc::FileBased,
             expected_file_path_suffix: Some("file_dir_detection/src/main.rs"),
             items_count: 13, // example_mod, top_pub_mod, top_priv_mod, crate_visible_mod, logical_name, inline_pub_mod, inline_priv_mod, main_pub_func, main_priv_func, reexported_func (ImportNode), duplicate_name, main, use std::path::Path (ImportNode)
@@ -305,7 +305,7 @@ lazy_static! {
             name: "deeply_nested_mod",
             path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod"],
             visibility: VisibilityKind::Inherited,
-            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased,
             expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/mod.rs"),
             items_count: 2, // pub mod deeply_nested_file; fn item_in_deeply_nested_mod
@@ -327,7 +327,7 @@ lazy_static! {
             name: "deeply_nested_file",
             path: &["crate", "example_mod", "example_private_submod", "subsubmod", "subsubsubmod", "deeply_nested_mod", "deeply_nested_file"],
             visibility: VisibilityKind::Inherited,
-            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: false,
+            attributes: vec![], docstring: None, imports_count: 0, exports_count: 0, tracking_hash_check: true,
             mod_disc: ModDisc::FileBased,
             expected_file_path_suffix: Some("file_dir_detection/src/example_mod/example_private_submod/subsubmod/subsubsubmod/deeply_nested_mod/deeply_nested_file.rs"),
             items_count: 1, // fn item_in_deeply_nested_file

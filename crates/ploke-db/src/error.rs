@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum DbError {
     #[error("Database error: {0}")]
     Cozo(String),
@@ -41,6 +41,6 @@ impl From<DbError> for ploke_error::Error {
 
 impl From<DbWarning> for ploke_error::WarningError {
     fn from(value: DbWarning) -> Self {
-        ploke_error::WarningError::PlokeDb(value.to_string()).into()
+        ploke_error::WarningError::PlokeDb(value.to_string())
     }
 }

@@ -12,6 +12,7 @@ mod chat_history;
 pub mod llm;
 mod user_config;
 mod utils;
+mod tracing_setup;
 
 use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
@@ -40,9 +41,20 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
+    let _guard = tracing_setup::init_tracing();
+    let _panic_hook = color_eyre::config::HookBuilder::default()
+        .display_location_section(false)
+        .install()?;
 
-    // TODO: Add error handling
+    if let Err(e) = try_main().await {
+        tracing::error!(error = %e, "Application error");
+        return Err(e);
+    }
+    tracing::info!("Application exited normally");
+    Ok(())
+}
+
+async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
 
     let mut config = config::Config::builder()
@@ -85,7 +97,7 @@ async fn main() -> color_eyre::Result<()> {
     ));
 
     let terminal = ratatui::init();
-    let app = App::new(state, cmd_tx, &event_bus);
+    let app = App::new(config.command_style, state, cmd_tx, &event_bus);
     let result = app.run(terminal).await;
     ratatui::restore();
     result

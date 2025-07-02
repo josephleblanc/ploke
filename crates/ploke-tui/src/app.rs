@@ -1,17 +1,18 @@
-use tokio::sync::RwLock;
-
-use crate::{
-    app_state::ListNavigation,
-    chat_history::{Message, MessageStatus, Role},
-};
+use crate::{app_state::ListNavigation, chat_history::Role, user_config::CommandStyle};
 
 use super::*;
+use std::time::{Duration, Instant};
+
+use app_state::{AppState, StateCommand};
+use color_eyre::Result;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
     #[default]
     Normal,
     Insert,
+    Command,
 }
 
 impl std::fmt::Display for Mode {
@@ -19,6 +20,7 @@ impl std::fmt::Display for Mode {
         match self {
             Mode::Normal => write!(f, "Normal"),
             Mode::Insert => write!(f, "Insert"),
+            Mode::Command => write!(f, "Command"),
         }
     }
 }
@@ -41,11 +43,13 @@ pub struct App {
     input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
+    command_style: CommandStyle,
 }
 
 impl App {
     /// Construct a new instance of [`App`].
     pub fn new(
+        command_style: CommandStyle,
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
@@ -58,6 +62,7 @@ impl App {
             event_rx: event_bus.subscribe(EventPriority::Realtime),
             input_buffer: String::new(),
             mode: Mode::default(),
+            command_style,
         }
     }
 
@@ -76,12 +81,18 @@ impl App {
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
 
+        let mut frame_counter = 0;
         while self.running {
+            let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
+            let frame_start = Instant::now();
+
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
             let current_path = history_guard.get_full_path();
             let current_id = history_guard.current;
 
+            // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
+            // Could it be made to?
             let renderable_messages = current_path
                 .iter()
                 .map(|m| RenderableMessage {
@@ -125,6 +136,14 @@ impl App {
                     }
                 }
             }
+            let frame_duration = frame_start.elapsed();
+            if frame_duration > Duration::from_millis(16) {
+                tracing::warn!(
+                    frame_duration_ms = frame_duration.as_millis(),
+                    "Frame budget exceeded"
+                );
+            }
+            frame_counter += 1;
         }
         Ok(())
     }
@@ -170,15 +189,26 @@ impl App {
 
         let list = match self.mode {
             Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
-            _ => list
+            _ => list,
         };
-        // Render input area
-        let input = Paragraph::new(self.input_buffer.as_str())
-            .block(Block::bordered().title("Input"))
-            .style(match self.mode {
-                Mode::Normal => Style::default(),
-                Mode::Insert => Style::default().fg(Color::Yellow),
-            });
+        // Render input area with dynamic title
+        let input_title = match (self.mode, self.command_style) {
+            (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
+            (Mode::Command, CommandStyle::Slash) => "Slash Mode",
+            _ => "Input",
+        };
+
+        let input_width = main_layout[1].width.saturating_sub(2);
+        let input = Paragraph::new(textwrap::fill(
+            self.input_buffer.as_str(),
+            input_width as usize,
+        ))
+        .block(Block::bordered().title(input_title))
+        .style(match self.mode {
+            Mode::Normal => Style::default(),
+            Mode::Insert => Style::default().fg(Color::Yellow),
+            Mode::Command => Style::default().fg(Color::Cyan),
+        });
 
         // Render Mode to text
         let status_bar = Block::default()
@@ -240,6 +270,7 @@ impl App {
         match self.mode {
             Mode::Normal => self.handle_normal_mode(key),
             Mode::Insert => self.handle_insert_mode(key),
+            Mode::Command => self.handle_command_mode(key),
         }
     }
 
@@ -262,12 +293,73 @@ impl App {
             }
 
             // 3. UI-Local State Change: Modify input buffer
-            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Char(c) => {
+                // Handle command prefix for slash mode
+                if self.command_style == CommandStyle::Slash
+                    && c == '/'
+                    && self.input_buffer.is_empty()
+                {
+                    self.mode = Mode::Command;
+                    self.input_buffer = "/".to_string();
+                } else {
+                    self.input_buffer.push(c);
+                }
+            }
             KeyCode::Backspace => {
                 self.input_buffer.pop();
             }
             _ => {}
         }
+    }
+
+    fn handle_command_mode(&mut self, key: KeyEvent) {
+        // if !self.input_buffer.starts_with('/') {
+        //     self.mode = Mode::Normal;
+        // }
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                self.execute_command();
+                self.input_buffer.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Backspace => {
+                if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
+                    self.mode = Mode::Insert;
+                }
+                self.input_buffer.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_command(&mut self) {
+        let cmd = self.input_buffer.clone();
+        // Remove command prefix for processing
+        let cmd_str = match self.command_style {
+            CommandStyle::NeoVim => cmd.trim_start_matches(':').trim(),
+            CommandStyle::Slash => cmd.trim_start_matches('/').trim(),
+        };
+
+        match cmd_str {
+            "index" => self.send_cmd(StateCommand::IndexWorkspace),
+            "help" => self.show_command_help(),
+            cmd => {
+                // TODO: Implement `tracing` crate import
+                // Placeholder for command error handling
+                eprintln!("Unknown command: {}", cmd);
+            }
+        }
+    }
+
+    fn show_command_help(&self) {
+        // TODO: Add these as system messages.
+        eprintln!("Available commands:");
+        eprintln!("  index - Run workspace indexing");
+        eprintln!("  help  - Show this help");
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
@@ -306,6 +398,12 @@ impl App {
             }),
             KeyCode::Char('l') | KeyCode::Right => {
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
+            }
+
+            // --- COMMANDS ---
+            KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
+                self.mode = Mode::Command;
+                self.input_buffer = ":".to_string();
             }
             _ => {}
         }
