@@ -615,11 +615,14 @@ mod tests {
             end: 7,
         }];
 
-        // fix this AI!
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
+        
+        // Verify we get the correct error response
         assert!(matches!(
-            results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::ContentMismatch { .. })
+            results[0],  // Direct access result at index 0
+            Err(PlokeError::Fatal(FatalError::ContentMismatch { 
+                ref path 
+            })) if path == &file_path
         ));
 
         io_manager.shutdown().await;
