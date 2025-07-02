@@ -111,11 +111,10 @@ pub async fn process_batch(
         .collect::<Vec<_>>();
 
     // Fetch snippets
-    // Solve the below problem on the `into` below AI!
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await
-        .map_err(|e| BatchError::SnippetFetch(e.into()))?;
+        .map_err(|e| BatchError::SnippetFetch(e))?;
 
     // Batch snippets and nodes for efficiency
     let mut valid_snippets = Vec::new();
