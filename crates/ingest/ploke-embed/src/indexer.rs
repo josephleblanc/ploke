@@ -82,7 +82,28 @@ impl IndexerTask {
     }
 
     async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, BatchError> {
-        todo!()
+        // State management - track last ID across batches
+        static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> = tokio::sync::Mutex::const_new(None);
+        
+        let mut last_id_guard = LAST_ID.lock().await;
+        let last_id = last_id_guard.take();
+
+        // Fetch batch of nodes from database
+        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)
+            .map_err(|e| BatchError::Database(e.into()))?;
+        
+        // Update cursor for next batch
+        *last_id_guard = batch.last().map(|node| node.id);
+
+        // Handle cancellation token
+        if self.cancellation_token.is_cancelled() {
+            return Err(BatchError::Generic("Processing cancelled".into()))
+        }
+
+        match batch.is_empty() {
+            true => Ok(None),
+            false => Ok(Some(batch))
+        }
     }
 }
 
@@ -167,4 +188,25 @@ pub async fn process_batch(
     Ok(())
 }
 
-pub struct CancellationToken {}
+use tokio::sync::watch;
+
+pub struct CancellationToken {
+    pub token: Arc<watch::Receiver<bool>>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        let (tx, rx) = watch::channel(false);
+        Self { token: Arc::new(rx) }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.token.borrow()
+    }
+
+    pub fn cancel(&self) {
+        if let Some(tx) = self.token.sender() {
+            let _ = tx.send(true);
+        }
+    }
+}
