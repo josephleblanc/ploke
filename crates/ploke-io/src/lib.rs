@@ -73,13 +73,13 @@
 //!     let requests = vec![
 //!         SnippetRequest {
 //!             path: file_path1.clone(),
-//!             content_hash: hash_content(content1.as_bytes()),
+//!             file_tracking_hash: hash_content(content1.as_bytes()),
 //!             start: 7,
 //!             end: 12, // "world"
 //!         },
 //!         SnippetRequest {
 //!             path: file_path2.clone(),
-//!             content_hash: hash_content(content2.as_bytes()),
+//!             file_tracking_hash: hash_content(content2.as_bytes()),
 //!             start: 0,
 //!             end: 4,  // "This"
 //!         },
@@ -107,6 +107,7 @@ use futures::future::join_all;
 use ploke_core::{TrackingHash, PROJECT_NAMESPACE_UUID};
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
+use quote::ToTokens;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::path::PathBuf;
@@ -361,7 +362,7 @@ impl IoManager {
             Err(_) => {
                 return requests
                     .into_iter()
-                    .map(|req| (req.idx, Err(FatalError::ShutdownInitiated.into())))
+                    .map(|req| (req.idx, Err(IoError::ShutdownInitiated.into())))
                     .collect();
             }
         };
@@ -376,7 +377,7 @@ impl IoManager {
                 for req in requests {
                     results.push((
                         req.idx,
-                        Err(FatalError::FileOperation {
+                        Err(IoError::FileOperation {
                             operation: "read",
                             path: path.clone(),
                             source: Arc::clone(&arced_error),
@@ -395,7 +396,7 @@ impl IoManager {
                 for req in requests {
                     results.push((
                         req.idx,
-                        Err(FatalError::ParseError {
+                        Err(IoError::ParseError {
                             path: path.clone(),
                             source: e.to_string(),
                         }
@@ -418,10 +419,7 @@ impl IoManager {
             for req in requests {
                 results.push((
                     req.idx,
-                    Err(FatalError::ContentMismatch {
-                        path: path.clone(),
-                    }
-                    .into()),
+                    Err(IoError::ContentMismatch { path: path.clone() }.into()),
                 ));
             }
             return results;
@@ -432,7 +430,7 @@ impl IoManager {
             if req.request.end > file_content.len() {
                 results.push((
                     req.idx,
-                    Err(FatalError::OutOfRange {
+                    Err(IoError::OutOfRange {
                         path: path.clone(),
                         start: req.request.start,
                         end: req.request.end,
@@ -450,7 +448,6 @@ impl IoManager {
     }
 }
 
-
 #[derive(Debug, Error)]
 pub enum RecvError {
     #[error("Failed to send request to IO Manager")]
@@ -461,32 +458,85 @@ pub enum RecvError {
 
 // Define the additional error variants locally since we can't edit ploke-error
 #[derive(Debug, Error)]
-pub enum FatalError {
+pub enum IoError {
     #[error("File content changed since indexing: {path}")]
     ContentMismatch { path: PathBuf },
-    
+
     #[error("Parse error in {path}: {source}")]
     ParseError { path: PathBuf, source: String },
-    
-    #[error("Requested byte range {start}..{end} out of range for file {path} (length {file_len})")]
-    OutOfRange { path: PathBuf, start: usize, end: usize, file_len: usize },
-    
+
+    #[error(
+        "Requested byte range {start}..{end} out of range for file {path} (length {file_len})"
+    )]
+    OutOfRange {
+        path: PathBuf,
+        start: usize,
+        end: usize,
+        file_len: usize,
+    },
+
     // Other existing variants...
     #[error("Shutdown initiated")]
     ShutdownInitiated,
-    
+
     #[error("File operation {operation} failed for {path}: {source}")]
     FileOperation {
         operation: &'static str,
         path: PathBuf,
         source: Arc<std::io::Error>,
     },
-    
+
     #[error("UTF-8 decoding error in {path}: {source}")]
     Utf8 {
         path: PathBuf,
         source: std::string::FromUtf8Error,
     },
+}
+
+impl Into<ploke_error::Error> for IoError {
+    fn into(self) -> ploke_error::Error {
+        use IoError::*;
+        match self {
+            ContentMismatch { path } => {
+                ploke_error::Error::Fatal(FatalError::ContentMismatch { path })
+            }
+
+            ParseError { path, source } => ploke_error::Error::Fatal(FatalError::SyntaxError(
+                format!("Parse error in {}: {}", path.display(), source),
+            )),
+
+            OutOfRange {
+                path,
+                start,
+                end,
+                file_len,
+            } => ploke_error::Error::Fatal(FatalError::FileOperation {
+                operation: "read",
+                path,
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!(
+                        "Byte range {}-{} exceeds file length {}",
+                        start, end, file_len
+                    ),
+                )),
+            }),
+
+            ShutdownInitiated => ploke_error::Error::Fatal(FatalError::ShutdownInitiated),
+
+            FileOperation {
+                operation,
+                path,
+                source,
+            } => ploke_error::Error::Fatal(FatalError::FileOperation {
+                operation,
+                path,
+                source,
+            }),
+
+            Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { path, source }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -520,19 +570,19 @@ mod tests {
         let requests = vec![
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: tracking_hash(content1.as_bytes()),
+                file_tracking_hash: tracking_hash(content1),
                 start: 7,
                 end: 12,
             },
             SnippetRequest {
                 path: file_path2.clone(),
-                content_hash: tracking_hash(content2.as_bytes()),
+                file_tracking_hash: tracking_hash(content2),
                 start: 0,
                 end: 4,
             },
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: tracking_hash(content1.as_bytes()),
+                file_tracking_hash: tracking_hash(content1),
                 start: 0,
                 end: 5,
             },
@@ -560,15 +610,16 @@ mod tests {
 
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            content_hash: TrackingHash(Uuid::new_v4()), // random non-matching UUID
+            file_tracking_hash: TrackingHash(Uuid::new_v4()), // random non-matching UUID
             start: 0,
             end: 7,
         }];
 
+        // fix this AI!
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::ContentMismatch { .. })
+            PlokeError::Fatal(IoError::ContentMismatch { .. })
         ));
 
         io_manager.shutdown().await;
@@ -581,7 +632,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: PathBuf::from("/non/existent"),
-                content_hash: TrackingHash(Uuid::nil()), // arbitrary UUID
+                file_tracking_hash: TrackingHash(Uuid::nil()), // arbitrary UUID
                 start: 0,
                 end: 10,
             }])
@@ -590,7 +641,7 @@ mod tests {
 
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::FileOperation {
+            PlokeError::Fatal(IoError::FileOperation {
                 operation: "open",
                 ..
             })
@@ -609,7 +660,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.to_owned(),
-                content_hash: tracking_hash(content.as_ref()),
+                file_tracking_hash: tracking_hash(content.as_ref()),
                 start: 0,
                 end: 8,
             }])
@@ -618,7 +669,7 @@ mod tests {
 
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::Utf8 { .. })
+            PlokeError::Fatal(IoError::Utf8 { .. })
         ));
     }
 
@@ -635,7 +686,7 @@ mod tests {
                 fs::write(&path, &content).unwrap();
                 SnippetRequest {
                     path: path.to_owned(),
-                    content_hash: tracking_hash(content.as_bytes()),
+                    file_tracking_hash: tracking_hash(content.as_bytes()),
                     start: 0,
                     end: content.len(),
                 }
@@ -661,7 +712,7 @@ mod tests {
         let binding = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.to_owned(),
-                content_hash: tracking_hash(content),
+                file_tracking_hash: tracking_hash(content),
                 start: 0,
                 // Ends past EOF
                 end: 20,
@@ -672,7 +723,7 @@ mod tests {
 
         assert!(matches!(
             res,
-            PlokeError::Fatal(FatalError::FileOperation { .. })
+            PlokeError::Fatal(IoError::FileOperation { .. })
         ));
     }
 
@@ -687,7 +738,7 @@ mod tests {
 
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            content_hash: tracking_hash(content.as_bytes()),
+            file_tracking_hash: tracking_hash(content.as_bytes()),
             start: 5,
             end: 5, // Zero-length snippet
         }];
@@ -728,35 +779,35 @@ mod tests {
             // Valid request 1
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: hash1,
+                file_tracking_hash: hash1,
                 start: 0,
                 end: 4,
             },
             // Invalid request: non-existent file
             SnippetRequest {
                 path: non_existent_file.clone(),
-                content_hash: 0,
+                file_tracking_hash: 0,
                 start: 0,
                 end: 10,
             },
             // Valid request 2
             SnippetRequest {
                 path: file_path2.clone(),
-                content_hash: hash2,
+                file_tracking_hash: hash2,
                 start: 9,
                 end: 13,
             },
             // Invalid request: content hash mismatch
             SnippetRequest {
                 path: file_path_mismatch.clone(),
-                content_hash: hash_mismatch,
+                file_tracking_hash: hash_mismatch,
                 start: 0,
                 end: 10,
             },
             // Valid request 3 (from file1 again)
             SnippetRequest {
                 path: file_path1.clone(),
-                content_hash: hash1,
+                file_tracking_hash: hash1,
                 start: 5,
                 end: 7,
             },
@@ -774,7 +825,7 @@ mod tests {
         // Assert failed results
         assert!(matches!(
             results[1].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::FileOperation {
+            PlokeError::Fatal(IoError::FileOperation {
                 operation: "open",
                 path,
                 ..
@@ -782,7 +833,7 @@ mod tests {
         ));
         assert!(matches!(
             results[3].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::ContentMismatch {
+            PlokeError::Fatal(IoError::ContentMismatch {
                 path,
             }) if path == &file_path_mismatch
         ));
@@ -809,7 +860,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![SnippetRequest {
                 path: file_path.clone(),
-                content_hash: initial_hash,
+                file_tracking_hash: initial_hash,
                 start: 0,
                 end: 15,
             }])
@@ -818,7 +869,7 @@ mod tests {
 
         assert!(matches!(
             results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(FatalError::ContentMismatch { .. })
+            PlokeError::Fatal(IoError::ContentMismatch { .. })
         ));
     }
 
@@ -841,7 +892,7 @@ mod tests {
                 io_manager
                     .get_snippets_batch(vec![SnippetRequest {
                         path: file_path,
-                        content_hash: hash,
+                        file_tracking_hash: hash,
                         start: 0,
                         end: 262144,
                     }])
