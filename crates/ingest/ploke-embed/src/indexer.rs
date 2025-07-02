@@ -58,6 +58,69 @@ impl EmbeddingProcessor {
     }
 }
 
+use candle_core::{Device, Tensor};
+use candle_transformers::models::bert::{BertModel, Config, DTYPE};
+use hf_hub::{api::sync::Api, Repo, RepoType};
+use tokenizers::Tokenizer;
+
+// A helper struct to manage the model and tokenizer
+pub struct EmbeddingModel {
+    model: BertModel,
+    tokenizer: Tokenizer,
+}
+
+impl EmbeddingModel {
+    pub fn new() -> Result<Self> {
+        // Use CPU by default, or check for CUDA feature
+        let device = Device::Cpu; 
+
+        // Download model and tokenizer files from Hugging Face Hub
+        let api = Api::new()?;
+        let repo = api.repo(Repo::new(
+            "sentence-transformers/all-MiniLM-L6-v2".to_string(), // A good starting model
+            RepoType::Model,
+        ));
+        let config_filename = repo.get("config.json")?;
+        let tokenizer_filename = repo.get("tokenizer.json")?;
+        let weights_filename = repo.get("model.safetensors")?;
+
+        // Setup the model configuration and load weights
+        let config = std::fs::read_to_string(config_filename)?;
+        let config: Config = serde_json::from_str(&config)?;
+        let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(anyhow::Error::msg)?;
+        
+        let vb = candle_nn::VarBuilder::from_safetensors(vec![weights_filename], DTYPE, &device)?;
+        let model = BertModel::load(vb, &config)?;
+
+        Ok(Self { model, tokenizer })
+    }
+
+    pub fn get_embeddings(&self, snippets: &[&str]) -> Result<Tensor> {
+        let tokens = self
+            .tokenizer
+            .encode_batch(snippets.to_vec(), true)
+            .map_err(anyhow::Error::msg)?;
+
+        let token_ids = tokens
+            .iter()
+            .map(|t| Ok(Tensor::new(t.get_ids(), &self.model.device)?))
+            .collect::<Result<Vec<_>>>()?;
+
+        let token_ids = Tensor::stack(&token_ids, 0)?;
+        
+        // Run inference
+        let embeddings = self.model.forward(&token_ids)?;
+
+        // Perform pooling (mean of the last hidden state)
+        // and normalization
+        let (_n_sentence, n_tokens, _hidden_size) = embeddings.dims3()?;
+        let embeddings = (embeddings.sum(1)? / (n_tokens as f64))?;
+        let embeddings = embeddings.broadcast_div(&embeddings.sqr()?.sum_keepdim(1)?.sqrt()?)?;
+
+        Ok(embeddings)
+    }
+}
+
 pub struct IndexerTask {
     db: Arc<Database>,
     io: IoManagerHandle,
@@ -81,7 +144,7 @@ impl IndexerTask {
         Ok(())
     }
 
-    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, BatchError> {
+    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, ploke_error::Error> {
         // State management - track last ID across batches
         static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> = tokio::sync::Mutex::const_new(None);
         
@@ -89,15 +152,16 @@ impl IndexerTask {
         let last_id = last_id_guard.take();
 
         // Fetch batch of nodes from database
-        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)
-            .map_err(|e| BatchError::Database(e.into()))?;
+        // TODO: Handle the error from get_nodes_from embedding better maybe? Does it need extra
+        // information here?
+        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)?;
         
         // Update cursor for next batch
         *last_id_guard = batch.last().map(|node| node.id);
 
         // Handle cancellation token
         if self.cancellation_token.is_cancelled() {
-            return Err(BatchError::Generic("Processing cancelled".into()))
+            return Err(BatchError::Generic("Processing cancelled".into()).into())
         }
 
         match batch.is_empty() {
@@ -182,7 +246,7 @@ pub async fn process_batch(
     // Update database in bulk
     db.update_embeddings_batch(updates)
         .await
-        .map_err(|e| BatchError::Database(e))?;
+        .map_err(BatchError::Database)?;
 
     report_progress(total_nodes, total_nodes);
     Ok(())
@@ -195,7 +259,7 @@ pub struct CancellationToken {
 }
 
 impl CancellationToken {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (tx, rx) = watch::channel(false);
         Self { token: Arc::new(rx) }
     }
@@ -204,9 +268,12 @@ impl CancellationToken {
         *self.token.borrow()
     }
 
-    pub fn cancel(&self) {
-        if let Some(tx) = self.token.sender() {
-            let _ = tx.send(true);
-        }
-    }
+    // pub fn cancel(&self) {
+    //     match self.token.sender() {
+    //         Some(tx) => {
+    //             let _ = tx.send(true);
+    //         }
+    //         _ => (),
+    //     }
+    // }
 }

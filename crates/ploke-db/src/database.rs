@@ -148,14 +148,14 @@ impl Database {
         params.insert("limit".into(), DataValue::from(limit as i64));
         params.insert(
             "cursor".into(),
-            cursor.map(DataValue::from).unwrap_or(DataValue::List(vec![])),
+            cursor
+                .map(|u| DataValue::Uuid(UuidWrapper(u)))
+                .unwrap_or(DataValue::List(vec![])),
         );
-
-        let query_result = self.db.run_script(
-            script,
-            params,
-            cozo::ScriptMutability::Immutable,
-        ).map_err(|e| DbError::Cozo(e.to_string()))?;
+        let query_result = self
+            .db
+            .run_script(script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
         QueryResult::from(query_result).to_embedding_nodes()
     }
 }

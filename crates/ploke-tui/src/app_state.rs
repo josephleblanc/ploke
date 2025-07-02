@@ -229,7 +229,7 @@ impl StateCommand {
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
-            StateCommand::IndexWorkspace => todo!("Implement me!"),
+            StateCommand::IndexWorkspace => "IndexWorkspace",
             // ... other variants
         }
     }
@@ -308,7 +308,7 @@ pub async fn state_manager(
                 if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
                     tracing::Span::current()
-                        .record("msg_id", &format!("{}", user_message_id));
+                        .record("msg_id", format!("{}", user_message_id));
                     tracing::info!(
                         content = %truncate_string(&content, 20),
                         parent_id = %parent_id,
@@ -389,17 +389,7 @@ pub async fn state_manager(
             StateCommand::IndexWorkspace => {
                 // TODO: This is a mock implementation. We need to pass the correct handles
                 // to the real IndexerTask.
-                // What is the difference between a blocking and non-blocking task? What are the
-                // tradeoffs? Would I want to use a blocking or non-blocking task here, do you
-                // think?
-                // Why do you think I should or shouldn't make an `IndexerTask` struct, as opposed
-                // to just having a function `indexer_task` instead? What are the tradeoffs?
-                // We've already implemented the `get_nodes_for_embedding` function in
-                // `database.rs`, and we have a way to retrieve the code snippets at the byte
-                // start/end locations in the stored files through the `ploke-io`.
-                // Our next step is likely to start filling out a newly created `ploke-embed`.
-                // I'm thinking that `ploke-embed` might be a good choice for where to put the
-                // function that will orchestrate the process of:
+                // Indexer Task will:
                 // 1. calling the database to get the non-indexed nodes in the graph using
                 //    `get_nodes_for_embedding`
                 // 2. calling the `get_snippets_batch` function to retrieve the code snippets from
@@ -414,6 +404,7 @@ pub async fn state_manager(
                 // 5. return here and likely sending some kind of event to alert the rest of the
                 //    systems, either through events or by changing state, that the embeddings are
                 //    finished.
+                //
                 // - Note that we will want to ensure there are some other features built in as
                 // well, such as a progress bar in the TUI that shows the ongoing progress of the
                 // embeddings and ways to fail gracefully if the program is terminated early, and
@@ -422,11 +413,6 @@ pub async fn state_manager(
                 // about how vector embeddings are handled remotely or locally, and don't know if
                 // there are streaming options available for vector embeddings services
                 // specifically or through the `candle` crate, which I've never used.
-                //
-                // Now I'd like you to provide a thorough review of the above plan, given your
-                // access to most (if not all) of the files involved, and provide critical
-                // feedback. Answer all of my questions thoroughly. Consider concurrency and how we
-                // can create an efficient, robust, and resilient system.
                 tokio::spawn(async move {
                     tracing::info!("IndexerTask started");
                 });
