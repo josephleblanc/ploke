@@ -4,11 +4,9 @@ use ploke_io::{IoManagerHandle, SnippetRequest};
 use std::sync::Arc;
 use tracing::{info_span, instrument};
 
-use crate::error::BatchError;
+use crate::error::EmbedError;
 
-// Replace trait with concrete processor
 pub struct EmbeddingProcessor {
-    // Will support multi-backend later
     local_backend: Option<LocalModelBackend>,
 }
 
@@ -30,12 +28,11 @@ impl LocalModelBackend {
     pub async fn compute_batch(
         &self,
         snippets: Vec<String>,
-    ) -> Result<Vec<Vec<f32>>, ploke_error::Error> {
-        // Dummy implementation
-        Ok(snippets
-            .into_iter()
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        snippets.into_iter()
             .map(|_| vec![0.0; self.dummy_dimensions])
-            .collect())
+            .map(|v| Ok(v))
+            .collect()
     }
 }
 
@@ -43,10 +40,10 @@ impl EmbeddingProcessor {
     pub async fn generate_embeddings(
         &self,
         snippets: Vec<String>,
-    ) -> Result<Vec<Vec<f32>>, ploke_error::Error> {
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         match &self.local_backend {
             Some(backend) => backend.compute_batch(snippets).await,
-            None => Err(BatchError::Generic("No embedding backend configured".into()).into()),
+            None => Err(EmbedError::Generic("No embedding backend configured".to_string())),
         }
     }
 
@@ -58,79 +55,16 @@ impl EmbeddingProcessor {
     }
 }
 
-use candle_core::{Device, Tensor};
-use candle_transformers::models::bert::{BertModel, Config, DTYPE};
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::Tokenizer;
-
-// A helper struct to manage the model and tokenizer
-pub struct EmbeddingModel {
-    model: BertModel,
-    tokenizer: Tokenizer,
-}
-
-impl EmbeddingModel {
-    pub fn new() -> Result<Self> {
-        // Use CPU by default, or check for CUDA feature
-        let device = Device::Cpu; 
-
-        // Download model and tokenizer files from Hugging Face Hub
-        let api = Api::new()?;
-        let repo = api.repo(Repo::new(
-            "sentence-transformers/all-MiniLM-L6-v2".to_string(), // A good starting model
-            RepoType::Model,
-        ));
-        let config_filename = repo.get("config.json")?;
-        let tokenizer_filename = repo.get("tokenizer.json")?;
-        let weights_filename = repo.get("model.safetensors")?;
-
-        // Setup the model configuration and load weights
-        let config = std::fs::read_to_string(config_filename)?;
-        let config: Config = serde_json::from_str(&config)?;
-        let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(anyhow::Error::msg)?;
-        
-        let vb = candle_nn::VarBuilder::from_safetensors(vec![weights_filename], DTYPE, &device)?;
-        let model = BertModel::load(vb, &config)?;
-
-        Ok(Self { model, tokenizer })
-    }
-
-    pub fn get_embeddings(&self, snippets: &[&str]) -> Result<Tensor> {
-        let tokens = self
-            .tokenizer
-            .encode_batch(snippets.to_vec(), true)
-            .map_err(anyhow::Error::msg)?;
-
-        let token_ids = tokens
-            .iter()
-            .map(|t| Ok(Tensor::new(t.get_ids(), &self.model.device)?))
-            .collect::<Result<Vec<_>>>()?;
-
-        let token_ids = Tensor::stack(&token_ids, 0)?;
-        
-        // Run inference
-        let embeddings = self.model.forward(&token_ids)?;
-
-        // Perform pooling (mean of the last hidden state)
-        // and normalization
-        let (_n_sentence, n_tokens, _hidden_size) = embeddings.dims3()?;
-        let embeddings = (embeddings.sum(1)? / (n_tokens as f64))?;
-        let embeddings = embeddings.broadcast_div(&embeddings.sqr()?.sum_keepdim(1)?.sqrt()?)?;
-
-        Ok(embeddings)
-    }
-}
-
 pub struct IndexerTask {
     db: Arc<Database>,
     io: IoManagerHandle,
-    embedding_processor: EmbeddingProcessor, // Static type
+    embedding_processor: EmbeddingProcessor,
     cancellation_token: CancellationToken,
     batch_size: usize,
 }
 
 impl IndexerTask {
-    async fn run(&self) -> Result<(), ploke_error::Error> {
+    async fn run(&self) -> Result<(), EmbedError> {
         while let Some(batch) = self.next_batch().await? {
             process_batch(
                 &self.db,
@@ -144,24 +78,18 @@ impl IndexerTask {
         Ok(())
     }
 
-    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, ploke_error::Error> {
-        // State management - track last ID across batches
+    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, EmbedError> {
         static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> = tokio::sync::Mutex::const_new(None);
         
         let mut last_id_guard = LAST_ID.lock().await;
         let last_id = last_id_guard.take();
 
-        // Fetch batch of nodes from database
-        // TODO: Handle the error from get_nodes_from embedding better maybe? Does it need extra
-        // information here?
         let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)?;
         
-        // Update cursor for next batch
         *last_id_guard = batch.last().map(|node| node.id);
 
-        // Handle cancellation token
         if self.cancellation_token.is_cancelled() {
-            return Err(BatchError::Generic("Processing cancelled".into()).into())
+            return Err(EmbedError::Cancelled("Processing cancelled".into()));
         }
 
         match batch.is_empty() {
@@ -171,7 +99,6 @@ impl IndexerTask {
     }
 }
 
-/// Processes a batch of nodes for embedding generation
 #[instrument(skip_all, fields(batch_size = nodes.len()))]
 pub async fn process_batch(
     db: &Database,
@@ -179,11 +106,10 @@ pub async fn process_batch(
     embedding_processor: &EmbeddingProcessor,
     nodes: Vec<EmbeddingNode>,
     report_progress: impl Fn(usize, usize) + Send + Sync,
-) -> Result<(), ploke_error::Error> {
+) -> Result<(), EmbedError> {
     let ctx_span = info_span!("process_batch");
     let _guard = ctx_span.enter();
 
-    // Convert nodes to snippet requests (use file_tracking_hash)
     let requests = nodes
         .iter()
         .map(|node| SnippetRequest {
@@ -194,13 +120,11 @@ pub async fn process_batch(
         })
         .collect::<Vec<_>>();
 
-    // Fetch snippets
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await
-        .map_err(ploke_io::IoError::Recv)?;
+        .map_err(EmbedError::SnippetFetch)?;
 
-    // Batch snippets and nodes for efficiency
     let mut valid_snippets = Vec::new();
     let mut valid_nodes = Vec::new();
     let mut valid_indices = Vec::new();
@@ -218,35 +142,28 @@ pub async fn process_batch(
         }
     }
 
-    // Process embeddings in batch
     let embeddings = embedding_processor
         .generate_embeddings(valid_snippets)
-        .await
-        .map_err(BatchError::Embedding)?;
+        .await?;
 
-    // Validate vector dimensions
     let dims = embedding_processor.dimensions();
-    for (i, embedding) in embeddings.iter().enumerate() {
+    for embedding in &embeddings {
         if embedding.len() != dims {
-            return Err(BatchError::DimensionMismatch {
+            return Err(EmbedError::DimensionMismatch {
                 expected: dims,
                 actual: embedding.len(),
-            }.into());
+            });
         }
-        report_progress(valid_indices[i], total_nodes);
     }
 
-    // Prepare updates using valid nodes and embeddings
     let updates = valid_nodes
         .into_iter()
         .zip(embeddings)
         .map(|(node, embedding)| (node.id, embedding))
         .collect();
 
-    // Update database in bulk
     db.update_embeddings_batch(updates)
-        .await
-        .map_err(BatchError::Database)?;
+        .await?;
 
     report_progress(total_nodes, total_nodes);
     Ok(())
@@ -267,13 +184,4 @@ impl CancellationToken {
     pub fn is_cancelled(&self) -> bool {
         *self.token.borrow()
     }
-
-    // pub fn cancel(&self) {
-    //     match self.token.sender() {
-    //         Some(tx) => {
-    //             let _ = tx.send(true);
-    //         }
-    //         _ => (),
-    //     }
-    // }
 }
