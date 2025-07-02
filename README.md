@@ -15,7 +15,7 @@ If you want to check out the project before then, you can download and run the `
 | ploke-embed | 👷 In Progress | Vector embeddings for code snippets |
 | ploke-transform | ✅ Implemented | Transformation of intermediate AST representation to graph database format (34 schema implemented and tested) |
 | ploke-db | ✅ Implemented | CozoDB query management for hybrid vector-graph storage |
-| ploke-io | 👷 Partial | I/O handler for reads/writes to file, including during vector embedding |
+| ploke-io | ✅ Partial | I/O handler for reads/writes to file, including during vector embedding |
 | context | 🚧 Planned | Context building for LLM prompts |
 | llm | 🚧 Planned | LLM integration for code generation |
 | prompt | 🚧 Planned | Prompt engineering of user prompt |

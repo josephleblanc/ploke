@@ -280,7 +280,7 @@ pub async fn state_manager(
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
                 tracing::Span::current()
-                    .record("msg_id", &format!("{}", id));
+                    .record("msg_id", format!("{}", id));
                 tracing::debug!(
                     content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
                     "Updating message"
