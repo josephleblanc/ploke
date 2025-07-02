@@ -25,16 +25,14 @@ impl LocalEmbedder {
             repo.get("config.json")?,
         )?)?;
 
-        // Load tokenizer with padding
-        let mut tokenizer = Tokenizer::from_file(repo.get("tokenizer.json")?).map_err(anyhow::Error::msg)?;
+        let mut tokenizer = Tokenizer::from_file(repo.get("tokenizer.json")?)?;
         tokenizer.with_padding(Some(PaddingParams {
             pad_to_multiple_of: 8,
             ..Default::default()
         }));
 
-        // Model weights (quantized or full precision)
         let weights_file = if quantized {
-            repo.get("model-Q4_0.gguf")? // Pre-download quantized version
+            repo.get("model-Q4_0.gguf")?
         } else {
             repo.get("model.safetensors")?
         };
