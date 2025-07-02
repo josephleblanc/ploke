@@ -542,15 +542,19 @@ impl Into<ploke_error::Error> for IoError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use seahash::SeaHasher;
     use std::fs;
     use tempfile::tempdir;
 
     fn tracking_hash(content: &str) -> TrackingHash {
-        let mut hasher = SeaHasher::new();
-        hasher.write(content.as_bytes());
-        let hash_value = hasher.finish();
-        TrackingHash(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &hash_value.to_le_bytes()))
+        // Missing in tests: needs to parse the file and use tokens like producti
+        let file = syn::parse_file(content).expect("Failed to parse content");
+        let tokens = file.into_token_stream();
+
+        TrackingHash::generate(
+            Uuid::nil(),                       // Matches production call
+            &PathBuf::from("placeholder.txt"), // Path not important for tests
+            &tokens,
+        )
     }
 
     #[tokio::test]
@@ -603,30 +607,28 @@ mod tests {
     #[tokio::test]
     async fn test_content_mismatch() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test.txt");
-        let content = "Initial content.";
+        let file_path = dir.path().join("test.rs");
+        let content = "fn main() { println!(\"Hello world!\"); }";
         fs::write(&file_path, content).unwrap();
 
-        let io_manager = IoManagerHandle::new();
+        // Generate hash with production method
+        let valid_hash = tracking_hash(content);
 
+        let io_manager = IoManagerHandle::new();
         let requests = vec![SnippetRequest {
             path: file_path.clone(),
-            file_tracking_hash: TrackingHash(Uuid::new_v4()), // random non-matching UUID
+            file_tracking_hash: TrackingHash(Uuid::new_v4()), // Random wrong UUI
             start: 0,
-            end: 7,
+            end: 5,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
-        
-        // Verify we get the correct error response
-        assert!(matches!(
-            results[0],  // Direct access result at index 0
-            Err(PlokeError::Fatal(FatalError::ContentMismatch { 
-                ref path 
-            })) if path == &file_path
-        ));
 
-        io_manager.shutdown().await;
+        assert!(matches!(
+            &results[0],
+            Err(PlokeError::Fatal(FatalError::ContentMismatch { path }))
+            if path == &file_path
+        ))
     }
 
     #[tokio::test]
@@ -672,8 +674,8 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            results[0].as_ref().unwrap_err(),
-            PlokeError::Fatal(IoError::Utf8 { .. })
+            results[0],
+            Err(PlokeError::Fatal(FatalError::Utf8 { .. }))
         ));
     }
 
