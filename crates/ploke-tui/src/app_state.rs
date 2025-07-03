@@ -1,11 +1,13 @@
-use tokio::sync::{mpsc, oneshot, RwLock};
+use ploke_embed::indexer::IndexerTask;
+use tokio::sync::{RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 // logging
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole}, utils::helper::truncate_string,
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    utils::helper::truncate_string,
 };
 
 use super::*;
@@ -206,8 +208,8 @@ pub enum StateCommand {
     },
     CreateAssistantMessage {
         parent_id: Uuid,
-        responder: oneshot::Sender<Uuid>
-    }
+        responder: oneshot::Sender<Uuid>,
+    },
 }
 
 impl StateCommand {
@@ -229,7 +231,7 @@ impl StateCommand {
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
-            StateCommand::IndexWorkspace => todo!("Implement me!"),
+            StateCommand::IndexWorkspace => "IndexWorkspace",
             // ... other variants
         }
     }
@@ -279,8 +281,7 @@ pub async fn state_manager(
 
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
-                tracing::Span::current()
-                    .record("msg_id", &format!("{}", id));
+                tracing::Span::current().record("msg_id", format!("{}", id));
                 tracing::debug!(
                     content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
                     "Updating message"
@@ -305,10 +306,10 @@ pub async fn state_manager(
                 let child_id = Uuid::new_v4();
 
                 // Add the user's message to the history
-                if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
+                if let Ok(user_message_id) =
+                    chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
-                    tracing::Span::current()
-                        .record("msg_id", &format!("{}", user_message_id));
+                    tracing::Span::current().record("msg_id", format!("{}", user_message_id));
                     tracing::info!(
                         content = %truncate_string(&content, 20),
                         parent_id = %parent_id,
@@ -365,13 +366,18 @@ pub async fn state_manager(
                 event_bus.send(MessageUpdatedEvent(chat_guard.current).into())
             }
 
-            StateCommand::CreateAssistantMessage { parent_id, responder } => {
+            StateCommand::CreateAssistantMessage {
+                parent_id,
+                responder,
+            } => {
                 let mut chat_guard = state.chat.0.write().await;
                 let child_id = Uuid::new_v4();
                 let status = MessageStatus::Generating;
                 let role = crate::chat_history::Role::Assistant;
 
-                if let Ok(new_id) = chat_guard.add_child(parent_id, child_id, "Pending...", status, role) {
+                if let Ok(new_id) =
+                    chat_guard.add_child(parent_id, child_id, "Pending...", status, role)
+                {
                     // update the state of the current id to the newly generated pending message.
                     chat_guard.current = new_id;
 
@@ -389,6 +395,30 @@ pub async fn state_manager(
             StateCommand::IndexWorkspace => {
                 // TODO: This is a mock implementation. We need to pass the correct handles
                 // to the real IndexerTask.
+                // Indexer Task will:
+                // 1. calling the database to get the non-indexed nodes in the graph using
+                //    `get_nodes_for_embedding`
+                // 2. calling the `get_snippets_batch` function to retrieve the code snippets from
+                //    the target location
+                // 3. then either:
+                //      a. processing the embeddings locally, likely using `candle` or an
+                //      alternative
+                //      b. sending the embeddings to a remote API that can process the code
+                //      snippets into embeddings.
+                // 4. calling the `index_embeddings` function to create the hnsw index for the
+                //    embeddings.
+                // 5. return here and likely sending some kind of event to alert the rest of the
+                //    systems, either through events or by changing state, that the embeddings are
+                //    finished.
+                //
+                // - Note that we will want to ensure there are some other features built in as
+                // well, such as a progress bar in the TUI that shows the ongoing progress of the
+                // embeddings and ways to fail gracefully if the program is terminated early, and
+                // ways to save our progress in processing the embeddings if possible, perhaps
+                // through some kind of streaming mechanism or something, I don't know very much
+                // about how vector embeddings are handled remotely or locally, and don't know if
+                // there are streaming options available for vector embeddings services
+                // specifically or through the `candle` crate, which I've never used.
                 tokio::spawn(async move {
                     tracing::info!("IndexerTask started");
                 });

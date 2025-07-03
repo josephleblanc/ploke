@@ -32,11 +32,11 @@ impl ErrorContext {
     }
 }
 
-impl<T: Into<Error>> From<T> for ContextualError {
-    fn from(err: T) -> Self {
-        ContextualError::WithContext {
-            source: Box::new(err.into()),
-            context: ErrorContext::new(PathBuf::new()),
-        }
-    }
-}
+// impl<T: Into<Error>> From<T> for ContextualError {
+//     fn from(err: T) -> Self {
+//         ContextualError::WithContext {
+//             source: Box::new(err.into()),
+//             context: ErrorContext::new(PathBuf::new()),
+//         }
+//     }
+// }

@@ -22,7 +22,8 @@ define_schema!(FunctionNodeSchema {
     cfgs: "[String]",
     return_type_id: "Uuid?",
     body: "String?",
-    module_id: "Uuid"
+    module_id: "Uuid",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -38,7 +39,8 @@ define_schema!(ConstNodeSchema {
     value: "String?",
     docstring: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    embedding: "<F32; 384>?"
 }); // need attributes
 
 // TODO: Link to:
@@ -57,6 +59,7 @@ define_schema!(EnumNodeSchema {
     tracking_hash: "Uuid?",
     cfgs: "[String]?",
     variants: "[Uuid]",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -112,7 +115,8 @@ define_schema!(MacroNodeSchema {
     tracking_hash: "Uuid?",
     cfgs: "[String]",
     kind: "String",
-    proc_kind: "String?"
+    proc_kind: "String?",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -135,7 +139,8 @@ define_schema!(ModuleNodeSchema {
     span: "[Int; 2]",
     tracking_hash: "Uuid?",
     module_kind: "String",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -153,7 +158,8 @@ define_schema!(StaticNodeSchema {
     value: "String?",
     docstring: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -169,7 +175,8 @@ define_schema!(StructNodeSchema {
     vis_path: "[String]?",
     docstring: "String?",
     tracking_hash: "Uuid?",
-    cfgs: "[String]?"
+    cfgs: "[String]?",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -187,7 +194,8 @@ define_schema!(TraitNodeSchema {
     docstring: "String?",
     tracking_hash: "Uuid?",
     cfgs: "[String]?",
-    methods: "[Uuid]?"
+    methods: "[Uuid]?",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -204,6 +212,7 @@ define_schema!(TypeAliasNodeSchema {
     tracking_hash: "Uuid?",
     cfgs: "[String]?",
     ty_id: "Uuid",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:
@@ -220,4 +229,5 @@ define_schema!(UnionNodeSchema {
     docstring: "String?",
     tracking_hash: "Uuid?",
     cfgs: "[String]?",
+    embedding: "<F32; 384>?"
 });

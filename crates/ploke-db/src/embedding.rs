@@ -7,8 +7,7 @@ use uuid::Uuid;
 pub struct EmbeddingNode {
     pub id: Uuid,
     pub path: PathBuf,
-    pub content_hash: u64,
+    pub file_tracking_hash: Uuid,
     pub start_byte: usize,
     pub end_byte: usize,
 }
-

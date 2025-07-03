@@ -27,9 +27,4 @@ pub enum Error {
     UiError(String),
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
-    // #[error("{msg} {0}", msg = "PlokeDbError: ")]
-    // DbError(String)
 }
-
-
-// Remove test function
