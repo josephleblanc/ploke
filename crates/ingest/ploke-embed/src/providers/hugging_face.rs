@@ -1,4 +1,3 @@
-use crate::error::ApiError;
 use thiserror::Error;
 use reqwest::Client;
 use serde::Serialize;

@@ -93,6 +93,7 @@ impl LocalEmbedder {
             model,
             tokenizer,
             device,
+            // TODO: Consider how to use max_length
             max_length: 256,
         })
     }
@@ -135,7 +136,7 @@ impl LocalEmbedder {
             &token_type_ids,  // token_type_ids argument
             None              // position_ids argument
         )
-        .map_err(|e| EmbeddingError::Tensor(e))?;
+        .map_err(EmbeddingError::Tensor)?;
 
         // Mean pooling with attention masks
         let weights = attention_mask.broadcast_as(outputs.shape())
