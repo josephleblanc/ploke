@@ -43,7 +43,7 @@ impl EmbeddingProcessor {
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
         match &self.local_backend {
             Some(backend) => backend.compute_batch(snippets).await,
-            None => Err(EmbedError::Generic("No embedding backend configured".to_string())),
+            None => Err(EmbedError::Embedding("No embedding backend configured".to_string())),
         }
     }
 
@@ -64,7 +64,7 @@ pub struct IndexerTask {
 }
 
 impl IndexerTask {
-    async fn run(&self) -> Result<(), EmbedError> {
+    async fn run(&self) -> Result<(), ploke_error::Error> {
         while let Some(batch) = self.next_batch().await? {
             process_batch(
                 &self.db,
@@ -123,7 +123,7 @@ pub async fn process_batch(
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await
-        .map_err(EmbedError::SnippetFetch)?;
+        .map_err(|arg0: ploke_io::RecvError| EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0)))?;
 
     let mut valid_snippets = Vec::new();
     let mut valid_nodes = Vec::new();
@@ -177,7 +177,7 @@ pub struct CancellationToken {
 
 impl CancellationToken {
     pub(crate) fn new() -> Self {
-        let (tx, rx) = watch::channel(false);
+        let (_tx, rx) = watch::channel(false);
         Self { token: Arc::new(rx) }
     }
 

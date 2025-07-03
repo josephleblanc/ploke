@@ -1,19 +1,51 @@
-
-use candle_core::{DType, Device, Tensor, D};
-use candle_nn::VarBuilder;
+use candle_core::{IndexOp, DType, Device, Tensor, D, Error as CandleError};
+use candle_nn::{Embedding, VarBuilder};
 use candle_transformers::models::bert::{BertModel, Config};
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use tokenizers::{PaddingParams, Tokenizer};
-use rayon::prelude::*; // For parallel processing
+use hf_hub::{api::sync::Api, api::sync::ApiError as HubError, Repo, RepoType};
+use ploke_error::Error as PlokeError;
+use ploke_transform::error::TransformError;
+use tokenizers::{Error as TokenizerError, PaddingParams, Tokenizer};
+use thiserror::Error;
 
-fn sometimes_forever(x: usize) {
-    print!("for");
-    while x < 3 {
-        print!("ever and.. ");
+#[derive(Debug, Error)]
+pub enum EmbeddingError {
+    #[error("Tokenizer initialization failed: {0}")]
+    Tokenizer(#[from] TokenizerError),
+    #[error("Model download failed: {0}")]
+    ModelDownload(#[from] HubError),
+    #[error("I/O operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Tensor operation failed: {0}")]
+    Tensor(#[from] CandleError),
+    #[error("Serialization failed: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("Invalid model configuration: {0}")]
+    Config(String),
+    #[error("Batch processing failed: {0}")]
+    BatchProcessing(String),
+    #[error("Dimension mismatch: {0}")]
+    Dimension(String),
+    #[error("Empty input batch")]
+    EmptyBatch,
+}
+
+impl From<EmbeddingError> for PlokeError {
+    fn from(error: EmbeddingError) -> Self {
+        match error {
+            // Classify as InternalError for infrastructure issues
+            EmbeddingError::ModelDownload(_) | 
+            // TODO: Not sure whether this makes sense, improve later when refactoring error
+            // handling
+            EmbeddingError::Io(_) => 
+                 error.into(),
+            
+            // All others as TransformError
+            // TODO: Placeholder, improve later.
+            _ => TransformError::Transformation(error.to_string()).into(),
+        }
     }
 }
 
-// Improved embedder with attention masks and proper pooling
 pub struct LocalEmbedder {
     model: BertModel,
     tokenizer: Tokenizer,
@@ -22,90 +54,109 @@ pub struct LocalEmbedder {
 }
 
 impl LocalEmbedder {
-    pub fn new(model_id: &str, quantized: bool) -> Result<Self> {
-        let device = Device::cuda_if_available(0)?;
-        let api = Api::new()?;
-        let repo = api.repo(Repo::new(model_id.to_string(), RepoType::Model));
+    pub fn new(model_id: &str) -> Result<Self, EmbeddingError> {
+        let device = Device::cuda_if_available(0).or_else(|_| {
+            tracing::warn!("CUDA not available, falling back to CPU");
+            Ok::<Device, EmbeddingError>(Device::Cpu)
+        })?;
 
-        // Load config
-        let config: Config = serde_json::from_str(&std::fs::read_to_string(
-            repo.get("config.json")?,
-        )?)?;
-
-        let mut tokenizer = Tokenizer::from_file(repo.get("tokenizer.json")?)?;
+        let api = Api::new().map_err(EmbeddingError::ModelDownload)?;
+        let repo = Repo::new(model_id.to_string(), RepoType::Model);
+        
+        // Load configuration
+        let config_path = api.repo(repo.clone()).get("config.json")?;
+        let config: Config = serde_json::from_str(
+            &std::fs::read_to_string(config_path)?
+        )?;
+        
+        // Initialize tokenizer with smart padding
+        let tokenizer_path = api.repo(repo.clone()).get("tokenizer.json")?;
+        let mut tokenizer = Tokenizer::from_file(tokenizer_path)?;
         tokenizer.with_padding(Some(PaddingParams {
-            pad_to_multiple_of: 8,
+            pad_to_multiple_of: Some( 8 ),
             ..Default::default()
         }));
 
-        let weights_file = if quantized {
-            repo.get("model-Q4_0.gguf")?
-        } else {
-            repo.get("model.safetensors")?
-        };
-
-        let vb = VarBuilder::from_safetensors(vec![weights_file], DType::F32, &device)?;
-        let model = BertModel::load(vb, &config)?;
+        // Load model weights
+        let weights_path = api.repo(repo).get("model.safetensors")?;
+        let vb = VarBuilder::from_pth(
+            &weights_path, 
+            DType::F32, 
+            &device
+        )?;
+        
+        let model = BertModel::load(vb, &config).map_err(|e| {
+            EmbeddingError::Config(format!("Failed to load model: {}", e))
+        })?;
 
         Ok(Self {
             model,
             tokenizer,
             device,
-            max_length: 256, // Optimize for common snippet lengths
+            max_length: 256,
         })
     }
 
-    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        // Process in parallel chunks
-        texts.par_chunks(8) // Optimal batch size for CPU/GPU
+    pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        if texts.is_empty() {
+            return Err(EmbeddingError::EmptyBatch);
+        }
+
+        texts.chunks(8) // Optimal batch size for most hardware
             .map(|batch| self.process_batch(batch))
             .collect()
     }
 
-    fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+    fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         // Tokenize with attention masks
-        let tokens = self.tokenizer
-            .encode_batch(texts.to_vec(), true)
-            .map_err(anyhow::Error::msg)?;
+        let tokens = self.tokenizer.encode_batch(texts.to_vec(), true)?;
 
-        // Prepare inputs
-        let token_ids: Vec<Tensor> = tokens.iter()
+        // Prepare inputs with proper error context
+        let token_ids: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_ids(), &self.device))
-            .collect::<Result<_, _>>()?;
+            .collect();
         
-        let attention_mask: Vec<Tensor> = tokens.iter()
+        let attention_mask: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_attention_mask(), &self.device))
-            .collect::<Result<_, _>>()?;
+            .collect();
 
-        let token_ids = Tensor::stack(&token_ids, 0)?;
-        let attention_mask = Tensor::stack(&attention_mask, 0)?.to_dtype(DType::F32)?;
+        let token_ids = Tensor::stack(&token_ids?, 0)?;
+        let attention_mask = Tensor::stack(&attention_mask?, 0)?
+            .to_dtype(DType::F32)?;
 
         // Forward pass with attention masks
-        let outputs = self.model.forward(&token_ids, &attention_mask)?;
+        let outputs = self.model.forward(&token_ids, &attention_mask)
+            .map_err(|e| EmbeddingError::Tensor(e))?;
 
-        // Proper mean pooling with attention masks
-        let weights = attention_mask.broadcast_as(outputs.shape())?;
+        // Mean pooling with attention masks
+        let weights = attention_mask.broadcast_as(outputs.shape())
+            .map_err(|e| EmbeddingError::Dimension(e.to_string()))?;
+        
         let sum_embeddings = (&outputs * &weights)?.sum_keepdim(1)?;
         let sum_weights = weights.sum_keepdim(1)?.clamp(1e-9, f32::MAX)?;
         let embeddings = (sum_embeddings / sum_weights)?;
 
-        // Normalize
-        let embeddings = embeddings.broadcast_div(&embeddings.sqr()?.sum_keepdim(1)?.sqrt()?)?;
+        // Normalize embeddings
+        let embeddings = embeddings.broadcast_div(
+            &embeddings.sqr()?.sum_keepdim(1)?.sqrt()?
+        )?;
 
-        // Convert to Vec<Vec<f32>>
+        // Convert to Vec<Vec<f32>> with proper error handling
         let mut results = Vec::with_capacity(texts.len());
         for i in 0..texts.len() {
-            let row = embeddings.i((i, ..))?;
+            let row = embeddings.i((i, ..))
+                .map_err(|_| EmbeddingError::Dimension(
+                    format!("Embedding index {} out of range", i)
+                ))?;
             results.push(row.to_vec1()?);
         }
 
         Ok(results)
     }
+}
 
-    // Quantization helper
-    pub fn quantize_model(model_id: &str) -> Result<()> {
-        // Requires llama.cpp or other quant tools
-        // Implementation would use ggml for quantization
-        unimplemented!("See https://github.com/llamafox/llama_cpp for quantization workflow")
-    }
+// Example usage at crate boundary
+pub fn create_embedder() -> Result<LocalEmbedder, PlokeError> {
+    LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
+        .map_err(Into::into)
 }

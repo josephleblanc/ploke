@@ -1,5 +1,4 @@
-use crate::providers::hugging_face;
-use ploke_error::{Error, InternalError};
+use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EmbedError {
@@ -26,6 +25,9 @@ pub enum EmbedError {
 
     #[error("Configuration error: {0}")]
     Config(String),
+
+    #[error("Query error: {0}")]
+    QueryError(String),
 }
 
 impl From<candle_core::Error> for EmbedError {
@@ -46,9 +48,8 @@ impl From<tokenizers::Error> for EmbedError {
     }
 }
 
-
-impl From<hf_hub::api::tokio::ApiError> for EmbedError {
-    fn from(e: hugging_face::ApiError) -> Self {
+impl From<ApiError> for EmbedError {
+    fn from(e: ApiError) -> Self {
         EmbedError::HuggingFaceApi {
             status: e.status,
             body: e.body,
