@@ -1,29 +1,29 @@
-use ploke_error::{Error, InternalError};
 use crate::providers::hugging_face;
+use ploke_error::{Error, InternalError};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EmbedError {
     #[error("Snippet fetch failed: {0}")]
     SnippetFetch(#[from] ploke_io::IoError),
-    
+
     #[error("Embedding computation failed: {0}")]
     Embedding(String),
-    
+
     #[error("Database operation failed: {0}")]
     Database(#[from] ploke_db::DbError),
-    
+
     #[error("Local model error: {0}")]
     LocalModel(String),
-    
+
     #[error("Hugging Face API error: status {status}, body: {body}")]
     HuggingFaceApi { status: u16, body: String },
-    
+
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
-    
+
     #[error("Cancelled operation: {0}")]
     Cancelled(String),
-    
+
     #[error("Configuration error: {0}")]
     Config(String),
 }
@@ -34,8 +34,8 @@ impl From<candle_core::Error> for EmbedError {
     }
 }
 
-impl From<hf_hub::error::Error> for EmbedError {
-    fn from(e: hf_hub::error::Error) -> Self {
+impl From<hf_hub::api::tokio::ApiError> for EmbedError {
+    fn from(e: hf_hub::api::tokio::ApiError) -> Self {
         EmbedError::Config(e.to_string())
     }
 }
@@ -46,9 +46,13 @@ impl From<tokenizers::Error> for EmbedError {
     }
 }
 
-impl From<hugging_face::ApiError> for EmbedError {
+
+impl From<hf_hub::api::tokio::ApiError> for EmbedError {
     fn from(e: hugging_face::ApiError) -> Self {
-        EmbedError::HuggingFaceApi { status: e.status, body: e.body }
+        EmbedError::HuggingFaceApi {
+            status: e.status,
+            body: e.body,
+        }
     }
 }
 

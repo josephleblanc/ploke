@@ -445,7 +445,7 @@ impl IoManager {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum RecvError {
     #[error("Failed to send request to IO Manager")]
     SendError,
@@ -460,7 +460,7 @@ pub enum RecvError {
 // }
 
 // Define the additional error variants locally since we can't edit ploke-error
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum IoError {
     #[error("IO channel error")]
     Recv(#[from] RecvError),

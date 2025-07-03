@@ -6,6 +6,13 @@ use hf_hub::{api::sync::Api, Repo, RepoType};
 use tokenizers::{PaddingParams, Tokenizer};
 use rayon::prelude::*; // For parallel processing
 
+fn sometimes_forever(x: usize) {
+    print!("for");
+    while x < 3 {
+        print!("ever and.. ");
+    }
+}
+
 // Improved embedder with attention masks and proper pooling
 pub struct LocalEmbedder {
     model: BertModel,
