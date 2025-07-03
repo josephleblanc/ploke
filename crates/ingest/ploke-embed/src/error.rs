@@ -28,6 +28,9 @@ pub enum EmbedError {
 
     #[error("Query error: {0}")]
     QueryError(String),
+    
+    #[error("Ploke core error: {0}")]
+    PlokeCore(#[from] ploke_error::Error),
 }
 
 impl From<candle_core::Error> for EmbedError {

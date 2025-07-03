@@ -1,5 +1,5 @@
-use candle_core::{IndexOp, DType, Device, Tensor, D, Error as CandleError};
-use candle_nn::{Embedding, VarBuilder};
+use candle_core::{IndexOp, DType, Device, Tensor, Error as CandleError};
+use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config};
 use hf_hub::{api::sync::Api, api::sync::ApiError as HubError, Repo, RepoType};
 use ploke_error::Error as PlokeError;
@@ -101,10 +101,13 @@ impl LocalEmbedder {
         if texts.is_empty() {
             return Err(EmbeddingError::EmptyBatch);
         }
-
-        texts.chunks(8) // Optimal batch size for most hardware
-            .map(|batch| self.process_batch(batch))
-            .collect()
+        
+        let mut results = Vec::new();
+        for chunk in texts.chunks(8) {
+            let batch_results = self.process_batch(chunk)?;
+            results.extend(batch_results);
+        }
+        Ok(results)
     }
 
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
@@ -125,8 +128,14 @@ impl LocalEmbedder {
             .to_dtype(DType::F32)?;
 
         // Forward pass with attention masks
-        let outputs = self.model.forward(&token_ids, &attention_mask)
-            .map_err(|e| EmbeddingError::Tensor(e))?;
+        let token_type_ids = Tensor::zeros(token_ids.shape(), DType::F32, &self.device)?;
+
+        let outputs = self.model.forward(
+            &token_ids,
+            &token_type_ids,  // token_type_ids argument
+            None              // position_ids argument
+        )
+        .map_err(|e| EmbeddingError::Tensor(e))?;
 
         // Mean pooling with attention masks
         let weights = attention_mask.broadcast_as(outputs.shape())

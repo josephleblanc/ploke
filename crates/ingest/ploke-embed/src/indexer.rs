@@ -84,7 +84,8 @@ impl IndexerTask {
         let mut last_id_guard = LAST_ID.lock().await;
         let last_id = last_id_guard.take();
 
-        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)?;
+        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)
+            .map_err(EmbedError::PlokeCore)?;
         
         *last_id_guard = batch.last().map(|node| node.id);
 
