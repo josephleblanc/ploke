@@ -10,28 +10,27 @@ mod app;
 pub mod app_state;
 mod chat_history;
 pub mod llm;
+mod tracing_setup;
 mod user_config;
 mod utils;
-mod tracing_setup;
 
 use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
 use llm::llm_manager;
+use ploke_embed::indexer::IndexerTask;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
-use user_config::{ProviderConfig, DEFAULT_MODEL, OPENROUTER_URL};
+use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
 use utils::layout::layout_statusline;
 
 use std::{collections::HashMap, sync::Arc};
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use futures::{FutureExt, StreamExt};
 use ratatui::{
     DefaultTerminal, Frame,
     style::Stylize,
-    text::Line,
     widgets::{Block, Borders, ListItem, ListState, Padding, Paragraph},
 };
 // for list
@@ -79,11 +78,14 @@ async fn try_main() -> color_eyre::Result<()> {
         };
     }
 
+    let new_db = ploke_db::Database::init_with_schema()?;
+
     let event_bus = Arc::new(EventBus::new(100, 1000, 100));
     let state = Arc::new(AppState::default());
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
 
     // Spawn state manager first
     tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));

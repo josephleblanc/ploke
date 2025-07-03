@@ -240,7 +240,7 @@ enum IoRequest {
 ///     caller, preserving the order of the initial requests.
 ///
 /// This design ensures that I/O is handled efficiently, concurrently, and safely.
-struct IoManager {
+pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
 }

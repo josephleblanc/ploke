@@ -1,11 +1,13 @@
-use tokio::sync::{mpsc, oneshot, RwLock};
+use ploke_embed::indexer::IndexerTask;
+use tokio::sync::{RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 // logging
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole}, utils::helper::truncate_string,
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    utils::helper::truncate_string,
 };
 
 use super::*;
@@ -206,8 +208,8 @@ pub enum StateCommand {
     },
     CreateAssistantMessage {
         parent_id: Uuid,
-        responder: oneshot::Sender<Uuid>
-    }
+        responder: oneshot::Sender<Uuid>,
+    },
 }
 
 impl StateCommand {
@@ -279,8 +281,7 @@ pub async fn state_manager(
 
         match cmd {
             StateCommand::UpdateMessage { id, update } => {
-                tracing::Span::current()
-                    .record("msg_id", format!("{}", id));
+                tracing::Span::current().record("msg_id", format!("{}", id));
                 tracing::debug!(
                     content = ?update.content.as_ref().map(|c| truncate_string(c, 20)),
                     "Updating message"
@@ -305,10 +306,10 @@ pub async fn state_manager(
                 let child_id = Uuid::new_v4();
 
                 // Add the user's message to the history
-                if let Ok(user_message_id) = chat_guard.add_message_user(parent_id, child_id, content.clone())
+                if let Ok(user_message_id) =
+                    chat_guard.add_message_user(parent_id, child_id, content.clone())
                 {
-                    tracing::Span::current()
-                        .record("msg_id", format!("{}", user_message_id));
+                    tracing::Span::current().record("msg_id", format!("{}", user_message_id));
                     tracing::info!(
                         content = %truncate_string(&content, 20),
                         parent_id = %parent_id,
@@ -365,13 +366,18 @@ pub async fn state_manager(
                 event_bus.send(MessageUpdatedEvent(chat_guard.current).into())
             }
 
-            StateCommand::CreateAssistantMessage { parent_id, responder } => {
+            StateCommand::CreateAssistantMessage {
+                parent_id,
+                responder,
+            } => {
                 let mut chat_guard = state.chat.0.write().await;
                 let child_id = Uuid::new_v4();
                 let status = MessageStatus::Generating;
                 let role = crate::chat_history::Role::Assistant;
 
-                if let Ok(new_id) = chat_guard.add_child(parent_id, child_id, "Pending...", status, role) {
+                if let Ok(new_id) =
+                    chat_guard.add_child(parent_id, child_id, "Pending...", status, role)
+                {
                     // update the state of the current id to the newly generated pending message.
                     chat_guard.current = new_id;
 

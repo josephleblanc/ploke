@@ -56,11 +56,11 @@ impl EmbeddingProcessor {
 }
 
 pub struct IndexerTask {
-    db: Arc<Database>,
-    io: IoManagerHandle,
-    embedding_processor: EmbeddingProcessor,
-    cancellation_token: CancellationToken,
-    batch_size: usize,
+    pub db: Arc<Database>,
+    pub io: IoManagerHandle,
+    pub embedding_processor: EmbeddingProcessor,
+    pub cancellation_token: CancellationToken,
+    pub batch_size: usize,
 }
 
 impl IndexerTask {

@@ -29,6 +29,15 @@ impl Database {
         Self { db }
     }
 
+    pub fn init_with_schema() -> Result<Self, ploke_error::Error> {
+        let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
+        db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        // Create the schema
+        ploke_transform::schema::create_schema_all(&db)?;
+        Ok(Self { db })
+    }
+
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
