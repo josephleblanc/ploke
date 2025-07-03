@@ -29,6 +29,15 @@ impl Database {
         Self { db }
     }
 
+    pub fn init_with_schema() -> Result<Self, ploke_error::Error> {
+        let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
+        db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        // Create the schema
+        ploke_transform::schema::create_schema_all(&db)?;
+        Ok(Self { db })
+    }
+
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
@@ -116,19 +125,11 @@ impl Database {
     /// This query retrieves the necessary information to fetch the node's content
     /// and later associate the generated embedding with the correct node.
     // In your impl Database block
-    pub fn get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, ploke_error::Error> {
-        // Rule 1: Define direct parent->child 'Contains' relationships.
-        // - parent_of
-        //
-        // Rule 2: Recursively define an ancestor relationship.
-        // - ancestor[desc, asc]
-        // - ancestor[desc, asc]
-        //
-        // Rule 3: Find all function nodes that have a null 'embedding' field.
-        // - needs_embedding
-        //
-        // Rule 4: Identify root modules (files) as modules that are not contained by any other module.
-        // - is_root_module[id]
+    pub fn get_nodes_for_embedding(
+        &self,
+        limit: usize,
+        cursor: Option<uuid::Uuid>,
+    ) -> Result<Vec<EmbeddingNode>, ploke_error::Error> {
         let script = r#"
         parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
 
@@ -139,17 +140,32 @@ impl Database {
 
         is_root_module[id] := *module{id}, NOT parent_of[id, _]
 
-        ?[func_id, path, hash, span] :=
+        batch[func_id, path, hash, span] := 
             needs_embedding[func_id, hash, span],
             ancestor[func_id, mod_id],
             is_root_module[mod_id],
             *module{id: mod_id, path}
+
+        ?[func_id, path, hash, span] := batch[func_id, path, hash, span]
+        :sort func_id
+        :limit $limit
+        :start-from $cursor
     "#;
 
-        let query_result = self.raw_query(script)?;
-        let embedding_nodes = query_result.to_embedding_nodes()?;
-
-        Ok(embedding_nodes)
+        // Create parameters map
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert(
+            "cursor".into(),
+            cursor
+                .map(|u| DataValue::Uuid(UuidWrapper(u)))
+                .unwrap_or(DataValue::List(vec![])),
+        );
+        let query_result = self
+            .db
+            .run_script(script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        QueryResult::from(query_result).to_embedding_nodes()
     }
 }
 

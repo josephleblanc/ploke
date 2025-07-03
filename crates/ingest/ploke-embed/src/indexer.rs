@@ -4,11 +4,9 @@ use ploke_io::{IoManagerHandle, SnippetRequest};
 use std::sync::Arc;
 use tracing::{info_span, instrument};
 
-use crate::error::BatchError;
+use crate::error::EmbedError;
 
-// Replace trait with concrete processor
 pub struct EmbeddingProcessor {
-    // Will support multi-backend later
     local_backend: Option<LocalModelBackend>,
 }
 
@@ -30,12 +28,11 @@ impl LocalModelBackend {
     pub async fn compute_batch(
         &self,
         snippets: Vec<String>,
-    ) -> Result<Vec<Vec<f32>>, ploke_error::Error> {
-        // Dummy implementation
-        Ok(snippets
-            .into_iter()
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        snippets.into_iter()
             .map(|_| vec![0.0; self.dummy_dimensions])
-            .collect())
+            .map(|v| Ok(v))
+            .collect()
     }
 }
 
@@ -43,10 +40,10 @@ impl EmbeddingProcessor {
     pub async fn generate_embeddings(
         &self,
         snippets: Vec<String>,
-    ) -> Result<Vec<Vec<f32>>, ploke_error::Error> {
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
         match &self.local_backend {
             Some(backend) => backend.compute_batch(snippets).await,
-            None => Err(BatchError::Generic("No embedding backend configured".into()).into()),
+            None => Err(EmbedError::Embedding("No embedding backend configured".to_string())),
         }
     }
 
@@ -59,11 +56,11 @@ impl EmbeddingProcessor {
 }
 
 pub struct IndexerTask {
-    db: Arc<Database>,
-    io: IoManagerHandle,
-    embedding_processor: EmbeddingProcessor, // Static type
-    cancellation_token: CancellationToken,
-    batch_size: usize,
+    pub db: Arc<Database>,
+    pub io: IoManagerHandle,
+    pub embedding_processor: EmbeddingProcessor,
+    pub cancellation_token: CancellationToken,
+    pub batch_size: usize,
 }
 
 impl IndexerTask {
@@ -81,12 +78,28 @@ impl IndexerTask {
         Ok(())
     }
 
-    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, BatchError> {
-        todo!()
+    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, EmbedError> {
+        static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> = tokio::sync::Mutex::const_new(None);
+        
+        let mut last_id_guard = LAST_ID.lock().await;
+        let last_id = last_id_guard.take();
+
+        let batch = self.db.get_nodes_for_embedding(self.batch_size, last_id)
+            .map_err(EmbedError::PlokeCore)?;
+        
+        *last_id_guard = batch.last().map(|node| node.id);
+
+        if self.cancellation_token.is_cancelled() {
+            return Err(EmbedError::Cancelled("Processing cancelled".into()));
+        }
+
+        match batch.is_empty() {
+            true => Ok(None),
+            false => Ok(Some(batch))
+        }
     }
 }
 
-/// Processes a batch of nodes for embedding generation
 #[instrument(skip_all, fields(batch_size = nodes.len()))]
 pub async fn process_batch(
     db: &Database,
@@ -94,11 +107,10 @@ pub async fn process_batch(
     embedding_processor: &EmbeddingProcessor,
     nodes: Vec<EmbeddingNode>,
     report_progress: impl Fn(usize, usize) + Send + Sync,
-) -> Result<(), ploke_error::Error> {
+) -> Result<(), EmbedError> {
     let ctx_span = info_span!("process_batch");
     let _guard = ctx_span.enter();
 
-    // Convert nodes to snippet requests (use file_tracking_hash)
     let requests = nodes
         .iter()
         .map(|node| SnippetRequest {
@@ -109,13 +121,11 @@ pub async fn process_batch(
         })
         .collect::<Vec<_>>();
 
-    // Fetch snippets
     let snippet_results = io_manager
         .get_snippets_batch(requests)
         .await
-        .map_err(ploke_io::IoError::Recv)?;
+        .map_err(|arg0: ploke_io::RecvError| EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0)))?;
 
-    // Batch snippets and nodes for efficiency
     let mut valid_snippets = Vec::new();
     let mut valid_nodes = Vec::new();
     let mut valid_indices = Vec::new();
@@ -133,38 +143,46 @@ pub async fn process_batch(
         }
     }
 
-    // Process embeddings in batch
     let embeddings = embedding_processor
         .generate_embeddings(valid_snippets)
-        .await
-        .map_err(BatchError::Embedding)?;
+        .await?;
 
-    // Validate vector dimensions
     let dims = embedding_processor.dimensions();
-    for (i, embedding) in embeddings.iter().enumerate() {
+    for embedding in &embeddings {
         if embedding.len() != dims {
-            return Err(BatchError::DimensionMismatch {
+            return Err(EmbedError::DimensionMismatch {
                 expected: dims,
                 actual: embedding.len(),
-            }.into());
+            });
         }
-        report_progress(valid_indices[i], total_nodes);
     }
 
-    // Prepare updates using valid nodes and embeddings
     let updates = valid_nodes
         .into_iter()
         .zip(embeddings)
         .map(|(node, embedding)| (node.id, embedding))
         .collect();
 
-    // Update database in bulk
     db.update_embeddings_batch(updates)
-        .await
-        .map_err(|e| BatchError::Database(e))?;
+        .await?;
 
     report_progress(total_nodes, total_nodes);
     Ok(())
 }
 
-pub struct CancellationToken {}
+use tokio::sync::watch;
+
+pub struct CancellationToken {
+    pub token: Arc<watch::Receiver<bool>>,
+}
+
+impl CancellationToken {
+    pub(crate) fn new() -> Self {
+        let (_tx, rx) = watch::channel(false);
+        Self { token: Arc::new(rx) }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        *self.token.borrow()
+    }
+}
