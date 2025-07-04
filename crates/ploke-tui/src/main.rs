@@ -111,8 +111,7 @@ async fn try_main() -> color_eyre::Result<()> {
         chat: ChatState::default(),
         config: ConfigState::default(),
         system: SystemState::default(),
-        // fill out the `todo!()` with a correct implementation AI!
-        indexing_state: todo!(),
+        indexing_state: RwLock::new(None),  // Initialize as None
         indexer_task: Some(Arc::new(indexer_task)),
     });
 
