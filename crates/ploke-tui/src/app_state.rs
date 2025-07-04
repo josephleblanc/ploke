@@ -39,17 +39,21 @@ pub struct AppState {
 
 // TODO: Implement Deref for all three *State items below
 
+// implement `new` AI!
 #[derive(Debug)]
 pub struct ChatState(pub RwLock<ChatHistory>);
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
-// Implement Deref AI!
+
+// implement `new` AI!
 #[derive(Debug)]
 pub struct ConfigState(RwLock<Config>);
 
+// implement `new` AI!
 #[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
 
+// implement `new` AI!
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
 
