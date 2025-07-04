@@ -1,8 +1,12 @@
 use crate::app_state::{ListNavigation, StateError};
 use crate::llm::LLMMetadata;
+use crate::AppEvent;
 
-use super::*;
+use std::collections::HashMap;
+use std::io::Write as _;
 use std::{fmt, path::Path};
+
+use color_eyre::Result;
 
 #[derive(Debug, Clone, Copy)]
 pub enum NavigationDirection {
@@ -41,6 +45,7 @@ impl fmt::Display for MessageStatus {
 }
 
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::{
     fs::{self, File},
@@ -497,27 +502,27 @@ impl ChatHistory {
             .and_then(|m| m.children.first().copied())
     }
 
-    pub async fn persist(&self, path: &Path) -> Result<()> {
-        // NOTE: Assuming `tokio::fs` and `tokio::File` below are correct, need to confirm
-        let temp_path = path.with_extension(".tmp");
-        let mut file = File::create(&temp_path).await?;
-
-        for msg in self.get_full_path() {
-            file.write_all(
-                format!(
-                    "## [{}] {}\n",
-                    msg.role,
-                    // TODO: `Utc::now` does not exist, need to use a real function/crate instead
-                    // Utc::now().to_rfc3339(),
-                    msg.content
-                )
-                .as_bytes(),
-            )
-            .await?;
+    /// Formats chat history as Markdown for persistence
+    pub fn format_for_persistence(&self) -> String {
+        let mut md = String::new();
+        md.push_str("# Ploke Chat History\n\n");
+        
+        for message in self.get_full_path() {
+            md.push_str(&format!(
+                "## [{}] {}\n\n{}\n\n",
+                message.role,
+                chrono::Utc::now().to_rfc3339(),
+                message.content
+            ));
         }
+        
+        md
+    }
 
-        fs::rename(temp_path, path).await?;
-        Ok(())
+    /// Asynchronous persistence handler
+    pub async fn persist(&self, path: &std::path::Path) -> Result<(), std::io::Error> {
+        let content = self.format_for_persistence();
+        atomic_write(path, content).await
     }
 
     /// Navigates the current path and updates the `current` message ID.
@@ -579,3 +584,15 @@ impl ChatHistory {
         Ok(self.current)
     }
 }
+
+/// Atomically writes file contents using tempfile and rename
+pub(crate) async fn atomic_write(
+    path: &std::path::Path,
+    content: String,
+) -> Result<(), std::io::Error> {
+    let mut temp = NamedTempFile::new_in(path.parent().unwrap_or(path))?;
+    temp.write_all(content.as_bytes())?;
+    temp.persist(path)?;
+    Ok(())
+}
+

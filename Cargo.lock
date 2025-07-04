@@ -3228,6 +3228,13 @@ dependencies = [
 [[package]]
 name = "ploke-rag"
 version = "0.1.0"
+dependencies = [
+ "ploke-db",
+ "ploke-embed",
+ "ploke-error",
+ "thiserror 2.0.12",
+ "tokio",
+]
 
 [[package]]
 name = "ploke-test-macros"
@@ -3303,6 +3310,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "textwrap 0.16.2",
  "thiserror 1.0.69",
  "tokio",

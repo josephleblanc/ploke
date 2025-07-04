@@ -31,6 +31,15 @@ pub enum EmbedError {
     
     #[error("Ploke core error: {0}")]
     PlokeCore(#[from] ploke_error::Error),
+
+    #[error("Broadcast send error: {0}")]
+    BroadcastSendError(String),
+}
+
+impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingState>> for EmbedError {
+    fn from(e: tokio::sync::broadcast::error::SendError<crate::indexer::IndexingState>) -> Self {
+        EmbedError::BroadcastSendError(e.to_string())
+    }
 }
 
 impl From<candle_core::Error> for EmbedError {

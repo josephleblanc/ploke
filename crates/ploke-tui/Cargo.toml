@@ -36,6 +36,9 @@ dirs = "5.0"
 config = { version = "0.14", features = ["toml"] }
 dotenvy = "0.15"
 
+# file io
+tempfile = "3.8"
+
 # user-facing error handling
 color-eyre = "0.6"
 

@@ -7,6 +7,7 @@ use crate::QueryResult;
 use cozo::DataValue;
 use cozo::Db;
 use cozo::MemStorage;
+use cozo::NamedRows;
 use cozo::UuidWrapper;
 
 /// Main database connection and query interface
@@ -166,6 +167,25 @@ impl Database {
             .run_script(script, params, cozo::ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         QueryResult::from(query_result).to_embedding_nodes()
+    }
+
+    pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
+        let query = r#"
+        ?[count(id)] := *embedding_nodes{id, embedding},
+        embedding = null"#;
+        let result = self.db.run_script_read_only(query, Default::default())
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Self::into_usize(result, "count(id)")
+    }
+
+    pub fn into_usize(named_rows: NamedRows, col: &str) -> Result<usize, DbError> {
+        named_rows
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|v| v.get_int())
+            .map(|n| n as usize)
+            .ok_or(DbError::NotFound)
     }
 }
 

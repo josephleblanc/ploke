@@ -5,9 +5,7 @@ use uuid::Uuid;
 // logging
 
 use crate::{
-    chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
-    utils::helper::truncate_string,
+    chat_history::{MessageStatus, MessageUpdate}, llm::{ChatHistoryTarget, LLMParameters, MessageRole}, system::SystemEvent, utils::helper::truncate_string
 };
 
 use super::*;
@@ -422,7 +420,16 @@ pub async fn state_manager(
                 tokio::spawn(async move {
                     tracing::info!("IndexerTask started");
                 });
+            },
+
+            StateCommand::SaveState => {
+                let serialized_content = {
+                    let guard = state.chat.0.read().await;
+                    guard.format_for_persistence().as_bytes().to_vec()
+                };
+                event_bus.send(AppEvent::System(SystemEvent::SaveRequested(serialized_content)))
             }
+
             // ... other commands
             // TODO: Fill out other fields
             _ => {}

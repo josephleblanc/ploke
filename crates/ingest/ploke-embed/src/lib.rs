@@ -4,6 +4,7 @@ pub mod events;
 pub mod error;
 pub mod providers;
 pub mod local;
+pub mod cancel_token;
 
 #[cfg(test)]
 mod tests {

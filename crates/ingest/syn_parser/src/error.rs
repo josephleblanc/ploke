@@ -1,7 +1,6 @@
-use crate::{
-    parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError},
-    resolve::ModuleTreeError,
-};
+//! Error types for the `syn_parser` crate.
+
+use crate::{parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError}, resolve::ModuleTreeError};
 use ploke_core::{IdConversionError, TypeId};
 // use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
@@ -34,90 +33,91 @@ pub enum CodeVisitorError {
 /// Custom error type for the syn_parser crate.
 use crate::parser::graph::ParsedGraphError;
 
+/// The primary error type for the `syn_parser` crate.
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum SynParserError {
-    /// Multiple errors grouped together, for example for all the results of the complete parsing
-    /// of all target files in a given crate.
+    /// Multiple errors occurred during parsing.
     #[error("Multiple errors occurred:\n{}", .0.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n"))]
     MultipleErrors(Vec<SynParserError>),
 
-    /// Error originating from test helper logic (wrapped as string).
+    /// An error occurred in a test helper.
     #[error("Test helper error: {0}")]
     TestHelperError(String), // Wrap the error message
 
+    /// An error occurred during ID conversion.
     #[error(transparent)]
     // This allows converting *from* IdConversionError *to* SynParserError using .into() or ?
     IdConversionError(#[from] IdConversionError),
 
+    /// An error occurred in the parsed graph.
     #[error(transparent)]
     ParsedGraphError(#[from] ParsedGraphError), // Add the new error variant
 
-    /// Indicates that a requested node was not found in the graph.
+    /// A requested node was not found in the graph.
     #[error("Node with ID {0} not found in the graph.")]
     NotFound(AnyNodeId),
 
-    /// Indicates that a requested node was not found in the graph.
-    /// node name, node path
+    /// A re-exported node was not found in the graph.
     #[error("Reexport Node with path {1:?} name {0} not found in the graph, id: {2}.")]
     ReexportNotFound(String, Vec<String>, ImportNodeId),
-    /// Indicates that a requested node was not found in the graph.
-    /// node name, node path
+    /// A node with the given name and path was not found in the graph.
     #[error("Node with path {1:?} name {0} not found in the graph.")]
     NotFoundInModuleByName(String, Vec<String>),
-    /// Indicates that a requested node was not found in the graph.
-    /// node name, node path
+    /// A node with the given name, path, and kind was not found in the graph.
     #[error("Node with path {1} name {0}, kind {2:?} not found in the graph.")]
     NotFoundInModuleByNameKind(String, String, ploke_core::ItemKind),
-    /// Indicates that multiple nodes were found when exactly one was expected.
+    /// Multiple nodes were found when exactly one was expected.
     #[error("Duplicate node found for ID {0} when only one was expected.")]
     DuplicateNode(AnyNodeId),
 
+    /// A duplicate `ModuleNode` was found during `ModuleTree` construction.
     #[error("Duplicate node found for ModuleNode in ModuleTree construction: {0:?} ")]
     DuplicateInModuleTree(Box<ModuleNode>), // Box the large ModuleNode
 
-    /// Represents an I/O error during file discovery or reading.
+    /// An I/O error occurred during file discovery or reading.
     #[error("I/O error: {0}")]
     Io(String), // Wrap std::io::Error details in a String for simplicity
 
-    /// Represents a parsing error from the `syn` crate.
+    /// A parsing error from the `syn` crate occurred.
     #[error("Syn parsing error: {0}")]
     Syn(String), // Wrap syn::Error details in a String
 
-    /// Indicates an invalid state or inconsistency within the visitor or graph.
+    /// An invalid state or inconsistency within the visitor or graph was detected.
     #[error("Internal state error: {0}")]
     InternalState(String),
 
-    /// Indicates a failure to merge graphs
+    /// A failure to merge `CodeGraph`s occurred.
     #[error("Failed to merge CodeGraphs")]
     MergeError,
 
-    /// Indicates that merging requires at least one graph.
+    /// Merging requires at least one graph.
     #[error("Merging code graphs requires at least one graph as input.")]
     MergeRequiresInput,
 
-    /// Indicates that the root module ("crate") could not be found.
+    /// The root module ("crate") could not be found.
     #[error("Root module ('crate') not found in the graph.")]
     RootModuleNotFound,
 
-    /// Indicates that a module with the specified path was not found.
+    /// A module with the specified path was not found.
     #[error("Module with path {0:?} not found.")]
     ModulePathNotFound(Vec<String>),
-    /// Indicates that a module with the specified path was not found.
+    /// An item with the specified path was not found.
     #[error("Item with path {0:?} not found.")]
     ItemPathNotFound(Vec<String>),
 
-    /// Indicates that multiple modules were found for the specified path.
+    /// Multiple modules were found for the specified path.
     #[error("Duplicate modules found for path {0:?}.")]
     DuplicateModulePath(Vec<String>),
 
+    /// An error occurred during resolution.
     #[error("Resolution error: {0}")]
     ResolutionError(#[from] ResolutionError),
 
-    /// Indicates a validation error related to node structure (e.g., NodePath).
+    /// A validation error related to node structure (e.g., `NodePath`) occurred.
     #[error("Node validation error: {0}")]
     NodeValidation(String),
 
-    /// Indicates a duplicate definition path was encountered when building the ModuleTree.
+    /// A duplicate definition path was encountered when building the `ModuleTree`.
     #[error("Duplicate definition path '{path}' found in module tree. Existing ID: {existing_id}, Conflicting ID: {conflicting_id}")]
     ModuleTreeDuplicateDefnPath {
         // New variant
@@ -126,47 +126,58 @@ pub enum SynParserError {
         conflicting_id: AnyNodeId,
     },
 
-    /// Indicates a duplicate module ID was encountered when building the ModuleTree.
+    /// A duplicate module ID was encountered when building the `ModuleTree`.
     #[error("Duplicate module ID found in module tree for ModuleNode: {0}")]
     ModuleTreeDuplicateModuleId(String), // Store Debug representation
 
+    /// A relation was not found in the `ModuleTree` during resolution.
     #[error("Relation not found in ModuleTree during resolution: {0}\nNode with no relations found: {1}")]
     ModuletreeRelationNotFound(AnyNodeId, String),
     // Removed ModuleKindinitionNotFound - covered by ModuleTreeError::FoundUnlinkedModules
     // #[error("Module definition not found for path: {0}")]
     // ModuleKindinitionNotFound(String), // Store path string representation
+    /// An error occurred during relation conversion.
     #[error("Relation conversion error: {0}")]
     RelationConversion(#[from] crate::parser::relations::RelationConversionError),
 
     // Forward ModuleTreeError variants - REMOVED #[from]
+    /// An error occurred in the `ModuleTree`.
     #[error(transparent)]
     ModuleTreeError(ModuleTreeError),
 
+    /// An error occurred during `TypeId` conversion.
     #[error("Relation conversion error: {0}")]
     TypeIdConversionError(TypeId), // Consider renaming if it's not just TypeId
 
-    /// Indicates that shortest public path resolution failed for an external item.
+    /// Shortest public path resolution failed for an external item.
     #[error("Shortest public path resolution failed for external item: {0}")]
     ExternalItemNotResolved(AnyNodeId),
 
+    /// An error occurred in the `CodeVisitor`.
     #[error(transparent)]
     VisitorError(#[from] CodeVisitorError), // Add conversion from CodeVisitorError
 
+    /// An error occurred during `AnyNodeId` conversion.
     #[error(transparent)]
     AnyNodeIdConversion(#[from] crate::parser::nodes::AnyNodeIdConversionError),
 
+    /// An error occurred during `TryFromPrimary` conversion.
     #[error(transparent)]
     TryFromPrimaryError(#[from] TryFromPrimaryError),
 }
 
+/// An error that can occur during resolution.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum ResolutionError {
+    /// The item is private and cannot be accessed.
     #[error("Private item: {0:?}")]
     PrivateItem(Vec<String>),
 
+    /// The path is ambiguous and could refer to multiple items.
     #[error("Ambiguous path. Candidates: {0:?}")]
     AmbiguousPath(Vec<Vec<String>>),
 
+    /// The item was not found.
     #[error("Not found: {0:?}")]
     NotFound(Vec<String>),
 }

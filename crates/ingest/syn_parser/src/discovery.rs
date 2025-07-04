@@ -1,3 +1,10 @@
+//! The discovery phase of the parsing process.
+//!
+//! This module is responsible for finding all `.rs` files in a given crate,
+//! parsing the `Cargo.toml` file, and generating a `CrateContext` for each
+//! crate. The `CrateContext` contains information about the crate, such as
+//! its name, version, and a list of all its source files.
+
 use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
@@ -33,32 +40,40 @@ use walkdir::WalkDir;
 /// Errors that can occur during the discovery phase.
 #[derive(Error, Debug, Clone)] // Add Clone derive
 pub enum DiscoveryError {
+    /// An I/O error occurred while accessing a path.
     #[error("I/O error accessing path {path}: {source}")]
     Io {
         path: PathBuf,
         #[source]
         source: Arc<std::io::Error>, // Wrap in Arc
     },
+    /// Failed to parse a `Cargo.toml` file.
     #[error("Failed to parse Cargo.toml at {path}: {source}")]
     TomlParse {
         path: PathBuf,
         #[source]
         source: Arc<toml::de::Error>, // Wrap in Arc
     },
+    /// The `package.name` field was missing from a `Cargo.toml` file.
     #[error("Missing 'package.name' in Cargo.toml at {path}")]
     MissingPackageName { path: PathBuf }, // This variant is already Clone
+    /// The `package.version` field was missing from a `Cargo.toml` file.
     #[error("Missing 'package.version' in Cargo.toml at {path}")]
     MissingPackageVersion { path: PathBuf },
+    /// The target crate path was not found.
     #[error("Target crate path not found: {path}")]
     CratePathNotFound { path: PathBuf },
+    /// An error occurred while walking a directory.
     #[error("Walkdir error in {path}: {source}")]
     Walkdir {
         path: PathBuf,
         #[source]
         source: Arc<walkdir::Error>, // Wrap in Arc
     },
+    /// The source directory was not found for a crate.
     #[error("Source directory not found for crate at: {path}")]
     SrcNotFound { path: PathBuf }, // Critical error: Cannot proceed without source files.
+    /// Multiple non-fatal errors occurred during discovery.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
 }
@@ -115,16 +130,27 @@ impl Features {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)] // Allows parsing either a string or a table
 pub enum DependencySpec {
+    /// A simple version string, e.g. `"1.0"`.
     Version(String),
+    /// A more detailed dependency specification.
     Detailed {
+        /// The version of the dependency.
         version: Option<String>,
+        /// The path to the dependency.
         path: Option<String>,
+        /// The git repository of the dependency.
         git: Option<String>,
+        /// The git branch of the dependency.
         branch: Option<String>,
+        /// The git tag of the dependency.
         tag: Option<String>,
+        /// The git revision of the dependency.
         rev: Option<String>,
+        /// The features to enable for the dependency.
         features: Option<Vec<String>>,
+        /// Whether the dependency is optional.
         optional: Option<bool>,
+        /// Whether to use the default features of the dependency.
         #[serde(rename = "default-features")]
         default_features: Option<bool>,
         // Add other fields like 'package' if needed
@@ -148,6 +174,7 @@ impl DependencySpec {
         matches!(self, Self::Version(..))
     }
 
+    /// Returns the version string if this is a version spec.
     pub fn as_version(&self) -> Option<&String> {
         if let Self::Version(v) = self {
             Some(v)
@@ -156,6 +183,7 @@ impl DependencySpec {
         }
     }
 
+    /// Tries to convert the dependency spec into a version string.
     pub fn try_into_version(self) -> Result<String, Box<Self>> {
         if let Self::Version(v) = self {
             Ok(v)
@@ -246,11 +274,13 @@ impl DependencySpec {
 #[derive(Deserialize, Debug, Clone, Default)]
 pub struct Dependencies(pub HashMap<String, DependencySpec>); // Made inner map public for direct access if needed
 
+/// A trait for accessing dependency information.
 pub trait DependencyMap {
     // Associated type for the inner map (optional, but can be useful)
     // type InnerMap = HashMap<String, DependencySpec>;
 
     // TODO: Turn these tests back on once the migration to typed ids is complete.
+    /// Returns a reference to the inner map of dependencies.
     fn inner_map(&self) -> &HashMap<String, DependencySpec>;
     /// Returns a reference to the dependency specification for the given crate name, if it exists.
     ///
@@ -345,6 +375,7 @@ pub trait DependencyMap {
     // --- Potential Future Additions (Consider if needed) ---
 
     // /// Returns an iterator over dependencies specified by a local path.
+    /// Returns an iterator over dependencies specified by a local path.
     fn path_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
         self.inner_map()
             .iter()
@@ -352,6 +383,7 @@ pub trait DependencyMap {
     }
 
     // /// Returns an iterator over dependencies specified by a git repository.
+    /// Returns an iterator over dependencies specified by a git repository.
     fn git_dependencies(&self) -> impl Iterator<Item = (&String, &str)> {
         self.inner_map()
             .iter()
@@ -451,23 +483,29 @@ pub struct CrateContext {
 }
 
 impl CrateContext {
+    /// Returns the features of the crate.
     pub fn features(&self) -> &Features {
         &self.features
     }
 
+    /// Returns the dependencies of the crate.
     pub fn dependencies(&self) -> &Dependencies {
         &self.dependencies
     }
 
+    /// Returns the dev-dependencies of the crate.
     pub fn dev_dependencies(&self) -> &DevDependencies {
         &self.dev_dependencies
     }
+    /// Returns `true` if the crate is a binary crate.
     pub fn is_bin(&self) -> bool {
         self.files.iter().any(|fp| fp.ends_with("main.rs"))
     }
+    /// Returns `true` if the crate is a library crate.
     pub fn is_lib(&self) -> bool {
         self.files.iter().any(|fp| fp.ends_with("lib.rs"))
     }
+    /// Returns the root file of the crate.
     pub fn root_file(&self) -> Option<&Path> {
         self.files
             .iter()

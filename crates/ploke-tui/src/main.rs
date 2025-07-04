@@ -19,7 +19,7 @@ use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
 use file_man::FileManager;
 use llm::llm_manager;
-use ploke_embed::{cancel_token::CancellationToken, indexer::{EmbeddingProcessor, IndexerTask, LocalModelBackend}};
+use ploke_embed::{cancel_token::CancellationToken, indexer::{EmbeddingProcessor, IndexProgress, IndexerTask, LocalModelBackend}};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
@@ -186,6 +186,7 @@ pub enum AppEvent {
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
     Error(ErrorEvent),
+    IndexProgress(IndexProgress),
 }
 
 impl AppEvent {
@@ -197,6 +198,7 @@ impl AppEvent {
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
             AppEvent::Error(_) => EventPriority::Background,
+            AppEvent::IndexProgress(_) => EventPriority::Realtime,
         }
     }
 }

@@ -12,6 +12,9 @@ pub enum DbError {
 
     #[error("Invalid query construction: {0}")]
     QueryConstruction(String),
+
+    #[error("Item not found")]
+    NotFound
 }
 
 #[derive(Error, Debug)]

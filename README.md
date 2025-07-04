@@ -349,7 +349,7 @@ We are deeply committed to creating a project that has clean, idiomatic rust tha
   - See [parser_error_handling]
 </details>
 
-## Current Focus: TUI Prototype
+## Current Focus: RAG Prototype
 
 Our immediate focus is on the Terminal User Interface that forms the primary user-facing interface with the LLM.
 
