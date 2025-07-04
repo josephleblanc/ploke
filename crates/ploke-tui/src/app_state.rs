@@ -1,4 +1,4 @@
-use ploke_embed::indexer::IndexerTask;
+use ploke_embed::indexer::{IndexStatus, IndexerTask};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
@@ -43,11 +43,15 @@ pub struct AppState {
 pub struct ChatState(pub RwLock<ChatHistory>);
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
+// Implement Deref AI!
 #[derive(Debug)]
 pub struct ConfigState(RwLock<Config>);
+
+// Implement Deref AI!
 #[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
 
+// Implement Deref AI!
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
 
