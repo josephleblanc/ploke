@@ -16,7 +16,7 @@ mod user_config;
 mod utils;
 
 use app::App;
-use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
+use app_state::{state_manager, AppState, ChatState, ConfigState, IndexingState, MessageUpdatedEvent, StateCommand, SystemState};
 use file_man::FileManager;
 use llm::llm_manager;
 use ploke_embed::{
@@ -108,10 +108,11 @@ async fn try_main() -> color_eyre::Result<()> {
     };
 
     let state = Arc::new(AppState {
-        chat: ChatState(RwLock::new(ChatHistory::new())),
-        config: ConfigState(RwLock::new(Config::default())),
-        system: SystemState(RwLock::new(SystemStatus::default())),
-        indexing_state: RwLock::new(None),
+        chat: ChatState::default(),
+        config: ConfigState::default(),
+        system: SystemState::default(),
+        // fill out the `todo!()` with a correct implementation AI!
+        indexing_state: todo!(),
         indexer_task: Some(Arc::new(indexer_task)),
     });
 
@@ -227,7 +228,7 @@ impl AppEvent {
             AppEvent::IndexingProgress(_) => EventPriority::Realtime,
             AppEvent::IndexingStarted => EventPriority::Background,
             AppEvent::IndexingCompleted => EventPriority::Background,
-            AppEvent::IndexingFailed => EventPriority::Background,
+            AppEvent::IndexingFailed(_) => EventPriority::Background,
         }
     }
 }
