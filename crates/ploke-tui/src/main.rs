@@ -98,12 +98,11 @@ async fn try_main() -> color_eyre::Result<()> {
 
     let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
     let file_manager = FileManager::new(
-        state.clone(),
         io_handle.clone(),
         event_bus.subscribe(EventPriority::Background),
     );
     
-    tokio::spawn(file_manager.run(filemgr_rx));
+    tokio::spawn(file_manager.run());
 
     let indexer_task = IndexerTask {
         db: db_handle,
