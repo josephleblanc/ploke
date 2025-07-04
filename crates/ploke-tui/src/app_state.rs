@@ -47,13 +47,32 @@ pub struct ChatState(pub RwLock<ChatHistory>);
 #[derive(Debug)]
 pub struct ConfigState(RwLock<Config>);
 
-// Implement Deref AI!
 #[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
 
-// Implement Deref AI!
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
+
+impl std::ops::Deref for ConfigState {
+    type Target = RwLock<Config>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for SystemState {
+    type Target = RwLock<SystemStatus>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for IndexingState {
+    type Target = Arc<Mutex<IndexingStatus>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Config {
