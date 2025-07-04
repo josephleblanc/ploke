@@ -9,17 +9,20 @@
 mod app;
 pub mod app_state;
 mod chat_history;
+mod file_man;
 pub mod llm;
 mod tracing_setup;
 mod user_config;
 mod utils;
-mod file_man;
 
 use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
 use file_man::FileManager;
 use llm::llm_manager;
-use ploke_embed::{cancel_token::CancellationToken, indexer::{EmbeddingProcessor, IndexProgress, IndexerTask, LocalModelBackend}};
+use ploke_embed::{
+    cancel_token::CancellationToken,
+    indexer::{self, EmbeddingProcessor, IndexProgress, IndexerTask, IndexingStatus, LocalModelBackend},
+};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
@@ -87,7 +90,14 @@ async fn try_main() -> color_eyre::Result<()> {
     // spawning state meager below.
     let io_handle = ploke_io::IoManagerHandle::new();
 
-    let event_bus = Arc::new(EventBus::new(100, 1000, 100));
+    // TODO: These numbers should be tested for performance under different circumstances.
+    let event_bus_caps = EventBusCaps {
+        realtime_cap: 100,
+        background_cap: 1000,
+        error_cap: 100,
+        index_cap: 1000,
+    };
+    let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
     let state = Arc::new(AppState::default());
 
@@ -101,18 +111,17 @@ async fn try_main() -> color_eyre::Result<()> {
         io_handle.clone(),
         event_bus.subscribe(EventPriority::Background),
     );
-    
+
     tokio::spawn(file_manager.run());
 
     let indexer_task = IndexerTask {
         db: db_handle,
         io: io_handle,
         // TODO: Change this from dummy once everything is connected.
-        embedding_processor: EmbeddingProcessor::new( Some( LocalModelBackend::dummy() ) ),
+        embedding_processor: EmbeddingProcessor::new(Some(LocalModelBackend::dummy())),
         cancellation_token,
         batch_size: 1024,
     };
-
 
     // Spawn state manager first
     tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));
@@ -186,7 +195,10 @@ pub enum AppEvent {
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
     Error(ErrorEvent),
-    IndexProgress(IndexProgress),
+    IndexingProgress(indexer::IndexingStatus),
+    IndexingStarted,
+    IndexingCompleted,
+    IndexingFailed,
 }
 
 impl AppEvent {
@@ -198,7 +210,10 @@ impl AppEvent {
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
             AppEvent::Error(_) => EventPriority::Background,
-            AppEvent::IndexProgress(_) => EventPriority::Realtime,
+            AppEvent::IndexingProgress(_) => EventPriority::Realtime,
+            AppEvent::IndexingStarted => EventPriority::Background,
+            AppEvent::IndexingCompleted => EventPriority::Background,
+            AppEvent::IndexingFailed => EventPriority::Background,
         }
     }
 }
@@ -223,20 +238,29 @@ pub enum EventPriority {
 }
 
 pub struct EventBus {
-    // NOTE: `broadcast` is being used here for now, but may not be the best option long term. We
-    // are leaving it as-is for flexibility, but there may not be a need for there to be a multiple
-    // sender model for the `AppEvent` elements.
     realtime_tx: broadcast::Sender<AppEvent>,
     background_tx: broadcast::Sender<AppEvent>,
     error_tx: broadcast::Sender<ErrorEvent>,
+    // NOTE: dedicated for indexing manager control
+    index_tx: broadcast::Sender<indexer::IndexingStatus>,
+}
+
+/// Convenience struct to help with the initialization of EventBus
+#[derive(Clone, Copy)]
+pub struct EventBusCaps {
+    realtime_cap: usize,
+    background_cap: usize,
+    error_cap: usize,
+    index_cap: usize,
 }
 
 impl EventBus {
-    pub fn new(realtime_cap: usize, background_cap: usize, error_cap: usize) -> Self {
+    pub fn new(b: EventBusCaps) -> Self {
         Self {
-            realtime_tx: broadcast::channel(realtime_cap).0,
-            background_tx: broadcast::channel(background_cap).0,
-            error_tx: broadcast::channel(error_cap).0,
+            realtime_tx: broadcast::channel(b.realtime_cap).0,
+            background_tx: broadcast::channel(b.background_cap).0,
+            error_tx: broadcast::channel(b.error_cap).0,
+            index_tx: broadcast::channel(b.index_cap).0,
         }
     }
 
@@ -258,5 +282,9 @@ impl EventBus {
             EventPriority::Realtime => self.realtime_tx.subscribe(),
             EventPriority::Background => self.background_tx.subscribe(),
         }
+    }
+
+    pub fn index_subscriber(&self) -> broadcast::Receiver<indexer::IndexingStatus> {
+        self.index_tx.subscribe()
     }
 }

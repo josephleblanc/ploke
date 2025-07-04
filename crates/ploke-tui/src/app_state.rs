@@ -1,11 +1,14 @@
 use ploke_embed::indexer::IndexerTask;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 // logging
 
 use crate::{
-    chat_history::{MessageStatus, MessageUpdate}, llm::{ChatHistoryTarget, LLMParameters, MessageRole}, system::SystemEvent, utils::helper::truncate_string
+    chat_history::{MessageStatus, MessageUpdate},
+    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    system::SystemEvent,
+    utils::helper::truncate_string,
 };
 
 use super::*;
@@ -28,6 +31,10 @@ pub struct AppState {
     pub chat: ChatState,     // High-write frequency
     pub config: ConfigState, // Read-heavy
     pub system: SystemState, // Medium-write
+
+    // crate-external processes
+    pub indexing_state: Option<IndexingStatus>,
+    pub indexer_task: Option<Arc<indexer::IndexerTask>>
 }
 
 // TODO: Implement Deref for all three *State items below
@@ -40,6 +47,9 @@ pub struct ChatState(pub RwLock<ChatHistory>);
 pub struct ConfigState(RwLock<Config>);
 #[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
+
+#[derive(Debug)]
+pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
 
 #[derive(Debug, Default)]
 pub struct Config {
@@ -66,6 +76,8 @@ impl Default for AppState {
             chat: ChatState(RwLock::new(ChatHistory::new())),
             config: ConfigState(RwLock::new(Config::default())),
             system: SystemState(RwLock::new(SystemStatus::default())),
+            indexing_state: None,
+            indexer_task: None,
             // TODO: This needs to be handled elsewhere if not handled in AppState
             // shutdown: tokio::sync::broadcast::channel(1).0,
         }
@@ -417,17 +429,31 @@ pub async fn state_manager(
                 // about how vector embeddings are handled remotely or locally, and don't know if
                 // there are streaming options available for vector embeddings services
                 // specifically or through the `candle` crate, which I've never used.
+                let (control_tx, control_rx) = mpsc::channel(4);
+                let progress_tx = event_bus.index_tx.clone();
+
+                state.indexing = control_tx;
+
                 tokio::spawn(async move {
                     tracing::info!("IndexerTask started");
+                    event_bus.send(AppEvent::IndexingStarted);
+
+                    if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
+                        event_bus.send(AppEvent::IndexingFailed(e.to_string()));
+                    } else {
+                        event_bus.send(AppEvent::IndexingCompleted);
+                    }
                 });
-            },
+            }
 
             StateCommand::SaveState => {
                 let serialized_content = {
                     let guard = state.chat.0.read().await;
                     guard.format_for_persistence().as_bytes().to_vec()
                 };
-                event_bus.send(AppEvent::System(SystemEvent::SaveRequested(serialized_content)))
+                event_bus.send(AppEvent::System(SystemEvent::SaveRequested(
+                    serialized_content,
+                )))
             }
 
             // ... other commands

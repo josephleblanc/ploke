@@ -7,10 +7,12 @@ use tracing::{info_span, instrument};
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
 
+#[derive(Debug)]
 pub struct EmbeddingProcessor {
     local_backend: Option<LocalModelBackend>,
 }
 
+#[derive(Debug)]
 pub struct LocalModelBackend {
     dummy_dimensions: usize,
 }
@@ -18,7 +20,7 @@ pub struct LocalModelBackend {
 pub type IndexProgress = f64;
  // New state to track indexing
  #[derive(Debug, Clone)]
- pub struct IndexingState {
+ pub struct IndexingStatus {
      pub status: IndexStatus,
      pub processed: usize,
      pub total: usize,
@@ -26,7 +28,7 @@ pub type IndexProgress = f64;
      pub errors: Vec<String>,
  }
 
-impl IndexingState {
+impl IndexingStatus {
     fn calc_progress(&self) -> IndexProgress {
         self.processed.div_euclid(self.processed) as f64
     }
@@ -94,6 +96,7 @@ impl EmbeddingProcessor {
     }
 }
 
+#[derive(Debug)]
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
@@ -119,11 +122,11 @@ impl IndexerTask {
 
     pub async fn run(
         &self,
-        progress_tx: broadcast::Sender<IndexingState>,
+        progress_tx: broadcast::Sender<IndexingStatus>,
         mut control_rx: mpsc::Receiver<IndexerCommand>
     ) -> Result<(), EmbedError> {
         let total = self.db.count_pending_embeddings()?;
-        let mut state = IndexingState {
+        let mut state = IndexingStatus {
             status: IndexStatus::Running,
             processed: 0,
             total,
