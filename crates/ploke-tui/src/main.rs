@@ -99,7 +99,21 @@ async fn try_main() -> color_eyre::Result<()> {
     };
     let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
-    let state = Arc::new(AppState::default());
+    let indexer_task = IndexerTask {
+        db: db_handle.clone(),
+        io: io_handle.clone(),
+        embedding_processor: EmbeddingProcessor::new(Some(LocalModelBackend::dummy())),
+        cancellation_token: CancellationToken::new().0,
+        batch_size: 1024,
+    };
+
+    let state = Arc::new(AppState {
+        chat: ChatState(RwLock::new(ChatHistory::new())),
+        config: ConfigState(RwLock::new(Config::default())),
+        system: SystemState(RwLock::new(SystemStatus::default())),
+        indexing_state: RwLock::new(None),
+        indexer_task: Some(Arc::new(indexer_task)),
+    });
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
 
@@ -198,7 +212,7 @@ pub enum AppEvent {
     IndexingProgress(indexer::IndexingStatus),
     IndexingStarted,
     IndexingCompleted,
-    IndexingFailed,
+    IndexingFailed(String),
 }
 
 impl AppEvent {

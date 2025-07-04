@@ -33,7 +33,7 @@ pub struct AppState {
     pub system: SystemState, // Medium-write
 
     // crate-external processes
-    pub indexing_state: Option<IndexingStatus>,
+    pub indexing_state: RwLock<Option<IndexingStatus>>,
     pub indexer_task: Option<Arc<indexer::IndexerTask>>
 }
 
@@ -76,7 +76,7 @@ impl Default for AppState {
             chat: ChatState(RwLock::new(ChatHistory::new())),
             config: ConfigState(RwLock::new(Config::default())),
             system: SystemState(RwLock::new(SystemStatus::default())),
-            indexing_state: None,
+            indexing_state: RwLock::new(None),
             indexer_task: None,
             // TODO: This needs to be handled elsewhere if not handled in AppState
             // shutdown: tokio::sync::broadcast::channel(1).0,
@@ -403,47 +403,41 @@ pub async fn state_manager(
             }
 
             StateCommand::IndexWorkspace => {
-                // TODO: This is a mock implementation. We need to pass the correct handles
-                // to the real IndexerTask.
-                // Indexer Task will:
-                // 1. calling the database to get the non-indexed nodes in the graph using
-                //    `get_nodes_for_embedding`
-                // 2. calling the `get_snippets_batch` function to retrieve the code snippets from
-                //    the target location
-                // 3. then either:
-                //      a. processing the embeddings locally, likely using `candle` or an
-                //      alternative
-                //      b. sending the embeddings to a remote API that can process the code
-                //      snippets into embeddings.
-                // 4. calling the `index_embeddings` function to create the hnsw index for the
-                //    embeddings.
-                // 5. return here and likely sending some kind of event to alert the rest of the
-                //    systems, either through events or by changing state, that the embeddings are
-                //    finished.
-                //
-                // - Note that we will want to ensure there are some other features built in as
-                // well, such as a progress bar in the TUI that shows the ongoing progress of the
-                // embeddings and ways to fail gracefully if the program is terminated early, and
-                // ways to save our progress in processing the embeddings if possible, perhaps
-                // through some kind of streaming mechanism or something, I don't know very much
-                // about how vector embeddings are handled remotely or locally, and don't know if
-                // there are streaming options available for vector embeddings services
-                // specifically or through the `candle` crate, which I've never used.
-                let (control_tx, control_rx) = mpsc::channel(4);
-                let progress_tx = event_bus.index_tx.clone();
-
-                state.indexing = control_tx;
-
-                tokio::spawn(async move {
-                    tracing::info!("IndexerTask started");
-                    event_bus.send(AppEvent::IndexingStarted);
-
-                    if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
-                        event_bus.send(AppEvent::IndexingFailed(e.to_string()));
-                    } else {
-                        event_bus.send(AppEvent::IndexingCompleted);
+                if let Some(indexer_task_arc) = &state.indexer_task {
+                    let indexer_task = Arc::clone(indexer_task_arc);
+                    let (control_tx, control_rx) = mpsc::channel(4);
+                    let progress_tx = event_bus.index_tx.clone();
+                    
+                    // Initialize indexing state
+                    {
+                        let mut state_guard = state.indexing_state.write().await;
+                        *state_guard = Some(IndexingStatus {
+                            status: IndexStatus::Running,
+                            processed: 0,
+                            total: indexer_task.db.count_pending_embeddings()
+                                .map_err(|e| tracing::error!("DB error: {e}"))
+                                .unwrap_or(100), // Fallback total
+                            current_file: None,
+                            errors: Vec::new(),
+                        });
                     }
-                });
+
+                    tokio::spawn(async move {
+                        tracing::info!("IndexerTask started");
+                        event_bus.send(AppEvent::IndexingStarted);
+                        
+                        if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
+                            event_bus.send(AppEvent::IndexingFailed(e.to_string()));
+                        } else {
+                            event_bus.send(AppEvent::IndexingCompleted);
+                        }
+                    });
+                } else {
+                    tracing::error!("Indexer task not initialized");
+                    event_bus.send(AppEvent::IndexingFailed(
+                        "Indexing subsystem not initialized".to_string()
+                    ));
+                }
             }
 
             StateCommand::SaveState => {

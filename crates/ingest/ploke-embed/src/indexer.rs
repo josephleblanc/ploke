@@ -30,7 +30,11 @@ pub type IndexProgress = f64;
 
 impl IndexingStatus {
     fn calc_progress(&self) -> IndexProgress {
-        self.processed.div_euclid(self.processed) as f64
+        if self.total == 0 {
+            0.0
+        } else {
+            self.processed as f64 / self.total as f64
+        }
     }
 }
 
