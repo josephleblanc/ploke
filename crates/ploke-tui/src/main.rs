@@ -13,17 +13,19 @@ pub mod llm;
 mod tracing_setup;
 mod user_config;
 mod utils;
+mod file_man;
 
 use app::App;
 use app_state::{AppState, MessageUpdatedEvent, StateCommand, state_manager};
+use file_man::FileManager;
 use llm::llm_manager;
-use ploke_embed::indexer::IndexerTask;
+use ploke_embed::{cancel_token::CancellationToken, indexer::{EmbeddingProcessor, IndexerTask, LocalModelBackend}};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc};
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
 use utils::layout::layout_statusline;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
@@ -41,7 +43,7 @@ use uuid::Uuid;
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     let _guard = tracing_setup::init_tracing();
-    let _panic_hook = color_eyre::config::HookBuilder::default()
+    color_eyre::config::HookBuilder::default()
         .display_location_section(false)
         .install()?;
 
@@ -79,12 +81,38 @@ async fn try_main() -> color_eyre::Result<()> {
     }
 
     let new_db = ploke_db::Database::init_with_schema()?;
+    let db_handle = Arc::new(new_db);
+
+    // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
+    // spawning state meager below.
+    let io_handle = ploke_io::IoManagerHandle::new();
 
     let event_bus = Arc::new(EventBus::new(100, 1000, 100));
+
     let state = Arc::new(AppState::default());
+
+    let (cancellation_token, cancel_handle) = CancellationToken::new();
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+    let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+    let file_manager = FileManager::new(
+        state.clone(),
+        io_handle.clone(),
+        event_bus.subscribe(EventPriority::Background),
+    );
+    
+    tokio::spawn(file_manager.run(filemgr_rx));
+
+    let indexer_task = IndexerTask {
+        db: db_handle,
+        io: io_handle,
+        // TODO: Change this from dummy once everything is connected.
+        embedding_processor: EmbeddingProcessor::new( Some( LocalModelBackend::dummy() ) ),
+        cancellation_token,
+        batch_size: 1024,
+    };
 
 
     // Spawn state manager first
@@ -136,6 +164,7 @@ pub mod system {
 
     #[derive(Clone, Debug)]
     pub enum SystemEvent {
+        SaveRequested,
         MutationFailed(UiError),
         CommandDropped(&'static str),
     }
