@@ -164,7 +164,7 @@ pub mod system {
 
     #[derive(Clone, Debug)]
     pub enum SystemEvent {
-        SaveRequested,
+        SaveRequested(Vec<u8>), // Serialized content
         MutationFailed(UiError),
         CommandDropped(&'static str),
     }
