@@ -39,23 +39,43 @@ pub struct AppState {
 
 // TODO: Implement Deref for all three *State items below
 
-// implement `new` AI!
 #[derive(Debug)]
 pub struct ChatState(pub RwLock<ChatHistory>);
+
+impl ChatState {
+    pub fn new(history: ChatHistory) -> Self {
+        ChatState(RwLock::new(history))
+    }
+}
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
 
-// implement `new` AI!
 #[derive(Debug)]
 pub struct ConfigState(RwLock<Config>);
 
-// implement `new` AI!
+impl ConfigState {
+    pub fn new(config: Config) -> Self {
+        ConfigState(RwLock::new(config))
+    }
+}
+
 #[derive(Debug)]
 pub struct SystemState(RwLock<SystemStatus>);
 
-// implement `new` AI!
+impl SystemState {
+    pub fn new(status: SystemStatus) -> Self {
+        SystemState(RwLock::new(status))
+    }
+}
+
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
+
+impl IndexingState {
+    pub fn new(status: IndexingStatus) -> Self {
+        IndexingState(Arc::new(Mutex::new(status)))
+    }
+}
 
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
