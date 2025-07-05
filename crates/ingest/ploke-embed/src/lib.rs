@@ -5,6 +5,7 @@ pub mod error;
 pub mod providers;
 pub mod local;
 pub mod cancel_token;
+pub mod config;
 
 #[cfg(test)]
 mod tests {

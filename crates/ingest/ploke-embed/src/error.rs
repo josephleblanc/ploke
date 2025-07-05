@@ -14,8 +14,17 @@ pub enum EmbedError {
     #[error("Local model error: {0}")]
     LocalModel(String),
 
-    #[error("Hugging Face API error: status {status}, body: {body}")]
-    HuggingFaceApi { status: u16, body: String },
+    #[error("Hugging Face API error: {0}")]
+    HuggingFace(#[from] HuggingFaceError),
+
+    #[error("OpenAI API error: {0}")]
+    OpenAI(#[from] OpenAIError),
+
+    #[error("Network Error: {0}")]
+    Network(String),
+
+    #[error("Feature not implemented: {0}")]
+    NotImplemented(String),
 
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
@@ -60,12 +69,9 @@ impl From<tokenizers::Error> for EmbedError {
     }
 }
 
-impl From<ApiError> for EmbedError {
-    fn from(e: ApiError) -> Self {
-        EmbedError::HuggingFaceApi {
-            status: e.status,
-            body: e.body,
-        }
+impl From<reqwest::Error> for EmbedError {
+    fn from(e: reqwest::Error) -> Self {
+        EmbedError::Network(e.to_string())
     }
 }
 
@@ -75,16 +81,14 @@ impl From<EmbedError> for ploke_error::Error {
     }
 }
 
-#[derive(Debug)]
-pub struct ApiError {
-    pub status: u16,
-    pub body: String,
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum HuggingFaceError {
+    #[error("API error: status {status}, body {body}")]
+    ApiError { status: u16, body: String },
 }
 
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "API error: status {} body {}", self.status, self.body)
-    }
+#[derive(thiserror::Error, Debug, Clone)]
+pub enum OpenAIError {
+    #[error("API error: status {status}, body {body}")]
+    ApiError { status: u16, body: String },
 }
-
-impl std::error::Error for ApiError {}

@@ -46,6 +46,11 @@ impl From<EmbeddingError> for PlokeError {
     }
 }
 
+//  Example usage at crate boundary
+// pub fn create_embedder() -> Result<LocalEmbedder, PlokeError> {
+//     LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
+//         .map_err(Into::into)
+// }
 pub struct LocalEmbedder {
     model: BertModel,
     tokenizer: Tokenizer,
@@ -165,8 +170,3 @@ impl LocalEmbedder {
     }
 }
 
-// Example usage at crate boundary
-pub fn create_embedder() -> Result<LocalEmbedder, PlokeError> {
-    LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
-        .map_err(Into::into)
-}

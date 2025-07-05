@@ -1,3 +1,4 @@
+use ploke_embed::config::{CozoConfig, HuggingFaceConfig, OpenAIConfig};
 use reqwest::{Request, RequestBuilder};
 use serde::Deserialize;
 
@@ -20,6 +21,16 @@ pub struct Config {
     pub provider: ProviderConfig,
     #[serde(default)]
     pub command_style: CommandStyle,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
+}
+
+// NEW: Embedding configuration
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EmbeddingConfig {
+    pub hugging_face: Option<HuggingFaceConfig>,
+    pub openai: Option<OpenAIConfig>,
+    pub cozo: Option<CozoConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
