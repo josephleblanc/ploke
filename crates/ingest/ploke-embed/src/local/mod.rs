@@ -167,6 +167,10 @@ impl LocalEmbedder {
         device: &Device,
     ) -> Result<(BertModel, Tokenizer, Config), EmbeddingError> {
         let api = Api::new().map_err(EmbeddingError::ModelDownload)?;
+        // Add token from environment
+        let token = std::env::var("HF_TOKEN").ok();
+        let api = api.with_token(token);
+
         let repo = match &config.revision {
             Some(revision) => Repo::with_revision(
                 config.model_id.clone(),
@@ -182,8 +186,9 @@ impl LocalEmbedder {
         // Download and validate config
         let config_path = repo_api.get("config.json")
             .map_err(EmbeddingError::ModelDownload)?;
-        Self::validate_file_size(&config_path)?;
-        let config_str = std::fs::read_to_string(&config_path)?;
+        Self::validate_file_contents(&config_path)?;
+        let config_str = std::fs::read_to_string(&config_path)
+            .map_err(|e| EmbeddingError::ModelDownload(e.to_string()))?;
         let mut model_config: Config = serde_json::from_str(&config_str)
             .map_err(|e| EmbeddingError::Config(e.to_string()))?;
         
@@ -194,7 +199,7 @@ impl LocalEmbedder {
         // Download and validate tokenizer
         let tokenizer_path = repo_api.get("tokenizer.json")
             .or_else(|_| repo_api.get("tokenizer.model"))?;
-        Self::validate_file_size(&tokenizer_path)?;
+        Self::validate_file_contents(&tokenizer_path)?;
         let tokenizer = Tokenizer::from_file(tokenizer_path)
             .map_err(EmbeddingError::Tokenizer)?;
 
@@ -206,7 +211,7 @@ impl LocalEmbedder {
             repo_api.get("model.safetensors")
                 .or_else(|_| repo_api.get("pytorch_model.bin"))?
         };
-        Self::validate_file_size(&weights_path)?;
+        Self::validate_file_contents(&weights_path)?;
 
         let vb = if weights_path.extension().and_then(|e| e.to_str()) == Some("safetensors") {
             Self::load_safetensors(&weights_path, device)?
@@ -245,13 +250,14 @@ impl LocalEmbedder {
         Ok(VarBuilder::from_tensors(tensors.into_iter().collect(), DType::F32, device))
     }
 
-    fn validate_file_size(path: &PathBuf) -> Result<(), EmbeddingError> {
-        let metadata = std::fs::metadata(path)?;
-        if metadata.len() < 1024 {
-            return Err(EmbeddingError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("File too small: {} bytes", metadata.len()),
-            )));
+    fn validate_file_contents(path: &PathBuf) -> Result<(), EmbeddingError> {
+        let content = std::fs::read(path)?;
+        if std::str::from_utf8(&content)
+            .map(|s| s.contains("private or gated model"))? 
+        {
+            return Err(EmbeddingError::ModelDownload(
+                "Authentication required for gated model".to_string()
+            ));
         }
         Ok(())
     }
