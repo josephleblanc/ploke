@@ -132,9 +132,9 @@ impl Database {
          }
 
          let inner_db = self.db.clone();
+         // FIX: Corrected CozoDB update script
          let script = r#"
-             input[id, embedding] <- $updates
-             ?[id, embedding] := input[id, embedding]
+             ?[id, embedding] <- $updates
              :update embedding_nodes { id => embedding }
          "#;
 
@@ -154,8 +154,7 @@ impl Database {
              .collect();
 
          let mut params = BTreeMap::new();
-         params.insert("updates".to_string(),
- DataValue::List(updates_data));
+         params.insert("updates".to_string(), DataValue::List(updates_data));
 
          // Run in blocking task to avoid stalling async runtime
          tokio::task::spawn_blocking(move || {
