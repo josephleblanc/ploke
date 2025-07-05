@@ -32,8 +32,8 @@ As it stands, the code snippets will be retrieved from the byte start/end of the
 - [x]  `ploke-io` created
     - [x]  Architected
     - [x]  Tested
-    - [ ]  Connected to `ploke-tui`
-    - [ ]  Connected to `ploke-embed`
+    - [x]  Connected to `ploke-tui`
+    - [x]  Connected to `ploke-embed`
 - [x]  Create `ploke-embed`
     - [x]  Update `ploke-db`
 

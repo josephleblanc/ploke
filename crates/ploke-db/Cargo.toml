@@ -21,8 +21,10 @@ log = { workspace = true }
 # pre-caching the schema fields for queries
 lazy_static = "1.4.0" # Added lazy_static
 
-[dev-dependencies]
+# concurrency
 tokio = { workspace = true }
+
+[dev-dependencies]
 ploke-transform = { path = "../ingest/ploke-transform" }
 
 [features]

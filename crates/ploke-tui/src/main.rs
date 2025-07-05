@@ -1,4 +1,4 @@
-#![allow(unused_variables, unused_imports)]
+#![allow(unused_variables, unused_imports, dead_code)]
 
 // TODO:
 //

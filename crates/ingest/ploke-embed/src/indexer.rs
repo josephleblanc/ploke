@@ -94,7 +94,7 @@ pub type IndexProgress = f64;
  }
 
 impl IndexingStatus {
-    fn calc_progress(&self) -> IndexProgress {
+    pub fn calc_progress(&self) -> IndexProgress {
         if self.total == 0 {
             0.0
         } else {

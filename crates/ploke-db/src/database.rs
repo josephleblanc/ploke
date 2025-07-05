@@ -110,52 +110,54 @@ impl Database {
 
         Ok(())
     }
-    pub async fn update_embeddings_batch(
-        &self,
-        updates: Vec<(uuid::Uuid, Vec<f32>)>,
-    ) -> Result<(), DbError> {
-        if updates.is_empty() {
-            return Ok(());
-        }
+     pub async fn update_embeddings_batch(
+         &self,
+         updates: Vec<(uuid::Uuid, Vec<f32>)>,
+     ) -> Result<(), DbError> {
+         if updates.is_empty() {
+             return Ok(());
+         }
 
-        let inner_db = self.db.clone();
-        let script = r#"
-            input[id, embedding] <- $updates
-            ?[id, embedding] := input[id, embedding]
-            :update embedding_nodes { id => embedding }
-        "#;
+         let inner_db = self.db.clone();
+         let script = r#"
+             input[id, embedding] <- $updates
+             ?[id, embedding] := input[id, embedding]
+             :update embedding_nodes { id => embedding }
+         "#;
 
-        // Convert updates to DataValue format
-        let updates_data: Vec<DataValue> = updates
-            .into_iter()
-            .map(|(id, embedding)| {
-                let id_val = DataValue::Uuid(UuidWrapper(id));
-                let embedding_val = DataValue::List(
-                    embedding
-                        .into_iter()
-                        .map(|f| DataValue::Float(f as f64))
-                        .collect(),
-                );
-                DataValue::List(vec![id_val, embedding_val])
-            })
-            .collect();
+         // Convert updates to DataValue format
+         let updates_data: Vec<DataValue> = updates
+             .into_iter()
+             .map(|(id, embedding)| {
+                 let id_val = DataValue::Uuid(UuidWrapper(id));
+                 let embedding_val = DataValue::List(
+                     embedding
+                         .into_iter()
+                         .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
+                         .collect(),
+                 );
+                 DataValue::List(vec![id_val, embedding_val])
+             })
+             .collect();
 
-        let mut params = BTreeMap::new();
-        params.insert("updates".to_string(), DataValue::List(updates_data));
+         let mut params = BTreeMap::new();
+         params.insert("updates".to_string(),
+ DataValue::List(updates_data));
 
-        // Run in blocking task to avoid stalling async runtime
-        tokio::task::spawn_blocking(move || {
-            inner_db.run_script(
-                script,
-                params,
-                cozo::ScriptMutability::Mutable,
-            )
-        })
-        .await?
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
+         // Run in blocking task to avoid stalling async runtime
+         tokio::task::spawn_blocking(move || {
+             inner_db.run_script(
+                 script,
+                 params,
+                 cozo::ScriptMutability::Mutable,
+             )
+         })
+         .await
+         .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
+         .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        Ok(())
-    }
+         Ok(())
+     }
 
     /// Fetches all primary nodes that do not yet have an embedding.
     ///

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::widgets::Gauge;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -214,6 +215,17 @@ impl App {
             Mode::Insert => Style::default().fg(Color::Yellow),
             Mode::Command => Style::default().fg(Color::Cyan),
         });
+        // Add progress bar at bottom if indexing
+        if let Some(state) = &self.indexing_state {
+            let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
+
+            let gauge = Gauge::default()
+                .block(progress_block)
+                .ratio(state.calc_progress())
+                .gauge_style(Style::new().light_blue());
+
+            frame.render_widget(gauge, main_layout[2]); // Bottom area
+        }
 
         // Render Mode to text
         let status_bar = Block::default()
@@ -350,8 +362,11 @@ impl App {
         };
 
         match cmd_str {
-            "index" => self.send_cmd(StateCommand::IndexWorkspace),
             "help" => self.show_command_help(),
+            "index start" => self.send_cmd(StateCommand::IndexWorkspace),
+            "index pause" => self.send_cmd(StateCommand::PauseIndexing),
+            "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
+            "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling

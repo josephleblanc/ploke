@@ -289,7 +289,11 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
                 })
                 .await;
         }
-        _ => {}
+        Event::Request { request_id, parent_id, prompt, parameters } => todo!("Implement Me!"),
+        Event::PartialResponse { request_id, delta } => todo!("Implement Me!"),
+        Event::Error { request_id, error } => todo!("Implement Me!"),
+        Event::Status { active_requests, queue_depth } => todo!("Implement Me!"),
+        Event::ModelChanged { new_model } => todo!("Implement Me!"),
     }
 }
 

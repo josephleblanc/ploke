@@ -472,15 +472,14 @@ mod test {
         use crate::QueryBuilder;
         use cozo::{Db, MemStorage};
 
-        // let db = Db::new(MemStorage::default()).expect("Failed to create database");
-        // db.initialize().expect("Failed to initialize database");
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
 
         let schema = &StructNodeSchema::SCHEMA;
         let name_field = schema.name();
 
         let builder = QueryBuilder::new(
-            // &db
-        )
+        ).with_name(name_field)
         .structs()
         .add_lhs(name_field);
 

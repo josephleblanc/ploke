@@ -1,4 +1,4 @@
-use ploke_embed::indexer::{IndexStatus, IndexerTask};
+use ploke_embed::indexer::{IndexStatus, IndexerCommand, IndexerTask};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
@@ -35,7 +35,7 @@ pub struct AppState {
     // crate-external processes
     pub indexing_state: RwLock<Option<IndexingStatus>>,
     pub indexer_task: Option<Arc<indexer::IndexerTask>>,
-    pub indexing_control: Arc<Mutex<Option<mpsc::Sender<indexer::IndexerCommand>>>>
+    pub indexing_control: Arc<Mutex<Option<mpsc::Sender<indexer::IndexerCommand>>>>,
 }
 
 // TODO: Implement Deref for all three *State items below
@@ -80,7 +80,7 @@ impl IndexingState {
 
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
-    fn deref(&self) -> &Self::Target {              
+    fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
@@ -231,9 +231,6 @@ pub enum StateCommand {
     /// Loads application state from a file, replacing the current state.
     LoadState,
 
-    /// Triggers a background task to index the entire workspace.
-    IndexWorkspace,
-
     // --- LLM and Agent Commands ---
     /// Submits the current chat history to the LLM for a response.
     /// The `state_manager` will prepare the prompt and dispatch it to the `llm_manager`.
@@ -269,6 +266,12 @@ pub enum StateCommand {
         parent_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
+
+    /// Triggers a background task to index the entire workspace.
+    IndexWorkspace,
+    PauseIndexing,
+    ResumeIndexing,
+    CancelIndexing,
 }
 
 impl StateCommand {
@@ -291,6 +294,9 @@ impl StateCommand {
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
             StateCommand::IndexWorkspace => "IndexWorkspace",
+            StateCommand::PauseIndexing => "PauseIndexing",
+            StateCommand::ResumeIndexing => "ResumeIndexing",
+            StateCommand::CancelIndexing => "CancelIndexing",
             // ... other variants
         }
     }
@@ -450,48 +456,89 @@ pub async fn state_manager(
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
-
             StateCommand::IndexWorkspace => {
+                let (control_tx, control_rx) = mpsc::channel(4);
+                let progress_tx = event_bus.index_tx.clone();
+
+                // Store control handle
+                {
+                    let mut ctrl_guard = state.indexing_control.lock().await;
+                    *ctrl_guard = Some(control_tx);
+                }
+
                 if let Some(indexer_task_arc) = &state.indexer_task {
-                    let indexer_task = Arc::clone(indexer_task_arc);
-                    let (control_tx, control_rx) = mpsc::channel(4);
-                    let progress_tx = event_bus.index_tx.clone();
-
-                    // Initialize indexing state
-                    {
-                        let mut state_guard = state.indexing_state.write().await;
-                        *state_guard = Some(IndexingStatus {
-                            status: IndexStatus::Running,
-                            processed: 0,
-                            total: indexer_task
-                                .db
-                                .count_pending_embeddings()
-                                .map_err(|e| tracing::error!("DB error: {e}"))
-                                .unwrap_or(100), // Fallback total
-                            current_file: None,
-                            errors: Vec::new(),
-                        });
-                    }
-
-                    let bus_copy = event_bus.clone();
-                    tokio::spawn(async move {
-                        tracing::info!("IndexerTask started");
-                        bus_copy.send(AppEvent::IndexingStarted);
-
-                        if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
-                            bus_copy.send(AppEvent::IndexingFailed(e.to_string()));
-                        } else {
-                            bus_copy.send(AppEvent::IndexingCompleted);
+                    tokio::spawn({
+                        let event_bus = event_bus.clone();
+                        let indexer_task = indexer_task_arc.clone();
+                        async move {
+                            event_bus.send(AppEvent::IndexingStarted);
+                            if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
+                                event_bus.send(AppEvent::IndexingFailed(e.to_string()));
+                            } else {
+                                event_bus.send(AppEvent::IndexingCompleted);
+                            }
                         }
                     });
-                } else {
-                    tracing::error!("Indexer task not initialized");
-                    event_bus.send(AppEvent::IndexingFailed(
-                        "Indexing subsystem not initialized".to_string(),
-                    ));
                 }
             }
 
+            StateCommand::PauseIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Pause).await.ok();
+                }
+            }
+
+            StateCommand::ResumeIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Resume).await.ok();
+                }
+            }
+
+            StateCommand::CancelIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Cancel).await.ok();
+                }
+            }
+            // StateCommand::IndexWorkspace => {
+            //     if let Some(indexer_task_arc) = &state.indexer_task {
+            //         let indexer_task = Arc::clone(indexer_task_arc);
+            //         let (control_tx, control_rx) = mpsc::channel(4);
+            //         let progress_tx = event_bus.index_tx.clone();
+            //
+            //         // Initialize indexing state
+            //         {
+            //             let mut state_guard = state.indexing_state.write().await;
+            //             *state_guard = Some(IndexingStatus {
+            //                 status: IndexStatus::Running,
+            //                 processed: 0,
+            //                 total: indexer_task
+            //                     .db
+            //                     .count_pending_embeddings()
+            //                     .map_err(|e| tracing::error!("DB error: {e}"))
+            //                     .unwrap_or(100), // Fallback total
+            //                 current_file: None,
+            //                 errors: Vec::new(),
+            //             });
+            //         }
+            //
+            //         let bus_copy = event_bus.clone();
+            //         tokio::spawn(async move {
+            //             tracing::info!("IndexerTask started");
+            //             bus_copy.send(AppEvent::IndexingStarted);
+            //
+            //             if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
+            //                 bus_copy.send(AppEvent::IndexingFailed(e.to_string()));
+            //             } else {
+            //                 bus_copy.send(AppEvent::IndexingCompleted);
+            //             }
+            //         });
+            //     } else {
+            //         tracing::error!("Indexer task not initialized");
+            //         event_bus.send(AppEvent::IndexingFailed(
+            //             "Indexing subsystem not initialized".to_string(),
+            //         ));
+            //     }
+            // }
             StateCommand::SaveState => {
                 let serialized_content = {
                     let guard = state.chat.0.read().await;
