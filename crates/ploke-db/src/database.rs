@@ -36,6 +36,19 @@ impl Database {
 
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
+        
+        // FIX: Create HNSW index for embeddings
+        let hnsw_script = r#"
+            ::hnsw create embedding_nodes:embedding_idx {
+                dim: 384,
+                fields: [embedding],
+                distance: Cosine,
+                filter: !is_null(embedding)
+            }
+        "#;
+        db.run_script(hnsw_script, Default::default(), cozo::ScriptMutability::Mutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
         Ok(Self { db })
     }
 
