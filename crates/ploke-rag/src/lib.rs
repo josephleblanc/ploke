@@ -1,3 +1,4 @@
+#![allow(unused_variables, unused_imports, dead_code)]
 use ploke_db::{Database, DbError};
 use ploke_embed::indexer::IndexerTask;
 use thiserror::Error;

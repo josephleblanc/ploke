@@ -1,20 +1,85 @@
-use ploke_core::{EmbeddingNode, TrackingHash};
+use crate::config::CozoConfig;
+use crate::local::LocalEmbedder;
+use crate::providers::hugging_face::HuggingFaceBackend;
+use crate::providers::openai::OpenAIBackend;
+use ploke_core::EmbeddingNode;
 use ploke_db::Database;
 use ploke_io::IoManagerHandle;
-use std::sync::Arc;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{info_span, instrument};
 
-use crate::{cancel_token::CancellationToken, error::EmbedError};
+use crate::{
+    cancel_token::CancellationToken,
+    error::EmbedError,
+};
 
 #[derive(Debug)]
 pub struct EmbeddingProcessor {
-    local_backend: Option<LocalModelBackend>,
+    source: EmbeddingSource,
 }
 
 #[derive(Debug)]
-pub struct LocalModelBackend {
-    dummy_dimensions: usize,
+pub enum EmbeddingSource {
+    Local(LocalEmbedder),
+    HuggingFace(HuggingFaceBackend),
+    OpenAI(OpenAIBackend),
+    Cozo(CozoBackend),
+}
+
+impl EmbeddingProcessor {
+    pub fn new(source: EmbeddingSource) -> Self {
+        Self { source }
+    }
+
+    pub async fn generate_embeddings(
+        &self,
+        snippets: Vec<String>,
+    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        match &self.source {
+            EmbeddingSource::Local(backend) => {
+                let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
+                Ok(backend.embed_batch(&text_slices)?)
+            }
+            EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
+            EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
+            EmbeddingSource::Cozo(backend) => backend.compute_batch(snippets).await,
+        }
+    }
+
+    pub fn dimensions(&self) -> usize {
+        match &self.source {
+            EmbeddingSource::Local(backend) => backend.dimensions(),
+            EmbeddingSource::HuggingFace(backend) => backend.dimensions,
+            EmbeddingSource::OpenAI(backend) => backend.dimensions,
+            EmbeddingSource::Cozo(backend) => backend.dimensions,
+        }
+    }
+}
+
+
+
+
+
+
+// Cozo placeholder backend
+#[derive(Debug)]
+pub struct CozoBackend {
+    endpoint: String,
+    dimensions: usize,
+}
+
+impl CozoBackend {
+    pub fn new(_config: &CozoConfig) -> Self {
+        Self {
+            endpoint: "https://embedding.cozo.com".to_string(),
+            dimensions: 512, // example dimensions
+        }
+    }
+
+    pub async fn compute_batch(&self, _snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+        Err(EmbedError::NotImplemented("Cozo embeddings not implemented".to_string()))
+    }
 }
 
 pub type IndexProgress = f64;
@@ -53,51 +118,6 @@ pub enum IndexerCommand {
     Pause,
     Resume,
     Cancel,
-}
-
-impl LocalModelBackend {
-    pub fn dummy() -> Self {
-        Self {
-            dummy_dimensions: 384,
-        }
-    }
-
-    pub fn dimensions(&self) -> usize {
-        self.dummy_dimensions
-    }
-
-    pub async fn compute_batch(&self, snippets: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
-        snippets
-            .into_iter()
-            .map(|_| vec![0.0; self.dummy_dimensions])
-            .map(Ok)
-            .collect()
-    }
-}
-
-impl EmbeddingProcessor {
-    pub fn new(local_backend: Option<LocalModelBackend>) -> Self {
-        Self { local_backend }
-    }
-
-    pub async fn generate_embeddings(
-        &self,
-        snippets: Vec<String>,
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        match &self.local_backend {
-            Some(backend) => backend.compute_batch(snippets).await,
-            None => Err(EmbedError::Embedding(
-                "No embedding backend configured".to_string(),
-            )),
-        }
-    }
-
-    pub fn dimensions(&self) -> usize {
-        self.local_backend
-            .as_ref()
-            .map(|b| b.dimensions())
-            .unwrap_or(0)
-    }
 }
 
 #[derive(Debug)]

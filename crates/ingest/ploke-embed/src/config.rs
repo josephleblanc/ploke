@@ -1,5 +1,10 @@
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LocalModelConfig {
+    pub model_id: String,
+}
+
 // NEW: Backend config structs
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct HuggingFaceConfig {

@@ -1,4 +1,5 @@
 //! High-performance text retrieval from code graph database
+#![allow(unused_variables, unused_imports, dead_code)]
 
 mod database;
 mod error;

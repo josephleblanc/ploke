@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_imports)]
+
 // TODO:
 //
 // 1 Add serialization support for saving/loading conversations
@@ -16,15 +18,21 @@ mod user_config;
 mod utils;
 
 use app::App;
-use app_state::{state_manager, AppState, ChatState, ConfigState, IndexingState, MessageUpdatedEvent, StateCommand, SystemState};
+use app_state::{
+    AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
+};
 use file_man::FileManager;
 use llm::llm_manager;
 use ploke_embed::{
     cancel_token::CancellationToken,
-    indexer::{self, EmbeddingProcessor, IndexProgress, IndexerTask, IndexingStatus, LocalModelBackend},
+    indexer::{
+        self, CozoBackend, EmbeddingProcessor, EmbeddingSource, IndexerTask, IndexingStatus,
+    },
+    local::LocalEmbedder,
+    providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
 use utils::layout::layout_statusline;
 
@@ -99,10 +107,16 @@ async fn try_main() -> color_eyre::Result<()> {
     };
     let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
+    let processor = config.load_embedding_processor()?;
+
+    // TODO:
+    // 1 Implement the cancellation token propagation in IndexerTask
+    // 2 Add error handling for embedder initialization failures
+    // 3 Complete the UI progress reporting integration
     let indexer_task = IndexerTask {
         db: db_handle.clone(),
         io: io_handle.clone(),
-        embedding_processor: EmbeddingProcessor::new(Some(LocalModelBackend::dummy())),
+        embedding_processor: processor, // Use configured processor
         cancellation_token: CancellationToken::new().0,
         batch_size: 1024,
     };
@@ -111,8 +125,9 @@ async fn try_main() -> color_eyre::Result<()> {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::default(),
         system: SystemState::default(),
-        indexing_state: RwLock::new(None),  // Initialize as None
+        indexing_state: RwLock::new(None), // Initialize as None
         indexer_task: Some(Arc::new(indexer_task)),
+        indexing_control: Arc::new(Mutex::new(None)),
     });
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
@@ -127,15 +142,6 @@ async fn try_main() -> color_eyre::Result<()> {
     );
 
     tokio::spawn(file_manager.run());
-
-    let indexer_task = IndexerTask {
-        db: db_handle,
-        io: io_handle,
-        // TODO: Change this from dummy once everything is connected.
-        embedding_processor: EmbeddingProcessor::new(Some(LocalModelBackend::dummy())),
-        cancellation_token,
-        batch_size: 1024,
-    };
 
     // Spawn state manager first
     tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));

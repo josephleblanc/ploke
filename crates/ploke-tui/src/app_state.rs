@@ -35,6 +35,7 @@ pub struct AppState {
     // crate-external processes
     pub indexing_state: RwLock<Option<IndexingStatus>>,
     pub indexer_task: Option<Arc<indexer::IndexerTask>>,
+    pub indexing_control: Arc<Mutex<Option<mpsc::Sender<indexer::IndexerCommand>>>>
 }
 
 // TODO: Implement Deref for all three *State items below
@@ -79,7 +80,7 @@ impl IndexingState {
 
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &Self::Target {              
         &self.0
     }
 }
@@ -125,6 +126,7 @@ impl Default for AppState {
             system: SystemState(RwLock::new(SystemStatus::default())),
             indexing_state: RwLock::new(None),
             indexer_task: None,
+            indexing_control: Arc::new(Mutex::new(None)),
             // TODO: This needs to be handled elsewhere if not handled in AppState
             // shutdown: tokio::sync::broadcast::channel(1).0,
         }

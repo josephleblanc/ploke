@@ -1,3 +1,4 @@
+#![allow(unused_variables, unused_imports, dead_code)]
 //! # ploke-io
 //!
 //! `ploke-io` provides a high-performance, non-blocking I/O actor system for reading
@@ -557,6 +558,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "needs redisign to have the id (NodeId) of file"]
+    #[allow(unreachable_code)]
     async fn test_get_snippets_batch_preserves_order() {
         let dir = tempdir().unwrap();
 
@@ -607,6 +609,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_content_mismatch() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.rs");
@@ -635,6 +638,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_io_errors() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.rs");
@@ -663,6 +667,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_concurrency_throttling() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
@@ -691,6 +696,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_seek_errors() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
@@ -717,6 +723,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_zero_length_snippet() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
@@ -741,6 +748,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_partial_failure_handling() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
@@ -833,6 +841,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_concurrent_modification() {
         use std::time::Duration;
         let io_manager = IoManagerHandle::new();
@@ -867,6 +876,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(unreachable_code)]
     async fn test_actor_shutdown_during_ops() {
         use std::time::Duration;
         let io_manager = IoManagerHandle::new();

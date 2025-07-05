@@ -51,14 +51,29 @@ impl From<EmbeddingError> for PlokeError {
 //     LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")
 //         .map_err(Into::into)
 // }
+use std::fmt;
+
+impl fmt::Debug for LocalEmbedder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalEmbedder")
+         .field("tokenizer", &self.tokenizer)
+         .field("device", &self.device)
+         .field("max_length", &self.max_length)
+         .field("model", &"BertModel { ... }") // Placeholder for non-Debug model
+         .finish()
+    }
+}
+
 pub struct LocalEmbedder {
     model: BertModel,
     tokenizer: Tokenizer,
     device: Device,
     max_length: usize,
+    dimensions: usize,
 }
 
 impl LocalEmbedder {
+
     pub fn new(model_id: &str) -> Result<Self, EmbeddingError> {
         let device = Device::cuda_if_available(0).or_else(|_| {
             tracing::warn!("CUDA not available, falling back to CPU");
@@ -90,6 +105,7 @@ impl LocalEmbedder {
             &device
         )?;
         
+        let dimensions = config.hidden_size as usize;
         let model = BertModel::load(vb, &config).map_err(|e| {
             EmbeddingError::Config(format!("Failed to load model: {}", e))
         })?;
@@ -98,9 +114,13 @@ impl LocalEmbedder {
             model,
             tokenizer,
             device,
-            // TODO: Consider how to use max_length
             max_length: 256,
+            dimensions,
         })
+    }
+
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
     }
 
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {

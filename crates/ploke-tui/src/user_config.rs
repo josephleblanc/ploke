@@ -1,5 +1,10 @@
-use ploke_embed::config::{CozoConfig, HuggingFaceConfig, OpenAIConfig};
-use reqwest::{Request, RequestBuilder};
+use ploke_embed::{
+    config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
+    indexer::{CozoBackend, EmbeddingProcessor, EmbeddingSource},
+    local::LocalEmbedder,
+    providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
+};
+use reqwest::Request;
 use serde::Deserialize;
 
 use crate::llm::RequestMessage;
@@ -14,7 +19,6 @@ pub enum CommandStyle {
     Slash,
 }
 
-
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -25,9 +29,44 @@ pub struct Config {
     pub embedding: EmbeddingConfig,
 }
 
+impl Config {
+    pub fn load_embedding_processor(
+        &self
+    ) -> Result<EmbeddingProcessor, color_eyre::eyre::Error> {
+        let processor = match self.embedding {
+            EmbeddingConfig {
+                local: Some(ref local_config),
+                ..
+            } => {
+                let embedder = LocalEmbedder::new(&local_config.model_id)?;
+                EmbeddingProcessor::new(EmbeddingSource::Local(embedder))
+            }
+            EmbeddingConfig {
+                hugging_face: Some(ref hf),
+                ..
+            } => EmbeddingProcessor::new(EmbeddingSource::HuggingFace(HuggingFaceBackend::new(hf))),
+            EmbeddingConfig {
+                openai: Some(ref openai),
+                ..
+            } => EmbeddingProcessor::new(EmbeddingSource::OpenAI(OpenAIBackend::new(openai))),
+            EmbeddingConfig {
+                cozo: Some(ref cozo),
+                ..
+            } => EmbeddingProcessor::new(EmbeddingSource::Cozo(CozoBackend::new(cozo))),
+            _ => {
+                let default_embedder =
+                    LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")?;
+                EmbeddingProcessor::new(EmbeddingSource::Local(default_embedder))
+            }
+        };
+        Ok(processor)
+    }
+}
+
 // NEW: Embedding configuration
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct EmbeddingConfig {
+    pub local: Option<LocalModelConfig>,
     pub hugging_face: Option<HuggingFaceConfig>,
     pub openai: Option<OpenAIConfig>,
     pub cozo: Option<CozoConfig>,
@@ -48,9 +87,13 @@ pub struct ProviderConfig {
 
 impl ProviderConfig {
     // TODO: proper error handling
-    pub fn form_request(&self, message: RequestMessage) -> Result<Request, Box<dyn std::error::Error>> {
+    pub fn form_request(
+        &self,
+        message: RequestMessage,
+    ) -> Result<Request, Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
-        let request = client.post(chat_url())
+        let request = client
+            .post(chat_url())
             .bearer_auth(self.api_key.clone())
             .json(&message)
             .build()?;

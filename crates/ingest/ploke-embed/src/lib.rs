@@ -1,3 +1,4 @@
+#![allow(unused_variables, unused_imports, dead_code)]
 pub mod indexer;
 // Removed embedding_service (replaced by concrete type in indexer)
 pub mod events;

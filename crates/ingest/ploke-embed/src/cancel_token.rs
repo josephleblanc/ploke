@@ -163,74 +163,74 @@ mod tests {
     }
 }
 
-// Example usage
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (token, handle) = CancellationToken::new();
-
-    // Create listeners for sharing across tasks
-    let listener1 = token.listener();
-    let listener2 = token.listener();
-
-    // Spawn multiple long-running tasks
-    let task1 = tokio::spawn(async move {
-        let mut counter = 0;
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    counter += 1;
-                    println!("Task 1 running... {}", counter);
-
-                    if counter >= 20 {
-                        println!("Task 1 completed normally");
-                        break;
-                    }
-                }
-                _ = listener1.cancelled() => {
-                    println!("Task 1 cancelled gracefully");
-                    break;
-                }
-            }
-        }
-    });
-
-    let task2 = tokio::spawn(async move {
-        let mut counter = 0;
-        let mut interval = tokio::time::interval(Duration::from_millis(150));
-
-        loop {
-            tokio::select! {
-                _ = interval.tick() => {
-                    counter += 1;
-                    println!("Task 2 running... {}", counter);
-
-                    if counter >= 15 {
-                        println!("Task 2 completed normally");
-                        break;
-                    }
-                }
-                _ = listener2.cancelled() => {
-                    println!("Task 2 cancelled gracefully");
-                    break;
-                }
-            }
-        }
-    });
-
-    // Let them run for a bit
-    sleep(Duration::from_millis(500)).await;
-
-    // Cancel all tasks
-    println!("Requesting cancellation...");
-    handle.cancel();
-
-    // Wait for tasks to complete
-    let _ = tokio::join!(task1, task2);
-
-    // Verify cancellation state
-    println!("Token is cancelled: {}", token.is_cancelled());
-
-    Ok(())
-}
+// // Example usage
+// #[tokio::main]
+// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//     let (token, handle) = CancellationToken::new();
+//
+//     // Create listeners for sharing across tasks
+//     let listener1 = token.listener();
+//     let listener2 = token.listener();
+//
+//     // Spawn multiple long-running tasks
+//     let task1 = tokio::spawn(async move {
+//         let mut counter = 0;
+//         let mut interval = tokio::time::interval(Duration::from_millis(100));
+//
+//         loop {
+//             tokio::select! {
+//                 _ = interval.tick() => {
+//                     counter += 1;
+//                     println!("Task 1 running... {}", counter);
+//
+//                     if counter >= 20 {
+//                         println!("Task 1 completed normally");
+//                         break;
+//                     }
+//                 }
+//                 _ = listener1.cancelled() => {
+//                     println!("Task 1 cancelled gracefully");
+//                     break;
+//                 }
+//             }
+//         }
+//     });
+//
+//     let task2 = tokio::spawn(async move {
+//         let mut counter = 0;
+//         let mut interval = tokio::time::interval(Duration::from_millis(150));
+//
+//         loop {
+//             tokio::select! {
+//                 _ = interval.tick() => {
+//                     counter += 1;
+//                     println!("Task 2 running... {}", counter);
+//
+//                     if counter >= 15 {
+//                         println!("Task 2 completed normally");
+//                         break;
+//                     }
+//                 }
+//                 _ = listener2.cancelled() => {
+//                     println!("Task 2 cancelled gracefully");
+//                     break;
+//                 }
+//             }
+//         }
+//     });
+//
+//     // Let them run for a bit
+//     sleep(Duration::from_millis(500)).await;
+//
+//     // Cancel all tasks
+//     println!("Requesting cancellation...");
+//     handle.cancel();
+//
+//     // Wait for tasks to complete
+//     let _ = tokio::join!(task1, task2);
+//
+//     // Verify cancellation state
+//     println!("Token is cancelled: {}", token.is_cancelled());
+//
+//     Ok(())
+// }

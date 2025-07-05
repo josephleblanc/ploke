@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::local;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EmbedError {
@@ -66,6 +67,12 @@ impl From<hf_hub::api::tokio::ApiError> for EmbedError {
 impl From<tokenizers::Error> for EmbedError {
     fn from(e: tokenizers::Error) -> Self {
         EmbedError::Embedding(e.to_string())
+    }
+}
+
+impl From<local::EmbeddingError> for EmbedError {
+    fn from(e: local::EmbeddingError) -> Self {
+        EmbedError::LocalModel(e.to_string())
     }
 }
 

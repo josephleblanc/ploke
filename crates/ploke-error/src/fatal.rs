@@ -79,7 +79,7 @@ impl Clone for FatalError {
             },
             Self::DatabaseCorruption(s) => Self::DatabaseCorruption(s.clone()),
             Self::FileOperation { operation, path, source } => Self::FileOperation {
-                operation: *operation,
+                operation,
                 path: path.clone(),
                 source: Arc::clone(source),
             },
