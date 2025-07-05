@@ -24,6 +24,39 @@ impl std::ops::Deref for Database {
     }
 }
 
+/// Safely converts a Cozo DataValue to a Uuid.
+pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
+    if let DataValue::Uuid(UuidWrapper(uuid)) = val {
+        Ok(*uuid)
+    } else {
+        Err(DbError::Cozo(format!("Expected Uuid, found {:?}", val)))
+    }
+}
+
+/// Safely converts a Cozo DataValue to a String.
+pub fn to_string(val: &DataValue) -> Result<String, DbError> {
+    if let DataValue::Str(s) = val {
+        Ok(s.to_string())
+    } else {
+        Err(DbError::Cozo(format!("Expected String, found {:?}", val)))
+    }
+}
+
+/// Safely converts a Cozo DataValue to a usize.
+pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
+    if let DataValue::Num(cozo::Num::Int(n)) = val {
+        // Cozo stores numbers that can be i64, u64, or f64. Safest to try as i64 for span.
+        usize::try_from(*n).map_err(|e| {
+            DbError::Cozo(format!(
+                "Could not convert Num::Int to i64 for usize: {:?}, original error {}",
+                n, e
+            ))
+        })
+    } else {
+        Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
+    }
+}
+
 impl Database {
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
@@ -36,7 +69,7 @@ impl Database {
 
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
-        
+
         // FIX: Create HNSW index for embeddings
         let hnsw_script = r#"
             ::hnsw create embedding_nodes:embedding_idx {
@@ -46,8 +79,12 @@ impl Database {
                 filter: !is_null(embedding)
             }
         "#;
-        db.run_script(hnsw_script, Default::default(), cozo::ScriptMutability::Mutable)
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        db.run_script(
+            hnsw_script,
+            Default::default(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(Self { db })
     }
@@ -123,53 +160,49 @@ impl Database {
 
         Ok(())
     }
-     pub async fn update_embeddings_batch(
-         &self,
-         updates: Vec<(uuid::Uuid, Vec<f32>)>,
-     ) -> Result<(), DbError> {
-         if updates.is_empty() {
-             return Ok(());
-         }
+    pub async fn update_embeddings_batch(
+        &self,
+        updates: Vec<(uuid::Uuid, Vec<f32>)>,
+    ) -> Result<(), DbError> {
+        if updates.is_empty() {
+            return Ok(());
+        }
 
-         let inner_db = self.db.clone();
-         // FIX: Corrected CozoDB update script
-         let script = r#"
+        let inner_db = self.db.clone();
+        // FIX: Corrected CozoDB update script
+        let script = r#"
              ?[id, embedding] <- $updates
              :update embedding_nodes { id => embedding }
          "#;
 
-         // Convert updates to DataValue format
-         let updates_data: Vec<DataValue> = updates
-             .into_iter()
-             .map(|(id, embedding)| {
-                 let id_val = DataValue::Uuid(UuidWrapper(id));
-                 let embedding_val = DataValue::List(
-                     embedding
-                         .into_iter()
-                         .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
-                         .collect(),
-                 );
-                 DataValue::List(vec![id_val, embedding_val])
-             })
-             .collect();
+        // Convert updates to DataValue format
+        let updates_data: Vec<DataValue> = updates
+            .into_iter()
+            .map(|(id, embedding)| {
+                let id_val = DataValue::Uuid(UuidWrapper(id));
+                let embedding_val = DataValue::List(
+                    embedding
+                        .into_iter()
+                        .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
+                        .collect(),
+                );
+                DataValue::List(vec![id_val, embedding_val])
+            })
+            .collect();
 
-         let mut params = BTreeMap::new();
-         params.insert("updates".to_string(), DataValue::List(updates_data));
+        let mut params = BTreeMap::new();
+        params.insert("updates".to_string(), DataValue::List(updates_data));
 
-         // Run in blocking task to avoid stalling async runtime
-         tokio::task::spawn_blocking(move || {
-             inner_db.run_script(
-                 script,
-                 params,
-                 cozo::ScriptMutability::Mutable,
-             )
-         })
-         .await
-         .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
-         .map_err(|e| DbError::Cozo(e.to_string()))?;
+        // Run in blocking task to avoid stalling async runtime
+        tokio::task::spawn_blocking(move || {
+            inner_db.run_script(script, params, cozo::ScriptMutability::Mutable)
+        })
+        .await
+        .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-         Ok(())
-     }
+        Ok(())
+    }
 
     /// Fetches all primary nodes that do not yet have an embedding.
     ///
@@ -223,7 +256,9 @@ impl Database {
         let query = r#"
         ?[count(id)] := *embedding_nodes{id, embedding},
         embedding = null"#;
-        let result = self.db.run_script_read_only(query, Default::default())
+        let result = self
+            .db
+            .run_script_read_only(query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Self::into_usize(result, "count(id)")
     }
@@ -242,11 +277,11 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::Database;
     use crate::DbError;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
+    use uuid::Uuid;
 
     fn setup_db() -> Database {
         let db = Db::new(MemStorage::default()).unwrap();
@@ -268,19 +303,22 @@ mod tests {
         let db = setup_db();
         let id = Uuid::new_v4();
         let embedding = vec![1.0, 2.0, 3.0];
-        
+
         db.update_embeddings_batch(vec![(id, embedding.clone())])
             .await?;
-        
+
         // Verify embedding was saved
-        let result = db.db.run_script(
-            "?[id, embedding] := *embedding_nodes{id, embedding}",
-            std::collections::BTreeMap::new(),
-            ScriptMutability::Immutable
-        ).map_err(|e| DbError::Cozo(e.to_string()))?;
-        
+        let result = db
+            .db
+            .run_script(
+                "?[id, embedding] := *embedding_nodes{id, embedding}",
+                std::collections::BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
         assert_eq!(result.rows.len(), 1);
-        if let DataValue::Uuid(uuid_wrapper) = result.rows[0][0] {
+        if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {
             assert_eq!(uuid_wrapper.0, id);
         } else {
             panic!("Expected Uuid DataValue");
@@ -305,41 +343,7 @@ mod tests {
         } else {
             panic!("Expected List DataValue");
         }
-        
+
         Ok(())
-    }
-
-}
-
-/// Safely converts a Cozo DataValue to a Uuid.
-pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
-    if let DataValue::Uuid(UuidWrapper(uuid)) = val {
-        Ok(*uuid)
-    } else {
-        Err(DbError::Cozo(format!("Expected Uuid, found {:?}", val)))
-    }
-}
-
-/// Safely converts a Cozo DataValue to a String.
-pub fn to_string(val: &DataValue) -> Result<String, DbError> {
-    if let DataValue::Str(s) = val {
-        Ok(s.to_string())
-    } else {
-        Err(DbError::Cozo(format!("Expected String, found {:?}", val)))
-    }
-}
-
-/// Safely converts a Cozo DataValue to a usize.
-pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
-    if let DataValue::Num(cozo::Num::Int(n)) = val {
-        // Cozo stores numbers that can be i64, u64, or f64. Safest to try as i64 for span.
-        usize::try_from(*n).map_err(|e| {
-            DbError::Cozo(format!(
-                "Could not convert Num::Int to i64 for usize: {:?}, original error {}",
-                n, e
-            ))
-        })
-    } else {
-        Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
     }
 }
