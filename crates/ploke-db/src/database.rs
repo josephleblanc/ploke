@@ -227,6 +227,78 @@ impl Database {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+    use crate::Database;
+    use crate::DbError;
+    use cozo::{Db, MemStorage, ScriptMutability};
+    use ploke_transform::schema::create_schema_all;
+
+    fn setup_db() -> Database {
+        let db = Db::new(MemStorage::default()).unwrap();
+        db.initialize().unwrap();
+        create_schema_all(&db).unwrap();
+        Database::new(db)
+    }
+
+    #[tokio::test]
+    async fn update_embeddings_batch_empty() -> Result<(), DbError> {
+        let db = setup_db();
+        db.update_embeddings_batch(vec![]).await?;
+        // Should not panic/error with empty input
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_embeddings_batch_single() -> Result<(), DbError> {
+        let db = setup_db();
+        let id = Uuid::new_v4();
+        let embedding = vec![1.0, 2.0, 3.0];
+        
+        db.update_embeddings_batch(vec![(id, embedding.clone())])
+            .await?;
+        
+        // Verify embedding was saved
+        let result = db.db.run_script(
+            "?[id, embedding] := *embedding_nodes{id, embedding}",
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Immutable
+        ).map_err(|e| DbError::Cozo(e.to_string()))?;
+        
+        assert_eq!(result.rows.len(), 1);
+        if let DataValue::Uuid(uuid_wrapper) = result.rows[0][0] {
+            assert_eq!(uuid_wrapper.0, id);
+        } else {
+            panic!("Expected Uuid DataValue");
+        }
+        if let DataValue::List(list) = &result.rows[0][1] {
+            assert_eq!(list.len(), 3);
+            if let DataValue::Num(cozo::Num::Float(f)) = list[0] {
+                assert_eq!(f, 1.0);
+            } else {
+                panic!("Expected Float DataValue");
+            }
+            if let DataValue::Num(cozo::Num::Float(f)) = list[1] {
+                assert_eq!(f, 2.0);
+            } else {
+                panic!("Expected Float DataValue");
+            }
+            if let DataValue::Num(cozo::Num::Float(f)) = list[2] {
+                assert_eq!(f, 3.0);
+            } else {
+                panic!("Expected Float DataValue");
+            }
+        } else {
+            panic!("Expected List DataValue");
+        }
+        
+        Ok(())
+    }
+
+}
+
 /// Safely converts a Cozo DataValue to a Uuid.
 pub fn to_uuid(val: &DataValue) -> Result<uuid::Uuid, DbError> {
     if let DataValue::Uuid(UuidWrapper(uuid)) = val {
