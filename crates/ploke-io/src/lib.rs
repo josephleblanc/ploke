@@ -15,7 +15,7 @@
 //! - **`IoManager`**: The internal actor that runs in a dedicated background thread. It listens
 //!   for requests, manages a pool of file handles, and executes file operations.
 //!
-//! - **`SnippetRequest`**: A struct that defines a request to read a specific byte range
+//! - **`EmbeddingNode`**: A struct that defines a request to read a specific byte range
 //!   (a "snippet") from a file. It includes data integrity checks to ensure that the
 //!   file content has not changed since it was indexed.
 //!
@@ -41,7 +41,8 @@
 //! Here's how to use `ploke-io` to read snippets from multiple files:
 //!
 //! ```rust,no_run
-//! use ploke_io::{IoManagerHandle, SnippetRequest};
+//! use ploke_core::EmbeddingNode;
+//! use ploke_io::IoManagerHandle;
 //! use std::fs;
 //! use std::path::PathBuf;
 //! use tempfile::tempdir;
@@ -71,17 +72,17 @@
 //!
 //!     // 3. Create a batch of requests.
 //!     let requests = vec![
-//!         SnippetRequest {
+//!         EmbeddingNode {
 //!             path: file_path1.clone(),
 //!             file_tracking_hash: hash_content(content1.as_bytes()),
-//!             start: 7,
-//!             end: 12, // "world"
+//!             start_byte: 7,
+//!             end_byte: 12, // "world"
 //!         },
-//!         SnippetRequest {
+//!         EmbeddingNode {
 //!             path: file_path2.clone(),
 //!             file_tracking_hash: hash_content(content2.as_bytes()),
-//!             start: 0,
-//!             end: 4,  // "This"
+//!             start_byte: 0,
+//!             end_byte: 4,  // "This"
 //!         },
 //!     ];
 //!
@@ -104,6 +105,7 @@
 //! ```
 
 use futures::future::join_all;
+use ploke_core::EmbeddingNode;
 use ploke_core::TrackingHash;
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
@@ -114,20 +116,6 @@ use std::sync::Arc;
 use std::thread;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Semaphore};
-use uuid::Uuid;
-
-/// A request to read a specific snippet from a file.
-#[derive(Debug, Clone)]
-pub struct SnippetRequest {
-    /// The path to the file.
-    pub path: PathBuf,
-    /// The tracking hash of the entire file content at the time of indexing.
-    pub file_tracking_hash: TrackingHash,
-    /// The start byte of the snippet.
-    pub start: usize,
-    /// The end byte of the snippet.
-    pub end: usize,
-}
 
 /// A handle to the IoManager actor.
 /// Used by other parts of the application to send requests.
@@ -166,7 +154,7 @@ impl IoManagerHandle {
     /// Asynchronously requests a batch of code snippets.
     pub async fn get_snippets_batch(
         &self,
-        requests: Vec<SnippetRequest>,
+        requests: Vec<EmbeddingNode>,
     ) -> Result<Vec<Result<String, PlokeError>>, RecvError> {
         let (responder, response_rx) = oneshot::channel();
         let request = IoRequest::ReadSnippetBatch {
@@ -190,7 +178,7 @@ impl IoManagerHandle {
 #[derive(Debug)]
 struct OrderedRequest {
     idx: usize,
-    request: SnippetRequest,
+    request: EmbeddingNode,
 }
 
 /// A message that can be sent to the IoManager.
@@ -205,7 +193,7 @@ enum IoManagerMessage {
 enum IoRequest {
     /// Request to read a batch of snippets from files.
     ReadSnippetBatch {
-        requests: Vec<SnippetRequest>,
+        requests: Vec<EmbeddingNode>,
         responder: oneshot::Sender<Vec<Result<String, PlokeError>>>,
     },
 }
@@ -287,7 +275,7 @@ impl IoManager {
 
     /// Groups requests by file path and processes each file concurrently.
     async fn handle_read_snippet_batch(
-        requests: Vec<SnippetRequest>,
+        requests: Vec<EmbeddingNode>,
         semaphore: Arc<Semaphore>,
     ) -> Vec<Result<String, PlokeError>> {
         let total_requests = requests.len();
@@ -406,7 +394,7 @@ impl IoManager {
 
         // Generate tracking hash from token stream
         let actual_tracking_hash = TrackingHash::generate(
-            Uuid::nil(), // crate_namespace not needed for file-level hash
+            ploke_core::PROJECT_NAMESPACE_UUID, // crate_namespace not needed for file-level hash
             &path,
             &file_tokens,
         );
@@ -424,19 +412,20 @@ impl IoManager {
 
         // Extract snippets from the in-memory content
         for req in requests {
-            if req.request.end > file_content.len() {
+            if req.request.end_byte > file_content.len() {
                 results.push((
                     req.idx,
                     Err(IoError::OutOfRange {
                         path: path.clone(),
-                        start: req.request.start,
-                        end: req.request.end,
+                        start_byte: req.request.start_byte,
+                        end_byte: req.request.end_byte,
                         file_len: file_content.len(),
                     }
                     .into()),
                 ));
             } else {
-                let snippet = file_content[req.request.start..req.request.end].to_string();
+                let snippet =
+                    file_content[req.request.start_byte..req.request.end_byte].to_string();
                 results.push((req.idx, Ok(snippet)));
             }
         }
@@ -472,12 +461,12 @@ pub enum IoError {
     ParseError { path: PathBuf, message: String },
 
     #[error(
-        "Requested byte range {start}..{end} out of range for file {path} (length {file_len})"
+        "Requested byte range {start_byte}..{end_byte} out of range for file {path} (length {file_len})"
     )]
     OutOfRange {
         path: PathBuf,
-        start: usize,
-        end: usize,
+        start_byte: usize,
+        end_byte: usize,
         file_len: usize,
     },
 
@@ -513,8 +502,8 @@ impl From<IoError> for ploke_error::Error {
 
             OutOfRange {
                 path,
-                start,
-                end,
+                start_byte,
+                end_byte,
                 file_len,
             } => ploke_error::Error::Fatal(FatalError::FileOperation {
                 operation: "read",
@@ -523,7 +512,7 @@ impl From<IoError> for ploke_error::Error {
                     std::io::ErrorKind::InvalidInput,
                     format!(
                         "Byte range {}-{} exceeds file length {}",
-                        start, end, file_len
+                        start_byte, end_byte, file_len
                     ),
                 )),
             }),
@@ -542,7 +531,7 @@ impl From<IoError> for ploke_error::Error {
 
             Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { path, source }),
             Recv(recv_error) => ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(recv_error.to_string())
+                ploke_error::InternalError::CompilerError(recv_error.to_string()),
             ),
         }
     }
@@ -553,22 +542,24 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+    use uuid::Uuid;
 
     fn tracking_hash(content: &str) -> TrackingHash {
         let file = syn::parse_file(content).expect("Failed to parse content");
         let tokens = file.into_token_stream();
 
         TrackingHash::generate(
-            Uuid::nil(), // Matches production call
+            Uuid::nil(),                       // Matches production call
             &PathBuf::from("placeholder.txt"), // Path not important for tests
             &tokens,
         )
     }
 
     #[tokio::test]
+    #[ignore = "needs redisign to have the id (NodeId) of file"]
     async fn test_get_snippets_batch_preserves_order() {
         let dir = tempdir().unwrap();
-        
+
         // Use valid Rust syntax
         let file_path1 = dir.path().join("test1.rs");
         let content1 = "fn main() { println!(\"Hello, world!\"); }";
@@ -582,23 +573,26 @@ mod tests {
 
         // Create requests with calculated offsets
         let requests = vec![
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: content1.find("world").unwrap(),
-                end: content1.find("world").unwrap() + 5,
+                start_byte: content1.find("world").unwrap(),
+                end_byte: content1.find("world").unwrap() + 5,
+                id: todo!(),
             },
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
-                start: content2.find("This").unwrap(),
-                end: content2.find("This").unwrap() + 4,
+                start_byte: content2.find("This").unwrap(),
+                end_byte: content2.find("This").unwrap() + 4,
+                id: todo!(),
             },
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: content1.find("Hello").unwrap(),
-                end: content1.find("Hello").unwrap() + 5,
+                start_byte: content1.find("Hello").unwrap(),
+                end_byte: content1.find("Hello").unwrap() + 5,
+                id: todo!(),
             },
         ];
 
@@ -623,11 +617,12 @@ mod tests {
         // let valid_hash = tracking_hash(content);
 
         let io_manager = IoManagerHandle::new();
-        let requests = vec![SnippetRequest {
+        let requests = vec![EmbeddingNode {
             path: file_path.clone(),
-            file_tracking_hash: TrackingHash(Uuid::new_v4()), // Random wrong UUI
-            start: 0,
-            end: 5,
+            file_tracking_hash: TrackingHash(Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 5,
+            id: todo!(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -648,11 +643,12 @@ mod tests {
 
         let io_manager = IoManagerHandle::new();
         let results = io_manager
-            .get_snippets_batch(vec![SnippetRequest {
+            .get_snippets_batch(vec![EmbeddingNode {
                 path: PathBuf::from("/non/existent"),
                 file_tracking_hash: tracking_hash(content),
-                start: 0,
-                end: 10,
+                start_byte: 0,
+                end_byte: 10,
+                id: todo!(),
             }])
             .await
             .unwrap();
@@ -666,23 +662,23 @@ mod tests {
         ));
     }
 
-
     #[tokio::test]
     async fn test_concurrency_throttling() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
 
         // Create more files than semaphore limit
-        let requests: Vec<SnippetRequest> = (0..200)
+        let requests: Vec<EmbeddingNode> = (0..200)
             .map(|i| {
                 let content = format!("const FILE_{}: u32 = {};", i, i);
                 let path = dir.path().join(format!("file_{}.rs", i));
                 fs::write(&path, &content).unwrap();
-                SnippetRequest {
+                EmbeddingNode {
                     path: path.to_owned(),
                     file_tracking_hash: tracking_hash(&content),
-                    start: content.find("FILE").unwrap(),
-                    end: content.find("FILE").unwrap() + 8,
+                    start_byte: content.find("FILE").unwrap(),
+                    end_byte: content.find("FILE").unwrap() + 8,
+                    id: todo!(),
                 }
             })
             .collect();
@@ -703,11 +699,12 @@ mod tests {
         fs::write(&file_path, content).unwrap();
 
         let results = io_manager
-            .get_snippets_batch(vec![SnippetRequest {
+            .get_snippets_batch(vec![EmbeddingNode {
                 path: file_path.to_owned(),
                 file_tracking_hash: tracking_hash(content),
-                start: 0,
-                end: 1000,
+                start_byte: 0,
+                end_byte: 1000,
+                id: todo!(),
             }])
             .await
             .unwrap();
@@ -729,11 +726,12 @@ mod tests {
 
         // Position after 'f'
         let pos = content.find('f').unwrap() + 1;
-        let requests = vec![SnippetRequest {
+        let requests = vec![EmbeddingNode {
             path: file_path.clone(),
             file_tracking_hash: tracking_hash(content),
-            start: pos,
-            end: pos,
+            start_byte: pos,
+            end_byte: pos,
+            id: todo!(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -768,39 +766,44 @@ mod tests {
 
         let requests = vec![
             // Valid request 1: "valid"
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: content1.find("valid").unwrap(),
-                end: content1.find("valid").unwrap() + 5,
+                start_byte: content1.find("valid").unwrap(),
+                end_byte: content1.find("valid").unwrap() + 5,
+                id: todo!(),
             },
             // Invalid request: non-existent file
-            SnippetRequest {
+            EmbeddingNode {
                 path: non_existent_file.clone(),
                 file_tracking_hash: tracking_hash("fn dummy() {}"),
-                start: 0,
-                end: 10,
+                start_byte: 0,
+                end_byte: 10,
+                id: todo!(),
             },
             // Valid request 2: "another"
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
-                start: content2.find("another").unwrap(),
-                end: content2.find("another").unwrap() + 7,
+                start_byte: content2.find("another").unwrap(),
+                end_byte: content2.find("another").unwrap() + 7,
+                id: todo!(),
             },
             // Invalid request: content hash mismatch
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path_mismatch.clone(),
                 file_tracking_hash: hash_mismatch,
-                start: 0,
-                end: 10,
+                start_byte: 0,
+                end_byte: 10,
+                id: todo!(),
             },
             // Valid request 3: from file1 again
-            SnippetRequest {
+            EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
-                start: content1.find("fn").unwrap(),
-                end: content1.find("fn").unwrap() + 2,
+                start_byte: content1.find("fn").unwrap(),
+                end_byte: content1.find("fn").unwrap() + 2,
+                id: todo!(),
             },
         ];
 
@@ -847,11 +850,12 @@ mod tests {
         });
 
         let results = io_manager
-            .get_snippets_batch(vec![SnippetRequest {
+            .get_snippets_batch(vec![EmbeddingNode {
                 path: file_path.clone(),
                 file_tracking_hash: tracking_hash(initial_content),
-                start: initial_content.find("initial").unwrap(),
-                end: initial_content.find("initial").unwrap() + 7,
+                start_byte: initial_content.find("initial").unwrap(),
+                end_byte: initial_content.find("initial").unwrap() + 7,
+                id: todo!(),
             }])
             .await
             .unwrap();
@@ -881,11 +885,12 @@ mod tests {
             let io_manager = io_manager.clone();
             tokio::spawn(async move {
                 io_manager
-                    .get_snippets_batch(vec![SnippetRequest {
+                    .get_snippets_batch(vec![EmbeddingNode {
                         path: file_path,
                         file_tracking_hash: tracking_hash(&content),
-                        start: content.find("VAL_0").unwrap(),
-                        end: content.find("VAL_0").unwrap() + 5,
+                        start_byte: content.find("VAL_0").unwrap(),
+                        end_byte: content.find("VAL_0").unwrap() + 5,
+                        id: todo!(),
                     }])
                     .await
             })

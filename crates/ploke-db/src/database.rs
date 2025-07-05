@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use crate::embedding::EmbeddingNode;
 use crate::error::DbError;
 use crate::NodeType;
 use crate::QueryResult;
@@ -9,6 +8,7 @@ use cozo::Db;
 use cozo::MemStorage;
 use cozo::NamedRows;
 use cozo::UuidWrapper;
+use ploke_core::EmbeddingNode;
 
 /// Main database connection and query interface
 #[derive(Debug)]

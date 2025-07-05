@@ -1,6 +1,6 @@
-use ploke_core::TrackingHash;
-use ploke_db::{embedding::EmbeddingNode, Database};
-use ploke_io::{IoManagerHandle, SnippetRequest};
+use ploke_core::{EmbeddingNode, TrackingHash};
+use ploke_db::Database;
+use ploke_io::IoManagerHandle;
 use std::sync::Arc;
 use std::path::PathBuf;
 use tracing::{info_span, instrument};
@@ -221,19 +221,10 @@ pub async fn process_batch(
     let ctx_span = info_span!("process_batch");
     let _guard = ctx_span.enter();
 
-    let requests = nodes
-        .iter()
-        .map(|node| SnippetRequest {
-            path: node.path.clone(),
-            file_tracking_hash: TrackingHash(node.file_tracking_hash),
-            start: node.start_byte,
-            end: node.end_byte,
-        })
-        .collect::<Vec<_>>();
-
+    let total_nodes = nodes.len();
     let snippet_results =
         io_manager
-            .get_snippets_batch(requests)
+            .get_snippets_batch(nodes.clone())
             .await
             .map_err(|arg0: ploke_io::RecvError| {
                 EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0))
@@ -242,7 +233,6 @@ pub async fn process_batch(
     let mut valid_snippets = Vec::new();
     let mut valid_nodes = Vec::new();
     let mut valid_indices = Vec::new();
-    let total_nodes = nodes.len();
 
     for (i, (node, snippet_result)) in nodes.into_iter().zip(snippet_results).enumerate() {
         report_progress(i, total_nodes);

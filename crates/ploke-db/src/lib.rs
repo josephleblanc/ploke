@@ -1,7 +1,5 @@
 //! High-performance text retrieval from code graph database
 
-pub mod embedding;
-
 mod database;
 mod error;
 mod query;

@@ -6,10 +6,11 @@ mod snippet;
 use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
+use ploke_core::{EmbeddingNode, TrackingHash};
 pub use snippet::CodeSnippet;
 
 use crate::{
-    database::{to_string, to_usize, to_uuid}, embedding::EmbeddingNode, error::DbError
+    database::{to_string, to_usize, to_uuid}, error::DbError
 };
 use cozo::NamedRows;
 
@@ -46,7 +47,7 @@ impl QueryResult {
             .map(|row| {
                 let id = to_uuid(&row[id_index]).map_err(map_err)?;
                 let path_str = to_string(&row[path_index]).map_err(map_err)?;
-                let file_tracking_hash = to_uuid(&row[content_hash_index]).map_err(map_err)?;
+                let file_tracking_hash = TrackingHash(to_uuid(&row[content_hash_index]).map_err(map_err)?);
                 let start_byte = to_usize(&row[start_byte_index]).map_err(map_err)?;
                 let end_byte = to_usize(&row[end_byte_index]).map_err(map_err)?;
 
