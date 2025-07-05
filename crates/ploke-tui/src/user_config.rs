@@ -1,7 +1,7 @@
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
     indexer::{CozoBackend, EmbeddingProcessor, EmbeddingSource},
-    local::LocalEmbedder,
+    local::{DevicePreference, EmbeddingConfig as LocalEmbeddingConfig, LocalEmbedder},
     providers::{hugging_face::HuggingFaceBackend, openai::OpenAIBackend},
 };
 use reqwest::Request;
@@ -38,7 +38,18 @@ impl Config {
                 local: Some(ref local_config),
                 ..
             } => {
-                let embedder = LocalEmbedder::new(&local_config.model_id)?;
+                let embedder_config = LocalEmbeddingConfig {
+                    model_id: local_config.model_id.clone(),
+                    revision: None,
+                    device_preference: DevicePreference::Auto,
+                    cuda_device_index: 0,
+                    allow_fallback: true,
+                    approximate_gelu: false,
+                    use_pth: false,
+                    batch_size: 8,
+                    max_length: None,
+                };
+                let embedder = LocalEmbedder::new(embedder_config)?;
                 EmbeddingProcessor::new(EmbeddingSource::Local(embedder))
             }
             EmbeddingConfig {
@@ -54,8 +65,18 @@ impl Config {
                 ..
             } => EmbeddingProcessor::new(EmbeddingSource::Cozo(CozoBackend::new(cozo))),
             _ => {
-                let default_embedder =
-                    LocalEmbedder::new("sentence-transformers/all-MiniLM-L6-v2")?;
+                let embedder_config = LocalEmbeddingConfig {
+                    model_id: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+                    revision: None,
+                    device_preference: DevicePreference::Auto,
+                    cuda_device_index: 0,
+                    allow_fallback: true,
+                    approximate_gelu: false,
+                    use_pth: false,
+                    batch_size: 8,
+                    max_length: None,
+                };
+                let default_embedder = LocalEmbedder::new(embedder_config)?;
                 EmbeddingProcessor::new(EmbeddingSource::Local(default_embedder))
             }
         };
