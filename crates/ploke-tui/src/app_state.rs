@@ -474,12 +474,12 @@ pub async fn state_manager(
                     let bus_copy = event_bus.clone();
                     tokio::spawn(async move {
                         tracing::info!("IndexerTask started");
-                        event_bus.send(AppEvent::IndexingStarted);
+                        bus_copy.send(AppEvent::IndexingStarted);
 
                         if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
-                            event_bus.send(AppEvent::IndexingFailed(e.to_string()));
+                            bus_copy.send(AppEvent::IndexingFailed(e.to_string()));
                         } else {
-                            event_bus.send(AppEvent::IndexingCompleted);
+                            bus_copy.send(AppEvent::IndexingCompleted);
                         }
                     });
                 } else {
