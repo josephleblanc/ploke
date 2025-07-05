@@ -2,6 +2,7 @@ use std::sync::Arc;
 use tokio::{sync::watch, time::sleep, time::Duration};
 
 /// A token that can be used to signal cancellation across async tasks
+#[derive(Debug)]
 pub struct CancellationToken {
     receiver: watch::Receiver<bool>,
 }

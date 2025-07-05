@@ -24,7 +24,7 @@ use ploke_embed::{
     indexer::{self, EmbeddingProcessor, IndexProgress, IndexerTask, IndexingStatus, LocalModelBackend},
 };
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
 use utils::layout::layout_statusline;
 
@@ -108,7 +108,7 @@ async fn try_main() -> color_eyre::Result<()> {
     };
 
     let state = Arc::new(AppState {
-        chat: ChatState::default(),
+        chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::default(),
         system: SystemState::default(),
         indexing_state: RwLock::new(None),  // Initialize as None

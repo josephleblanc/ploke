@@ -13,8 +13,8 @@ pub struct FileManager {
 impl FileManager {
     /// Creates a new FileManager instance
     pub fn new(
-        io_handle: ploke_io::IoManagerHandle, 
-        event_rx: broadcast::Receiver<crate::AppEvent>
+        io_handle: ploke_io::IoManagerHandle,
+        event_rx: broadcast::Receiver<crate::AppEvent>,
     ) -> Self {
         Self {
             io_handle,
@@ -24,11 +24,8 @@ impl FileManager {
 
     /// Main event loop for file operations
     pub async fn run(mut self) {
-        loop {
-            match self.event_rx.recv().await {
-                Ok(event) => self.handle_event(event).await,
-                Err(_) => break,
-            }
+        while let Ok(event) = self.event_rx.recv().await {
+            self.handle_event(event).await
         }
     }
 
@@ -40,13 +37,17 @@ impl FileManager {
                 if let Err(e) = self.save_content(&path, &content).await {
                     error!("Save failed: {}", e);
                 }
-            },
+            }
             other => warn!("FileManager received unexpected event: {:?}", other),
         }
     }
 
     /// Saves content to disk atomically in a temp location then moves to final path
-    async fn save_content(&self, path: &std::path::Path, content: &[u8]) -> Result<(), std::io::Error> {
+    async fn save_content(
+        &self,
+        path: &std::path::Path,
+        content: &[u8],
+    ) -> Result<(), std::io::Error> {
         let temp_path = path.with_extension("tmp");
         let mut temp_file = fs::File::create(&temp_path).await?;
         temp_file.write_all(content).await?;
@@ -63,4 +64,3 @@ impl FileManager {
             .join("ploke_history.md")
     }
 }
-

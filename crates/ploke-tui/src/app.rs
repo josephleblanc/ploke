@@ -44,6 +44,7 @@ pub struct App {
     /// Input mode for vim-like multi-modal editing experience
     mode: Mode,
     command_style: CommandStyle,
+    indexing_state: Option<indexer::IndexingStatus>,
 }
 
 impl App {
@@ -63,6 +64,7 @@ impl App {
             input_buffer: String::new(),
             mode: Mode::default(),
             command_style,
+            indexing_state: None,
         }
     }
 
@@ -131,6 +133,9 @@ impl App {
                     match app_event {
                         AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
                             self.sync_list_selection().await;
+                        }
+                        AppEvent::IndexingProgress(state) => {
+                            self.indexing_state = Some(state);
                         }
                         _ => {}
                     }

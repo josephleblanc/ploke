@@ -36,8 +36,8 @@ pub enum EmbedError {
     BroadcastSendError(String),
 }
 
-impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingState>> for EmbedError {
-    fn from(e: tokio::sync::broadcast::error::SendError<crate::indexer::IndexingState>) -> Self {
+impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>> for EmbedError {
+    fn from(e: tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>) -> Self {
         EmbedError::BroadcastSendError(e.to_string())
     }
 }
