@@ -34,12 +34,12 @@ pub struct AppState {
 
     // crate-external processes
     pub indexing_state: RwLock<Option<IndexingStatus>>,
-    pub indexer_task: Option<Arc<indexer::IndexerTask>>
+    pub indexer_task: Option<Arc<indexer::IndexerTask>>,
 }
 
 // TODO: Implement Deref for all three *State items below
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ChatState(pub RwLock<ChatHistory>);
 
 impl ChatState {
@@ -50,7 +50,7 @@ impl ChatState {
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ConfigState(RwLock<Config>);
 
 impl ConfigState {
@@ -59,7 +59,7 @@ impl ConfigState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SystemState(RwLock<SystemStatus>);
 
 impl SystemState {
@@ -454,14 +454,16 @@ pub async fn state_manager(
                     let indexer_task = Arc::clone(indexer_task_arc);
                     let (control_tx, control_rx) = mpsc::channel(4);
                     let progress_tx = event_bus.index_tx.clone();
-                    
+
                     // Initialize indexing state
                     {
                         let mut state_guard = state.indexing_state.write().await;
                         *state_guard = Some(IndexingStatus {
                             status: IndexStatus::Running,
                             processed: 0,
-                            total: indexer_task.db.count_pending_embeddings()
+                            total: indexer_task
+                                .db
+                                .count_pending_embeddings()
                                 .map_err(|e| tracing::error!("DB error: {e}"))
                                 .unwrap_or(100), // Fallback total
                             current_file: None,
@@ -469,10 +471,11 @@ pub async fn state_manager(
                         });
                     }
 
+                    let bus_copy = event_bus.clone();
                     tokio::spawn(async move {
                         tracing::info!("IndexerTask started");
                         event_bus.send(AppEvent::IndexingStarted);
-                        
+
                         if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
                             event_bus.send(AppEvent::IndexingFailed(e.to_string()));
                         } else {
@@ -482,7 +485,7 @@ pub async fn state_manager(
                 } else {
                     tracing::error!("Indexer task not initialized");
                     event_bus.send(AppEvent::IndexingFailed(
-                        "Indexing subsystem not initialized".to_string()
+                        "Indexing subsystem not initialized".to_string(),
                     ));
                 }
             }
