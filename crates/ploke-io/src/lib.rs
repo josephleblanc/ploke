@@ -603,22 +603,22 @@ mod tests {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("world").unwrap(),
-                end_byte: content1.find("world").unwrap() + 5,
-                id: todo!(),
+                end_byte: content1.find("world").unwrap() + "world".len(),
+                id: Uuid::nil(),
             },
             EmbeddingNode {
                 path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
                 start_byte: content2.find("This").unwrap(),
-                end_byte: content2.find("This").unwrap() + 4,
-                id: todo!(),
+                end_byte: content2.find("This").unwrap() + "This".len(),
+                id: Uuid::nil(),
             },
             EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("Hello").unwrap(),
-                end_byte: content1.find("Hello").unwrap() + 5,
-                id: todo!(),
+                end_byte: content1.find("Hello").unwrap() + "Hello".len(),
+                id: Uuid::nil(),
             },
         ];
 
@@ -676,7 +676,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content),
                 start_byte: 0,
                 end_byte: 10,
-                id: todo!(),
+                id: Uuid::nil(),
             }])
             .await
             .unwrap();
@@ -762,7 +762,7 @@ mod tests {
             file_tracking_hash: tracking_hash(content),
             start_byte: pos,
             end_byte: pos,
-            id: todo!(),
+            id: Uuid::nil(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -827,7 +827,7 @@ mod tests {
                 file_tracking_hash: hash_mismatch,
                 start_byte: 0,
                 end_byte: 10,
-                id: todo!(),
+                id: Uuid::nil(),
             },
             // Valid request 3: from file1 again
             EmbeddingNode {
@@ -835,7 +835,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("fn").unwrap(),
                 end_byte: content1.find("fn").unwrap() + 2,
-                id: todo!(),
+                id: Uuid::nil(),
             },
         ];
 
@@ -888,7 +888,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(initial_content),
                 start_byte: initial_content.find("initial").unwrap(),
                 end_byte: initial_content.find("initial").unwrap() + 7,
-                id: todo!(),
+                id: Uuid::nil(),
             }])
             .await
             .unwrap();
@@ -924,7 +924,7 @@ mod tests {
                         file_tracking_hash: tracking_hash(&content),
                         start_byte: content.find("VAL_0").unwrap(),
                         end_byte: content.find("VAL_0").unwrap() + 5,
-                        id: todo!(),
+                        id: Uuid::nil(),
                     }])
                     .await
             })
@@ -1005,27 +1005,23 @@ mod tests {
         let result = handle.get_snippets_batch(vec![]).await;
 
         assert!(matches!(result, Err(RecvError::SendError)));
+        handle.shutdown().await;
     }
 
     #[tokio::test]
     async fn test_send_during_shutdown() {
         let handle = IoManagerHandle::new();
-        let (sender, receiver) = oneshot::channel();
-        handle
-            .request_sender
-            .send(IoManagerMessage::Shutdown)
-            .await
-            .unwrap();
+        // First make sure to send shutdown
+        let _ = handle.request_sender.send(IoManagerMessage::Shutdown).await;
 
         // Try to send after shutdown
-        let result = handle
-            .request_sender
-            .send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
-                requests: vec![],
-                responder: sender,
-            }))
-            .await;
+        let result = handle.request_sender.send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
+            requests: vec![],
+            responder: oneshot::channel().0,
+        })).await;
 
         assert!(result.is_err());
+        // Cleanup shutdown
+        handle.shutdown().await;
     }
 }
