@@ -35,11 +35,11 @@
 - [x] File not found errors
 - [x] Byte range exceeds file size
 - [x] Parse errors
-- [ ] UTF-8 decoding errors
-- [ ] Permission denied errors
+- [x] UTF-8 decoding errors
+- [x] Permission denied errors
 - [x] Concurrency throttling verification
-- [ ] Read during shutdown
-- [ ] Send request during shutdown
+- [x] Read during shutdown
+- [x] Send request during shutdown
 
 ### Edge Cases
 - [ ] Zero-byte files
