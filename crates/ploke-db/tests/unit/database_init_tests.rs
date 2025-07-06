@@ -1,5 +1,5 @@
+use crate::common::test_helpers::setup_test_db; // Uses the function
 use ploke_db::Database;
-use crate::test_helpers::setup_test_db;
 
 #[test]
 fn test_schema_creation_success() {

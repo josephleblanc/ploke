@@ -2,7 +2,7 @@
 
 use cozo::Db;
 use cozo::MemStorage;
-use ploke_db::database::Database;
+use ploke_db::Database;
 use ploke_transform::schema::create_schema_all;
 
 /// Creates a new in-memory database with the schema initialized
