@@ -474,7 +474,7 @@ impl IoManager {
                         req.idx,
                         Err(IoError::Utf8 {
                             path: path.clone(),
-                            source: Arc::new(e.into_error()),
+                            source: e,
                         }
                         .into()),
                     ));
@@ -583,7 +583,6 @@ pub enum IoError {
     #[error("Shutdown initiated")]
     ShutdownInitiated,
 
-    #[error("File operation {operation} failed for {path}: {source}")]
     #[error("File operation {operation} failed for {path}: {source} (kind: {kind:?})")]
     FileOperation {
         operation: &'static str,
@@ -595,7 +594,7 @@ pub enum IoError {
     #[error("UTF-8 decoding error in {path}: {source}")]
     Utf8 {
         path: PathBuf,
-        source: Arc<std::string::FromUtf8Error>,
+        source: std::string::FromUtf8Error,
     },
 }
 
@@ -634,13 +633,17 @@ impl From<IoError> for ploke_error::Error {
                 operation,
                 path,
                 source,
+                kind,
             } => ploke_error::Error::Fatal(FatalError::FileOperation {
                 operation,
                 path,
                 source,
             }),
 
-            Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { path, source }),
+            Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { 
+                path, 
+                source: Arc::new(source) 
+            }),
             Recv(recv_error) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(recv_error.to_string()),
             ),
