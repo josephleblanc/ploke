@@ -987,6 +987,168 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_zero_byte_files() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("empty.rs");
+        fs::write(&file_path, "").unwrap();
+
+        let requests = vec![EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: TrackingHash(Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 0,
+            id: Uuid::new_v4(),
+        }];
+
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert!(matches!(
+            results[0],
+            Err(PlokeError::Fatal(FatalError::ContentMismatch { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_multi_byte_unicode_boundaries() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("unicode.rs");
+        let content = "fn main() { let s = \"こんにちは\"; }";
+        fs::write(&file_path, content).unwrap();
+
+        // Valid snippet: whole multi-byte character
+        let valid_request = EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            start_byte: content.find("こ").unwrap(),
+            end_byte: content.find("こ").unwrap() + "こ".len(),
+            id: Uuid::new_v4(),
+        };
+
+        // Invalid snippet: partial multi-byte character
+        let invalid_request = EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            start_byte: content.find("こ").unwrap() + 1,
+            end_byte: content.find("こ").unwrap() + 2,
+            id: Uuid::new_v4(),
+        };
+
+        let requests = vec![valid_request, invalid_request];
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert_eq!(results[0].as_ref().unwrap(), "こ");
+        assert!(matches!(
+            results[1].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::Utf8 { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_byte_ranges() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        let content = "fn main() {}";
+        fs::write(&file_path, content).unwrap();
+
+        // Case 1: start_byte > end_byte
+        let reverse_request = EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            start_byte: 10,
+            end_byte: 5,
+            id: Uuid::new_v4(),
+        };
+
+        // Case 2: start_byte == end_byte (but file is shorter)
+        let equal_request = EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash_with_path(content, &file_path),
+            start_byte: 100,
+            end_byte: 100,
+            id: Uuid::new_v4(),
+        };
+
+        let requests = vec![reverse_request, equal_request];
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert!(matches!(
+            results[0].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::FileOperation { .. })
+        ));
+        
+        assert!(matches!(
+            results[1].as_ref().unwrap_err(),
+            PlokeError::Fatal(FatalError::FileOperation { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_exact_semaphore_limit() {
+        let io_manager = IoManagerHandle::new();
+        let dir = tempdir().unwrap();
+
+        // Determine expected concurrency limit
+        let limit = match rlimit::getrlimit(rlimit::Resource::NOFILE) {
+            Ok((soft, _)) => std::cmp::min(100, (soft / 3) as usize),
+            Err(_) => 50,
+        };
+
+        let mut requests = Vec::new();
+        for i in 0..limit {
+            let content = format!("const FILE_{}: u32 = {};", i, i);
+            let path = dir.path().join(format!("file_{}.rs", i));
+            fs::write(&path, &content).unwrap();
+            requests.push(EmbeddingNode {
+                path: path.to_owned(),
+                file_tracking_hash: tracking_hash_with_path(&content, &path),
+                start_byte: content.find("FILE").unwrap(),
+                end_byte: content.find("FILE").unwrap() + 8,
+                id: Uuid::new_v4(),
+            });
+        }
+
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+        assert_eq!(results.len(), limit);
+        assert!(results.iter().all(|r| r.is_ok()));
+    }
+
+    #[tokio::test]
+    async fn test_token_stream_sensitivity() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("sensitivity.rs");
+        
+        // Content with comments
+        let content1 = r#"
+        // This is a comment
+        fn original() {}
+        "#;
+        
+        // Same functional content without comments
+        let content2 = "fn original() {}";
+        
+        // Different functional content
+        let content3 = "fn modified() {}";
+        
+        fs::write(&path, content1).unwrap();
+        let hash1 = tracking_hash_with_path(content1, &path);
+        
+        fs::write(&path, content2).unwrap();
+        let hash2 = tracking_hash_with_path(content2, &path);
+        
+        fs::write(&path, content3).unwrap();
+        let hash3 = tracking_hash_with_path(content3, &path);
+        
+        // Same semantics but should have same hash (comment changes don't matter)
+        assert_eq!(hash1, hash2);
+        
+        // Functional change should produce different hash
+        assert_ne!(hash2, hash3);
+    }
+
+    #[tokio::test]
     #[cfg_attr(not(unix), ignore)]
     async fn test_permission_denied() {
         use std::os::unix::fs::PermissionsExt;
