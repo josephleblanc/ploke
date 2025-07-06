@@ -604,21 +604,21 @@ mod tests {
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("world").unwrap(),
                 end_byte: content1.find("world").unwrap() + "world".len(),
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             },
             EmbeddingNode {
                 path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
                 start_byte: content2.find("This").unwrap(),
                 end_byte: content2.find("This").unwrap() + "This".len(),
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             },
             EmbeddingNode {
                 path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("Hello").unwrap(),
                 end_byte: content1.find("Hello").unwrap() + "Hello".len(),
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             },
         ];
 
@@ -649,7 +649,7 @@ mod tests {
             file_tracking_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 0,
             end_byte: 5,
-            id: Uuid::nil(),
+            id: Uuid::new_v4(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -676,7 +676,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content),
                 start_byte: 0,
                 end_byte: 10,
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             }])
             .await
             .unwrap();
@@ -684,7 +684,7 @@ mod tests {
         assert!(matches!(
             results[0],
             Err(PlokeError::Fatal(FatalError::FileOperation {
-                operation: "open",
+                operation: "read",
                 ..
             }))
         ));
@@ -734,7 +734,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content),
                 start_byte: 0,
                 end_byte: 1000,
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             }])
             .await
             .unwrap();
@@ -742,7 +742,7 @@ mod tests {
 
         assert!(matches!(
             res,
-            PlokeError::Fatal(FatalError::FileOperation { .. })
+            PlokeError::Fatal(FatalError::FileOperation { operation: "read", .. })
         ));
     }
 
@@ -762,7 +762,7 @@ mod tests {
             file_tracking_hash: tracking_hash(content),
             start_byte: pos,
             end_byte: pos,
-            id: Uuid::nil(),
+            id: Uuid::new_v4(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -803,7 +803,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("valid").unwrap(),
                 end_byte: content1.find("valid").unwrap() + 5,
-                id: todo!(),
+                id: Uuid::new_v4(),
             },
             // Invalid request: non-existent file
             EmbeddingNode {
@@ -811,7 +811,7 @@ mod tests {
                 file_tracking_hash: tracking_hash("fn dummy() {}"),
                 start_byte: 0,
                 end_byte: 10,
-                id: todo!(),
+                id: Uuid::new_v4(),
             },
             // Valid request 2: "another"
             EmbeddingNode {
@@ -819,7 +819,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content2),
                 start_byte: content2.find("another").unwrap(),
                 end_byte: content2.find("another").unwrap() + 7,
-                id: todo!(),
+                id: Uuid::new_v4(),
             },
             // Invalid request: content hash mismatch
             EmbeddingNode {
@@ -827,7 +827,7 @@ mod tests {
                 file_tracking_hash: hash_mismatch,
                 start_byte: 0,
                 end_byte: 10,
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             },
             // Valid request 3: from file1 again
             EmbeddingNode {
@@ -835,7 +835,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("fn").unwrap(),
                 end_byte: content1.find("fn").unwrap() + 2,
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             },
         ];
 
@@ -852,7 +852,7 @@ mod tests {
         assert!(matches!(
             results[1].as_ref().unwrap_err(),
             PlokeError::Fatal(FatalError::FileOperation {
-                operation: "open",
+                operation: "read",
                 ..
             })
         ));
@@ -888,7 +888,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(initial_content),
                 start_byte: initial_content.find("initial").unwrap(),
                 end_byte: initial_content.find("initial").unwrap() + 7,
-                id: Uuid::nil(),
+                id: Uuid::new_v4(),
             }])
             .await
             .unwrap();
@@ -924,7 +924,7 @@ mod tests {
                         file_tracking_hash: tracking_hash(&content),
                         start_byte: content.find("VAL_0").unwrap(),
                         end_byte: content.find("VAL_0").unwrap() + 5,
-                        id: Uuid::nil(),
+                        id: Uuid::new_v4(),
                     }])
                     .await
             })
@@ -1005,13 +1005,13 @@ mod tests {
         let result = handle.get_snippets_batch(vec![]).await;
 
         assert!(matches!(result, Err(RecvError::SendError)));
-        handle.shutdown().await;
+        // handle.shutdown().await; // Already shut down
     }
 
     #[tokio::test]
     async fn test_send_during_shutdown() {
-        let handle = IoManagerHandle::new();
-        // First make sure to send shutdown
+        let handle = IoManagerHandle::new();            
+        // Send shutdown and wait for it to process
         let _ = handle.request_sender.send(IoManagerMessage::Shutdown).await;
 
         // Try to send after shutdown
