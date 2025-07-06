@@ -168,6 +168,11 @@ impl Database {
             return Ok(());
         }
 
+        // Validate embeddings before processing
+        for (id, embedding) in &updates {
+            validate_embedding_vec(embedding)?;
+        }
+
         let inner_db = self.db.clone();
         // FIX: Corrected CozoDB update script
         let script = r#"
@@ -202,6 +207,17 @@ impl Database {
         .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Validate that an embedding vector is non-empty
+    fn validate_embedding_vec(embedding: &[f32]) -> Result<(), DbError> {
+        if embedding.is_empty() {
+            Err(DbError::QueryExecution(
+                "Embedding vector must not be empty".into(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     /// Fetches all primary nodes that do not yet have an embedding.
