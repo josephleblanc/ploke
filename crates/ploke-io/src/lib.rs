@@ -602,13 +602,18 @@ impl From<IoError> for ploke_error::Error {
                 source,
             }),
             InvalidCharBoundary { path, start_byte, end_byte } => {
-                ploke_error::Error::Fatal(FatalError::FileOperation {
-                    operation: "read",
+                // Create a FromUtf8Error to capture the decoding failure
+                let err_msg = format!(
+                    "Byte range {}-{} splits multi-byte Unicode character",
+                    start_byte, end_byte
+                );
+                let source = std::string::FromUtf8Error::from(
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, err_msg)
+                );
+                
+                ploke_error::Error::Fatal(FatalError::Utf8 {
                     path,
-                    source: Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Byte range {}-{} is not on UTF-8 character boundary", start_byte, end_byte),
-                    )),
+                    source,
                 })
             }
             Recv(recv_error) => ploke_error::Error::Internal(
