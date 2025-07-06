@@ -1,9 +1,13 @@
+use ploke_tui::AppEvent;
 use ratatui::backend::TestBackend;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ploke_tui::app::{App, Mode, CommandStyle};
-use ploke_tui::event::Event;
-use ploke_tui::app_state::{StateCommand, IndexingStatus, IndexStatus};
+use ploke_tui::app::{App, Mode, };
+use ploke_tui::user_config::CommandStyle;
+use ploke_tui::ui::UiEvent;
+use ploke_tui::app_state::{AppState, StateCommand };
+use ploke_embed::indexer::{IndexingStatus, IndexStatus};
 use tokio::sync::mpsc;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[tokio::test]
