@@ -54,7 +54,7 @@
 - [ ] Empty file groups processing  <!-- Still needs test -->
 - [ ] Shutdown with no active operations  <!-- Still needs test -->
 - [x] Early shutdown during heavy operations
-- [ ] Exactly semaphore-limit concurrent files  <!-- Still needs test -->
+- [x] Exactly semaphore-limit concurrent files  <!-- Tested -->
 
 ### Error Conversion Paths
 - [x] IoError::Recv conversion
