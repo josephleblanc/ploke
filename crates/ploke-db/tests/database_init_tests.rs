@@ -1,5 +1,4 @@
 use ploke_db::Database;
-use ploke_db::DbError;
 use crate::test_helpers::setup_test_db;
 
 #[test]
@@ -48,7 +47,7 @@ fn test_hnsw_initialization() {
 #[test]
 fn test_reinitialization_handling() {
     // First initialization
-    let db = setup_test_db();
+    let _ = setup_test_db();
     
     // Try to re-initialize the database
     let db = Database::init_with_schema();
