@@ -133,6 +133,18 @@ mod tests {
     use tempfile::tempdir;
     use uuid::Uuid;
     
+    // Helper function for tests
+    fn tracking_hash(content: &str) -> TrackingHash {
+        let file = syn::parse_file(content).expect("Failed to parse content");
+        let tokens = file.into_token_stream();
+
+        TrackingHash::generate(
+            Uuid::nil(),                       // Matches production call
+            &PathBuf::from("placeholder.txt"), // Path not important for tests
+            &tokens,
+        )
+    }
+
     // ... existing tests ...
 
     // Add the new tests below the existing tests
@@ -214,6 +226,8 @@ mod tests {
         
         assert!(result.is_err());
     }
+
+    // ... existing tests from the second module ...
 }
 
 impl Default for IoManagerHandle {
