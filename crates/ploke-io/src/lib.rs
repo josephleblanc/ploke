@@ -581,7 +581,7 @@ mod tests {
     }
 
     // Helper function for tests that need path-specific hashing
-    fn tracking_hash_with_path(content: &str, path: &Path) -> TrackingHash {
+    fn tracking_hash_with_path(content: &str, path: &std::path::Path) -> TrackingHash {
         let file = syn::parse_file(content).expect("Failed to parse content");
         let tokens = file.into_token_stream();
 
