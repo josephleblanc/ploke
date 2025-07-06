@@ -1,6 +1,4 @@
-use crate::{config::OpenAIConfig, error::{EmbedError, OpenAIError}};
-
-
+use crate::{config::OpenAIConfig, error::{EmbedError, truncate_string}};
 
 // OpenAI backend implementation
 #[derive(Debug)]
@@ -28,26 +26,31 @@ impl OpenAIBackend {
             model: self.model.clone(),
             input: snippets,
         };
+        let endpoint = "https://api.openai.com/v1/embeddings".to_string();
 
         let res = client
-            .post("https://api.openai.com/v1/embeddings")
+            .post(&endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request)
             .send()
             .await?; // Uses From<reqwest::Error>
 
         if !res.status().is_success() {
-            return Err(OpenAIError::ApiError { 
-                status: res.status().as_u16(), 
-                body: res.text().await?
-            }.into());
+            let status = res.status().as_u16();
+            let body = res.text().await.unwrap_or_else(|_| "<unreadable>".into());
+            return Err(EmbedError::HttpError {
+                status,
+                body,
+                url: endpoint,
+            });
         }
 
-        let response = res.json::<OpenAIEmbedResponse>().await?;
+        let response = res.json::<OpenAIEmbedResponse>()
+            .await
+            .map_err(|e| EmbedError::Network(format!("Deserialization failed: {}", truncate_string(&e.to_string(), 60))))?;
         Ok(response.data.into_iter().map(|d| d.embedding).collect())
     }
 }
-
 
 // Request structs for openAI
 #[derive(serde::Serialize)]

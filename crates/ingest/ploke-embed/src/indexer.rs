@@ -190,7 +190,17 @@ impl IndexerTask {
                 |current, total| tracing::info!("Indexed {current}/{total}"),
             ).await {
                 Ok(_) => state.processed += batch_len,
-                Err(e) => state.errors.push(e.to_string()),
+                Err(e) => {
+                    let error_str = match &e {
+                        EmbedError::HttpError { status, body, url } => 
+                            format!("HTTP {} at {}: {}", status, truncate_string(url, 40), truncate_string(body, 80)),
+                        _ => e.to_string()
+                    };
+                    state.errors.push(error_str);
+                    
+                    // Log with full context for diagnostics
+                    tracing::error!("Batch process failed: {e:?}");
+                }
             }
             
             progress_tx.send(state.clone())?;

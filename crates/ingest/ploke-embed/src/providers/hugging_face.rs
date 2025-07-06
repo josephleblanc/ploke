@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::{config::HuggingFaceConfig, error::{EmbedError, HuggingFaceError}};
+use crate::{config::HuggingFaceConfig, error::{EmbedError, truncate_string}};
 
 #[derive(Serialize)]
 struct EmbeddingRequest<'a> {
@@ -33,9 +33,10 @@ impl HuggingFaceBackend {
         let client = reqwest::Client::new();
         let inputs: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
         let request_body = EmbeddingRequest { inputs: &inputs };
+        let endpoint = format!("https://api-inference.huggingface.co/models/{}", self.model);
 
         let res = client
-            .post(format!("https://api-inference.huggingface.co/models/{}", self.model))
+            .post(&endpoint)
             .bearer_auth(&self.token)
             .json(&request_body)
             .timeout(Duration::from_secs(30))  // Add timeout
@@ -43,12 +44,17 @@ impl HuggingFaceBackend {
             .await?; // Uses From<reqwest::Error>
 
         if !res.status().is_success() {
-            return Err(HuggingFaceError::ApiError { 
-                status: res.status().as_u16(), 
-                body: res.text().await?
-            }.into());
+            let status = res.status().as_u16();
+            let body = res.text().await.unwrap_or_else(|_| "<unreadable>".into());
+            return Err(EmbedError::HttpError {
+                status,
+                body,
+                url: endpoint,
+            });
         }
 
-        res.json().await.map_err(Into::into)
+        res.json::<Vec<Vec<f32>>>()
+            .await
+            .map_err(|e| EmbedError::Network(format!("Deserialization failed: {}", truncate_string(&e.to_string(), 60))))
     }
 }

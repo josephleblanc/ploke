@@ -15,12 +15,6 @@ pub enum EmbedError {
     #[error("Local model error: {0}")]
     LocalModel(String),
 
-    #[error("Hugging Face API error: {0}")]
-    HuggingFace(#[from] HuggingFaceError),
-
-    #[error("OpenAI API error: {0}")]
-    OpenAI(#[from] OpenAIError),
-
     #[error("Network Error: {0}")]
     Network(String),
 
@@ -44,6 +38,13 @@ pub enum EmbedError {
 
     #[error("Broadcast send error: {0}")]
     BroadcastSendError(String),
+
+    #[error("HTTP Error {status} at {url}: {body}")]
+    HttpError {
+        status: u16,
+        body: String,
+        url: String,
+    },
 }
 
 impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>> for EmbedError {
@@ -88,14 +89,11 @@ impl From<EmbedError> for ploke_error::Error {
     }
 }
 
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum HuggingFaceError {
-    #[error("API error: status {status}, body {body}")]
-    ApiError { status: u16, body: String },
-}
-
-#[derive(thiserror::Error, Debug, Clone)]
-pub enum OpenAIError {
-    #[error("API error: status {status}, body {body}")]
-    ApiError { status: u16, body: String },
+/// Helper to truncate strings for error display
+pub fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_owned()
+    } else {
+        format!("{}…", &s[..max_len])
+    }
 }
