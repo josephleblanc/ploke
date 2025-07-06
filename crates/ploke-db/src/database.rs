@@ -345,7 +345,7 @@ mod tests {
             insert_script,
             params,
             cozo::ScriptMutability::Mutable,
-        )?;
+        ).map_err(|e| DbError::Cozo(e.to_string()))?;
 
         db.update_embeddings_batch(vec![(id, embedding.clone())])
             .await?;

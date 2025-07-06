@@ -1,4 +1,4 @@
-use crate::config::CozoConfig;
+use crate::{config::CozoConfig, error::truncate_string};
 use crate::local::LocalEmbedder;
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
