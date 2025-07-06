@@ -572,10 +572,22 @@ mod tests {
     fn tracking_hash(content: &str) -> TrackingHash {
         let file = syn::parse_file(content).expect("Failed to parse content");
         let tokens = file.into_token_stream();
+        let path = PathBuf::from("placeholder.txt");
+        TrackingHash::generate(
+            ploke_core::PROJECT_NAMESPACE_UUID,
+            &path,
+            &tokens,
+        )
+    }
+
+    // Helper function for tests that need path-specific hashing
+    fn tracking_hash_with_path(content: &str, path: &Path) -> TrackingHash {
+        let file = syn::parse_file(content).expect("Failed to parse content");
+        let tokens = file.into_token_stream();
 
         TrackingHash::generate(
             ploke_core::PROJECT_NAMESPACE_UUID,
-            &PathBuf::from("placeholder.txt"),
+            path,
             &tokens,
         )
     }
@@ -704,7 +716,7 @@ mod tests {
                 fs::write(&path, &content).unwrap();
                 EmbeddingNode {
                     path: path.to_owned(),
-                    file_tracking_hash: tracking_hash(&content),
+                    file_tracking_hash: tracking_hash_with_path(&content, &path),
                     start_byte: content.find("FILE").unwrap(),
                     end_byte: content.find("FILE").unwrap() + 8,
                     id: Uuid::new_v4(),
@@ -731,7 +743,7 @@ mod tests {
         let results = io_manager
             .get_snippets_batch(vec![EmbeddingNode {
                 path: file_path.to_owned(),
-                file_tracking_hash: tracking_hash(content),
+                file_tracking_hash: tracking_hash_with_path(content, &file_path),
                 start_byte: 0,
                 end_byte: 1000,
                 id: Uuid::new_v4(),
@@ -759,7 +771,7 @@ mod tests {
         let pos = content.find('f').unwrap() + 1;
         let requests = vec![EmbeddingNode {
             path: file_path.clone(),
-            file_tracking_hash: tracking_hash(content),
+            file_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: pos,
             end_byte: pos,
             id: Uuid::new_v4(),
@@ -800,7 +812,7 @@ mod tests {
             // Valid request 1: "valid"
             EmbeddingNode {
                 path: file_path1.clone(),
-                file_tracking_hash: tracking_hash(content1),
+                file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
                 start_byte: content1.find("valid").unwrap(),
                 end_byte: content1.find("valid").unwrap() + 5,
                 id: Uuid::new_v4(),
@@ -816,7 +828,7 @@ mod tests {
             // Valid request 2: "another"
             EmbeddingNode {
                 path: file_path2.clone(),
-                file_tracking_hash: tracking_hash(content2),
+                file_tracking_hash: tracking_hash_with_path(content2, &file_path2),
                 start_byte: content2.find("another").unwrap(),
                 end_byte: content2.find("another").unwrap() + 7,
                 id: Uuid::new_v4(),
@@ -832,7 +844,7 @@ mod tests {
             // Valid request 3: from file1 again
             EmbeddingNode {
                 path: file_path1.clone(),
-                file_tracking_hash: tracking_hash(content1),
+                file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
                 start_byte: content1.find("fn").unwrap(),
                 end_byte: content1.find("fn").unwrap() + 2,
                 id: Uuid::new_v4(),
