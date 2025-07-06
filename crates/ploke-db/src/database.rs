@@ -70,7 +70,21 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        // FIX: Create HNSW index for embeddings
+        // Create embedding_nodes table
+        let create_embedding_nodes = r#"
+            ::create embedding_nodes {
+                id: Uuid,
+                embedding: <F32; 384>?
+            }
+        "#;
+        db.run_script(
+            create_embedding_nodes,
+            Default::default(),
+            cozo::ScriptMutability::Mutable,
+        )
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        // Create HNSW index for embeddings
         let hnsw_script = r#"
             ::hnsw create embedding_nodes:embedding_idx {
                 dim: 384,
@@ -319,6 +333,19 @@ mod tests {
         let db = setup_db();
         let id = Uuid::new_v4();
         let embedding = vec![1.0, 2.0, 3.0];
+
+        // Insert initial record with null embedding
+        let insert_script = r#"
+            ?[id] <- [[$id]]
+            :put embedding_nodes { id => embedding: null }
+        "#;
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(id)));
+        db.db.run_script(
+            insert_script,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
 
         db.update_embeddings_batch(vec![(id, embedding.clone())])
             .await?;

@@ -1,7 +1,6 @@
 use cozo::DataValue;
 use ploke_db::to_usize;
 use ploke_db::Database;
-use ploke_db::DbError;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -58,7 +57,8 @@ async fn test_update_embeddings_batch_empty() {
 async fn test_update_embeddings_batch_single() {
     let db = create_test_db_for_embedding_updates();
     let id = Uuid::new_v4();
-    let embedding = vec![0.5f32, -0.25f32, 1.0f32];
+    // Use 384-dimensional vector to match schema
+    let embedding = vec![0.5f32; 384]; 
     
     db.update_embeddings_batch(vec![(id, embedding)])
         .await
