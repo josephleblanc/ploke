@@ -126,109 +126,6 @@ pub struct IoManagerHandle {
     request_sender: mpsc::Sender<IoManagerMessage>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-    use uuid::Uuid;
-    
-    // Helper function for tests
-    fn tracking_hash(content: &str) -> TrackingHash {
-        let file = syn::parse_file(content).expect("Failed to parse content");
-        let tokens = file.into_token_stream();
-
-        TrackingHash::generate(
-            Uuid::nil(),                       // Matches production call
-            &PathBuf::from("placeholder.txt"), // Path not important for tests
-            &tokens,
-        )
-    }
-
-    // ... existing tests ...
-
-    // Add the new tests below the existing tests
-    #[tokio::test]
-    async fn test_utf8_error() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("invalid_utf8.rs");
-        fs::write(&file_path, b"fn invalid\xc3(\"Hello\")").unwrap();
-        
-        let io_manager = IoManagerHandle::new();
-        let requests = vec![EmbeddingNode {
-            path: file_path.clone(),
-            file_tracking_hash: TrackingHash(Uuid::new_v4()),
-            start_byte: 0,
-            end_byte: 10,
-            id: Uuid::new_v4(),
-        }];
-        
-        let results = io_manager.get_snippets_batch(requests).await.unwrap();
-        
-        assert!(matches!(results[0], Err(PlokeError::Fatal(FatalError::Utf8 { .. }))));
-    }
-
-    #[tokio::test]
-    #[cfg_attr(not(unix), ignore)]
-    async fn test_permission_denied() {
-        use std::os::unix::fs::PermissionsExt;
-        
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("protected.rs");
-        fs::write(&file_path, "fn main() {}").unwrap();
-        
-        // Set read-only permissions
-        let mut permissions = file_path.metadata().unwrap().permissions();
-        permissions.set_mode(0o200);
-        fs::set_permissions(&file_path, permissions).unwrap();
-        
-        let io_manager = IoManagerHandle::new();
-        let requests = vec![EmbeddingNode {
-            path: file_path.clone(),
-            file_tracking_hash: tracking_hash("fn main() {}"),
-            start_byte: 0,
-            end_byte: 10,
-            id: Uuid::new_v4(),
-        }];
-        
-        let results = io_manager.get_snippets_batch(requests).await.unwrap();
-        
-        assert!(matches!(
-            results[0],
-            Err(PlokeError::Fatal(FatalError::FileOperation {
-                source,
-                ..
-            })) if source.kind() == std::io::ErrorKind::PermissionDenied
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_read_during_shutdown() {
-        let handle = IoManagerHandle::new();
-        handle.shutdown().await;
-        
-        let result = handle.get_snippets_batch(vec![]).await;
-        
-        assert!(matches!(result, Err(RecvError::SendError)));
-    }
-
-    #[tokio::test]
-    async fn test_send_during_shutdown() {
-        let handle = IoManagerHandle::new();
-        let (sender, receiver) = oneshot::channel();
-        handle.request_sender.send(IoManagerMessage::Shutdown).await.unwrap();
-        
-        // Try to send after shutdown
-        let result = handle.request_sender.send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
-            requests: vec![],
-            responder: sender,
-        })).await;
-        
-        assert!(result.is_err());
-    }
-
-    // ... existing tests from the second module ...
-}
 
 impl Default for IoManagerHandle {
     fn default() -> Self {
@@ -488,7 +385,7 @@ impl IoManager {
                         req.idx,
                         Err(IoError::Utf8 {
                             path: path.clone(),
-                            source: e,
+                            source: e.clone(),
                         }
                         .into()),
                     ));
@@ -654,9 +551,9 @@ impl From<IoError> for ploke_error::Error {
                 source,
             }),
 
-            Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 { 
-                path, 
-                source: Arc::new(source) 
+            Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 {
+                path,
+                source: Arc::new(source),
             }),
             Recv(recv_error) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(recv_error.to_string()),
@@ -1040,5 +937,95 @@ mod tests {
         // Should handle shutdown gracefully
         let res = handle.await.unwrap();
         assert!(matches!(res, Err(RecvError::RecvError)));
+    }
+
+    // Add the new tests below the existing tests
+    #[tokio::test]
+    async fn test_utf8_error() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("invalid_utf8.rs");
+        fs::write(&file_path, b"fn invalid\xc3(\"Hello\")").unwrap();
+
+        let io_manager = IoManagerHandle::new();
+        let requests = vec![EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: TrackingHash(Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 10,
+            id: Uuid::new_v4(),
+        }];
+
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert!(matches!(
+            results[0],
+            Err(PlokeError::Fatal(FatalError::Utf8 { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(unix), ignore)]
+    async fn test_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("protected.rs");
+        fs::write(&file_path, "fn main() {}").unwrap();
+
+        // Set read-only permissions
+        let mut permissions = file_path.metadata().unwrap().permissions();
+        permissions.set_mode(0o200);
+        fs::set_permissions(&file_path, permissions).unwrap();
+
+        let io_manager = IoManagerHandle::new();
+        let requests = vec![EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash("fn main() {}"),
+            start_byte: 0,
+            end_byte: 10,
+            id: Uuid::new_v4(),
+        }];
+
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+
+        assert!(matches!(
+            results[0].clone(),
+            Err(PlokeError::Fatal(FatalError::FileOperation {
+                source,
+                ..
+            })) if source.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_read_during_shutdown() {
+        let handle = IoManagerHandle::new();
+        handle.shutdown().await;
+
+        let result = handle.get_snippets_batch(vec![]).await;
+
+        assert!(matches!(result, Err(RecvError::SendError)));
+    }
+
+    #[tokio::test]
+    async fn test_send_during_shutdown() {
+        let handle = IoManagerHandle::new();
+        let (sender, receiver) = oneshot::channel();
+        handle
+            .request_sender
+            .send(IoManagerMessage::Shutdown)
+            .await
+            .unwrap();
+
+        // Try to send after shutdown
+        let result = handle
+            .request_sender
+            .send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
+                requests: vec![],
+                responder: sender,
+            }))
+            .await;
+
+        assert!(result.is_err());
     }
 }
