@@ -649,7 +649,7 @@ mod tests {
             file_tracking_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 0,
             end_byte: 5,
-            id: todo!(),
+            id: Uuid::nil(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -734,7 +734,7 @@ mod tests {
                 file_tracking_hash: tracking_hash(content),
                 start_byte: 0,
                 end_byte: 1000,
-                id: todo!(),
+                id: Uuid::nil(),
             }])
             .await
             .unwrap();
