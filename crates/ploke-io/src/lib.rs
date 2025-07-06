@@ -443,7 +443,21 @@ impl IoManager {
 
         // Extract snippets from the in-memory content
         for req in requests {
-            if req.request.end_byte > file_content.len() {
+            // Validate byte order first
+            if req.request.start_byte > req.request.end_byte {
+                results.push((
+                    req.idx,
+                    Err(IoError::OutOfRange {
+                        path: path.clone(),
+                        start_byte: req.request.start_byte,
+                        end_byte: req.request.end_byte,
+                        file_len: file_content.len(),
+                    }
+                    .into()),
+                ));
+            }
+            // Then check file bounds
+            else if req.request.end_byte > file_content.len() {
                 results.push((
                     req.idx,
                     Err(IoError::OutOfRange {
@@ -455,9 +469,23 @@ impl IoManager {
                     .into()),
                 ));
             } else {
-                let snippet =
-                    file_content[req.request.start_byte..req.request.end_byte].to_string();
-                results.push((req.idx, Ok(snippet)));
+                // Safe UTF-8 boundary check
+                if !file_content.is_char_boundary(req.request.start_byte)
+                    || !file_content.is_char_boundary(req.request.end_byte)
+                {
+                    results.push((
+                        req.idx,
+                        Err(IoError::InvalidCharBoundary {
+                            path: path.clone(),
+                            start_byte: req.request.start_byte,
+                            end_byte: req.request.end_byte,
+                        }
+                        .into()),
+                    ));
+                } else {
+                    let snippet = file_content[req.request.start_byte..req.request.end_byte].to_string();
+                    results.push((req.idx, Ok(snippet)));
+                }
             }
         }
 
@@ -518,6 +546,13 @@ pub enum IoError {
         path: PathBuf,
         source: std::string::FromUtf8Error,
     },
+
+    #[error("Invalid UTF-8 boundaries in {path}: indices {start_byte}..{end_byte}")]
+    InvalidCharBoundary {
+        path: PathBuf,
+        start_byte: usize,
+        end_byte: usize,
+    },
 }
 
 impl From<IoError> for ploke_error::Error {
@@ -566,6 +601,16 @@ impl From<IoError> for ploke_error::Error {
                 path,
                 source,
             }),
+            InvalidCharBoundary { path, start_byte, end_byte } => {
+                ploke_error::Error::Fatal(FatalError::FileOperation {
+                    operation: "read",
+                    path,
+                    source: Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Byte range {}-{} is not on UTF-8 character boundary", start_byte, end_byte),
+                    )),
+                })
+            }
             Recv(recv_error) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(recv_error.to_string()),
             ),
