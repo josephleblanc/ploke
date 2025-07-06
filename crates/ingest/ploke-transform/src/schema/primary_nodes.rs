@@ -75,7 +75,8 @@ define_schema!(ImplNodeSchema {
     span: "[Int; 2]",
     trait_type: "Uuid?",
     methods: "[Uuid]?",
-    cfgs: "[String]"
+    cfgs: "[String]",
+    embedding: "<F32; 384>?"
 }); // needs methods, trait_type, generic_params linked by uuids
 
 // TODO: Link to:
@@ -98,6 +99,7 @@ define_schema!(ImportNodeSchema {
     is_glob: "Bool",
     is_self_import: "Bool",
     import_kind: "String",
+    embedding: "<F32; 384>?"
 });
 
 // TODO: Link to:

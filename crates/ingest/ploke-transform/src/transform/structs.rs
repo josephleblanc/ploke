@@ -56,11 +56,14 @@ mod test {
         ParsedCodeGraph,
     };
 
-    use crate::{error::TransformError, schema::{
-        create_and_insert_generic_schema,
-        primary_nodes::StructNodeSchema,
-        secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
-    }};
+    use crate::{
+        error::TransformError,
+        schema::{
+            create_and_insert_generic_schema,
+            primary_nodes::StructNodeSchema,
+            secondary_nodes::{AttributeNodeSchema, FieldNodeSchema},
+        },
+    };
 
     use super::transform_structs;
 

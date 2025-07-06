@@ -96,6 +96,7 @@ fn process_impl(imple: &ImplNode) -> BTreeMap<String, DataValue> {
         (schema.span().to_string(), cozo_span),
         (schema.trait_type().to_string(), cozo_trait_id_ty),
         (schema.cfgs().to_string(), cozo_cfgs),
+        (schema.embedding().to_string(), DataValue::Null)
     ])
 }
 
