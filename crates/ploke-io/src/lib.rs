@@ -141,7 +141,7 @@ pub struct IoManagerHandle {
         
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
         
-        assert!(matches!(results[0], Err(PlokeError::Fatal(FatalError::Utf8 { .. })));
+        assert!(matches!(results[0], Err(PlokeError::Fatal(FatalError::Utf8 { .. }))));
     }
 
     #[tokio::test]
