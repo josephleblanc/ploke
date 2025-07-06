@@ -574,8 +574,8 @@ mod tests {
         let tokens = file.into_token_stream();
 
         TrackingHash::generate(
-            Uuid::nil(),                       // Matches production call
-            &PathBuf::from("placeholder.txt"), // Path not important for tests
+            ploke_core::PROJECT_NAMESPACE_UUID,
+            &PathBuf::from("placeholder.txt"),
             &tokens,
         )
     }
@@ -707,7 +707,7 @@ mod tests {
                     file_tracking_hash: tracking_hash(&content),
                     start_byte: content.find("FILE").unwrap(),
                     end_byte: content.find("FILE").unwrap() + 8,
-                    id: todo!(),
+                    id: Uuid::new_v4(),
                 }
             })
             .collect();
@@ -1001,6 +1001,7 @@ mod tests {
     async fn test_read_during_shutdown() {
         let handle = IoManagerHandle::new();
         handle.shutdown().await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let result = handle.get_snippets_batch(vec![]).await;
 
@@ -1013,6 +1014,7 @@ mod tests {
         let handle = IoManagerHandle::new();            
         // Send shutdown and wait for it to process
         let _ = handle.request_sender.send(IoManagerMessage::Shutdown).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Try to send after shutdown
         let result = handle.request_sender.send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
