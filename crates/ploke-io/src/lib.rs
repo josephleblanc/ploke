@@ -553,7 +553,7 @@ impl From<IoError> for ploke_error::Error {
 
             Utf8 { path, source } => ploke_error::Error::Fatal(FatalError::Utf8 {
                 path,
-                source: Arc::new(source),
+                source,
             }),
             Recv(recv_error) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(recv_error.to_string()),
