@@ -42,11 +42,11 @@
 - [x] Send request during shutdown
 
 ### Edge Cases
-- [ ] Zero-byte files  <!-- Still needs test -->
+- [x] Zero-byte files  <!-- Tested -->
 - [x] Files with invalid UTF-8 sequences  <!-- Added checkmark -->
-- [ ] Files with multi-byte Unicode sequences  <!-- Still needs test -->
-- [ ] Requests with start_byte > end_byte  <!-- Still needs test -->
-- [ ] End byte exactly at EOF  <!-- Still needs test -->
+- [x] Files with multi-byte Unicode sequences  <!-- Tested -->
+- [x] Requests with start_byte > end_byte  <!-- Tested -->
+- [x] End byte exactly at EOF  <!-- Tested -->
 
 ### Infrastructure
 - [ ] Runtime initialization failure  <!-- Still needs test -->
