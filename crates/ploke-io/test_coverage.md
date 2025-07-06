@@ -24,90 +24,6 @@
 ## Test Plan Checklist
 
 ### Core Functionality
-- [x] Basic file read \<100KB
-- [x] Basic file read \>1MB
-- [x] Zero-length snippet handling
-- [x] Multiple snippets on single file
-- [ ] Empty batch handling
-
-### Error Handling
-- [x] Content changed detection
-- [x] File not found errors
-- [x] Byte range exceeds file size
-- [x] Parse errors
-- [x] UTF-8 decoding errors
-- [x] Permission denied errors
-- [x] Concurrency throttling verification
-- [x] Read during shutdown
-- [x] Send request during shutdown
-
-### Edge Cases
-- [ ] Zero-byte files
-- [ ] Files with invalid UTF-8 sequences
-- [ ] Files with multi-byte Unicode sequences
-- [ ] Requests with start_byte > end_byte
-- [ ] End byte exactly at EOF
-
-### Infrastructure
-- [ ] Runtime initialization failure
-- [ ] Semaphore acquisition failure
-- [ ] Empty file groups processing
-- [ ] Shutdown with no active operations
-- [x] Early shutdown during heavy operations
-- [ ] Exactly semaphore-limit concurrent files
-
-### Error Conversion Paths
-- [x] IoError::Recv conversion
-- [x] IoError::ContentMismatch conversion
-- [x] IoError::OutOfRange conversion
-- [ ] IoError::Utf8 conversion
-- [ ] IoError::FileOperation conversion
-
-## Recommended Actions
-
-1. Add `rstest` for parameterized testing
-```toml
-[rdev-dependencies]
-rstest = "0.18"
-```
-
-2. Fix ignored tests by providing proper `id` fields
-3. Generate test data programmatically using `rand`
-4. Add explicit UTf-8 decoding tests
-5. Test permission errors using temporary inaccessible files
-
-## Questions
-
-1. Should we add `rstest` for parameterized testing?
-2. What specific hash consistency requirements exist?
-3. What file descriptor limit thresholds should we validate?
-=======
-# Ploke-IO Test Coverage Plan
-
-## Assessment Summary
-
-### Strong Areas
-- Order-preserving batch snippet retrieval
-- Content validation via token-based tracking hashes
-- File grouping and concurrency optimization
-- Basic I/O error handling (missing files, invalid paths)
-- Byte range validation and error handling
-- Partial failure handling in mixed success/failure batches
-
-### Weak Areas
-- Semaphore acquisition edge cases
-- Runtime initialization failures
-- Permission-related I/O errors
-- Zero-file/no-file edge cases
-- UTF-8 decoding and Unicode handling
-- Cross-platform hash consistency
-- Controlled shutdown scenarios
-- Semaphore limit validation
-- Token stream sensitivity verification
-
-## Test Plan Checklist
-
-### Core Functionality
 - [x] Basic file read <100KB
 - [ ] Basic file read >1MB  <!-- Still needs test -->
 - [x] Zero-length snippet handling
@@ -146,6 +62,41 @@ rstest = "0.18"
 - [x] IoError::OutOfRange conversion
 - [x] IoError::Utf8 conversion  <!-- Added checkmark -->
 - [x] IoError::FileOperation conversion  <!-- Added checkmark -->
+
+2. Fix ignored tests by providing proper `id` fields
+3. Generate test data programmatically using `rand`
+4. Add explicit UTf-8 decoding tests
+5. Test permission errors using temporary inaccessible files
+
+## Questions
+
+1. Should we add `rstest` for parameterized testing?
+2. What specific hash consistency requirements exist?
+3. What file descriptor limit thresholds should we validate?
+=======
+# Ploke-IO Test Coverage Plan
+
+## Assessment Summary
+
+### Strong Areas
+- Order-preserving batch snippet retrieval
+- Content validation via token-based tracking hashes
+- File grouping and concurrency optimization
+- Basic I/O error handling (missing files, invalid paths)
+- Byte range validation and error handling
+- Partial failure handling in mixed success/failure batches
+
+### Weak Areas
+- Semaphore acquisition edge cases
+- Runtime initialization failures
+- Permission-related I/O errors
+- Zero-file/no-file edge cases
+- UTF-8 decoding and Unicode handling
+- Cross-platform hash consistency
+- Controlled shutdown scenarios
+- Semaphore limit validation
+- Token stream sensitivity verification
+
 
 ## Recommended Technologies
 
