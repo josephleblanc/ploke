@@ -17,3 +17,4 @@ uuid = { workspace = true, features = ["v5", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"
+mockall = "0.12"

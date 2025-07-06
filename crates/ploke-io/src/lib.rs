@@ -124,6 +124,84 @@ use tokio::sync::{mpsc, oneshot, Semaphore};
 pub struct IoManagerHandle {
     /// Channel sender to send requests to the IoManager
     request_sender: mpsc::Sender<IoManagerMessage>,
+    #[tokio::test]
+    async fn test_utf8_error() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("invalid_utf8.rs");
+        fs::write(&file_path, b"fn invalid\xc3(\"Hello\")").unwrap();
+        
+        let io_manager = IoManagerHandle::new();
+        let requests = vec![EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: TrackingHash(Uuid::new_v4()),
+            start_byte: 0,
+            end_byte: 10,
+            id: Uuid::new_v4(),
+        }];
+        
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+        
+        assert!(matches!(results[0], Err(PlokeError::Fatal(FatalError::Utf8 { .. })));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(unix), ignore)]
+    async fn test_permission_denied() {
+        use std::os::unix::fs::PermissionsExt;
+        
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("protected.rs");
+        fs::write(&file_path, "fn main() {}").unwrap();
+        
+        // Set read-only permissions
+        let mut permissions = file_path.metadata().unwrap().permissions();
+        permissions.set_mode(0o200);
+        fs::set_permissions(&file_path, permissions).unwrap();
+        
+        let io_manager = IoManagerHandle::new();
+        let requests = vec![EmbeddingNode {
+            path: file_path.clone(),
+            file_tracking_hash: tracking_hash("fn main() {}"),
+            start_byte: 0,
+            end_byte: 10,
+            id: Uuid::new_v4(),
+        }];
+        
+        let results = io_manager.get_snippets_batch(requests).await.unwrap();
+        
+        assert!(matches!(
+            results[0],
+            Err(PlokeError::Fatal(FatalError::FileOperation {
+                source,
+                ..
+            })) if source.kind() == std::io::ErrorKind::PermissionDenied
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_read_during_shutdown() {
+        let handle = IoManagerHandle::new();
+        handle.shutdown().await;
+        
+        let result = handle.get_snippets_batch(vec![]).await;
+        
+        assert!(matches!(result, Err(RecvError::SendError)));
+    }
+
+    #[tokio::test]
+    async fn test_send_during_shutdown() {
+        let handle = IoManagerHandle::new();
+        let (sender, receiver) = oneshot::channel();
+        handle.request_sender.send(IoManagerMessage::Shutdown).await.unwrap();
+        
+        // Try to send after shutdown
+        let result = handle.request_sender.send(IoManagerMessage::Request(IoRequest::ReadSnippetBatch {
+            requests: vec![],
+            responder: sender,
+        })).await;
+        
+        assert!(result.is_err());
+    }
 }
 
 impl Default for IoManagerHandle {
@@ -356,7 +434,7 @@ impl IoManager {
         let mut results = Vec::new();
 
         // Read the entire file content once
-        let file_content = match tokio::fs::read_to_string(&path).await {
+        let bytes = match tokio::fs::read(&path).await {
             Ok(content) => content,
             Err(e) => {
                 let arced_error = Arc::new(e);
@@ -367,6 +445,24 @@ impl IoManager {
                             operation: "read",
                             path: path.clone(),
                             source: Arc::clone(&arced_error),
+                            kind: arced_error.kind(),
+                        }
+                        .into()),
+                    ));
+                }
+                return results;
+            }
+        };
+
+        let file_content = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                for req in requests {
+                    results.push((
+                        req.idx,
+                        Err(IoError::Utf8 {
+                            path: path.clone(),
+                            source: Arc::new(e.into_error()),
                         }
                         .into()),
                     ));
@@ -476,16 +572,18 @@ pub enum IoError {
     ShutdownInitiated,
 
     #[error("File operation {operation} failed for {path}: {source}")]
+    #[error("File operation {operation} failed for {path}: {source} (kind: {kind:?})")]
     FileOperation {
         operation: &'static str,
         path: PathBuf,
         source: Arc<std::io::Error>,
+        kind: std::io::ErrorKind,
     },
 
     #[error("UTF-8 decoding error in {path}: {source}")]
     Utf8 {
         path: PathBuf,
-        source: std::string::FromUtf8Error,
+        source: Arc<std::string::FromUtf8Error>,
     },
 }
 
