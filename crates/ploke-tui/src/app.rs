@@ -41,9 +41,9 @@ pub struct App {
     event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
-    input_buffer: String,
+    pub input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
-    mode: Mode,
+    pub mode: Mode,
     command_style: CommandStyle,
     indexing_state: Option<indexer::IndexingStatus>,
 }
@@ -329,7 +329,7 @@ impl App {
         }
     }
 
-    fn handle_command_mode(&mut self, key: KeyEvent) {
+    pub fn handle_command_mode(&mut self, key: KeyEvent) {
         // if !self.input_buffer.starts_with('/') {
         //     self.mode = Mode::Normal;
         // }

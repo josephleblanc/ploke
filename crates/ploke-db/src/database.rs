@@ -70,35 +70,7 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        // Create embedding_nodes table
-        let create_embedding_nodes = r#"
-            ::create embedding_nodes {
-                id: Uuid,
-                embedding: <F32; 384>?
-            }
-        "#;
-        db.run_script(
-            create_embedding_nodes,
-            Default::default(),
-            cozo::ScriptMutability::Mutable,
-        )
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
-
-        // Create HNSW index for embeddings
-        let hnsw_script = r#"
-            ::hnsw create embedding_nodes:embedding_idx {
-                dim: 384,
-                fields: [embedding],
-                distance: Cosine,
-                filter: !is_null(embedding)
-            }
-        "#;
-        db.run_script(
-            hnsw_script,
-            Default::default(),
-            cozo::ScriptMutability::Mutable,
-        )
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
+        
 
         Ok(Self { db })
     }
@@ -284,8 +256,7 @@ impl Database {
 
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
         let query = r#"
-        ?[count(id)] := *embedding_nodes{id, embedding},
-        embedding = null"#;
+        ?[count(id)] := *embedding_nodes{id, embedding: null}"#;
         let result = self
             .db
             .run_script_read_only(query, Default::default())

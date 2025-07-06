@@ -19,7 +19,7 @@ fn test_schema_creation_success() {
 
 #[test]
 fn test_hnsw_initialization() {
-    let db = setup_test_db();
+    let db = Database::init_with_schema().expect("Failed to initialize database with schema");
     
     // Test if HNSW index was created
     let script = "?[type, name, access] ::index";
@@ -46,9 +46,6 @@ fn test_hnsw_initialization() {
 
 #[test]
 fn test_reinitialization_handling() {
-    // First initialization
-    let _ = setup_test_db();
-    
     // Try to re-initialize the database
     let db = Database::init_with_schema();
     
@@ -56,4 +53,25 @@ fn test_reinitialization_handling() {
         db.is_ok(), 
         "Re-initialization should not cause errors"
     );
+}
+
+#[test]
+fn test_function_schema_creation_script() {
+    use ploke_transform::schema::primary_nodes::FunctionNodeSchema;
+    use cozo::{Db, MemStorage, ScriptMutability};
+    use std::collections::BTreeMap;
+
+    let db = Db::new(MemStorage::default()).unwrap();
+    db.initialize().unwrap();
+
+    let schema = FunctionNodeSchema::SCHEMA;
+    let script = schema.script_create();
+    println!("Generated FunctionNodeSchema script:\n{}", script);
+
+    let result = db.run_script(
+        &script,
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    );
+    assert!(result.is_ok(), "Failed to create FunctionNodeSchema: {:?}", result.err());
 }
