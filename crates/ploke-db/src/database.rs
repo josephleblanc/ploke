@@ -170,7 +170,7 @@ impl Database {
 
         // Validate embeddings before processing
         for (id, embedding) in &updates {
-            validate_embedding_vec(embedding)?;
+            Self::validate_embedding_vec(embedding)?;
         }
 
         let inner_db = self.db.clone();
