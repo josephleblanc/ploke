@@ -1,6 +1,6 @@
-use ploke_db::database::Database;
-use ploke_db::error::DbError;
-use ploke_db::test_helpers::setup_test_db;
+use ploke_db::Database;
+use ploke_db::DbError;
+use crate::test_helpers::setup_test_db;
 
 #[test]
 fn test_schema_creation_success() {

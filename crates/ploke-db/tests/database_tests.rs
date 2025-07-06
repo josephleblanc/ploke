@@ -1,9 +1,7 @@
-mod database_init_tests;
-
 use cozo::DataValue;
-use ploke_db::database::to_usize;
-use ploke_db::database::Database;
-use ploke_db::error::DbError;
+use ploke_db::to_usize;
+use ploke_db::Database;
+use ploke_db::DbError;
 use uuid::Uuid;
 
 #[cfg(test)]
