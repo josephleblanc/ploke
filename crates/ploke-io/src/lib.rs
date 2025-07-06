@@ -41,7 +41,7 @@
 //!
 //! Here's how to use `ploke-io` to read snippets from multiple files:
 //!
-//! ```rust,no_run
+//! ```rust
 //! use ploke_core::EmbeddingNode;
 //! use ploke_io::IoManagerHandle;
 //! use std::fs;
@@ -49,6 +49,7 @@
 //! use tempfile::tempdir;
 //! use seahash::SeaHasher;
 //! use std::hash::{Hash, Hasher};
+//! use uuid::Uuid;  // Add this for ID generation
 //!
 //! fn hash_content(content: &[u8]) -> u64 {
 //!     let mut hasher = SeaHasher::new();
@@ -61,11 +62,11 @@
 //!     // 1. Create a temporary directory and some files for the example.
 //!     let dir = tempdir().unwrap();
 //!     let file_path1 = dir.path().join("test1.txt");
-//!     let content1 = "Hello, world!";
+//!     let content1 = "fn main() { println!(\"Hello, world!\"); }";
 //!     fs::write(&file_path1, content1).unwrap();
 //!
 //!     let file_path2 = dir.path().join("test2.txt");
-//!     let content2 = "This is a test.";
+//!     let content2 = "fn example() { println!(\"This is a test.\"); }";
 //!     fs::write(&file_path2, content2).unwrap();
 //!
 //!     // 2. Create an IoManagerHandle. This spawns the actor in the background.
@@ -74,16 +75,26 @@
 //!     // 3. Create a batch of requests.
 //!     let requests = vec![
 //!         EmbeddingNode {
+//!             id: Uuid::new_v4(),  // Add UUID field
 //!             path: file_path1.clone(),
-//!             file_tracking_hash: hash_content(content1.as_bytes()),
-//!             start_byte: 7,
-//!             end_byte: 12, // "world"
+//!             file_tracking_hash: ploke_core::TrackingHash::generate(
+//!                 ploke_core::PROJECT_NAMESPACE_UUID,
+//!                 &file_path1,
+//!                 &content1.parse().unwrap()
+//!             ),
+//!             start_byte: content1.find("world").unwrap(),
+//!             end_byte: content1.find("world").unwrap() + "world".len(),
 //!         },
 //!         EmbeddingNode {
+//!             id: Uuid::new_v4(),  // Add UUID field
 //!             path: file_path2.clone(),
-//!             file_tracking_hash: hash_content(content2.as_bytes()),
-//!             start_byte: 0,
-//!             end_byte: 4,  // "This"
+//!             file_tracking_hash: ploke_core::TrackingHash::generate(
+//!                 ploke_core::PROJECT_NAMESPACE_UUID,
+//!                 &file_path2,
+//!                 &content2.parse().unwrap()
+//!             ),
+//!             start_byte: content2.find("This").unwrap(),
+//!             end_byte: content2.find("This").unwrap() + "This".len(),
 //!         },
 //!     ];
 //!
