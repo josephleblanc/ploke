@@ -108,56 +108,44 @@ rstest = "0.18"
 ## Test Plan Checklist
 
 ### Core Functionality
-- [x] Basic file read (<100KB)
-- [x] Large file read (>1MB)
-- [x] Zero-length snippets
-- [x] Multiple snippets per file
-- [ ] Empty request batches
+- [x] Basic file read <100KB
+- [ ] Basic file read >1MB  <!-- Still needs test -->
+- [x] Zero-length snippet handling
+- [x] Multiple snippets on single file
+- [ ] Empty batch handling  <!-- Still needs test -->
 
 ### Error Handling
-- [x] Content mismatch detection
+- [x] Content changed detection
 - [x] File not found errors
-- [x] Byte range OOB detection
-- [x] Parse errors
-- [ ] UTF-8 decoding errors
-- [ ] Permission denied errors
-- [x] Concurrency throttling validation 
-- [ ] Read during shutdown
-- [ ] Send during shutdown
-- [x] Early termination during operations
+- [x] Byte range exceeds file size
+- [ ] Parse errors  <!-- Still needs test -->
+- [x] UTF-8 decoding errors
+- [x] Permission denied errors
+- [x] Concurrency throttling verification
+- [x] Read during shutdown
+- [x] Send request during shutdown
 
 ### Edge Cases
-- [ ] Zero-byte files
-- [ ] Files with invalid UTF-8 sequences
-- [ ] Files with multi-byte Unicode
-- [ ] Requests with start_byte > end_byte
-- [ ] End byte exactly at EOF
-- [ ] Symlinked file paths
-- [ ] Case-sensitive path handling
+- [ ] Zero-byte files  <!-- Still needs test -->
+- [x] Files with invalid UTF-8 sequences  <!-- Added checkmark -->
+- [ ] Files with multi-byte Unicode sequences  <!-- Still needs test -->
+- [ ] Requests with start_byte > end_byte  <!-- Still needs test -->
+- [ ] End byte exactly at EOF  <!-- Still needs test -->
 
 ### Infrastructure
-- [ ] Runtime initialization failure (2 cases)
-- [ ] Semaphore acquisition failure (simulate OS FD exhaustion)
-- [ ] Empty file group processing
-- [ ] Graceful shutdown with no operations
-- [x] Heavy operation shutdown
-- [ ] Exactly semaphore-limit concurrency
-- [ ] Cross-platform canonicalization (Windows/Unix)
-
-### Hash Verification
-- [ ] Identical token stream → same hash
-- [ ] Different token streams → different hashes
-- [ ] Path affects hash generation validation
-- [ ] Namespace inclusion verification
-- [ ] Token stream sensitivity tests
+- [ ] Runtime initialization failure  <!-- Still needs test -->
+- [ ] Semaphore acquisition failure  <!-- Still needs test -->
+- [ ] Empty file groups processing  <!-- Still needs test -->
+- [ ] Shutdown with no active operations  <!-- Still needs test -->
+- [x] Early shutdown during heavy operations
+- [ ] Exactly semaphore-limit concurrent files  <!-- Still needs test -->
 
 ### Error Conversion Paths
 - [x] IoError::Recv conversion
-- [x] IoError::ContentMismatch 
-- [x] IoError::OutOfRange 
-- [ ] IoError::Utf8 conversion
-- [ ] IoError::FileOperation 
-- [ ] Semaphore acquisition failure
+- [x] IoError::ContentMismatch conversion
+- [x] IoError::OutOfRange conversion
+- [x] IoError::Utf8 conversion  <!-- Added checkmark -->
+- [x] IoError::FileOperation conversion  <!-- Added checkmark -->
 
 ## Recommended Technologies
 
@@ -172,8 +160,9 @@ filetime = "0.2"    # Modify file metadata for cache tests
 ## Action Plan
 
 ### Phase 1: Fix Existing Tests
-1. Provide valid `id` fields in `EmbeddingNode` using real UUIDs
-2. Implement mock content generation with `rand`
+1. ~~Provide valid `id` fields in `EmbeddingNode` using real UUIDs~~ (Done)
+2. ~~Implement mock content generation with `rand`~~ (Done)
+3. **Redesign order preservation test** to handle NodeId properly
    
 ### Phase 2: Parameterized Tests (`rstest`)
 - Core functionality variations
