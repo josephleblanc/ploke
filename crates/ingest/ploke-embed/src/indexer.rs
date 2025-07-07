@@ -131,13 +131,18 @@ pub struct IndexerTask {
     pub batch_size: usize,
 }
 
+use tracing::instrument;
+
+#[instrument(skip_all)]
 impl IndexerTask {
+    #[instrument(skip_all)]
     pub async fn run(
         &self,
         progress_tx: broadcast::Sender<IndexingStatus>,
         mut control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), EmbedError> {
         let total = self.db.count_pending_embeddings()?;
+        tracing::info!("Starting indexing with {} unembedded nodes", total);
         let mut state = IndexingStatus {
             status: IndexStatus::Running,
             processed: 0,
@@ -151,6 +156,8 @@ impl IndexerTask {
         // TODO: Use `tokio::select!` here?
         //  see ploke-embed/docs/better_index.md
         while let Some(batch) = self.next_batch().await? {
+            tracing::debug!("Retrieved batch of {} nodes", batch.len());
+            
             // Check for control commands
             if let Ok(cmd) = control_rx.try_recv() {
                 match cmd {
@@ -183,7 +190,10 @@ impl IndexerTask {
                 )
                 .await
             {
-                Ok(_) => state.processed += batch_len,
+                Ok(_) => {
+                    state.processed += batch_len;
+                    tracing::info!("Processed batch: {}/{}", state.processed, state.total);
+                },
                 Err(e) => {
                     let error_str = match &e {
                         EmbedError::HttpError { status, body, url } => format!(
@@ -205,20 +215,24 @@ impl IndexerTask {
         }
 
         state.status = if state.processed >= state.total {
+            tracing::info!("Indexing completed");
             IndexStatus::Completed
         } else {
+            tracing::warn!("Indexing cancelled");
             IndexStatus::Cancelled
         };
         progress_tx.send(state)?;
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn next_batch(&self) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
         static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> =
             tokio::sync::Mutex::const_new(None);
 
         let mut last_id_guard = LAST_ID.lock().await;
         let last_id = last_id_guard.take();
+        tracing::debug!("Last ID: {:?}", last_id);
 
         let batch = self
             .db
@@ -249,6 +263,7 @@ impl IndexerTask {
         let ctx_span = info_span!("process_batch");
         let _guard = ctx_span.enter();
 
+        tracing::info!("Processing batch of {} nodes", nodes.len());
         let total_nodes = nodes.len();
         let snippet_results = self.io.get_snippets_batch(nodes.clone()).await.map_err(
             |arg0: ploke_io::RecvError| EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0)),
@@ -294,6 +309,7 @@ impl IndexerTask {
         self.db.update_embeddings_batch(updates).await?;
 
         report_progress(total_nodes, total_nodes);
+        tracing::info!("Finished processing batch");
         Ok(())
     }
 }
@@ -311,12 +327,20 @@ mod tests {
         broadcast::{self, error::TryRecvError},
         mpsc,
     }, time::Instant};
+    use tracing_subscriber::{fmt, EnvFilter};
 
     use crate::{
         cancel_token::CancellationToken,
         indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask},
         local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
     };
+
+    fn init_test_tracing() {
+        let _ = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter(EnvFilter::from_default_env())
+            .try_init();
+    }
 
     async fn setup_local_model_config() -> Result<LocalEmbedder, ploke_error::Error> {
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -348,6 +372,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
+        init_test_tracing();
+        tracing::info!("Starting test_next_batch");
+
         let cozo_db = setup_db_full("fixture_nodes")?;
         let db = Arc::new(Database::new(cozo_db));
         let io = IoManagerHandle::new();
