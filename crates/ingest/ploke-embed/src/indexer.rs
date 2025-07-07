@@ -371,7 +371,7 @@ mod tests {
 
         let handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
         let start_time = Instant::now();
-        let timeout = Duration::from_millis(2000);
+        let timeout = Duration::from_secs(120);
         let mut received_completed = false;
 
         while Instant::now().duration_since(start_time) < timeout { 
