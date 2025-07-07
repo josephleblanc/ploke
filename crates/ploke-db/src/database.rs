@@ -346,9 +346,6 @@ mod tests {
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
         // Initialize the logger to see output from Cozo
-        // let _ = tracing_subscriber::fmt()
-        //     .with_env_filter("cozo=debug")
-        //     .try_init();
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count1 = db.count_pending_embeddings()?;
         tracing::debug!("Found {} nodes without embeddings", count1);

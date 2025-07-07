@@ -282,6 +282,7 @@ impl ParsedCodeGraph {
         // Ensure crate_context exists
         eprintln!("crate_context: {:#?}", self.crate_context);
         // NOTE: Crate context not available for individual nodes.
+        // NOTE: Results in an error for crates which do not have a [lib] or [bin] section.
         let context = self
             .crate_context
             .as_ref() // Borrow the context

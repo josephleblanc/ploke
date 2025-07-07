@@ -41,6 +41,8 @@ pub enum EmbeddingError {
     GpuUnavailable,
     #[error("Tokenization failed: {0}")]
     Tokenization(String),
+    #[error("Tokenization failed: {0}")]
+    Timeout(#[from] tokio::task::JoinError),
 }
 
 impl From<EmbeddingError> for PlokeError {
@@ -72,15 +74,6 @@ impl fmt::Debug for LocalEmbedder {
     }
 }
 
-pub struct LocalEmbedder {
-    model: BertModel,
-    tokenizer: Tokenizer,
-    device: Device,
-    config: EmbeddingConfig,
-    max_length: usize,
-    dimensions: usize,
-}
-
 use tracing::{info, warn};
 
 #[derive(Debug, Clone)]
@@ -96,13 +89,38 @@ pub struct EmbeddingConfig {
     pub max_length: Option<usize>,  // NEW: Optional max length override
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+                    model_id: "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+                    revision: None,
+                    device_preference: DevicePreference::Auto,
+                    cuda_device_index: 0,
+                    allow_fallback: true,
+                    approximate_gelu: false,
+                    use_pth: false,
+                    batch_size: 8,
+                    max_length: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum DevicePreference {
+    #[default]
     Auto,
     ForceCpu,
     ForceGpu,
 }
 
+pub struct LocalEmbedder {
+    model: BertModel,
+    tokenizer: Tokenizer,
+    device: Device,
+    config: EmbeddingConfig,
+    max_length: usize,
+    dimensions: usize,
+}
 
 impl LocalEmbedder {
     pub fn new(config: EmbeddingConfig) -> Result<Self, EmbeddingError> {

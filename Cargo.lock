@@ -3452,6 +3452,7 @@ dependencies = [
  "ploke-db",
  "ploke-error",
  "ploke-io",
+ "ploke-test-utils",
  "ploke-transform",
  "rayon",
  "reqwest",
@@ -3461,6 +3462,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3539,6 +3541,7 @@ dependencies = [
  "proc-macro2",
  "serde",
  "syn_parser",
+ "tokio",
  "uuid",
 ]
 

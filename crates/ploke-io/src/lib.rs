@@ -992,7 +992,7 @@ mod tests {
             tokio::spawn(async move {
                 io_manager
                     .get_snippets_batch(vec![EmbeddingData {
-                        file_path: file_path,
+                        file_path,
                         file_tracking_hash: tracking_hash(&content),
                         start_byte: content.find("VAL_0").unwrap(),
                         end_byte: content.find("VAL_0").unwrap() + 5,
@@ -1279,8 +1279,19 @@ mod tests {
             .with_env_filter(EnvFilter::from_default_env())
             .with_test_writer()
             .try_init();
+        tracing::debug!("Initializing test database");
 
         let embedding_data = setup_db_full_embeddings("fixture_nodes")?;
+        // Add temporary tracing to inspect embedding data
+        for data in &embedding_data {
+            tracing::trace!(
+                "EmbeddingData: id={}, file={}, range={}..{}",
+                data.id,
+                data.file_path.display(),
+                data.start_byte,
+                data.end_byte
+            );
+        }
         assert_ne!(0, embedding_data.len());
         tracing::debug!(target: "handle", "{:?}", embedding_data.len());
 

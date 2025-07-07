@@ -41,6 +41,7 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
         .collect()
 }
 
+#[cfg(feature = "test_setup")]
 pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     // initialize db
     let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
@@ -77,6 +78,7 @@ pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core:
     // let embedding_data = db.get_nodes_for_embedding(100, None)?;
     db.get_unembedded_node_data(limit, cursor)
 }
+
 
 // Should return result
 pub fn parse_malformed_fixture(fixture_name: &str) {

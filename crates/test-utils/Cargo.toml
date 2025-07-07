@@ -16,6 +16,7 @@ ploke-transform = { path = "../ingest/ploke-transform" }
 
 cozo = { workspace = true }
 
+tokio = { workspace = true }
 
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
