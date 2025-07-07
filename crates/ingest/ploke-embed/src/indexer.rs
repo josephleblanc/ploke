@@ -129,9 +129,27 @@ pub struct IndexerTask {
     pub embedding_processor: EmbeddingProcessor,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
+    last_id: Arc<Mutex<Option<uuid::Uuid>>>,
 }
 
 impl IndexerTask {
+    pub fn new(
+        db: Arc<Database>,
+        io: IoManagerHandle,
+        embedding_processor: EmbeddingProcessor,
+        cancellation_token: CancellationToken,
+        batch_size: usize,
+    ) -> Self {
+        Self {
+            db,
+            io,
+            embedding_processor,
+            cancellation_token,
+            batch_size,
+            last_id: Arc::new(Mutex::new(None)),
+        }
+    }
+
     #[instrument(skip_all)]
     pub async fn run(
         &self,
@@ -224,16 +242,10 @@ impl IndexerTask {
 
     #[instrument(skip_all)]
     async fn next_batch(&self) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
-        static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> =
-            tokio::sync::Mutex::const_new(None);
-
-        let mut last_id_guard = LAST_ID.lock().await;
-        let last_id = last_id_guard.take();
-        tracing::debug!("Last ID: {:?}", last_id);
-
+        let mut last_id_guard = self.last_id.lock().await;
         let batch = self
             .db
-            .get_unembedded_node_data(self.batch_size, last_id)
+            .get_unembedded_node_data(self.batch_size, *last_id_guard)
             .map_err(EmbedError::PlokeCore)?;
 
         *last_id_guard = batch.last().map(|node| node.id);
@@ -383,13 +395,13 @@ mod tests {
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let batch_size = 100;
 
-        let idx_tag = IndexerTask {
+        let idx_tag = IndexerTask::new(
             db,
             io,
             embedding_processor,
             cancellation_token,
             batch_size,
-        };
+        );
         let (progress_tx, mut progress_rx) = broadcast::channel(1000);
         let (control_tx, control_rx) = mpsc::channel(4);
 
