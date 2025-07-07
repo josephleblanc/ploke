@@ -25,7 +25,9 @@ lazy_static = "1.4.0" # Added lazy_static
 tokio = { workspace = true }
 
 [dev-dependencies]
-ploke-transform = { path = "../ingest/ploke-transform" }
+ploke-test-utils = { path = "../test-utils" }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
 defaults = []

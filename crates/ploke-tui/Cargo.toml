@@ -64,15 +64,4 @@ wiremock = "0.5.14"
 tokio-test = "0.4"
 test-context = "0.1"
 fake = "4.3.0"
-
-[[test]]
-name = "unit"
-path = "tests/unit/mod.rs"
-
-[[test]]
-name = "integration"
-path = "tests/integration/mod.rs"
-
-[[test]]
-name = "e2e"
-path = "tests/e2e/mod.rs"
+cozo = { workspace = true }

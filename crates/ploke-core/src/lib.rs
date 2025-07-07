@@ -20,9 +20,10 @@ use serde::{Deserialize, Serialize};
 pub mod graph;
 
 #[derive(Debug, Clone)]
-pub struct EmbeddingNode {
+pub struct EmbeddingData {
     pub id: Uuid,
-    pub path: PathBuf,
+    pub name: String,
+    pub file_path: PathBuf,
     pub start_byte: usize,
     pub end_byte: usize,
     pub file_tracking_hash: TrackingHash,

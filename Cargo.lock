@@ -3427,12 +3427,15 @@ dependencies = [
  "log",
  "ploke-core",
  "ploke-error",
+ "ploke-test-utils",
  "ploke-transform",
  "serde",
  "serde_json",
  "syn_parser",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3476,7 +3479,9 @@ dependencies = [
  "futures",
  "mockall",
  "ploke-core",
+ "ploke-db",
  "ploke-error",
+ "ploke-test-utils",
  "proc-macro2",
  "quote",
  "rlimit",
@@ -3485,6 +3490,8 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3522,10 +3529,13 @@ dependencies = [
 name = "ploke-test-utils"
 version = "0.1.0"
 dependencies = [
+ "cozo",
  "log",
  "ploke-common",
  "ploke-core",
+ "ploke-db",
  "ploke-error",
+ "ploke-transform",
  "proc-macro2",
  "serde",
  "syn_parser",
@@ -3556,6 +3566,7 @@ dependencies = [
  "chrono",
  "color-eyre",
  "config",
+ "cozo",
  "crossterm 0.29.0",
  "dirs 5.0.1",
  "dotenvy",

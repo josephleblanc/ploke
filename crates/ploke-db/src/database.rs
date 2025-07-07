@@ -8,7 +8,7 @@ use cozo::Db;
 use cozo::MemStorage;
 use cozo::NamedRows;
 use cozo::UuidWrapper;
-use ploke_core::EmbeddingNode;
+use ploke_core::EmbeddingData;
 
 /// Main database connection and query interface
 #[derive(Debug)]
@@ -70,8 +70,6 @@ impl Database {
         // Create the schema
         ploke_transform::schema::create_schema_all(&db)?;
 
-        
-
         Ok(Self { db })
     }
 
@@ -93,12 +91,12 @@ impl Database {
     //     QueryBuilder::new(&self.db)
     // }
 
-    pub async fn mock_get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingNode>, DbError> {
+    pub async fn mock_get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingData>, DbError> {
         // TODO: The CozoScript query needs to be validated and might require adjustments
         // based on the final schema. For now, we'll return mock data.
         let mock_nodes = vec![
             // Example node. In a real scenario, this would come from the database.
-            // EmbeddingNode {
+            // EmbeddingData {
             //     id: Uuid::new_v4(),
             //     path: PathBuf::from("/path/to/your/file.rs"),
             //     content_hash: 123456789,
@@ -210,56 +208,94 @@ impl Database {
     ///
     /// This query retrieves the necessary information to fetch the node's content
     /// and later associate the generated embedding with the correct node.
-    // In your impl Database block
-    pub fn get_nodes_for_embedding(
+    pub fn get_unembedded_node_data(
         &self,
         limit: usize,
         cursor: Option<uuid::Uuid>,
-    ) -> Result<Vec<EmbeddingNode>, ploke_error::Error> {
-        let script = r#"
-        parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+    ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
+        let mut unembedded_data = Vec::new();
+        for t in NodeType::primary_nodes() {
+            let nodes_of_type = self.get_unembedded_data_single(t, 100, None)?;
+            unembedded_data.extend_from_slice(&nodes_of_type);
+        }
+        Ok(unembedded_data)
+    }
 
-        ancestor[desc, asc] := parent_of[desc, asc]
-        ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+    pub fn get_unembedded_data_single(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Option<uuid::Uuid>,
+    ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
+        let mut base_script = String::new();
+        let base_script_start = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
 
-        needs_embedding[id, hash, span] := *function{id, tracking_hash: hash, span, embedding}, is_null(embedding)
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
-        is_root_module[id] := *module{id}, NOT parent_of[id, _]
+    needs_embedding[id, name, hash, span] := *"#;
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
 
-        batch[func_id, path, hash, span] := 
-            needs_embedding[func_id, hash, span],
-            ancestor[func_id, mod_id],
-            is_root_module[mod_id],
-            *module{id: mod_id, path}
+    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
-        ?[func_id, path, hash, span] := batch[func_id, path, hash, span]
-        :sort func_id
+    batch[id, name, file_path, hash, span] := 
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{id: mod_id},
+        *file_mod { owner_id: mod_id, file_path }
+
+    ?[id, name, file_path, hash, span] := batch[id, name, file_path, hash, span]
+        :sort id
         :limit $limit
-        :start-from $cursor
-    "#;
+     "#;
+        let cursor_script = ":offset $cursor";
+        let rel_name = node_type.relation_str();
+
+        base_script.push_str(base_script_start);
+        base_script.push_str(rel_name);
+        base_script.push_str(base_script_end);
 
         // Create parameters map
         let mut params = BTreeMap::new();
         params.insert("limit".into(), DataValue::from(limit as i64));
-        params.insert(
-            "cursor".into(),
-            cursor
-                .map(|u| DataValue::Uuid(UuidWrapper(u)))
-                .unwrap_or(DataValue::List(vec![])),
-        );
+
+        if let Some(val) = cursor {
+            base_script.push_str(cursor_script);
+            params.insert(
+                "cursor".into(),
+                cursor
+                    .map(|u| DataValue::Uuid(UuidWrapper(u)))
+                    .unwrap_or(DataValue::List(vec![])),
+            );
+        }
         let query_result = self
             .db
-            .run_script(script, params, cozo::ScriptMutability::Immutable)
+            .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         QueryResult::from(query_result).to_embedding_nodes()
     }
 
+    // TODO: Add tests for this function
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        let query = r#"
-        ?[count(id)] := *embedding_nodes{id, embedding: null}"#;
+        let lhs = r#"?[count(id)] := "#;
+        let mut query: String = String::new();
+
+        query.push_str(lhs);
+        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
+            query.push_str(&format!(
+                "*{} {{id, embedding: null}}",
+                primary_node.relation_str()
+            ));
+            if i + 1 < NodeType::primary_nodes().len() {
+                query.push_str(" or ")
+            }
+        }
+
         let result = self
             .db
-            .run_script_read_only(query, Default::default())
+            .run_script_read_only(&query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Self::into_usize(result, "count(id)")
     }
@@ -300,6 +336,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_count_nodes_for_embedding() -> Result<(), ploke_error::Error> {
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        let count = db.count_pending_embeddings()?;
+        tracing::info!("Found {} nodes without embeddings", count);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
+        // Initialize the logger to see output from Cozo
+        // let _ = tracing_subscriber::fmt()
+        //     .with_env_filter("cozo=debug")
+        //     .try_init();
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        let count1 = db.count_pending_embeddings()?;
+        tracing::debug!("Found {} nodes without embeddings", count1);
+        assert_ne!(0, count1);
+
+        let limit = 100;
+        let cursor = None;
+
+        let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        for node in unembedded_data.iter() {
+            tracing::trace!("{}", node.id);
+        }
+
+        let count2 = unembedded_data.len();
+        assert_ne!(0, count2);
+        tracing::debug!("Retrieved {} nodes without embeddings", count2);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_embeddings_batch_single() -> Result<(), DbError> {
         let db = setup_db();
         let id = Uuid::new_v4();
@@ -312,11 +381,9 @@ mod tests {
         "#;
         let mut params = BTreeMap::new();
         params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(id)));
-        db.db.run_script(
-            insert_script,
-            params,
-            cozo::ScriptMutability::Mutable,
-        ).map_err(|e| DbError::Cozo(e.to_string()))?;
+        db.db
+            .run_script(insert_script, params, cozo::ScriptMutability::Mutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         db.update_embeddings_batch(vec![(id, embedding.clone())])
             .await?;

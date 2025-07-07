@@ -125,6 +125,26 @@ impl NodeType {
             SyntaxEdge,
         ]
     }
+
+    pub fn primary_nodes() -> [Self; 10] {
+        use NodeType::*;
+        [
+            Function,
+            Const,
+            Enum,
+            // NOTE: leaving import and impl out, we don't generate a tracking hash for these for some
+            // reason?
+            // Import,
+            // Impl,
+            Macro,
+            Module,
+            Static,
+            Struct,
+            Trait,
+            TypeAlias,
+            Union
+        ]
+    }
 }
 
 impl QueryBuilder {

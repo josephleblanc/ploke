@@ -7,6 +7,9 @@ pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
 
+#[cfg(test)]
+mod test_utils;
+
 use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
@@ -15,12 +18,10 @@ use file_man::FileManager;
 use llm::llm_manager;
 use ploke_embed::{
     cancel_token::CancellationToken,
-    indexer::{
-        self, IndexerTask, IndexingStatus,
-    },
+    indexer::{self, IndexerTask, IndexingStatus},
 };
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
 use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
 use utils::layout::layout_statusline;
@@ -39,7 +40,6 @@ use ratatui::{
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
-
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -247,6 +247,17 @@ pub struct EventBusCaps {
     background_cap: usize,
     error_cap: usize,
     index_cap: usize,
+}
+
+impl Default for EventBusCaps {
+    fn default() -> Self {
+        Self {
+            realtime_cap: 100,
+            background_cap: 1000,
+            error_cap: 1000,
+            index_cap: 1000,
+        }
+    }
 }
 
 impl EventBus {

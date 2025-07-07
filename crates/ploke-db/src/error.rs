@@ -23,6 +23,12 @@ pub enum DbWarning {
     QueryBuild(String),
 }
 
+impl From<cozo::Error> for DbError {
+    fn from(value: cozo::Error) -> Self {
+        Self::Cozo(value.to_string())
+    }
+}
+
 // impl std::fmt::Display for crate::Error {
 //     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 //         let msg = match self {

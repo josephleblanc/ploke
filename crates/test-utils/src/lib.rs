@@ -7,6 +7,7 @@
 
 pub mod nodes;
 
+use cozo::MemStorage;
 use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
 use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
@@ -38,6 +39,43 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
             })
         })
         .collect()
+}
+
+pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    // initialize db
+    let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    db.initialize().expect("Failed to initialize database");
+    // create and insert schema for all nodes
+    ploke_transform::schema::create_schema_all(&db)?;
+
+    // run the parser
+    let successful_graphs = test_run_phases_and_collect(fixture);
+    // merge results from all files
+    let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+
+    // build module tree
+    let tree = merged.build_module_tree().unwrap_or_else(|e| {
+        log::error!(target: "transform_function",
+            "Error building tree: {}",
+            e
+        );
+        panic!()
+    });
+
+    ploke_transform::transform::transform_code_graph(&db, merged.graph, &tree)?;
+    Ok(db)
+}
+
+#[cfg(feature = "test_setup")]
+pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {
+    use ploke_core::EmbeddingData;
+
+    let db = ploke_db::Database::new( setup_db_full(fixture)? );
+
+    let limit = 100;
+    let cursor = None;
+    // let embedding_data = db.get_nodes_for_embedding(100, None)?;
+    db.get_unembedded_node_data(limit, cursor)
 }
 
 // Should return result

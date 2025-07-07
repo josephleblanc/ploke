@@ -38,7 +38,7 @@ define_schema!(ConstNodeSchema {
     ty_id: "Uuid",
     value: "String?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]",
     embedding: "<F32; 384>?"
 }); // need attributes
@@ -56,7 +56,7 @@ define_schema!(EnumNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]?",
     variants: "[Uuid]",
     embedding: "<F32; 384>?"
@@ -114,7 +114,7 @@ define_schema!(MacroNodeSchema {
     vis_path: "[String]?",
     docstring: "String?",
     body: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]",
     kind: "String",
     proc_kind: "String?",
@@ -139,7 +139,7 @@ define_schema!(ModuleNodeSchema {
     vis_path: "[String]?",
     docstring: "String?",
     span: "[Int; 2]",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     module_kind: "String",
     cfgs: "[String]",
     embedding: "<F32; 384>?"
@@ -159,7 +159,7 @@ define_schema!(StaticNodeSchema {
     is_mutable: "Bool",
     value: "String?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]",
     embedding: "<F32; 384>?"
 });
@@ -176,7 +176,7 @@ define_schema!(StructNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]?",
     embedding: "<F32; 384>?"
 });
@@ -194,7 +194,7 @@ define_schema!(TraitNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]?",
     methods: "[Uuid]?",
     embedding: "<F32; 384>?"
@@ -211,7 +211,7 @@ define_schema!(TypeAliasNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]?",
     ty_id: "Uuid",
     embedding: "<F32; 384>?"
@@ -229,7 +229,7 @@ define_schema!(UnionNodeSchema {
     vis_kind: "String",
     vis_path: "[String]?",
     docstring: "String?",
-    tracking_hash: "Uuid?",
+    tracking_hash: "Uuid",
     cfgs: "[String]?",
     embedding: "<F32; 384>?"
 });

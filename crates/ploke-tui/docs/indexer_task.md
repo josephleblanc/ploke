@@ -37,11 +37,6 @@ As it stands, the code snippets will be retrieved from the byte start/end of the
 - [x]  Create `ploke-embed`
     - [x]  Update `ploke-db`
 
-### Record of Progress
-
-[Initial plan](https://www.notion.so/Initial-plan-224a8c42adc180a38230fe146d0c8a05?pvs=21)
-
-[Connecting the Crates](https://www.notion.so/Connecting-the-Crates-224a8c42adc1801a9307e7c1b5420da1?pvs=21)
 
 ## Implementation
 
@@ -61,13 +56,13 @@ sequenceDiagram
 
     TUI->>StateManager: StateCommand::IndexWorkspace
      activate StateManager
-     StateManager->>IndexerTask: tokio::spawn(run_indexing)
+     StateManager->>IndexerTask: IndexerTask.run<br>on new thread
      deactivate StateManager
      activate IndexerTask
 
      IndexerTask->>PlokeDb: get_nodes_for_embedding()
      activate PlokeDb
-     PlokeDb-->>IndexerTask: Vec<(id, path, hash, start, end)>
+     PlokeDb-->>IndexerTask: Vec<EmbeddingData>
      deactivate PlokeDb
 
      IndexerTask->>IoManager: IoRequest::ReadSnippetBatch
@@ -96,9 +91,9 @@ sequenceDiagram
     - [x]  Recognizing this as a long-running operation, it spawns a new Tokio task to
     act as an "Indexer." This is critical to prevent blocking the state_manager,
     which must remain responsive to other commands.
-    - The Indexer task is given clones of the necessary handles: a ploke-db
+    - [ ] The Indexer task is given clones of the necessary handles: a ploke-db
     handle, an IoManagerHandle, and a ploke-rag handle.
-- [ ]  Database Query (Indexer Task -> `ploke-db`):
+- [x]  Database Query (Indexer Task -> `ploke-db`):
     - The Indexer task sends a single, batched query to ploke-db to fetch all
     nodes that require an embedding.
     - The query returns a `Vec<(Uuid, PathBuf, usize, usize)>` containing the node

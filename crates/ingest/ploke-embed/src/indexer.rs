@@ -2,7 +2,7 @@ use crate::{config::CozoConfig, error::truncate_string};
 use crate::local::LocalEmbedder;
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
-use ploke_core::EmbeddingNode;
+use ploke_core::EmbeddingData;
 use ploke_db::Database;
 use ploke_io::IoManagerHandle;
 use std::path::PathBuf;
@@ -130,19 +130,6 @@ pub struct IndexerTask {
 }
 
 impl IndexerTask {
-    // async fn run(&self) -> Result<(), ploke_error::Error> {
-    //     while let Some(batch) = self.next_batch().await? {
-    //         process_batch(
-    //             &self.db,
-    //             &self.io,
-    //             &self.embedding_processor,
-    //             batch,
-    //             |current, total| tracing::info!("Indexed {current}/{total}"),
-    //         )
-    //         .await?;
-    //     }
-    //     Ok(())
-    // }
 
     pub async fn run(
         &self,
@@ -178,7 +165,7 @@ impl IndexerTask {
                 continue;
             }
             
-            state.current_file = batch.first().map(|n| n.path.clone());
+            state.current_file = batch.first().map(|n| n.file_path.clone());
             progress_tx.send(state.clone())?;
             
             let batch_len = batch.len();
@@ -214,7 +201,7 @@ impl IndexerTask {
         progress_tx.send(state)?;
         Ok(())
     }
-    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingNode>>, EmbedError> {
+    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
         static LAST_ID: tokio::sync::Mutex<Option<uuid::Uuid>> =
             tokio::sync::Mutex::const_new(None);
 
@@ -223,7 +210,7 @@ impl IndexerTask {
 
         let batch = self
             .db
-            .get_nodes_for_embedding(self.batch_size, last_id)
+            .get_unembedded_node_data(self.batch_size, last_id)
             .map_err(EmbedError::PlokeCore)?;
 
         *last_id_guard = batch.last().map(|node| node.id);
@@ -245,7 +232,7 @@ pub async fn process_batch(
     db: &Database,
     io_manager: &IoManagerHandle,
     embedding_processor: &EmbeddingProcessor,
-    nodes: Vec<EmbeddingNode>,
+    nodes: Vec<EmbeddingData>,
     report_progress: impl Fn(usize, usize) + Send + Sync,
 ) -> Result<(), EmbedError> {
     let ctx_span = info_span!("process_batch");

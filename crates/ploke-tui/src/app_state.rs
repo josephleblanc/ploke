@@ -499,46 +499,6 @@ pub async fn state_manager(
                     ctrl.send(IndexerCommand::Cancel).await.ok();
                 }
             }
-            // StateCommand::IndexWorkspace => {
-            //     if let Some(indexer_task_arc) = &state.indexer_task {
-            //         let indexer_task = Arc::clone(indexer_task_arc);
-            //         let (control_tx, control_rx) = mpsc::channel(4);
-            //         let progress_tx = event_bus.index_tx.clone();
-            //
-            //         // Initialize indexing state
-            //         {
-            //             let mut state_guard = state.indexing_state.write().await;
-            //             *state_guard = Some(IndexingStatus {
-            //                 status: IndexStatus::Running,
-            //                 processed: 0,
-            //                 total: indexer_task
-            //                     .db
-            //                     .count_pending_embeddings()
-            //                     .map_err(|e| tracing::error!("DB error: {e}"))
-            //                     .unwrap_or(100), // Fallback total
-            //                 current_file: None,
-            //                 errors: Vec::new(),
-            //             });
-            //         }
-            //
-            //         let bus_copy = event_bus.clone();
-            //         tokio::spawn(async move {
-            //             tracing::info!("IndexerTask started");
-            //             bus_copy.send(AppEvent::IndexingStarted);
-            //
-            //             if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
-            //                 bus_copy.send(AppEvent::IndexingFailed(e.to_string()));
-            //             } else {
-            //                 bus_copy.send(AppEvent::IndexingCompleted);
-            //             }
-            //         });
-            //     } else {
-            //         tracing::error!("Indexer task not initialized");
-            //         event_bus.send(AppEvent::IndexingFailed(
-            //             "Indexing subsystem not initialized".to_string(),
-            //         ));
-            //     }
-            // }
             StateCommand::SaveState => {
                 let serialized_content = {
                     let guard = state.chat.0.read().await;
@@ -553,5 +513,34 @@ pub async fn state_manager(
             // TODO: Fill out other fields
             _ => {}
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[tokio::test]
+    async fn indexing_lifecycle() {
+        // Setup
+        let state = Arc::new(AppState::default());
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let state_clone = state.clone();
+
+        let event_bus = EventBus::new(EventBusCaps::default());
+
+        // Start state manager
+        tokio::spawn(state_manager(state_clone, cmd_rx, Arc::new(event_bus)));
+
+        // Start indexing
+        cmd_tx.send(StateCommand::IndexWorkspace).await.unwrap();
+
+        // Verify RUNNING state
+        let guard = state.indexing_state.read().await;
+        assert!(guard.as_ref().unwrap().status == IndexStatus::Running);
+
+        // TODO:
+        // ... similar checks for pause/resume/cancel
     }
 }
