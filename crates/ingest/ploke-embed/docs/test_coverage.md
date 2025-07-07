@@ -12,135 +12,226 @@ This document outlines comprehensive test coverage requirements for the embeddin
 - **P1**: Important functionality, should be implemented
 - **P2**: Nice-to-have optimizations, implement if possible
 
----
-
-## Unit Tests (P0)
-
-### Embedding Processor
-- [ ] Test all EmbeddingSource variants generate correctly
-- [ ] Test dimension reporting for each provider type
-- [ ] Validate error mapping between provider errors and EmbedError
-
-```rust
-// Example: Local embedder dimension test
-#[test]
-fn local_model_dimensions() {
-    let model = LocalEmbedder::new(Default::default()).unwrap();
-    assert_eq!(model.dimensions(), 384);
-}
+## Embedding Pipeline Diagram
+```mermaid
+graph TD
+    A[Unembedded Nodes] --> B[Get Next Batch]
+    B --> C[Fetch Snippets]
+    C --> D{Batch Empty?}
+    D -->|Yes| E[Update Progress]
+    D -->|No| F[Compute Embeddings]
+    F --> G[Validate Dimensions]
+    G --> H[Store Embeddings]
+    H --> E
+    E --> I{Cancellation/Pause?}
+    I -->|Yes| J[Handle Command]
+    I -->|No| K[More Nodes?]
+    K -->|Yes| B
+    K -->|No| L[Done]
 ```
 
-### Local Embedder
-- [ ] Test tokenization across edge cases (unicode, empty, very long)
-- [ ] Validate proper pooling/normalization logic
-- [ ] Test error handling:
-  - Invalid model URLs
-  - Missing tokenizer.json
-  - GPU allocation failures
-- [ ] Test configurable batch sizes with small inputs
+---
 
-### HuggingFace/OpenAI Providers
-- [ ] Test request serialization for differing snippet counts
-- [ ] Test error handling:
-  - Invalid credentials
-  - Rate limiting
-  - Timeouts
-  - Malformed responses
-- [ ] Test dimension verification against config
+## Unit Tests (P0) - Critical Function Coverage
+
+### Embedding Processor
+1. `generate_embeddings()`
+   - Techniques: State simulation (mocked providers), Error injection
+   - Validate each provider type handles:
+     - Empty snippets vector
+     - Mixed-length snippets
+     - Embedding dimension mismatches
+2. `dimensions()`
+   - Techniques: Boundary tests for dimension reporting
+   - Verify dimensions match provider config
+
+### Local Embedder
+1. `process_batch()`
+   - Techniques: Golden tests with known inputs/outputs
+   - Validate:
+     - Tokenization edge cases (UTF-8, control chars)
+     - Attention mask application
+     - Pooling/aggregation correctness
+2. `load_model()`
+   - Techniques: Negative testing (invalid paths)
+   - Validate:
+     - Model fallback logic (safetensors -> pytorch)
+     - GPU/CUDA allocation failures
+     - HW auto-detection behaviour
+3. `embed_batch()`
+   - Techniques: Parameterized tests (batch sizes 1-64)
+   - Verify:
+     - Batch splitting logic
+     - Memory scaling characteristics
+
+### HuggingFace Provider
+1. `compute_batch()`
+   - Techniques: Mock-HTTP tests (wiremock)
+   - Validate:
+     - Token injection (API keys)
+     - Batch chunking logic
+     - HTTP/429 exponential backoff
+2. Error mapping:
+   - Map HTTP 401 -> AuthError
+   - Map HTTP 429 -> RateLimitError
+
+### OpenAI Provider
+1. `compute_batch()`
+   - Techniques: State machine testing
+   - Validate:
+     - Request serialization
+     - Response deserialization
+     - Token accounting (cost calculation)
+   - Test error types:
+     - Invalid JSON
+     - Dimension mismatches
+     - Truncated responses
 
 ### Batch Processing
-- [ ] Test cancellation token integration
-- [ ] Validate batch progress reporting accuracy
-- [ ] Test pipeline continuation after network failure recovery
-- [ ] Test dangling batch cleanup
+1. `next_batch()`
+   - Techniques: Fault-injection tests
+   - Validate cursor tracking
+   - Simulate cancellation mid-batch
+2. `process_batch()`
+   - Techniques: Data-driven tests
+   - Verify:
+     - Partial embedding updates
+     - Error aggregation/reporting
+     - Progress reporting granularity
+
+### Cancellation Token
+1. Integration tests
+   - Test token propagation depth
+   - Measure cancellation latency (<100ms)
+   - Validate watchdog timers
 
 ### Error Handling
-- [ ] Test truncate_string() edge cases
-- [ ] Validate EmbedError -> ploke_error::Error conversion
-- [ ] Test error wrapping preserves critical context
+1. `truncate_string()`
+   - Techniques: Property-based tests
+   - Validate correctness invariants:
+     - Output length <= max_len+1
+     - Contains ellipsis when truncated
+     - Always valid UTF-8
+2. Error conversions
+   - Validate EmbedError -> UiEvent mapping
 
 ---
 
-## Integration Tests (P0-P1)
+## Integration Tests (P0-P1) - Critical Workflows
 
 ### Local Embedder Pipeline
-1. Download test model (all-MiniLM-L6-v2)
-2. Run through sample messages
-3. Verify:
-   - Output vector dimensions
-   - Output normalization (magnitude≈1)
-   - Basic semantic similarity
+1. Component integration points:
+   - Tokenizer ⇨ Model ⇨ Pooling
+   - Hardware detection ⇨ Model loading
+2. Failure scenarios:
+   - Out-of-VRAM recovery
+   - Partial model downloads
 
-### HuggingFace API Flow
-- [ ] Mock server tests validating:
-  - Batch request splitting
-  - HTTP header formatting
-  - Result parsing
-  - Handling 429/500 responses
+### Remote Provider E2E Flow
+1. Mock server integration:
+   - Verify payload schema compliance
+   - Test timeout handling (5s+,30s+)
+   - Validate authentication headers
+2. Parallelism control:
+   - Test semaphore-based concurrency limiting
+   - Connection pool exhaustion recovery
 
-### Embedding -> Storage Flow
-1. Load test database fixture
-2. Run indexing on small repo
-3. Verify:
-   - Embedding vectors persisted 
-   - Embeddings attached to nodes
-   - Progress events dispatched
+### Storage Integration Flow
+1. Data integrity checks:
+   - Validate DB write atomicity
+   - Test embedding vector alignment
+2. Progress tracking:
+   - Verify consistent state reporting
+   - Test resume-after-crash
 
 ### Cancellation Flow
-- [ ] Indexing startup -> cancellation command -> clean stop
-- [ ] Verify cancellation token propagation
-- [ ] Test resource cleanup during cancellation
+1. Control plane tests:
+   - Measure cancellation propagation speed
+   - Validate ETCD-like state management
+   - Test pause/resume state transitions
 
 ---
 
 ## Performance Testing (P1)
 
 ### Local Embedder
-- [ ] Measure TP95 latency at different batch sizes (1-64)
-- [ ] Measure memory consumption during embedding generation
-- [ ] CPU utilization tests (single-threaded vs multi)
+1. Metrics collection:
+   - TP90/TP99 latency per batch size
+   - Memory usage vs input length
+   - CPU/GPU utilization %
+2. Benchmarks:
+   - Cold start vs warm start
+   - Per-thread scaling characteristics
 
 ### Remote Providers
-- [ ] Latency measurement at differing connection qualities
-- [ ] Parallel request saturation testing
-- [ ] Automatic batch sizing for network conditions
+1. Network simulation:
+   - Use tc-netem for packet loss/latency
+   - Measure throughput under constraint
+2. Load testing:
+   - Parallel request saturation (100+ conn)
+   - Automatic batch sizing (adaptivity)
 
-### Full Pipeline Profile
-- [ ] End-to-end indexing time for:
-  - Small crate (10 files)
-  - Medium crate (100 files)
-- [ ] Profile database write contention (chi-square tests)
+### Pipeline End-to-End
+1. Resource monitoring:
+   - File I/O contention
+   - DB write amplification
+   - Inter-process communication
+2. Regression benchmarks:
+   - Per-component telemetry
+   - CI regression detection
 
 ---
 
-## Network Reliability Testing (P1)
+## Network Testing Matrix (P1)
 
-### Simulated Conditions
-- [ ] High latency (300ms+ RTT)
-- [ ] Packet loss (1%-5%)
-- [ ] Intermittent connectivity failures
-- [ ] Rate limitation handling 
+| Condition         | Sim Method        | Success Criteria          |
+|-------------------|-------------------|---------------------------|
+| High Latency (300ms) | tc-netem       | 80% baseline throughput   |
+| Packet Loss (3%)  | tc-netem         | No crashes, loss recovery |
+| Intermittent Conn | Manual disconnect | Autoreconnect attempts    |
+| Rate Limits       | Mock 429s        | Exponential backoff       |
 
 ### Transition Strategies
-- [ ] Local fallback on remote failure
-- [ ] Graceful degradation mode
-- [ ] Progress checkpointing for resume
+1. Local fallback:
+   - Measure failover time
+   - Test seamless transition UX
+2. Graceful degradation:
+   - Verify degraded-mode restrictions
+   - Test notification systems
 
 ---
 
 ## Edge Cases (P2)
 
 ### Input Validation
-- [ ] Empty snippet batches
-- [ ] Purely whitespace/comment snippets
-- [ ] Oversized snippets (>512 tokens)
+1. Test:
+   ```rust
+   // Verify empty snippet handling
+   assert!(processor.compute(&[""]).is_err());
+   
+   // Test whitespace-only inputs
+   assert_eq!(processor.compute(&["   \n"])?.len(), DIM);
+   ```
+2. Tools:
+   - cargo-fuzz for snippet content
 
 ### Hardware Constraints
-- [ ] CPU-fallback GPU-reliant workflows
-- [ ] Operation under constrained memory (<1GB free)
-- [ ] Suspend/resume handling
+1. Teardown tests:
+   - OOM killer simulation (cgroups)
+   - Crash during save recovery
+2. Low-resource profiles:
+   - Memory-constrained batch sizing
+   - Thread reduction behaviors
 
-### Model Compatibility
-- [ ] Non-standard HF models
-- [ ] Different embedding dimensions
-- [ ] Model cache purging
+### Compatibility Matrix
+1. Validation targets:
+   ```markdown
+   | Model            | Dims | Status |
+   |------------------|------|--------|
+   | all-MiniLM-L6-v2 | 384  | ✅     |
+   | text-embedding   | 768  | ✅     |
+   | custom-model     | ?    | 🚧     |
+   ```
+2. Cache purging tests:
+   - Verify stale model removal logic
+   - Validate cache size limits
