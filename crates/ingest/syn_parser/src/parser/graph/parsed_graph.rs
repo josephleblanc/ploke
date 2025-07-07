@@ -90,13 +90,24 @@ impl ParsedCodeGraph {
     }
 
     pub fn merge_new(mut graphs: Vec<Self>) -> Result<Self, SynParserError> {
+        for graph in graphs.iter() {
+            log::debug!(target: "buggy_c", "Buggy First Context: {:#?}", graph.crate_context);
+        }
         let mut new_graph = graphs.pop().ok_or(SynParserError::MergeRequiresInput)?;
+
+        // Preserve crate context from any graph
+        let mut found_context = new_graph.crate_context.take();
+        log::debug!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
         for mut graph in graphs {
-            if graph.crate_context.is_some() {
-                new_graph.crate_context = graph.crate_context.take();
+            if found_context.is_none() {
+                log::debug!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
+                found_context = graph.crate_context.take();
             }
             new_graph.append_all(graph)?;
         }
+        log::debug!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
+        new_graph.crate_context = found_context;
+        log::debug!(target: "buggy", "Last Context: {:#?}", new_graph.crate_context);
 
         Ok(new_graph)
     }
@@ -105,12 +116,12 @@ impl ParsedCodeGraph {
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(self);
-            log::debug!(target: "validate", 
-                "{}: {} <- {}",
-                "Validating".log_step(),
-                self.root_file().unwrap().display(),
-                other.root_file().unwrap().display()
-            );
+            // log::debug!(target: "validate", 
+            //     "{}: {} <- {}",
+            //     "Validating".log_step(),
+                // self.root_file().unwrap().display(),
+                // other.root_file().unwrap().display()
+            // );
             assert!(self.validate_unique_rels());
         }
         self.graph.functions.append(&mut other.graph.functions);

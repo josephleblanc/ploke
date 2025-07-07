@@ -395,8 +395,9 @@ mod tests {
 
         let handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
         let start_time = Instant::now();
-        let timeout = Duration::from_secs(120);
+        let timeout = Duration::from_secs(10);
         let mut received_completed = false;
+        let mut last_time = Instant::now();
 
         while Instant::now().duration_since(start_time) < timeout { 
             match progress_rx.try_recv() {
@@ -406,7 +407,10 @@ mod tests {
                     break;
                 },
                 Err(TryRecvError::Closed | TryRecvError::Empty) => {
-                    tracing::debug!("update | closed");
+                    if Instant::now().duration_since(last_time) > Duration::from_millis(20) {
+                        last_time = Instant::now();
+                        tracing::debug!("update | closed");
+                    }
                 }
                 Err(TryRecvError::Lagged(backlog)) => {
                     tracing::debug!("update | lagged: {:?}", backlog);
