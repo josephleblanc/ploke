@@ -39,6 +39,7 @@ tokenizers = "0.21"
 ploke-test-utils = { path = "../../test-utils" }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
 
 
 [features]

@@ -3447,6 +3447,7 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "cozo",
+ "futures",
  "hf-hub",
  "ploke-core",
  "ploke-db",

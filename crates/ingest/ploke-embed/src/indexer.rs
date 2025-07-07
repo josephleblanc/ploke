@@ -131,9 +131,6 @@ pub struct IndexerTask {
     pub batch_size: usize,
 }
 
-use tracing::instrument;
-
-#[instrument(skip_all)]
 impl IndexerTask {
     #[instrument(skip_all)]
     pub async fn run(
