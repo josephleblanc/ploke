@@ -24,9 +24,11 @@ pub struct EmbeddingData {
     pub id: Uuid,
     pub name: String,
     pub file_path: PathBuf,
+    pub file_tracking_hash: TrackingHash,
     pub start_byte: usize,
     pub end_byte: usize,
-    pub file_tracking_hash: TrackingHash,
+    pub node_tracking_hash: TrackingHash,
+    pub namespace: Uuid
 }
 
 // Helper Hasher to collect bytes for UUID generation

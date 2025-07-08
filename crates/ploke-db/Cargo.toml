@@ -16,7 +16,6 @@ uuid = { workspace = true }
 # error handling
 ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
-log = { workspace = true }
 
 # pre-caching the schema fields for queries
 lazy_static = "1.4.0" # Added lazy_static
@@ -24,10 +23,12 @@ lazy_static = "1.4.0" # Added lazy_static
 # concurrency
 tokio = { workspace = true }
 
-[dev-dependencies]
-ploke-test-utils = { path = "../test-utils" }
+# logging
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+ploke-test-utils = { path = "../test-utils" }
 
 [features]
 defaults = []

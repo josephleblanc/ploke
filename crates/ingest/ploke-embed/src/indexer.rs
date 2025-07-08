@@ -7,6 +7,7 @@ use ploke_db::Database;
 use ploke_io::IoManagerHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{info_span, instrument};
 
@@ -129,7 +130,7 @@ pub struct IndexerTask {
     pub embedding_processor: EmbeddingProcessor,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
-    last_id: Arc<Mutex<Option<uuid::Uuid>>>,
+    pub last_id: Arc<Mutex<Option<uuid::Uuid>>>,
 }
 
 impl IndexerTask {
@@ -172,7 +173,7 @@ impl IndexerTask {
         //  see ploke-embed/docs/better_index.md
         while let Some(batch) = self.next_batch().await? {
             tracing::debug!("Retrieved batch of {} nodes", batch.len());
-            
+
             // Check for control commands
             if let Ok(cmd) = control_rx.try_recv() {
                 match cmd {
@@ -208,7 +209,7 @@ impl IndexerTask {
                 Ok(_) => {
                     state.processed += batch_len;
                     tracing::info!("Processed batch: {}/{}", state.processed, state.total);
-                },
+                }
                 Err(e) => {
                     let error_str = match &e {
                         EmbedError::HttpError { status, body, url } => format!(
@@ -240,6 +241,12 @@ impl IndexerTask {
         Ok(())
     }
 
+    /// This function next_batch:
+    /// - It locks the `last_id` (an `Arc<Mutex<Option<uuid::Uuid>>>`).
+    /// - Then it calls `db.get_unembedded_node_data(batch_size, *last_id_guard)`.
+    /// - It updates the `last_id` to the last node in the batch (if any).
+    /// - If the cancellation token is cancelled, it returns an error.
+    /// - If the batch is empty, it returns `None`; otherwise, it returns the batch.
     #[instrument(skip_all)]
     async fn next_batch(&self) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
         let mut last_id_guard = self.last_id.lock().await;
@@ -247,8 +254,11 @@ impl IndexerTask {
             .db
             .get_unembedded_node_data(self.batch_size, *last_id_guard)
             .map_err(EmbedError::PlokeCore)?;
+        tracing::debug!("old batch id: {:?}", last_id_guard);
 
         *last_id_guard = batch.last().map(|node| node.id);
+
+        tracing::debug!("new batch id: {:?}", last_id_guard);
 
         if self.cancellation_token.is_cancelled() {
             return Err(EmbedError::Cancelled("Processing cancelled".into()));
@@ -332,11 +342,14 @@ mod tests {
     use ploke_db::Database;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::setup_db_full;
-    use tokio::{sync::{
-        broadcast::{self, error::TryRecvError},
-        mpsc,
-    }, time::Instant};
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tokio::{
+        sync::{
+            broadcast::{self, error::TryRecvError},
+            mpsc,
+        },
+        time::Instant,
+    };
+    use tracing_subscriber::{filter, fmt, EnvFilter, prelude::*};
 
     use crate::{
         cancel_token::CancellationToken,
@@ -345,10 +358,20 @@ mod tests {
     };
 
     fn init_test_tracing() {
-        let _ = tracing_subscriber::fmt()
-            .with_test_writer()
-            .with_env_filter(EnvFilter::from_default_env())
-            .try_init();
+        let filter = filter::Targets::new()
+            .with_target("cozo", tracing::Level::WARN)
+            .with_target("", tracing::Level::DEBUG);
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr) // Write to stderr
+                    .with_ansi(true) // Disable colors for cleaner output
+                    .pretty()
+                    .without_time() // Optional: remove timestamps
+            )
+            .with(filter)
+            .init();
     }
 
     async fn setup_local_model_config() -> Result<LocalEmbedder, ploke_error::Error> {
@@ -379,6 +402,18 @@ mod tests {
         Ok(())
     }
 
+    // The test does the following:
+    //  1. Initializes tracing for the test.
+    //  2. Sets up a test database using `setup_db_full("fixture_nodes")`.
+    //  3. Creates an `IoManagerHandle`.
+    //  4. Creates a `LocalEmbedder` for embeddings.
+    //  5. Creates an `EmbeddingProcessor` with the `LocalEmbedder`.
+    //  6. Creates a `CancellationToken` and its handle.
+    //  7. Creates an `IndexerTask` with the database, I/O handle, embedding processor, cancellation token, and a batch size of 100.
+    //  8. Creates a broadcast channel for progress and an mpsc channel for control commands.
+    //  9. Spawns the `IndexerTask::run` in a separate tokio task.
+    //  10. Then it waits for the indexing to complete by listening to progress updates and the task handle.
+    //  The issue: the test times out without receiving a completion signal.
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
         init_test_tracing();
@@ -395,45 +430,85 @@ mod tests {
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let batch_size = 100;
 
-        let idx_tag = IndexerTask::new(
-            db,
-            io,
-            embedding_processor,
-            cancellation_token,
-            batch_size,
-        );
+        let idx_tag = IndexerTask::new(db, io, embedding_processor, cancellation_token, batch_size);
         let (progress_tx, mut progress_rx) = broadcast::channel(1000);
         let (control_tx, control_rx) = mpsc::channel(4);
 
-        let handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
-        let start_time = Instant::now();
-        let timeout = Duration::from_secs(10);
-        let mut received_completed = false;
-        let mut last_time = Instant::now();
+        let mut handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 
-        while Instant::now().duration_since(start_time) < timeout { 
-            match progress_rx.try_recv() {
-                Ok(status) if status.status == IndexStatus::Completed => {
-                    received_completed = true;
-                    tracing::debug!("update: {:?} and received_completed = {}", status, received_completed);
-                    break;
-                },
-                Err(TryRecvError::Closed | TryRecvError::Empty) => {
-                    if Instant::now().duration_since(last_time) > Duration::from_millis(20) {
-                        last_time = Instant::now();
-                        tracing::debug!("update | closed");
+        let mut received_completed = false;
+        let start = Instant::now();
+        let timeout = Duration::from_secs(10); // Increased timeout
+
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if start.elapsed() > timeout {
+                        panic!("Test timed out without completion signal");
                     }
                 }
-                Err(TryRecvError::Lagged(backlog)) => {
-                    tracing::debug!("update | lagged: {:?}", backlog);
+
+                status = progress_rx.recv() => {
+                    match status {
+                        Ok(status) if status.status == IndexStatus::Completed => {
+                            tracing::debug!("Progress: {:?}", status);
+                            received_completed = true;
+                            break;
+                        }
+                        Ok(status) => {
+                            tracing::debug!("Progress: {:?}", status);
+                            if matches!(status.status, IndexStatus::Failed(_)) {
+                                panic!("Indexing failed: {:?}", status.errors);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Received Error: {:?}", e);
+                            break;
+                        }, // Channel closed
+                    }
                 }
-                _ => tokio::time::sleep(Duration::from_millis(10)).await
+
+                res = &mut handle => {
+                    let task_result = res.expect("Task panicked");
+                    task_result?; // Propagate any errors
+                    break;
+                }
+
             }
         }
-        assert!(received_completed, "Test timed out without completion signal");
-        let res = handle.await.map_err(EmbeddingError::from)?;
-        res?;
 
+        // let res = handle.await.map_err(EmbeddingError::from)?;
+        // res?;
+
+        assert!(
+            received_completed,
+            "Indexer completed without sending completion status"
+        );
         Ok(())
     }
 }
+
+// while Instant::now().duration_since(start_time) < timeout {
+//     match progress_rx.recv().await {
+//         // ASYNC receive
+//         Ok(status) if status.status == IndexStatus::Completed => {
+//             received_completed = true;
+//             break;
+//         } // Handle other statuses/errors
+//         Err(broadcast::error::RecvError::Closed) => {
+//             // if Instant::now().duration_since(last_time) > Duration::from_millis(20) {
+//             //     last_time = Instant::now();
+//             tracing::debug!(target = "next_batch",
+//                 "update | closed, break out of while loop");
+//             break;
+//             // }
+//         }
+//         Err(broadcast::error::RecvError::Lagged(backlog)) => {
+//             tracing::debug!(target = "next_batch",
+//                 "update | lagged: {:?}", backlog
+//             );
+//         }
+//         _ => {},
+//         // tokio::time::sleep(Duration::from_millis(10)).await,
+//     }
+// }

@@ -16,6 +16,10 @@ proc-macro2 = { workspace = true }
 uuid = { workspace = true, features = ["v5", "serde"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-error = "0.2"
+
+ploke-common = { path = "../common" }
+syn_parser = { path = "../ingest/syn_parser" }
 
 
 [dev-dependencies]

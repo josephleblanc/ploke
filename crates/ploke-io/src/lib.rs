@@ -423,19 +423,31 @@ impl IoManager {
         };
 
         // Generate tracking hash from token stream
-        let actual_tracking_hash = TrackingHash::generate(
-            ploke_core::PROJECT_NAMESPACE_UUID, // crate_namespace not needed for file-level hash
-            &file_path,
-            &file_tokens,
-        );
+        let namespace = requests
+            .first()
+            .expect("All read requests must have at least one request")
+            .request
+            .namespace;
+        let actual_tracking_hash = TrackingHash::generate(namespace, &file_path, &file_tokens);
 
         // Verify against the expected tracking hash
+        // TODO: Replace just using the first file_tracking_hash with a better method. we should
+        // probably just be sending the file tracking hash along once with the OrederedRequest.
         if actual_tracking_hash != requests[0].request.file_tracking_hash {
             for req in requests {
+                eprintln!(
+                    "file: {}, database: {}",
+                    actual_tracking_hash.0, req.request.file_tracking_hash.0
+                );
                 results.push((
+                    // TODO: Replace req.idx with the actual node id
                     req.idx,
                     Err(IoError::ContentMismatch {
                         path: file_path.clone(),
+                        name: req.request.name.clone(),
+                        id: req.request.id,
+                        file_tracking_hash: req.request.file_tracking_hash.0,
+                        namespace,
                     }
                     .into()),
                 ));
@@ -506,7 +518,13 @@ pub enum IoError {
     Recv(#[from] RecvError),
 
     #[error("File content changed since indexing: {path}")]
-    ContentMismatch { path: PathBuf },
+    ContentMismatch {
+        name: String,
+        id: uuid::Uuid,
+        file_tracking_hash: uuid::Uuid,
+        namespace: uuid::Uuid,
+        path: PathBuf,
+    },
 
     #[error("Parse error in {path}: {message}")]
     ParseError { path: PathBuf, message: String },
@@ -551,9 +569,19 @@ impl From<IoError> for ploke_error::Error {
     fn from(e: IoError) -> ploke_error::Error {
         use IoError::*;
         match e {
-            ContentMismatch { path } => {
-                ploke_error::Error::Fatal(FatalError::ContentMismatch { path })
-            }
+            ContentMismatch {
+                name,
+                id,
+                file_tracking_hash,
+                namespace,
+                path,
+            } => ploke_error::Error::Fatal(FatalError::ContentMismatch {
+                name,
+                id,
+                file_tracking_hash,
+                namespace,
+                path,
+            }),
 
             ParseError { path, message } => ploke_error::Error::Fatal(FatalError::SyntaxError(
                 format!("Parse error in {}: {}", path.display(), message),
@@ -613,12 +641,55 @@ impl From<IoError> for ploke_error::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_common::{fixtures_crates_dir, workspace_root};
     use ploke_test_utils::{setup_db_full, setup_db_full_embeddings};
     use std::fs;
+    use syn_parser::discovery::run_discovery_phase;
     use tempfile::tempdir;
+    use tracing_error::ErrorLayer;
     use uuid::Uuid;
 
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::{
+        filter, fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry,
+    };
+
+    fn init_test_tracing(level: tracing::Level) {
+        let filter = filter::Targets::new()
+            .with_target("cozo", tracing::Level::WARN)
+            .with_target("ploke-io", level);
+        // .with_target("", tracing::Level::ERROR);
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr) // Write to stderr
+                    .with_ansi(true) // Disable colors for cleaner output
+                    .pretty()
+                    .without_time(), // Optional: remove timestamps
+            )
+            .with(filter)
+            .init();
+    }
+
+    fn init_tracing_v2(level: tracing::Level) {
+        let filter = filter::Targets::new()
+            .with_target("cozo", tracing::Level::WARN)
+            .with_target("ploke-io", tracing::Level::DEBUG) // Use your crate name
+            .with_target("", tracing::Level::INFO); // Default for other crates
+
+        let fmt_layer = fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(true)
+            .without_time()
+            .with_target(false) // Disable target prefix for cleaner output
+            .compact();
+
+        Registry::default()
+            .with(filter)
+            .with(fmt_layer)
+            .with(ErrorLayer::default()) // For span traces on errors
+            .init();
+    }
 
     fn tracking_hash(content: &str) -> TrackingHash {
         let file = syn::parse_file(content).expect("Failed to parse content");
@@ -652,31 +723,41 @@ mod tests {
 
         let io_manager = IoManagerHandle::new();
 
+        let namespace = Uuid::new_v4();
         // Create requests with calculated offsets
         let requests = vec![
             EmbeddingData {
                 file_path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
+
+                node_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("world").unwrap(),
                 end_byte: content1.find("world").unwrap() + "world".len(),
                 id: Uuid::new_v4(),
                 name: "world".to_string(),
+                namespace,
             },
             EmbeddingData {
                 file_path: file_path2.clone(),
                 file_tracking_hash: tracking_hash(content2),
+
+                node_tracking_hash: tracking_hash(content2),
                 start_byte: content2.find("This").unwrap(),
                 end_byte: content2.find("This").unwrap() + "This".len(),
                 id: Uuid::new_v4(),
                 name: "This".to_string(),
+                namespace,
             },
             EmbeddingData {
                 file_path: file_path1.clone(),
                 file_tracking_hash: tracking_hash(content1),
+
+                node_tracking_hash: tracking_hash(content1),
                 start_byte: content1.find("Hello").unwrap(),
                 end_byte: content1.find("Hello").unwrap() + "Hello".len(),
                 id: Uuid::new_v4(),
                 name: "Hello".to_string(),
+                namespace,
             },
         ];
 
@@ -705,17 +786,20 @@ mod tests {
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: TrackingHash(Uuid::new_v4()),
+
+            node_tracking_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 0,
             end_byte: 5,
             id: Uuid::new_v4(),
             name: "mismatched_hash".to_string(),
+            namespace: Uuid::new_v4(),
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
 
         assert!(matches!(
             &results[0],
-            Err(PlokeError::Fatal(FatalError::ContentMismatch { path }))
+            Err(PlokeError::Fatal(FatalError::ContentMismatch { path, .. }))
             if path == &file_path
         ))
     }
@@ -729,14 +813,18 @@ mod tests {
         fs::write(&file_path, content).unwrap();
 
         let io_manager = IoManagerHandle::new();
+        let namespace = Uuid::nil();
         let results = io_manager
             .get_snippets_batch(vec![EmbeddingData {
                 file_path: PathBuf::from("/non/existent"),
                 file_tracking_hash: tracking_hash(content),
+
+                node_tracking_hash: tracking_hash(content),
                 start_byte: 0,
                 end_byte: 10,
                 id: Uuid::new_v4(),
                 name: "non_existent_file".to_string(),
+                namespace,
             }])
             .await
             .unwrap();
@@ -755,6 +843,7 @@ mod tests {
     async fn test_concurrency_throttling() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
+        let namespace = Uuid::nil();
 
         // Create more files than semaphore limit
         let requests: Vec<EmbeddingData> = (0..200)
@@ -765,10 +854,12 @@ mod tests {
                 EmbeddingData {
                     file_path: file_path.to_owned(),
                     file_tracking_hash: tracking_hash_with_path(&content, &file_path),
+                    node_tracking_hash: tracking_hash_with_path(&content, &file_path),
                     start_byte: content.find("FILE").unwrap(),
                     end_byte: content.find("FILE").unwrap() + 8,
                     id: Uuid::new_v4(),
                     name: format!("FILE_{}", i),
+                    namespace,
                 }
             })
             .collect();
@@ -789,14 +880,18 @@ mod tests {
         let content = "fn short() {}";
         fs::write(&file_path, content).unwrap();
 
+        let namespace = Uuid::nil();
         let results = io_manager
             .get_snippets_batch(vec![EmbeddingData {
                 file_path: file_path.to_owned(),
                 file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+                node_tracking_hash: tracking_hash_with_path(content, &file_path),
                 start_byte: 0,
                 end_byte: 1000,
                 id: Uuid::new_v4(),
                 name: "seek_error".to_string(),
+                namespace,
             }])
             .await
             .unwrap();
@@ -822,13 +917,17 @@ mod tests {
 
         // Position after 'f'
         let pos = content.find('f').unwrap() + 1;
+        let namespace = Uuid::nil();
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+            node_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: pos,
             end_byte: pos,
             id: Uuid::new_v4(),
             name: "zero_length".to_string(),
+            namespace,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -862,51 +961,66 @@ mod tests {
         fs::write(&file_path_mismatch, content_mismatch).unwrap();
         let hash_mismatch = TrackingHash(Uuid::new_v4()); // random non-matching UUID
 
+        let namespace = Uuid::nil();
         let requests = vec![
             // Valid request 1: "valid"
             EmbeddingData {
                 file_path: file_path1.clone(),
                 file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+
+                node_tracking_hash: tracking_hash_with_path(content1, &file_path1),
                 start_byte: content1.find("valid").unwrap(),
                 end_byte: content1.find("valid").unwrap() + 5,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             },
             // Invalid request: non-existent file
             EmbeddingData {
                 file_path: non_existent_file.clone(),
                 file_tracking_hash: tracking_hash("fn dummy() {}"),
+
+                node_tracking_hash: tracking_hash("fn dummy() {}"),
                 start_byte: 0,
                 end_byte: 10,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             },
             // Valid request 2: "another"
             EmbeddingData {
                 file_path: file_path2.clone(),
                 file_tracking_hash: tracking_hash_with_path(content2, &file_path2),
+
+                node_tracking_hash: tracking_hash_with_path(content2, &file_path2),
                 start_byte: content2.find("another").unwrap(),
                 end_byte: content2.find("another").unwrap() + 7,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             },
             // Invalid request: content hash mismatch
             EmbeddingData {
                 file_path: file_path_mismatch.clone(),
                 file_tracking_hash: hash_mismatch,
+                node_tracking_hash: hash_mismatch,
                 start_byte: 0,
                 end_byte: 10,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             },
             // Valid request 3: from file1 again
             EmbeddingData {
                 file_path: file_path1.clone(),
                 file_tracking_hash: tracking_hash_with_path(content1, &file_path1),
+
+                node_tracking_hash: tracking_hash_with_path(content1, &file_path1),
                 start_byte: content1.find("fn").unwrap(),
                 end_byte: content1.find("fn").unwrap() + 2,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             },
         ];
 
@@ -931,6 +1045,7 @@ mod tests {
             results[3].as_ref().unwrap_err(),
             PlokeError::Fatal(FatalError::ContentMismatch {
                 path,
+            ..
             }) if path == &file_path_mismatch
         ));
     }
@@ -953,14 +1068,18 @@ mod tests {
             fs::write(&file_path_clone, new_content).unwrap();
         });
 
+        let namespace = Uuid::nil();
         let results = io_manager
             .get_snippets_batch(vec![EmbeddingData {
                 file_path: file_path.clone(),
                 file_tracking_hash: tracking_hash(initial_content),
+
+                node_tracking_hash: tracking_hash(initial_content),
                 start_byte: initial_content.find("initial").unwrap(),
                 end_byte: initial_content.find("initial").unwrap() + 7,
                 id: Uuid::new_v4(),
                 name: "any_name".to_string(),
+                namespace,
             }])
             .await
             .unwrap();
@@ -978,6 +1097,7 @@ mod tests {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("slow_test.rs");
+        let namespace = Uuid::nil();
 
         // Create large Rust content (256KB)
         let mut content = String::with_capacity(262144);
@@ -994,10 +1114,13 @@ mod tests {
                     .get_snippets_batch(vec![EmbeddingData {
                         file_path,
                         file_tracking_hash: tracking_hash(&content),
+
+                        node_tracking_hash: tracking_hash(&content),
                         start_byte: content.find("VAL_0").unwrap(),
                         end_byte: content.find("VAL_0").unwrap() + 5,
                         id: Uuid::new_v4(),
                         name: "any_name".to_string(),
+                        namespace,
                     }])
                     .await
             })
@@ -1015,6 +1138,7 @@ mod tests {
     // Add the new tests below the existing tests
     #[tokio::test]
     async fn test_utf8_error() {
+        let namespace = Uuid::nil();
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("invalid_utf8.rs");
         fs::write(&file_path, b"fn invalid\xc3(\"Hello\")").unwrap();
@@ -1023,10 +1147,13 @@ mod tests {
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: TrackingHash(Uuid::new_v4()),
+
+            node_tracking_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 0,
             end_byte: 10,
             id: Uuid::new_v4(),
             name: "any_name".to_string(),
+            namespace,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -1039,6 +1166,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_zero_byte_files() {
+        let namespace = Uuid::nil();
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("empty.rs");
@@ -1047,10 +1175,13 @@ mod tests {
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: TrackingHash(Uuid::new_v4()),
+
+            node_tracking_hash: TrackingHash(Uuid::new_v4()),
             start_byte: 0,
             end_byte: 0,
             id: Uuid::new_v4(),
             name: "any_name".to_string(),
+            namespace,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -1063,6 +1194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multi_byte_unicode_boundaries() {
+        let namespace = Uuid::nil();
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("unicode.rs");
@@ -1073,20 +1205,26 @@ mod tests {
         let valid_request = EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+            node_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: content.find("こ").unwrap(),
             end_byte: content.find("こ").unwrap() + "こ".len(),
             id: Uuid::new_v4(),
             name: "any_name".to_string(),
+            namespace,
         };
 
         // Invalid snippet: partial multi-byte character
         let invalid_request = EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+            node_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: content.find("こ").unwrap() + 1,
             end_byte: content.find("こ").unwrap() + 2,
             id: Uuid::new_v4(),
             name: "any_name".to_string(),
+            namespace,
         };
 
         let requests = vec![valid_request, invalid_request];
@@ -1101,6 +1239,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_byte_ranges() {
+        let namespace = Uuid::nil();
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.rs");
@@ -1111,20 +1250,26 @@ mod tests {
         let reverse_request = EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+            node_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: 10,
             end_byte: 5,
             id: Uuid::new_v4(),
             name: "any_name".to_string(),
+            namespace,
         };
 
         // Case 2: start_byte == end_byte (but file is shorter)
         let equal_request = EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash_with_path(content, &file_path),
+
+            node_tracking_hash: tracking_hash_with_path(content, &file_path),
             start_byte: 100,
             end_byte: 100,
             id: Uuid::new_v4(),
             name: "name".to_string(),
+            namespace,
         };
 
         let requests = vec![reverse_request, equal_request];
@@ -1145,6 +1290,7 @@ mod tests {
     async fn test_exact_semaphore_limit() {
         let io_manager = IoManagerHandle::new();
         let dir = tempdir().unwrap();
+        let namespace = Uuid::nil();
 
         // Determine expected concurrency limit
         let limit = match rlimit::getrlimit(rlimit::Resource::NOFILE) {
@@ -1160,10 +1306,13 @@ mod tests {
             requests.push(EmbeddingData {
                 file_path: file_path.to_owned(),
                 file_tracking_hash: tracking_hash_with_path(&content, &file_path),
+
+                node_tracking_hash: tracking_hash_with_path(&content, &file_path),
                 start_byte: content.find("FILE").unwrap(),
                 end_byte: content.find("FILE").unwrap() + 8,
                 id: Uuid::new_v4(),
                 name: "name".to_string(),
+                namespace,
             });
         }
 
@@ -1220,13 +1369,17 @@ mod tests {
         fs::set_permissions(&file_path, permissions).unwrap();
 
         let io_manager = IoManagerHandle::new();
+        let namespace = Uuid::nil();
         let requests = vec![EmbeddingData {
             file_path: file_path.clone(),
             file_tracking_hash: tracking_hash("fn main() {}"),
+
+            node_tracking_hash: tracking_hash("fn main() {}"),
             start_byte: 0,
             end_byte: 10,
             id: Uuid::new_v4(),
             name: "main".to_string(),
+            namespace,
         }];
 
         let results = io_manager.get_snippets_batch(requests).await.unwrap();
@@ -1275,16 +1428,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_read_snippet_batch() -> Result<(), ploke_error::Error> {
-        let _ = fmt()
-            .with_env_filter(EnvFilter::from_default_env())
-            .with_test_writer()
-            .try_init();
+        init_test_tracing(tracing::Level::TRACE);
+
+        let fixture_name = "fixture_nodes";
+        let crate_path = fixtures_crates_dir().join(fixture_name);
+        let project_root = workspace_root(); // Use workspace root for context
+        let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
+            .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
+
+        tracing::info!("🚀 Starting test");
         tracing::debug!("Initializing test database");
 
-        let embedding_data = setup_db_full_embeddings("fixture_nodes")?;
+        let embedding_data = setup_db_full_embeddings(fixture_name)?;
+        let data_expensive_clone = embedding_data.clone();
         // Add temporary tracing to inspect embedding data
         for data in &embedding_data {
-            tracing::trace!(
+            tracing::trace!(target: "handle_data",
                 "EmbeddingData: id={}, file={}, range={}..{}",
                 data.id,
                 data.file_path.display(),
@@ -1296,7 +1455,7 @@ mod tests {
         tracing::debug!(target: "handle", "{:?}", embedding_data.len());
 
         for data in embedding_data.iter() {
-            tracing::trace!(target: "handle", "{:?}", data);
+            tracing::trace!(target: "handle", "{:#?}", data);
         }
         let embeddings_count = embedding_data.len();
         let semaphore = Arc::new(Semaphore::new(50)); // defaulting to safe value
@@ -1312,13 +1471,45 @@ mod tests {
             tracing::debug!(target: "handle", "{}", e);
         }
 
-        for s in snippets.iter() {
-            tracing::trace!(target: "handle", "{:?}", s);
-            assert!(s.is_ok());
+        let mut correct = 0;
+        let mut error_count = 0;
+        let total_snips = snippets.len();
+        for (i, s) in snippets.iter().enumerate() {
+            match s {
+                Ok(snip) => {
+                    correct += 1;
+                    tracing::trace!(target: "handle", "{:?}", snip);
+                }
+                Err(e) => {
+                    error_count += 1;
+                    // tracing::error!(target: "handle", "{:?}", e);
+                }
+            }
+            tracing::info!(target: "handle", "correct: {} | error_count: {} | total: {}", correct, error_count, total_snips);
         }
+
+        for (i, (s, embed_data)) in snippets.iter().zip(data_expensive_clone.iter()).enumerate() {
+            assert!(
+                s.is_ok(),
+                "snippet is error: {:?} \n\t| processing {}/{}\n\t| {:.2}% correct\nEmbedding data errored on: {:#?}",
+                s,
+                i,
+                total_snips,
+                (i as f32 / total_snips as f32),
+                embed_data
+            );
+        }
+        tracing::info!(
+            "✅ Test complete. Errors: {}/{}",
+            error_count,
+            snippets.len()
+        );
+
+        assert_eq!(error_count, 0, "Found {} snippet errors", error_count);
 
         Ok(())
     }
+
     #[tokio::test]
     #[ignore = "needs work"]
     async fn test_handle_request() -> Result<(), ploke_error::Error> {

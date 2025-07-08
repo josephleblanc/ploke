@@ -63,15 +63,21 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
         panic!()
     });
 
-    ploke_transform::transform::transform_code_graph(&db, merged.graph, &tree)?;
+    ploke_transform::transform::transform_parsed_graph(
+        &db,
+        merged,
+        &tree,
+    )?;
     Ok(db)
 }
 
 #[cfg(feature = "test_setup")]
-pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {
+pub fn setup_db_full_embeddings(
+    fixture: &'static str,
+) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {
     use ploke_core::EmbeddingData;
 
-    let db = ploke_db::Database::new( setup_db_full(fixture)? );
+    let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;
     let cursor = None;
@@ -79,6 +85,58 @@ pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core:
     db.get_unembedded_node_data(limit, cursor)
 }
 
+use fmt::format::FmtSpan;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
+
+pub fn init_tracing_v2() -> WorkerGuard {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")); // Default to 'info' level
+
+    // File appender with custom timestamp format
+    let log_dir = "logs";
+    std::fs::create_dir_all(log_dir).expect("Failed to create logs directory");
+    let file_appender = tracing_appender::rolling::daily(log_dir, "ploke.log");
+    let (non_blocking_file, file_guard) = tracing_appender::non_blocking(file_appender);
+
+    // Common log format builder
+    let fmt_layer = fmt::layer()
+        .pretty()
+        .with_target(true)
+        .with_level(true)
+        .with_thread_ids(true)
+        .with_span_events(FmtSpan::CLOSE); // Capture span durations
+
+    let file_subscriber = fmt_layer
+        .with_writer(std::io::stderr)
+        // .with_writer(non_blocking_file)
+        .with_ansi(false)
+        .compact();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(file_subscriber)
+        .init();
+
+    file_guard
+}
+
+pub fn init_test_tracing(level: tracing::Level) {
+    let filter = filter::Targets::new()
+        .with_target("cozo", tracing::Level::WARN)
+        .with_target("ploke-io", level)
+        .with_target("", tracing::Level::ERROR);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr) // Write to stderr
+                .with_ansi(true) // Disable colors for cleaner output
+                .pretty()
+                .without_time(), // Optional: remove timestamps
+        )
+        .with(filter)
+        .init();
+}
 
 // Should return result
 pub fn parse_malformed_fixture(fixture_name: &str) {

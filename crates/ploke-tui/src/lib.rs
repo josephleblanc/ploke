@@ -94,6 +94,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         embedding_processor: processor, // Use configured processor
         cancellation_token: CancellationToken::new().0,
         batch_size: 1024,
+        last_id: Arc::new(Mutex::new(None)),
     };
 
     let state = Arc::new(AppState {

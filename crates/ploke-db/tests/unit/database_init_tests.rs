@@ -18,6 +18,7 @@ fn test_schema_creation_success() {
 }
 
 #[test]
+// NOTE: This test is helpful but needs to be updated
 fn test_hnsw_initialization() {
     let db = Database::init_with_schema().expect("Failed to initialize database with schema");
     
@@ -35,6 +36,7 @@ fn test_hnsw_initialization() {
     // Look for our embedding index
     let found_embedding_index = result.rows.iter().any(|row| {
         row.len() >= 3 &&
+        // NOTE: Problem is the embedding_nodes area here
         row[1].get_str() == Some("embedding_nodes:embedding_idx")
     });
     

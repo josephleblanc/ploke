@@ -3424,7 +3424,6 @@ dependencies = [
  "cozo",
  "itertools 0.14.0",
  "lazy_static",
- "log",
  "ploke-core",
  "ploke-error",
  "ploke-test-utils",
@@ -3473,6 +3472,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "thiserror 2.0.12",
+ "uuid",
 ]
 
 [[package]]
@@ -3481,6 +3481,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "mockall",
+ "ploke-common",
  "ploke-core",
  "ploke-db",
  "ploke-error",
@@ -3490,10 +3491,12 @@ dependencies = [
  "rlimit",
  "seahash",
  "syn 2.0.100",
+ "syn_parser",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-error",
  "tracing-subscriber",
  "uuid",
 ]
@@ -3532,6 +3535,7 @@ dependencies = [
 name = "ploke-test-utils"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "cozo",
  "log",
  "ploke-common",
@@ -3543,6 +3547,9 @@ dependencies = [
  "serde",
  "syn_parser",
  "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -3561,6 +3568,7 @@ dependencies = [
  "serde_json",
  "syn_parser",
  "thiserror 2.0.12",
+ "uuid",
 ]
 
 [[package]]

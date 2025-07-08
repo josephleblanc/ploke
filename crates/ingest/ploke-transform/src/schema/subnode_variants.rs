@@ -10,5 +10,6 @@ define_schema!(FileModuleNodeSchema {
     owner_id: "Uuid",
     file_path: "String",
     file_docs: "String?",
-    items: "[Uuid]"
+    items: "[Uuid]",
+    namespace: "Uuid",
 });

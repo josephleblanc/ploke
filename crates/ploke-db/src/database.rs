@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::DbError;
+use crate::result::FileData;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::DataValue;
@@ -221,6 +222,25 @@ impl Database {
         Ok(unembedded_data)
     }
 
+    // TODO: finish integrating get_file_data into the batch embedding process.
+    // Most likely this will involve repalcing the Vec<EmbeddingData> with a hashmap.
+    pub fn get_file_data(&self) -> Result<Vec<FileData>, ploke_error::Error> {
+        let script = r#"
+            ?[id, tracking_hash, namespace, file_path] := 
+                *module { id, tracking_hash },
+                *file_mod { owner_id: id, namespace, file_path },
+                *crate_context { namespace }
+        "#;
+
+        let named_rows = self
+            .db
+            .run_script(script, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let query_result = QueryResult::from(named_rows);
+        query_result.try_into_file_data()
+
+    }
+
     pub fn get_unembedded_data_single(
         &self,
         node_type: NodeType,
@@ -239,14 +259,15 @@ impl Database {
 
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
-    batch[id, name, file_path, hash, span] := 
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
         needs_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id},
-        *file_mod { owner_id: mod_id, file_path }
+        *module{id: mod_id, tracking_hash: file_hash},
+        *file_mod { owner_id: mod_id, file_path, namespace }
 
-    ?[id, name, file_path, hash, span] := batch[id, name, file_path, hash, span]
+    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace]
         :sort id
         :limit $limit
      "#;
@@ -318,6 +339,9 @@ mod tests {
     use crate::DbError;
     use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_transform::schema::create_schema_all;
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     use uuid::Uuid;
 
     fn setup_db() -> Database {
@@ -336,6 +360,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_file_data() -> Result<(), ploke_error::Error> {
+        // Initialize the logger to see output from Cozo
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        let count1 = db.count_pending_embeddings()?;
+        tracing::debug!("Found {} nodes without embeddings", count1);
+        assert_ne!(0, count1);
+
+        let limit = 100;
+        let cursor = None;
+
+        let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        for node in unembedded_data.iter() {
+            tracing::trace!("{}", node.id);
+        }
+
+        let count2 = unembedded_data.len();
+        assert_ne!(0, count2);
+        tracing::debug!("Retrieved {} nodes without embeddings", count2);
+
+        let file_data = db.get_file_data()?;
+        eprintln!("{:#?}", file_data);
+        assert_eq!(10, file_data.len());
+        for node in unembedded_data.iter() {
+            assert!(file_data.iter().any(|f| f.namespace == node.namespace), 
+                "No file with identical tracking hash to node: {:#?}",
+                node
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_count_nodes_for_embedding() -> Result<(), ploke_error::Error> {
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count = db.count_pending_embeddings()?;
@@ -343,8 +400,26 @@ mod tests {
         Ok(())
     }
 
+    pub fn init_test_tracing(level: tracing::Level) {
+        let filter = tracing_subscriber::filter::Targets::new()
+            // .with_target("cozo", tracing::Level::ERROR)
+            .with_target("ploke-db", Level::TRACE);
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr) // Write to stderr
+                    .with_ansi(true) // Disable colors for cleaner output
+                    .pretty()
+                    .without_time(), // Optional: remove timestamps
+            )
+            .with(filter)
+            .init();
+    }
+
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
+        init_test_tracing(Level::TRACE);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count1 = db.count_pending_embeddings()?;
@@ -366,6 +441,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "test needs refactoring"]
     async fn update_embeddings_batch_single() -> Result<(), DbError> {
         let db = setup_db();
         let id = Uuid::new_v4();

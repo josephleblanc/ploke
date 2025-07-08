@@ -24,6 +24,12 @@ proc-macro2 = { workspace = true, features = ["span-locations"] }
 log = { workspace = true }
 ploke-db = { path = "../ploke-db" }
 
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+chrono = "0.4"
+
 [dev-dependencies]
 
 [features]

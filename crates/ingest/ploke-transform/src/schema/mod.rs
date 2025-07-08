@@ -20,10 +20,12 @@ pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
+pub mod crate_node;
 
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
 use cozo::{Db, MemStorage};
+use crate_node::CrateContextSchema;
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
 use primary_nodes::*;
@@ -94,6 +96,9 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- edges --
     SyntacticRelationSchema::create_and_insert_schema(db)?;
+
+    // -- crate_context --
+    CrateContextSchema::create_and_insert_schema(db)?;
     Ok(())
 }
 

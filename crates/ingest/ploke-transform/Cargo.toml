@@ -10,6 +10,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
 ploke-core = { path = "../../ploke-core" }
+uuid = { workspace = true }
 
 # debugging
 log = { workspace = true }

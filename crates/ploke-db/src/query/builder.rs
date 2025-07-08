@@ -1,6 +1,7 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
+use tracing;
 use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
@@ -209,12 +210,12 @@ impl QueryBuilder {
             if node_ty.fields().contains(&field) {
                 self.lhs.insert(field);
             } else {
-                log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                     "Cannot add field {} to {:?}", field, node_ty
                 );
             }
         } else {
-            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+            tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                 "Calling add_lhs on None: {}", field
             );
         }
@@ -226,12 +227,12 @@ impl QueryBuilder {
             if node_ty.fields().contains(&field) {
                 self.lhs.insert(field);
             } else {
-                log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+                tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                     "Cannot add field {} to {:?}", field, node_ty
                 );
             }
         } else {
-            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+            tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                 "Calling add_lhs on None: {}", field
             );
         }
@@ -253,7 +254,7 @@ impl QueryBuilder {
         if self.selected_node.is_none() {
                 self.custom_lhs.push(custom_field);
         } else {
-            log::warn!(target: LOG_TARGET_QUERY_BUILDER,
+            tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                 "Calling insert_lhs_custom on Some, when it should only ever be called when the builder's selected_node is None: {}", custom_field
             );
         }
