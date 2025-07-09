@@ -10,7 +10,10 @@ use cozo::Db;
 use cozo::MemStorage;
 use cozo::NamedRows;
 use cozo::UuidWrapper;
+use itertools::Itertools;
 use ploke_core::EmbeddingData;
+use rayon::iter::ParallelBridge;
+use rayon::iter::ParallelIterator;
 
 /// Main database connection and query interface
 #[derive(Debug)]
@@ -58,7 +61,6 @@ pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
         Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
     }
 }
-
 
 impl Database {
     /// Create new database connection
@@ -150,27 +152,36 @@ impl Database {
     pub async fn update_embeddings_batch(
         &self,
         updates: Vec<(uuid::Uuid, Vec<f32>)>,
-    ) -> Result<(), DbError> {
+    ) -> Result<usize, DbError> {
         if updates.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
-        let rhs = &EMBEDDABLE_NODES;
-
         // Validate embeddings before processing
-        for (id, embedding) in &updates {
+        for (_, embedding) in &updates {
             Self::validate_embedding_vec(embedding)?;
         }
 
-        let inner_db = self.db.clone();
-        // FIX: Corrected CozoDB update script
-        let script = r#"
-             ?[id, embedding] <- $updates
-             :update *embedding_nodes { id, embedding }
-         "#;
+        let scripts = NodeType::primary_nodes().into_iter().map(|node_type| {
+            let rel_name = node_type.relation_str();
+            let scpt = format!(
+                "{}{}{}{}\n",
+                // r#"
+                // ?[id, embedding] <- [[ $updates ]] 
+                // "#,
+                r#"?[id] <- $id 
+                ?[embedding] <- $embedding
+                "#,
+                r#" :update "#,
+                rel_name,
+                r#" { id, embedding }
+                "#,
+            );
+            scpt
+        });
 
         // Convert updates to DataValue format
-        let updates_data: Vec<DataValue> = updates
+        let updates_data: (Vec< DataValue>, Vec<DataValue> ) = updates
             .into_iter()
             .map(|(id, embedding)| {
                 let id_val = DataValue::Uuid(UuidWrapper(id));
@@ -180,22 +191,42 @@ impl Database {
                         .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
                         .collect(),
                 );
-                DataValue::List(vec![id_val, embedding_val])
+                ( id_val, embedding_val )
             })
-            .collect();
+            .unzip();
+        let (update_ids, update_vecs) = updates_data;
 
         let mut params = BTreeMap::new();
-        params.insert("updates".to_string(), DataValue::List(updates_data));
+        // params.insert("updates".to_string(), DataValue::List(updates_data));
+        params.insert("id".to_string(), DataValue::List( update_ids ));
+        params.insert("embedding".to_string(), DataValue::List( update_vecs ));
 
-        // Run in blocking task to avoid stalling async runtime
-        // tokio::task::spawn_blocking(move || {
-        //     inner_db.run_script(script, params, cozo::ScriptMutability::Mutable)
+        tracing::debug!("script: {}", scripts.clone().join(""));
+
+        // TODO: bench this sometime, might not be worth the overhead.
+        // - See if its always faster either sync or parallel
+        // - Try with different sized inputs, see if there is a tradeoff
+        // let inner_db = self.db.clone();
+        // let count = tokio::task::spawn_blocking(move || {
+        //     scripts.par_bridge().map(|( relation, script )| {
+        //         inner_db.run_script(&script, params.clone(), cozo::ScriptMutability::Mutable);
+        //     }).count()
         // })
         // .await
-        // .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
-        // .map_err(|e| DbError::Cozo(e.to_string()))?;
+        // .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?;
+        // Ok(count)
 
-        Ok(())
+        let mut count = 0;
+        for script in scripts {
+            let result = self.run_script(&script, params.clone(), cozo::ScriptMutability::Mutable)
+                .map_err(|e| cozo::format_error_as_json(e, None) )
+                .map_err(|e| serde_json::to_string_pretty(&e).unwrap())
+                .inspect_err(|e| {
+                    tracing::error!("{}", e);
+                });
+            count += 1;
+        }
+        Ok(count)
     }
 
     /// Validate that an embedding vector is non-empty
@@ -354,6 +385,8 @@ impl Database {
             .map(|n| n as usize)
             .ok_or(DbError::NotFound)
     }
+
+
 }
 
 #[cfg(test)]
@@ -479,7 +512,7 @@ mod tests {
 
         // Check it all adds up.
         let file_pending = db.count_unembedded_files()?;
-        assert!(( non_file_pending + file_pending ) == all_pending);
+        assert!((non_file_pending + file_pending) == all_pending);
 
         let limit = 100;
         let cursor = 0;
@@ -549,6 +582,44 @@ mod tests {
         } else {
             panic!("Expected List DataValue");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_update_embeddings_batch() -> Result<(), ploke_error::Error> {
+        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        // 1. Setup the database with a fixture
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+
+        // 2. Get initial state
+        let initial_count = db.count_unembedded_nonfiles()?;
+        assert!(initial_count > 0, "Fixture should have unembedded nodes");
+
+        // 3. Get a batch of nodes to update
+        let nodes_to_update = db.get_unembedded_node_data(10, 0)?;
+        let update_count = nodes_to_update.len();
+        assert!(update_count > 0, "Should retrieve some nodes to update");
+        assert!(update_count <= 10);
+
+        // 4. Create mock embeddings for the batch
+        let updates: Vec<(uuid::Uuid, Vec<f32>)> = nodes_to_update
+            .into_iter()
+            .map(|node| (node.id, vec![1.0; 384]))
+            .collect();
+
+        // 5. Call the function to update the batch
+        let updated_ct = db.update_embeddings_batch(updates).await?;
+        assert_eq!(update_count, updated_ct);
+
+        // 6. Verify the update
+        let final_count = db.count_unembedded_nonfiles()?;
+        assert_eq!(
+            final_count,
+            initial_count - update_count,
+            "The number of pending embeddings should decrease by the number of updated nodes, which is {}",
+            update_count
+        );
 
         Ok(())
     }

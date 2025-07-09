@@ -119,7 +119,7 @@ pub fn init_tracing_v2() -> WorkerGuard {
 #[cfg(feature = "test_setup")]
 pub fn init_test_tracing(level: tracing::Level) {
     let filter = filter::Targets::new()
-        .with_target("cozo", tracing::Level::WARN)
+        .with_target("cozo", tracing::Level::ERROR)
         .with_target("ploke", level);
     // .with_target("", tracing::Level::ERROR);
 

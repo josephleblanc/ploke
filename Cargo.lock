@@ -3422,12 +3422,14 @@ name = "ploke-db"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "crossbeam",
  "itertools 0.14.0",
  "lazy_static",
  "ploke-core",
  "ploke-error",
  "ploke-test-utils",
  "ploke-transform",
+ "rayon",
  "serde",
  "serde_json",
  "syn_parser",
