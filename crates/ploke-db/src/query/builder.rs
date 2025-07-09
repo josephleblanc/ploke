@@ -1,7 +1,6 @@
 //! Query builder implementation
 #![allow(dead_code)]
 
-use tracing;
 use itertools::Itertools;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
@@ -19,6 +18,7 @@ use ploke_transform::schema::types::{
     NamedTypeSchema, NeverTypeSchema, ParenTypeSchema, RawPointerTypeSchema, ReferenceTypeSchema,
     SliceTypeSchema, TraitObjectTypeSchema, TupleTypeSchema, UnknownTypeSchema,
 };
+use tracing;
 
 use crate::{DbError, QueryResult};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -130,22 +130,35 @@ impl NodeType {
     pub fn primary_nodes() -> [Self; 10] {
         use NodeType::*;
         [
-            Function,
-            Const,
-            Enum,
+            Function, Const, Enum,
             // NOTE: leaving import and impl out, we don't generate a tracking hash for these for some
             // reason?
             // Import,
             // Impl,
-            Macro,
-            Module,
-            Static,
-            Struct,
-            Trait,
-            TypeAlias,
-            Union
+            Macro, Module, Static, Struct, Trait, TypeAlias, Union,
         ]
     }
+    pub fn embeddable_nodes() -> String {
+        let star: &'static str = " *";
+        let left: &'static str = " {";
+        let right: &'static str = " }";
+        let rhs = NodeType::primary_nodes().iter().map(|n| {
+            [star]
+                .iter()
+                .chain(&[n.relation_str()])
+                .chain(&[left])
+                .chain(n.fields())
+                .chain(&[right])
+                .join("")
+        }).join(" or ");
+        rhs
+    }
+}
+
+lazy_static::lazy_static! {
+    pub static ref EMBEDDABLE_NODES: String = {
+        NodeType::embeddable_nodes()
+    };
 }
 
 impl QueryBuilder {
@@ -252,7 +265,7 @@ impl QueryBuilder {
     /// ```
     pub fn insert_lhs_custom(&mut self, custom_field: String) {
         if self.selected_node.is_none() {
-                self.custom_lhs.push(custom_field);
+            self.custom_lhs.push(custom_field);
         } else {
             tracing::warn!(target: LOG_TARGET_QUERY_BUILDER,
                 "Calling insert_lhs_custom on Some, when it should only ever be called when the builder's selected_node is None: {}", custom_field
@@ -499,10 +512,10 @@ mod test {
         let schema = &StructNodeSchema::SCHEMA;
         let name_field = schema.name();
 
-        let builder = QueryBuilder::new(
-        ).with_name(name_field)
-        .structs()
-        .add_lhs(name_field);
+        let builder = QueryBuilder::new()
+            .with_name(name_field)
+            .structs()
+            .add_lhs(name_field);
 
         eprintln!("{:#?}", builder);
         assert!(builder.has_field(name_field));

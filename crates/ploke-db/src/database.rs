@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::DbError;
+use crate::query::builder::EMBEDDABLE_NODES;
 use crate::result::FileData;
 use crate::NodeType;
 use crate::QueryResult;
@@ -57,6 +58,7 @@ pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
         Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
     }
 }
+
 
 impl Database {
     /// Create new database connection
@@ -153,6 +155,8 @@ impl Database {
             return Ok(());
         }
 
+        let rhs = &EMBEDDABLE_NODES;
+
         // Validate embeddings before processing
         for (id, embedding) in &updates {
             Self::validate_embedding_vec(embedding)?;
@@ -162,7 +166,7 @@ impl Database {
         // FIX: Corrected CozoDB update script
         let script = r#"
              ?[id, embedding] <- $updates
-             :update embedding_nodes { id => embedding }
+             :update *embedding_nodes { id, embedding }
          "#;
 
         // Convert updates to DataValue format
@@ -184,12 +188,12 @@ impl Database {
         params.insert("updates".to_string(), DataValue::List(updates_data));
 
         // Run in blocking task to avoid stalling async runtime
-        tokio::task::spawn_blocking(move || {
-            inner_db.run_script(script, params, cozo::ScriptMutability::Mutable)
-        })
-        .await
-        .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
-        .map_err(|e| DbError::Cozo(e.to_string()))?;
+        // tokio::task::spawn_blocking(move || {
+        //     inner_db.run_script(script, params, cozo::ScriptMutability::Mutable)
+        // })
+        // .await
+        // .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?
+        // .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         Ok(())
     }
@@ -219,8 +223,8 @@ impl Database {
         // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
             let nodes_of_type = self.get_unembed_rel(t, limit - count, cursor)?;
+            count += nodes_of_type.len();
             unembedded_data.extend_from_slice(&nodes_of_type);
-            count += 1;
         }
         Ok(unembedded_data)
     }

@@ -74,7 +74,7 @@ impl fmt::Debug for LocalEmbedder {
     }
 }
 
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 #[derive(Debug, Clone)]
 pub struct EmbeddingConfig {
@@ -266,20 +266,6 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         let tensors = safetensors::load_buffer(&data, device)
             .map_err(|e| EmbeddingError::Safetensors(e.to_string()))?;
         
-        // Convert to F32 if needed
-        // let tensors = tensors
-        //     .into_iter()
-        //     .map(|(k, v)| {
-        //         if v.dtype() != DType::F32 {
-        //             v.to_dtype(DType::F32)
-        //                 .map(|v| (k, v))
-        //                 .map_err(EmbeddingError::Tensor)
-        //         } else {
-        //             Ok((k, v))
-        //         }
-        //     })
-        //     .collect::<Result<HashMap<_, _>, _>>()?;
-        
         Ok(VarBuilder::from_tensors(tensors.into_iter().collect(), DType::F32, device))
     }
 
@@ -358,6 +344,7 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
     }
 
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        // TODO: NOW
         if texts.is_empty() {
             return Err(EmbeddingError::EmptyBatch);
         }
@@ -371,29 +358,41 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         Ok(results)
     }
 
+    #[instrument(
+        skip(self, texts),
+        fields(batch_size, cursor),
+        level = "INFO"  // Demote to debug level
+    )]
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         // Tokenize with attention masks
+        tracing::debug!("Processing tokens");
         let tokens = self.tokenizer.encode_batch(texts.to_vec(), true)?;
 
         // Prepare inputs with proper error context
+        tracing::debug!("Processing token_ids");
         let token_ids: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_ids(), &self.device))
             .collect();
         
+        tracing::debug!("Processing attention_mask");
         let attention_mask: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_attention_mask(), &self.device))
             .collect();
 
         // FIXED: Keep token_ids as the correct integer type (U32/I64)
+        tracing::debug!("Processing token_ids with Tensor::stack");
         let token_ids = Tensor::stack(&token_ids?, 0)?;
         
         // FIXED: Keep attention_mask as integer type initially, convert later if needed
+        tracing::debug!("Processing attention_mask with Tensor::stack");
         let attention_mask = Tensor::stack(&attention_mask?, 0)?;
 
         // FIXED: Create token_type_ids with the same dtype as token_ids (not F32)
+        tracing::debug!("Processing token-type ids with Tensor::zeros");
         let token_type_ids = Tensor::zeros(token_ids.shape(), token_ids.dtype(), &self.device)?;
 
         // Forward pass with correct dtypes
+        tracing::debug!("Processing outputs with self.model.forward");
         let outputs = self.model.forward(
             &token_ids,
             &token_type_ids,
@@ -402,28 +401,37 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         .map_err(EmbeddingError::Tensor)?;
 
         // FIXED: Convert attention_mask to F32 only when needed for arithmetic operations
+        tracing::debug!("Prodcessing attention_mask_f32 with to_dtype(DType::F32)");
         let attention_mask_f32 = attention_mask.to_dtype(DType::F32)?;
 
         // Mean pooling with attention masks
-        let weights = attention_mask_f32.broadcast_as(outputs.shape())
+        tracing::debug!("Prodcessing attention_mask_f32 with attention_mask_f32.broadcase_as");
+        // Mean pooling with attention masks
+        let weights = attention_mask_f32
+            .unsqueeze(candle_core::D::Minus1)?
+            .broadcast_as(outputs.shape())
             .map_err(|e| EmbeddingError::Dimension(e.to_string()))?;
         
+        tracing::debug!("Prodcessing sums");
         let sum_embeddings = (&outputs * &weights)?.sum_keepdim(1)?;
         let sum_weights = weights.sum_keepdim(1)?.clamp(1e-9, f32::MAX)?;
         let embeddings = (sum_embeddings / sum_weights)?;
 
         // Normalize embeddings
+        tracing::debug!("Normalize embeddings");
         let embeddings = embeddings.broadcast_div(
             &embeddings.sqr()?.sum_keepdim(1)?.sqrt()?
         )?;
 
         // Convert to Vec<Vec<f32>> with proper error handling
+        tracing::debug!("Convert to Vec<Vec<f32>> with proper error handling");
         let mut results = Vec::with_capacity(texts.len());
         for i in 0..texts.len() {
             let row = embeddings.i((i, ..))
-                .map_err(|_| EmbeddingError::Dimension(
-                    format!("Embedding index {} out of range", i)
-                ))?;
+                .map_err(|e| EmbeddingError::Dimension(
+                    format!("Embedding index {} out of range: {}", i, e)
+                ))?
+                .squeeze(0)?;
             results.push(row.to_vec1()?);
         }
 

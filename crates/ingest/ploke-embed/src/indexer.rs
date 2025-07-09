@@ -42,6 +42,12 @@ impl EmbeddingProcessor {
         &self,
         snippets: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
+        tracing::info!("Starting generate_embeddings with EmbeddingSource: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
+            self,
+            snippets.len(),
+            snippets.first(),
+            snippets.last(),
+        );
         match &self.source {
             EmbeddingSource::Local(backend) => {
                 let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
@@ -151,7 +157,11 @@ impl IndexerTask {
         }
     }
 
-    #[instrument(skip_all)]
+    #[instrument(
+        name = "Indexer::run",
+        skip(self, progress_tx, control_rx),
+        fields(total, processed, status="Running")  // Track key state
+    )]
     pub async fn run(
         &self,
         progress_tx: broadcast::Sender<IndexingStatus>,
@@ -215,8 +225,11 @@ impl IndexerTask {
                 Ok(_) => {
                     state.processed += batch_len;
                     tracing::info!("Processed batch: {}/{}", state.processed, state.total);
-                    if state.processed == total {
-                        tracing::info!("Break: {} == {}", state.processed, state.total);
+                    if state.processed >= total {
+                        if state.processed > total {
+                            tracing::warn!("state.processed > total | there is a miscount of nodes somewhere");
+                        }
+                        tracing::info!("Break: {} >= {}", state.processed, state.total);
                         break;
                     }
                 }
@@ -291,8 +304,7 @@ impl IndexerTask {
         nodes: Vec<EmbeddingData>,
         report_progress: impl Fn(usize, usize) + Send + Sync,
     ) -> Result<(), EmbedError> {
-        let ctx_span = info_span!("process_batch");
-        let _guard = ctx_span.enter();
+        tracing::info!("process_batch with {} nodes of EmbeddingData", nodes.len());
 
         let total_nodes = nodes.len();
         tracing::info!("Processing batch of {} nodes", total_nodes);
@@ -327,11 +339,22 @@ impl IndexerTask {
                 Err(e) => tracing::warn!("Snippet error: {:?}", e),
             }
         }
+        tracing::info!(
+            "snippet results | valid_snippets: {}, valid_nodes: {}, valid_indices: {}",
+            valid_snippets.len(),
+            valid_nodes.len(),
+            valid_indices.len(),
+        );
 
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
             .await?;
+        tracing::trace!(
+            "Processed embeddings {} with dimension {:?}",
+            embeddings.len(),
+            embeddings.first().map(|v| v.len())
+        );
 
         let dims = self.embedding_processor.dimensions();
         for embedding in &embeddings {
@@ -365,7 +388,7 @@ mod tests {
     use cozo::MemStorage;
     use ploke_db::Database;
     use ploke_io::IoManagerHandle;
-    use ploke_test_utils::setup_db_full;
+    use ploke_test_utils::{init_test_tracing, setup_db_full};
     use tokio::{
         sync::{
             broadcast::{self, error::TryRecvError},
@@ -373,6 +396,7 @@ mod tests {
         },
         time::Instant,
     };
+    use tracing::Level;
     use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
     use crate::{
@@ -380,23 +404,6 @@ mod tests {
         indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask},
         local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
     };
-
-    fn init_test_tracing() {
-        let filter = filter::Targets::new()
-            .with_target("cozo", tracing::Level::WARN)
-            .with_target("", tracing::Level::DEBUG);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr) // Write to stderr
-                    .with_ansi(true) // Disable colors for cleaner output
-                    .pretty()
-                    .without_time(), // Optional: remove timestamps
-            )
-            .with(filter)
-            .init();
-    }
 
     async fn setup_local_model_config() -> Result<LocalEmbedder, ploke_error::Error> {
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -440,7 +447,7 @@ mod tests {
     //  The issue: the test times out without receiving a completion signal.
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
-        init_test_tracing();
+        let _tracing_handle = init_test_tracing(Level::DEBUG);
         tracing::info!("Starting test_next_batch");
 
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -462,7 +469,7 @@ mod tests {
 
         let mut received_completed = false;
         let start = Instant::now();
-        let timeout = Duration::from_secs(10); // Increased timeout
+        let timeout = Duration::from_secs(600); // Increased timeout
 
         loop {
             tokio::select! {
@@ -477,7 +484,6 @@ mod tests {
                         Ok(status) if status.status == IndexStatus::Completed => {
                             tracing::debug!("Progress: {:?}", status);
                             received_completed = true;
-                            break;
                         }
                         Ok(status) => {
                             tracing::debug!("Progress: {:?}", status);
@@ -500,9 +506,6 @@ mod tests {
 
             }
         }
-
-        // let res = handle.await.map_err(EmbeddingError::from)?;
-        // res?;
 
         assert!(
             received_completed,

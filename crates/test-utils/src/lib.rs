@@ -63,11 +63,7 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
         panic!()
     });
 
-    ploke_transform::transform::transform_parsed_graph(
-        &db,
-        merged,
-        &tree,
-    )?;
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
     Ok(db)
 }
 
@@ -120,21 +116,21 @@ pub fn init_tracing_v2() -> WorkerGuard {
     file_guard
 }
 
+#[cfg(feature = "test_setup")]
 pub fn init_test_tracing(level: tracing::Level) {
     let filter = filter::Targets::new()
         .with_target("cozo", tracing::Level::WARN)
-        .with_target("ploke-io", level)
-        .with_target("ploke-db", level);
-        // .with_target("", tracing::Level::ERROR);
+        .with_target("ploke", level);
+    // .with_target("", tracing::Level::ERROR);
 
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(false) // Show module path
+        .with_level(true) // Show log level
+        .without_time() // Remove timestamps
+        .compact(); // Use compact format
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_writer(std::io::stderr) // Write to stderr
-                .with_ansi(true) // Disable colors for cleaner output
-                .pretty()
-                .without_time(), // Optional: remove timestamps
-        )
+        .with(layer)
         .with(filter)
         .init();
 }
