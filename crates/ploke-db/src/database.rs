@@ -212,12 +212,15 @@ impl Database {
     pub fn get_unembedded_node_data(
         &self,
         limit: usize,
-        cursor: Option<uuid::Uuid>,
+        cursor: usize,
     ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
         let mut unembedded_data = Vec::new();
+        let mut count = 0;
+        // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
-            let nodes_of_type = self.get_unembedded_data_single(t, 100, None)?;
+            let nodes_of_type = self.get_unembed_rel(t, limit - count, cursor)?;
             unembedded_data.extend_from_slice(&nodes_of_type);
+            count += 1;
         }
         Ok(unembedded_data)
     }
@@ -238,14 +241,29 @@ impl Database {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         let query_result = QueryResult::from(named_rows);
         query_result.try_into_file_data()
-
     }
 
-    pub fn get_unembedded_data_single(
+    pub fn count_unembedded_files(&self) -> Result<usize, DbError> {
+        let script = r#"
+            ?[count( id )] := 
+                *module { id, tracking_hash },
+                *file_mod { owner_id: id, namespace, file_path },
+                *crate_context { namespace }
+        "#;
+
+        let result = self
+            .db
+            .run_script(script, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        // Ok(named_rows.flatten().len())
+        Self::into_usize(result, "count(id)")
+    }
+
+    pub fn get_unembed_rel(
         &self,
         node_type: NodeType,
         limit: usize,
-        cursor: Option<uuid::Uuid>,
+        cursor: usize,
     ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
         let mut base_script = String::new();
         let base_script_start = r#"
@@ -277,20 +295,13 @@ impl Database {
         base_script.push_str(base_script_start);
         base_script.push_str(rel_name);
         base_script.push_str(base_script_end);
+        base_script.push_str(cursor_script);
 
         // Create parameters map
         let mut params = BTreeMap::new();
         params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::from(cursor as i64));
 
-        if let Some(val) = cursor {
-            base_script.push_str(cursor_script);
-            params.insert(
-                "cursor".into(),
-                cursor
-                    .map(|u| DataValue::Uuid(UuidWrapper(u)))
-                    .unwrap_or(DataValue::List(vec![])),
-            );
-        }
         let query_result = self
             .db
             .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
@@ -298,15 +309,24 @@ impl Database {
         QueryResult::from(query_result).to_embedding_nodes()
     }
 
-    // TODO: Add tests for this function
+    pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
+        let nodes = self.count_pending_embeddings()?;
+        let files = self.count_unembedded_files()?;
+        let count = nodes.checked_sub(files).expect(
+            "Invariant: There must be more nodes than files, since files are a subset of nodes",
+        );
+        Ok(count)
+    }
+
     pub fn count_pending_embeddings(&self) -> Result<usize, DbError> {
-        let lhs = r#"?[count(id)] := "#;
+        let lhs = r#"?[count(id)] := 
+        "#;
         let mut query: String = String::new();
 
         query.push_str(lhs);
         for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
             query.push_str(&format!(
-                "*{} {{id, embedding: null}}",
+                "*{} {{ id, embedding: null, tracking_hash, span }}",
                 primary_node.relation_str()
             ));
             if i + 1 < NodeType::primary_nodes().len() {
@@ -368,7 +388,7 @@ mod tests {
         assert_ne!(0, count1);
 
         let limit = 100;
-        let cursor = None;
+        let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
         for node in unembedded_data.iter() {
@@ -383,8 +403,9 @@ mod tests {
         eprintln!("{:#?}", file_data);
         assert_eq!(10, file_data.len());
         for node in unembedded_data.iter() {
-            assert!(file_data.iter().any(|f| f.namespace == node.namespace), 
-                "No file with identical tracking hash to node: {:#?}",
+            assert!(
+                file_data.iter().any(|f| f.namespace == node.namespace),
+                "No node with identical tracking hash to file: {:#?}",
                 node
             );
         }
@@ -400,26 +421,26 @@ mod tests {
         Ok(())
     }
 
-    pub fn init_test_tracing(level: tracing::Level) {
-        let filter = tracing_subscriber::filter::Targets::new()
-            // .with_target("cozo", tracing::Level::ERROR)
-            .with_target("ploke-db", Level::TRACE);
-
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_writer(std::io::stderr) // Write to stderr
-                    .with_ansi(true) // Disable colors for cleaner output
-                    .pretty()
-                    .without_time(), // Optional: remove timestamps
-            )
-            .with(filter)
-            .init();
-    }
+    // pub fn init_test_tracing(level: tracing::Level) {
+    //     let filter = tracing_subscriber::filter::Targets::new()
+    //         // .with_target("cozo", tracing::Level::ERROR)
+    //         .with_target("ploke-db", Level::TRACE);
+    //
+    //     tracing_subscriber::registry()
+    //         .with(
+    //             tracing_subscriber::fmt::layer()
+    //                 .with_writer(std::io::stderr) // Write to stderr
+    //                 .with_ansi(true) // Disable colors for cleaner output
+    //                 .pretty()
+    //                 .without_time(), // Optional: remove timestamps
+    //         )
+    //         .with(filter)
+    //         .init();
+    // }
 
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
-        init_test_tracing(Level::TRACE);
+        ploke_test_utils::init_test_tracing(Level::DEBUG);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count1 = db.count_pending_embeddings()?;
@@ -427,7 +448,7 @@ mod tests {
         assert_ne!(0, count1);
 
         let limit = 100;
-        let cursor = None;
+        let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
         for node in unembedded_data.iter() {
@@ -437,6 +458,33 @@ mod tests {
         let count2 = unembedded_data.len();
         assert_ne!(0, count2);
         tracing::debug!("Retrieved {} nodes without embeddings", count2);
+        assert!(count1 > count2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unembedded_counts() -> Result<(), ploke_error::Error> {
+        // Initialize the logger to see output from Cozo
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+        let all_pending = db.count_pending_embeddings()?;
+        assert_ne!(0, all_pending);
+
+        // Check that there are at least as many files as nodes
+        let non_file_pending = db.count_unembedded_nonfiles()?;
+        assert!(non_file_pending <= all_pending);
+
+        // Check it all adds up.
+        let file_pending = db.count_unembedded_files()?;
+        assert!(( non_file_pending + file_pending ) == all_pending);
+
+        let limit = 100;
+        let cursor = 0;
+
+        let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        assert_eq!(non_file_pending, unembedded_data.len());
+        for node in unembedded_data.iter() {
+            tracing::trace!("{}", node.id);
+        }
         Ok(())
     }
 

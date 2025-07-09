@@ -168,6 +168,10 @@ impl IoManagerHandle {
         &self,
         requests: Vec<EmbeddingData>,
     ) -> Result<Vec<Result<String, PlokeError>>, RecvError> {
+        use tracing::{span, Level};
+        let tracing_span = span!(Level::TRACE, "get_snippets_batch");
+        let _enter = tracing_span.enter();
+
         let (responder, response_rx) = oneshot::channel();
         let request = IoRequest::ReadSnippetBatch {
             requests,
@@ -655,8 +659,9 @@ mod tests {
 
     fn init_test_tracing(level: tracing::Level) {
         let filter = filter::Targets::new()
-            .with_target("cozo", tracing::Level::WARN)
-            .with_target("ploke-io", level);
+            .with_target("cozo", tracing::Level::ERROR)
+            .with_target("", level);
+        // .with_target("test_handle_read_snippet_batch", level);
         // .with_target("", tracing::Level::ERROR);
 
         tracing_subscriber::registry()
@@ -1473,19 +1478,32 @@ mod tests {
 
         let mut correct = 0;
         let mut error_count = 0;
+        let mut contains_name = 0;
         let total_snips = snippets.len();
         for (i, s) in snippets.iter().enumerate() {
             match s {
                 Ok(snip) => {
                     correct += 1;
-                    tracing::trace!(target: "handle", "{:?}", snip);
+                    if let Some(embed_data) = data_expensive_clone
+                        .iter()
+                        .find(|emb| snip.contains(&emb.name))
+                    {
+                        tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);
+                        contains_name += 1;
+                    } else {
+                        tracing::error!(target: "handle", 
+                            "Name Not Found: \n{}{}",
+                            "snippet: ", snip);
+                    }
                 }
                 Err(e) => {
                     error_count += 1;
                     // tracing::error!(target: "handle", "{:?}", e);
                 }
             }
-            tracing::info!(target: "handle", "correct: {} | error_count: {} | total: {}", correct, error_count, total_snips);
+            tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}", 
+                correct, error_count, contains_name, total_snips
+            );
         }
 
         for (i, (s, embed_data)) in snippets.iter().zip(data_expensive_clone.iter()).enumerate() {
@@ -1504,6 +1522,12 @@ mod tests {
             error_count,
             snippets.len()
         );
+        tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}\n\tcorrect: {:.2}% | error_count: {:.2}% | contains_name: {:.2}%", 
+            correct, error_count, contains_name, total_snips,
+            percent(correct, total_snips),
+            percent(error_count, total_snips),
+            percent(contains_name, total_snips)
+        );
 
         assert_eq!(error_count, 0, "Found {} snippet errors", error_count);
 
@@ -1519,6 +1543,10 @@ mod tests {
         let handle = io_manager.run();
 
         Ok(())
+    }
+
+    fn percent(i: usize, t: usize) -> f32 {
+        i as f32 /(t as f32) * 100.0
     }
 
     // pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {

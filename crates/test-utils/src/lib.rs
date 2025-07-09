@@ -80,7 +80,7 @@ pub fn setup_db_full_embeddings(
     let db = ploke_db::Database::new(setup_db_full(fixture)?);
 
     let limit = 100;
-    let cursor = None;
+    let cursor = 0;
     // let embedding_data = db.get_nodes_for_embedding(100, None)?;
     db.get_unembedded_node_data(limit, cursor)
 }
@@ -124,7 +124,8 @@ pub fn init_test_tracing(level: tracing::Level) {
     let filter = filter::Targets::new()
         .with_target("cozo", tracing::Level::WARN)
         .with_target("ploke-io", level)
-        .with_target("", tracing::Level::ERROR);
+        .with_target("ploke-db", level);
+        // .with_target("", tracing::Level::ERROR);
 
     tracing_subscriber::registry()
         .with(

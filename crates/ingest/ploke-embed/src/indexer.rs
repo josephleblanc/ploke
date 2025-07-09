@@ -130,7 +130,7 @@ pub struct IndexerTask {
     pub embedding_processor: EmbeddingProcessor,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
-    pub last_id: Arc<Mutex<Option<uuid::Uuid>>>,
+    pub cursor: Arc<Mutex<usize>>,
 }
 
 impl IndexerTask {
@@ -147,7 +147,7 @@ impl IndexerTask {
             embedding_processor,
             cancellation_token,
             batch_size,
-            last_id: Arc::new(Mutex::new(None)),
+            cursor: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -157,7 +157,7 @@ impl IndexerTask {
         progress_tx: broadcast::Sender<IndexingStatus>,
         mut control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), EmbedError> {
-        let total = self.db.count_pending_embeddings()?;
+        let total = self.db.count_unembedded_nonfiles()?;
         tracing::info!("Starting indexing with {} unembedded nodes", total);
         let mut state = IndexingStatus {
             status: IndexStatus::Running,
@@ -169,9 +169,19 @@ impl IndexerTask {
 
         progress_tx.send(state.clone())?;
 
-        // TODO: Use `tokio::select!` here?
-        //  see ploke-embed/docs/better_index.md
-        while let Some(batch) = self.next_batch().await? {
+        // BUG: Infinite loop in `test_next_batch`, either
+        //
+        //      1. self.next_batch().await? never returns `None`
+        //          - `next_batch` calls `db.get_unembedded_node_data`, meaning it relies on the
+        //          `cursor` of the database return to return none.
+        //      2. never `send` the finishing trigger?
+        //
+        //      NOTE: To be clear, this loop never exits, and the timeout never triggers.
+        //      I think that suggests that the node hangs either when it is trying to send or after
+        //      the loop or something. Not exactly sure.
+        //      - Actually, we never get the "Break: " tracing message, so I think it hangs
+        //      sometime when processed
+        while let Some(batch) = self.next_batch(total).await? {
             tracing::debug!("Retrieved batch of {} nodes", batch.len());
 
             // Check for control commands
@@ -197,18 +207,18 @@ impl IndexerTask {
 
             let batch_len = batch.len();
             match self
-                .process_batch(
-                    // &self.db,
-                    // &self.io,
-                    // &self.embedding_processor,
-                    batch,
-                    |current, total| tracing::info!("Indexed {current}/{total}"),
-                )
+                .process_batch(batch, |current, total| {
+                    tracing::info!("Indexed {current}/{total}")
+                })
                 .await
             {
                 Ok(_) => {
                     state.processed += batch_len;
                     tracing::info!("Processed batch: {}/{}", state.processed, state.total);
+                    if state.processed == total {
+                        tracing::info!("Break: {} == {}", state.processed, state.total);
+                        break;
+                    }
                 }
                 Err(e) => {
                     let error_str = match &e {
@@ -248,15 +258,16 @@ impl IndexerTask {
     /// - If the cancellation token is cancelled, it returns an error.
     /// - If the batch is empty, it returns `None`; otherwise, it returns the batch.
     #[instrument(skip_all)]
-    async fn next_batch(&self) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
-        let mut last_id_guard = self.last_id.lock().await;
+    async fn next_batch(&self, total: usize) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
+        let mut last_id_guard = self.cursor.lock().await;
+        let batch_min = self.batch_size.min(total);
         let batch = self
             .db
-            .get_unembedded_node_data(self.batch_size, *last_id_guard)
+            .get_unembedded_node_data(batch_min, *last_id_guard)
             .map_err(EmbedError::PlokeCore)?;
         tracing::debug!("old batch id: {:?}", last_id_guard);
 
-        *last_id_guard = batch.last().map(|node| node.id);
+        *last_id_guard += batch.len();
 
         tracing::debug!("new batch id: {:?}", last_id_guard);
 
@@ -264,6 +275,10 @@ impl IndexerTask {
             return Err(EmbedError::Cancelled("Processing cancelled".into()));
         }
 
+        tracing::debug!(
+            "batch: {} | batch_min: {batch_min} | last_id_guard: {last_id_guard}",
+            batch.len()
+        );
         match batch.is_empty() {
             true => Ok(None),
             false => Ok(Some(batch)),
@@ -273,32 +288,41 @@ impl IndexerTask {
     #[instrument(skip_all, fields(batch_size = nodes.len()))]
     pub async fn process_batch(
         &self,
-        // db: &Database,
-        // io_manager: &IoManagerHandle,
-        // embedding_processor: &EmbeddingProcessor,
         nodes: Vec<EmbeddingData>,
         report_progress: impl Fn(usize, usize) + Send + Sync,
     ) -> Result<(), EmbedError> {
         let ctx_span = info_span!("process_batch");
         let _guard = ctx_span.enter();
 
-        tracing::info!("Processing batch of {} nodes", nodes.len());
         let total_nodes = nodes.len();
-        let snippet_results = self.io.get_snippets_batch(nodes.clone()).await.map_err(
-            |arg0: ploke_io::RecvError| EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0)),
-        )?;
+        tracing::info!("Processing batch of {} nodes", total_nodes);
+        // TODO: Get rid of this `clone` somehow
+        let snippet_results = self
+            .io
+            .get_snippets_batch(nodes.clone())
+            .await
+            .inspect_err(|e| {
+                tracing::error!(
+                    "Error processing batch, with start node {:#?}\nend node {:#?}",
+                    nodes.first(),
+                    nodes.last()
+                );
+            })
+            .map_err(|arg0: ploke_io::RecvError| {
+                EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0))
+            })?;
 
         let mut valid_snippets = Vec::new();
         let mut valid_nodes = Vec::new();
         let mut valid_indices = Vec::new();
 
         for (i, (node, snippet_result)) in nodes.into_iter().zip(snippet_results).enumerate() {
-            report_progress(i, total_nodes);
+            report_progress(i + 1, total_nodes);
             match snippet_result {
                 Ok(snippet) => {
                     valid_snippets.push(snippet);
                     valid_nodes.push(node);
-                    valid_indices.push(i);
+                    valid_indices.push(i + 1);
                 }
                 Err(e) => tracing::warn!("Snippet error: {:?}", e),
             }
@@ -349,7 +373,7 @@ mod tests {
         },
         time::Instant,
     };
-    use tracing_subscriber::{filter, fmt, EnvFilter, prelude::*};
+    use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
     use crate::{
         cancel_token::CancellationToken,
@@ -368,7 +392,7 @@ mod tests {
                     .with_writer(std::io::stderr) // Write to stderr
                     .with_ansi(true) // Disable colors for cleaner output
                     .pretty()
-                    .without_time() // Optional: remove timestamps
+                    .without_time(), // Optional: remove timestamps
             )
             .with(filter)
             .init();
@@ -487,28 +511,3 @@ mod tests {
         Ok(())
     }
 }
-
-// while Instant::now().duration_since(start_time) < timeout {
-//     match progress_rx.recv().await {
-//         // ASYNC receive
-//         Ok(status) if status.status == IndexStatus::Completed => {
-//             received_completed = true;
-//             break;
-//         } // Handle other statuses/errors
-//         Err(broadcast::error::RecvError::Closed) => {
-//             // if Instant::now().duration_since(last_time) > Duration::from_millis(20) {
-//             //     last_time = Instant::now();
-//             tracing::debug!(target = "next_batch",
-//                 "update | closed, break out of while loop");
-//             break;
-//             // }
-//         }
-//         Err(broadcast::error::RecvError::Lagged(backlog)) => {
-//             tracing::debug!(target = "next_batch",
-//                 "update | lagged: {:?}", backlog
-//             );
-//         }
-//         _ => {},
-//         // tokio::time::sleep(Duration::from_millis(10)).await,
-//     }
-// }
