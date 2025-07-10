@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum DbError {
     #[error("Database error: {0}")]
     Cozo(String),

@@ -386,7 +386,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use cozo::MemStorage;
-    use ploke_db::Database;
+    use ploke_db::{CallbackManager, Database};
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{init_test_tracing, setup_db_full};
     use tokio::{
@@ -461,9 +461,12 @@ mod tests {
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let batch_size = 100;
 
+        let callback_manager = CallbackManager::new_bounded(db.as_ref(), 100)?;
+
         let idx_tag = IndexerTask::new(db, io, embedding_processor, cancellation_token, batch_size);
         let (progress_tx, mut progress_rx) = broadcast::channel(1000);
         let (control_tx, control_rx) = mpsc::channel(4);
+
 
         let mut handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 

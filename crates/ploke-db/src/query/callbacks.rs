@@ -179,3 +179,81 @@ fn get_recvr(
         Entry::Vacant(vac) => Err(DbError::CallbackErr),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use cozo::NamedRows;
+    use crossbeam_channel::Receiver;
+
+    use super::*;
+    use crate::{Database, DbError, NodeType};
+
+    struct MockDb;
+
+    impl MockDb {
+        fn register_callback(
+            &self,
+            _rel: &str,
+            _cap: Option<usize>,
+        ) -> (u32, Receiver<(cozo::CallbackOp, NamedRows, NamedRows)>) {
+            let (s, r) = crossbeam_channel::unbounded();
+            (0, r)
+        }
+    }
+
+    #[test]
+    fn test_get_recvr_success() {
+        let mut receivers = HashMap::new();
+        let (s, r) = crossbeam_channel::unbounded();
+        receivers.insert(NodeType::Function, r);
+
+        let result = get_recvr(NodeType::Function, &mut receivers);
+        assert!(result.is_ok());
+        assert!(receivers.is_empty());
+    }
+
+    #[test]
+    fn test_get_recvr_fail() {
+        let mut receivers = HashMap::new();
+        let result = get_recvr(NodeType::Function, &mut receivers);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_bounded() {
+        let db = Database::init_with_schema().unwrap();
+        let result = CallbackManager::new_bounded(&db, 10);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_new_unbounded() {
+        let db = Database::init_with_schema().unwrap();
+        let result = CallbackManager::new_unbounded(&db);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_clone_counter() {
+        let db = Database::init_with_schema().unwrap();
+        let (manager, _) = CallbackManager::new_unbounded(&db).unwrap();
+        let counter = manager.clone_counter();
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_init_max() {
+        let db = Database::init_with_schema().unwrap();
+        let (mut manager, _) = CallbackManager::new_unbounded(&db).unwrap();
+        let max = AtomicUsize::new(10);
+        let result = manager.init_max(max);
+        assert!(result.is_ok());
+
+        let max = AtomicUsize::new(10);
+        let result = manager.init_max(max);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(DbError::CallbackSetCheck));
+    }
+}

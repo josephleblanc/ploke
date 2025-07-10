@@ -9,6 +9,11 @@ mod span;
 
 pub use database::{to_usize, Database};
 pub use error::DbError;
-pub use query::{builder::FieldValue, builder::NodeType, QueryBuilder};
+pub use query::{
+    builder::FieldValue,
+    builder::NodeType,
+    callbacks::{Callback, CallbackManager},
+    QueryBuilder,
+};
 pub use result::{CodeSnippet, QueryResult, ResultFormatter};
 pub use span::{CodeLocation, SpanChange, SpanTracker};

@@ -471,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        ploke_test_utils::init_test_tracing(Level::ERROR);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count1 = db.count_pending_embeddings()?;
@@ -585,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_embeddings_batch() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
 
