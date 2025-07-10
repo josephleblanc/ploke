@@ -23,7 +23,7 @@ lazy_static = "1.4.0" # Added lazy_static
 # concurrency
 tokio = { workspace = true }
 rayon = { workspace = true }
-crossbeam = "0.8"
+crossbeam-channel = "0.5.15"
 
 # logging
 tracing = { workspace = true }

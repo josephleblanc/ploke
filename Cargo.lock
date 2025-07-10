@@ -824,9 +824,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.14"
+version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06ba6d68e24814cb8de6bb986db8222d3a027d15872cabc0d18817bc3c0e4471"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -3422,7 +3422,7 @@ name = "ploke-db"
 version = "0.1.0"
 dependencies = [
  "cozo",
- "crossbeam",
+ "crossbeam-channel",
  "itertools 0.14.0",
  "lazy_static",
  "ploke-core",
@@ -3562,7 +3562,6 @@ dependencies = [
  "cozo",
  "env_logger 0.11.8",
  "itertools 0.14.0",
- "log",
  "ploke-core",
  "ploke-error",
  "ploke-test-utils",
@@ -3570,6 +3569,7 @@ dependencies = [
  "serde_json",
  "syn_parser",
  "thiserror 2.0.12",
+ "tracing",
  "uuid",
 ]
 

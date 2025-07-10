@@ -31,7 +31,7 @@ pub(super) fn transform_enums(
                 let field_params = process_fields(variant.id.as_any(), field_schema, i, field);
                 let script = field_schema.script_put(&field_params);
 
-                log::trace!(
+                tracing::trace!(
                     "  {} {} {:?}",
                     "field put:".log_step(),
                     script,
@@ -42,7 +42,7 @@ pub(super) fn transform_enums(
             let variant_params = process_variants(enm_any_id, variant_schema, i, variant);
             let script = variant_schema.script_put(&variant_params);
 
-            log::trace!(
+            tracing::trace!(
                 "  {} {} {:?}",
                 "variant put:".log_step(),
                 script,
@@ -53,13 +53,13 @@ pub(super) fn transform_enums(
 
         enm_params.insert(schema.variants().to_string(), DataValue::List(variant_ids));
         let script = schema.script_put(&enm_params);
-        log::trace!("  {} {}", "enum put:".log_step(), script);
+        tracing::trace!("  {} {}", "enum put:".log_step(), script);
         db.run_script(&script, enm_params, ScriptMutability::Mutable)?;
 
         // Add generic parameters
         for (i, generic_param) in enm.generic_params.into_iter().enumerate() {
             let (params, script) = process_generic_params(enm_any_id, i as i64, generic_param);
-            log::trace!(
+            tracing::trace!(
                 "  {} {} {:?}",
                 "generic_param put:".log_step(),
                 script,
@@ -74,7 +74,7 @@ pub(super) fn transform_enums(
             let attr_params = process_attributes(enm.id.as_any(), i, attr);
 
             let script = attr_schema.script_put(&attr_params);
-            log::trace!("  {} {} {:?}", "attr put:".log_step(), script, attr_params);
+            tracing::trace!("  {} {} {:?}", "attr put:".log_step(), script, attr_params);
             db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
         }
     }
@@ -145,7 +145,7 @@ mod tests {
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
         // let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        //     log::error!(target: "transform_function",
+        //     tracing::error!(target: "transform_function",
         //         "Error building tree: {}",
         //         e
         //     );
@@ -183,7 +183,7 @@ mod tests {
         let mut enum_nodes: Vec<EnumNode> = Vec::new();
         for type_def_node in merged.graph.defined_types.into_iter() {
             if let TypeDefNode::Enum(enm) = type_def_node {
-                // log::info!(target: "db",
+                // tracing::info!(target: "db",
                 //     "{} {}",
                 //     "Processing Node:".log_step(),
                 //     enm.name.log_name(),
@@ -193,7 +193,7 @@ mod tests {
                 // let script = enum_schema.script_put(&enm_params);
                 // db.run_script(&script, enm_params, ScriptMutability::Mutable)
                 //     .inspect_err(|_| {
-                //         log::error!(target: "db",
+                //         tracing::error!(target: "db",
                 //             "{} {}\n{:#?}\n{} {:#?}\n{} {:#?}",
                 //             "Error inserting enum".log_error(),
                 //             enm.name.log_name(),

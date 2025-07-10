@@ -120,8 +120,8 @@ pub fn init_tracing_v2() -> WorkerGuard {
 pub fn init_test_tracing(level: tracing::Level) {
     let filter = filter::Targets::new()
         .with_target("cozo", tracing::Level::ERROR)
-        .with_target("ploke", level);
-    // .with_target("", tracing::Level::ERROR);
+        .with_target("ploke", level)
+        .with_target("", tracing::Level::ERROR);
 
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)

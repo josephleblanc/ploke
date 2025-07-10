@@ -66,7 +66,7 @@ use syn_parser::utils::{LogStyle, LogStyleDebug};
 //             }
 //
 //             pub fn log_create_script(&self) {
-//                 log::info!(target: "db",
+//                 tracing::info!(target: "db",
 //                     "{} {}: {:?}",
 //                     "Printing edge schema".log_header(),
 //                     $relation.log_name(),
@@ -195,7 +195,7 @@ impl SyntacticRelationSchema {
         let script = &self.script_put(&params);
         db.run_script(script, params, cozo::ScriptMutability::Mutable)
             .inspect_err(|&_| {
-                log::error!(target: "db", "{} {}\n{} {}",
+                tracing::error!(target: "db", "{} {}\n{} {}",
                     "Error:".log_error().bold(),
                     format_args!("running script {}", script.log_orange()),
                     "type_node info:".log_foreground_primary_debug(),

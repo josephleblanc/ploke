@@ -13,7 +13,7 @@ ploke-core = { path = "../../ploke-core" }
 uuid = { workspace = true }
 
 # debugging
-log = { workspace = true }
+tracing = { workspace = true }
 
 #error handling
 ploke-error = { path = "../../ploke-error" }

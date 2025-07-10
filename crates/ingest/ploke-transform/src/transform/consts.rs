@@ -1,4 +1,6 @@
-use crate::{macro_traits::CommonFields, schema::primary_nodes::ConstNodeSchema};
+use crate::{
+    macro_traits::CommonFields, schema::primary_nodes::ConstNodeSchema, utils::log_db_error,
+};
 
 use super::*;
 
@@ -20,7 +22,7 @@ pub(super) fn transform_consts(
         consta_params.insert(schema.ty_id().to_string(), cozo_ty_id);
 
         let script = schema.script_put(&consta_params);
-        db.run_script(&script, consta_params, ScriptMutability::Mutable)?;
+        db.run_script_log(&script, consta_params, ScriptMutability::Mutable)?;
 
         // Add attributes
         let attr_schema = AttributeNodeSchema::SCHEMA;
@@ -28,11 +30,41 @@ pub(super) fn transform_consts(
             let attr_params = process_attributes(consta.id.as_any(), i, attr);
 
             let script = attr_schema.script_put(&attr_params);
-            db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
+            db.run_script_log(&script, attr_params, ScriptMutability::Mutable)?;
         }
     }
 
     Ok(())
+}
+
+pub trait LogScript {
+    fn run_script_log(
+        &self,
+        script: &str,
+        params: BTreeMap<String, DataValue>,
+        mutability: ScriptMutability,
+    ) -> Result<(), TransformError>;
+}
+
+impl LogScript for &Db<MemStorage> {
+    fn run_script_log(
+        &self,
+        script: &str,
+        rel_params: BTreeMap<String, DataValue>,
+        mutability: ScriptMutability,
+    ) -> Result<(), TransformError> {
+        self.run_script(script, rel_params.clone(), mutability)
+            .inspect_err(|_| {
+                tracing::error!(target: "db", "{} {}\n{} {:#?}",
+                    "put script".log_step(),
+                    &script,
+                    "rel_params:".log_step(),
+                    rel_params
+                );
+            })
+            .map_err(log_db_error)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -42,7 +74,11 @@ mod tests {
     use ploke_test_utils::test_run_phases_and_collect;
     use syn_parser::parser::ParsedCodeGraph;
 
-    use crate::{error::TransformError, schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema}};
+    use crate::{
+        error::TransformError,
+        schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema},
+        utils::log_db_error,
+    };
 
     use super::transform_consts;
     #[test]

@@ -209,7 +209,7 @@ mod tests {
 
         // build module tree
         let tree = merged.build_module_tree().unwrap_or_else(|e| {
-            log::error!(target: "transform_function",
+            tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e
             );
@@ -237,7 +237,7 @@ mod tests {
 
         // build module tree
         let tree = merged.build_module_tree().unwrap_or_else(|e| {
-            log::error!(target: "transform_function",
+            tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e
             );

@@ -196,7 +196,7 @@ mod test {
         let successful_graphs = test_run_phases_and_collect("fixture_types");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
         let tree = merged.build_module_tree().unwrap_or_else(|e| {
-            log::error!(target: "transform_function",
+            tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e
             );
@@ -207,7 +207,7 @@ mod test {
         db.initialize().expect("Failed to initialize database");
 
         let func_schema = &FunctionNodeSchema::SCHEMA;
-        log::info!(target: "transform_function",
+        tracing::debug!(target: "transform_function",
             "{}: {:?}",
             "Printing function schema".log_step(),
             func_schema.script_create()
@@ -215,7 +215,7 @@ mod test {
 
         let schema = func_schema.script_create();
         let db_result = db.run_script(&schema, BTreeMap::new(), cozo::ScriptMutability::Mutable);
-        log::info!(target: "transform_function",
+        tracing::info!(target: "transform_function",
             "{}: {:?}",
             "  db return".log_step(),
             db_result
@@ -228,20 +228,20 @@ mod test {
             .cloned()
             .expect("Cannot find target function node");
         let func_params = process_func(&tree, &mut func_node, func_schema);
-        log::info!(target: "transform_function",
+        tracing::debug!(target: "transform_function",
             "{}: {:#?}",
             "Build func_params".log_step(),
             func_params,
         );
         let script = script_put(&func_params, func_schema.relation);
-        log::info!(target: "transform_function",
+        tracing::debug!(target: "transform_function",
             "{}: {:#?}",
             "Build func script".log_step(),
             script,
         );
 
         let db_result = db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)?;
-        log::info!(target: "transform_function",
+        tracing::debug!(target: "transform_function",
             "{} {:#?}",
             "  Db return: ".log_step(),
             db_result,
@@ -276,7 +276,7 @@ mod test {
                 ),
             ]);
 
-            log::info!(target: "transform_function",
+            tracing::debug!(target: "transform_function",
                 "{}: {:#?}",
                 "Build param_params".log_step(),
                 param_params,
@@ -287,7 +287,7 @@ mod test {
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
             );
-            log::info!(target: "transform_function",
+            tracing::debug!(target: "transform_function",
                 "{}: {:?}\n{} {:?}",
                 "param schema created".log_step(),
                 db_result,
@@ -303,7 +303,7 @@ mod test {
                 cozo::ScriptMutability::Mutable,
             )
             .inspect_err(|_| {
-                log::error!(target: "transform_function",
+                tracing::error!(target: "transform_function",
                     "{} {}\n{} {:?}\n{}\n{:#?}\n{} {:?}",
                     "Error:".log_error(),
                     "db.run_script faild with arguments:",
@@ -316,7 +316,7 @@ mod test {
                 );
             })?;
 
-            log::info!(target: "transform_function",
+            tracing::debug!(target: "transform_function",
                 "{} {:#?}",
                 "  Db return: ".log_step(),
                 db_result,
@@ -343,7 +343,7 @@ mod test {
                     cozo::ScriptMutability::Mutable,
                 )
                 .inspect_err(|_| {
-                    log::error!(target: "transform_function",
+                    tracing::error!(target: "transform_function",
                         "{} {} {}\n{} {:?}\n{}\n{:#?}\n{} {:?}",
                         "Error:".log_error(),
                         "generic_params".log_foreground_primary(),
@@ -371,7 +371,7 @@ mod test {
     }
 
     fn log_db_result(db_result: cozo::NamedRows) {
-        log::info!(target: "transform_function",
+        tracing::debug!(target: "transform_function",
             "{} {}",
             "  Db return: ".log_step(),
             db_result.log_comment_debug(),

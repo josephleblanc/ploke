@@ -680,7 +680,7 @@ mod tests {
         let filter = filter::Targets::new()
             .with_target("cozo", tracing::Level::WARN)
             .with_target("ploke-io", tracing::Level::DEBUG) // Use your crate name
-            .with_target("", tracing::Level::INFO); // Default for other crates
+            .with_target("ploke-db", tracing::Level::INFO); // Default for other crates
 
         let fmt_layer = fmt::layer()
             .with_writer(std::io::stderr)

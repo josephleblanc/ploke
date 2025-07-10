@@ -14,7 +14,16 @@ pub enum DbError {
     QueryConstruction(String),
 
     #[error("Item not found")]
-    NotFound
+    NotFound,
+
+    #[error("Error encountered for callback construction")]
+    CallbackErr,
+
+    #[error("Do not change the max of the callback")]
+    CallbackSetCheck,
+
+    #[error("Error receiving message: {0}")]
+    CrossBeamSend(String)
 }
 
 #[derive(Error, Debug)]

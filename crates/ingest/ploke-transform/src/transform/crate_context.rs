@@ -17,7 +17,7 @@ pub(super) fn transform_crate_context(
     let script = schema.script_put(&crate_params);
     db.run_script(&script, crate_params, ScriptMutability::Mutable)
         .inspect_err(|e| {
-            log::error!(target: "transform_crate",
+            tracing::error!(target: "transform_crate",
                 "{} {}\n\t{} {}\n\t{} {}",
                 "CrateContext:".log_header(),
                 e.to_string(),

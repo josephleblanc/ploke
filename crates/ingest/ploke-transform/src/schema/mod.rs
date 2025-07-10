@@ -145,7 +145,12 @@ macro_rules! define_schema {
                         } else { "skip_me_id".to_string() }
                     ),+
                 ];
-                format!("{} {{ id => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+                if fields.contains(&"skip_me_id".to_string()) {
+                    format!("{} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+
+                } else {
+                    format!("{} {{ {} }}", $relation, fields.iter().join(", "))
+                }
             }
 
             pub fn script_create(&self) -> String {
@@ -156,7 +161,12 @@ macro_rules! define_schema {
                         } else { "skip_me_id".to_string() }
                     ),+
                 ];
-                format!(":create {} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+                if fields.contains(&"skip_me_id".to_string()) {
+                    format!(":create {} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+
+                } else {
+                    format!(":create {} {{ {} }}", $relation, fields.iter().join(", "))
+                }
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
@@ -179,7 +189,7 @@ macro_rules! define_schema {
             }
 
             pub fn log_create_script(&self) {
-                log::info!(target: "db",
+                tracing::info!(target: "db",
                     "{} {}: {:?}",
                     "Printing schema".log_header(),
                     $relation.log_name(),
@@ -227,7 +237,7 @@ pub(crate) fn create_and_insert_generic_schema(db: &Db<MemStorage>) -> Result<()
 }
 
 pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
-    log::info!(target: "db",
+    tracing::info!(target: "db",
         "{} {:?}",
         "  Db return: ".log_step(),
         db_result,

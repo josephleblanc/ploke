@@ -185,6 +185,18 @@ impl Database {
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
+
+    let script2 = [r#"
+{
+    ?[new_id, new_embedding] <- $updates 
+    :replace _new {new_id, new_embedding} 
+} 
+{ 
+    ?[id, embedding] := *_new{new_id: id, new_embedding: embedding}, 
+    *"#, rel_name, r#"{id}
+    :update "#, rel_name, r#" {id, embedding}
+}
+"#].join("");
             let script = format!(
                 "?[id, embedding] <- $updates\n:update {} {{ id, embedding }}\n",
                 rel_name
@@ -193,18 +205,21 @@ impl Database {
             tracing::debug!("script: {}", script);
 
             let result = self
-                .run_script(&script, params.clone(), cozo::ScriptMutability::Mutable)
+                .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
                 .map_err(|e| {
                     let error_json = cozo::format_error_as_json(e, None);
                     let error_str = serde_json::to_string_pretty(&error_json).unwrap();
                     tracing::error!("{}", error_str);
                     DbError::Cozo(error_str)
-                })?;
+                }).inspect_err(|e| tracing::error!("{}", e));
+            tracing::debug!("full_result: {:#?}", result);
+            let result = result?;
 
             // Count the number of rows actually updated
             // The result should contain information about how many rows were affected
             // This depends on CozoDB's response format - you may need to adjust this
-            total_updated += result.into_iter().count();
+            total_updated += result.rows.len();
+            tracing::debug!("total_updated: {}", total_updated);
         }
 
         Ok(total_updated)
@@ -493,7 +508,10 @@ mod tests {
         let file_pending = db.count_unembedded_files()?;
         assert!((non_file_pending + file_pending) == all_pending);
 
-        let limit = 100;
+        // NOTE: If the limit is under around 129-ish, then this test will fail.
+        // I can't tell if this is the desired result or not. Depends on how we want to design the
+        // file and node counting functions.
+        let limit = 200;
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
@@ -567,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_embeddings_batch() -> Result<(), ploke_error::Error> {
-        // ploke_test_utils::init_test_tracing(Level::DEBUG);
+        ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
 

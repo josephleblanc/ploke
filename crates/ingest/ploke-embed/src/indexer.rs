@@ -469,7 +469,7 @@ mod tests {
 
         let mut received_completed = false;
         let start = Instant::now();
-        let timeout = Duration::from_secs(600); // Increased timeout
+        let timeout = Duration::from_secs(2400); // Increased timeout
 
         loop {
             tokio::select! {

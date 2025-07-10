@@ -115,6 +115,121 @@ async fn debug_cozo_update_syntax() {
     
     let result = db.run_script(select_script, Default::default(), ScriptMutability::Immutable);
     println!("Table contents: {:?}", result);
+
+    println!("\n=== Test 6: Use conditional update ===");
+    let update_conditional = r#"
+{:create _test {a}}
+
+%loop
+    %if { len[count(x)] := *_test[x]; ?[x] := len[z], x = z >= 10 }
+        %then %return _test
+    %end
+    { ?[a] := a = rand_uuid_v1(); :put _test {a} }
+%end
+    "#;
+    let result = db.run_script(update_conditional, Default::default(), ScriptMutability::Mutable);
+    println!("Update literal result: {:?}", result);
+
+    println!("\n=== Test 7: Use conditional update realistic ===");
+    // {:create _test {id, embedding}}
+    let update_conditional_realistic = r#"
+{
+    ?[test_id, test_embedding] <- [[to_uuid("55555555-5555-5555-5555-555555555555"), [50.0, 20.0, 30.0]]] 
+    :replace _test {test_id, test_embedding} 
+} 
+
+%if { 
+        ?[id, embedding] := *_test {test_id: id, test_embedding: embedding}, *test_table { id, embedding }
+    }
+    %then {
+        ?[id, embedding] <- [
+            [to_uuid("55555555-5555-5555-5555-555555555555"), [50.0, 20.0, 30.0]]
+        ]
+        :update test_table { id, embedding }
+    }
+%end
+    "#;
+    let result = db.run_script(update_conditional_realistic, Default::default(), ScriptMutability::Mutable);
+    println!("Update literal result: {:?}", result);
+
+    let create_script = r#"
+    "#;
+    println!("\n=== Test 8: Debug - conditional update realistic ===");
+    let update_param_script = r#"
+{
+    :create second_test_table {
+        id: Uuid
+        =>
+        embedding: [Float]
+    }
+}
+{
+        ?[id, embedding] <- [
+            [to_uuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), [9090.0, 2020.0, 3030.0]]
+        ]
+        :put second_test_table { id, embedding }
+}
+{
+    ?[test_id, test_embedding] <- $updates 
+    :replace _test {test_id, test_embedding} 
+} 
+
+%if { ?[id] := 
+        *_test {test_id: id}, 
+        *test_table { id }
+} %then { 
+    ?[id, embedding] <- $updates 
+    :update test_table { id, embedding } } 
+%end 
+"#;
+    let update_param_script2 = r#"
+{
+    ?[test_id, test_embedding] <- $updates 
+    :replace _test {test_id, test_embedding} 
+} 
+{ 
+    ?[id, embedding] := *_test{test_id: id, test_embedding: embedding}, *test_table{id}
+    :update test_table {id, embedding}
+}
+"#;
+    
+    // Create the parameter data structure as we currently do
+    let uuid_val = DataValue::Uuid(cozo::UuidWrapper(uuid::uuid!("11111111-1111-1111-1111-111111111111")));
+    let embedding_val = DataValue::List(vec![
+        DataValue::Num(cozo::Num::Float(1.0)),
+        DataValue::Num(cozo::Num::Float(2.0)),
+        DataValue::Num(cozo::Num::Float(3.0)),
+    ]);
+    let uuid_val2 = DataValue::Uuid(cozo::UuidWrapper(uuid::uuid!("22222222-2222-2222-2222-222222222222")));
+    let embedding_val2 = DataValue::List(vec![
+        DataValue::Num(cozo::Num::Float(9.0)),
+        DataValue::Num(cozo::Num::Float(8.0)),
+        DataValue::Num(cozo::Num::Float(7.0)),
+    ]);
+    let uuid_val3 = DataValue::Uuid(cozo::UuidWrapper(uuid::uuid!("99999999-9999-9999-9999-999999999999")));
+    let embedding_val3 = DataValue::List(vec![
+        DataValue::Num(cozo::Num::Float(10.0)),
+        DataValue::Num(cozo::Num::Float(10.0)),
+        DataValue::Num(cozo::Num::Float(1.0)),
+    ]);
+    
+    let updates_data = vec![
+        DataValue::List(vec![uuid_val, embedding_val]),
+        DataValue::List(vec![uuid_val2, embedding_val2]),
+        DataValue::List(vec![uuid_val3, embedding_val3])
+    ];
+    
+    let mut params = BTreeMap::new();
+    params.insert("updates".to_string(), DataValue::List(updates_data));
+    
+    println!("Parameters: {:?}", params);
+    
+    let result = db.run_script(update_param_script2, params, ScriptMutability::Mutable);
+    println!("Update param result: {:?}", result);
+
+    let check_val_script = "?[id, embedding] := *test_table {id, embedding}";
+    let result = db.run_script(check_val_script, BTreeMap::new(), ScriptMutability::Immutable);
+    println!("Update param result: {:?}", result);
 }
 
 // Helper function to test different parameter structures

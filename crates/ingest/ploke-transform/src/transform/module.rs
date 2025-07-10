@@ -63,7 +63,7 @@ pub(super) fn transform_modules(
         // temporary clone() for logging
         db.run_script(&script, module_params.clone(), ScriptMutability::Mutable)
             .inspect_err(|_| {
-                log::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
+                tracing::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
                     "Error processing module".log_error(),
                     module.name.log_name(),
                     module.id.to_string().log_id(),
@@ -101,7 +101,7 @@ fn process_module_def(
                 .into_os_string()
                 .into_string()
                 .unwrap_or_else(|f| {
-                    log::error!(target: "db", "{} {} ({}) {:?}",
+                    tracing::error!(target: "db", "{} {} ({}) {:?}",
                         "Error in file path:".log_error(),
                         "ModuleNode ID",
                         module_id.to_string().log_name(),

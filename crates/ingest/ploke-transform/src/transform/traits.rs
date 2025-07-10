@@ -33,7 +33,7 @@ pub(super) fn transform_traits(
             let method_params = process_methods(trayt_any_id, method);
             let script = method_schema.script_put(&method_params);
 
-            log::trace!(
+            tracing::trace!(
                 "  {} {} {:?}",
                 "method put:".log_step(),
                 script,

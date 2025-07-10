@@ -4,6 +4,7 @@ use syn_parser::utils::LogStyleDebug;
 
 use crate::macro_traits::HasAnyNodeId;
 use crate::schema::primary_nodes::ImportNodeSchema;
+use crate::utils::log_db_error;
 
 use super::*;
 
@@ -53,27 +54,9 @@ pub(super) fn transform_imports(
         let script = schema.script_put(&import_params);
         // temporary clone() for logging
 
-        log::info!(target: "db", "-----Here6.5-----");
-        db.run_script(
-            "::columns import",
-            BTreeMap::new(),
-            ScriptMutability::Immutable,
-        )
-        .into_iter()
-        .for_each(|r| println!("{:?}", r));
-        log::info!(target: "db", "-----Here7-----");
-        db.run_script(
-            "::columns import",
-            BTreeMap::new(),
-            ScriptMutability::Immutable,
-        )
-        .into_iter()
-        .flatten()
-        .for_each(|r| println!("{:?}", r));
-        log::info!(target: "db", "-----Here7.5-----");
         db.run_script(&script, import_params.clone(), ScriptMutability::Mutable)
             .inspect_err(|_| {
-                log::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
+                tracing::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
                     "Error processing import".log_error(),
                     import.visible_name.log_name(),
                     import.id.to_string().log_id(),
@@ -84,15 +67,12 @@ pub(super) fn transform_imports(
                     "import_params:".log_step(),
                     import_params
                 );
-                log::info!(target: "db", "-----Here7.75-----");
+
                 schema.log_create_script();
             })
-            .map_err(|e| {
-                log::error!(target: "db", "{}", to_string_pretty(&format_error_as_json(e, None)).unwrap());
-                TransformError::Database( "when executing against relation 'import'".to_string() )
-            })?;
+            .map_err(log_db_error)?;
 
-        log::info!(target: "db", "-----Here8-----");
+
     }
 
     Ok(())
@@ -211,28 +191,28 @@ mod tests {
         // create and insert attribute schema
         // create_attribute_schema(&db)?;
 
-        log::info!(target: "db", "-----Here1-----");
+
         pub(crate) fn create_import_schema(
             db: &Db<MemStorage>,
         ) -> Result<(), Box<dyn std::error::Error>> {
             let import_schema = ImportNodeSchema::SCHEMA;
-            log::info!(target: "db", "-----Here2-----");
+
             let db_result = db.run_script(
                 &import_schema.script_create(),
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
             )?;
-            log::info!(target: "db", "-----Here3-----");
+
             log_db_result(db_result);
-            log::info!(target: "db", "-----Here4-----");
+
             Ok(())
         }
         create_import_schema(&db)?;
-        log::info!(target: "db", "-----Here5-----");
+
 
         // transform and insert impls into cozo
         transform_imports(&db, merged.graph.use_statements)?;
-        log::info!(target: "db", "-----Here6-----");
+
 
         Ok(())
     }

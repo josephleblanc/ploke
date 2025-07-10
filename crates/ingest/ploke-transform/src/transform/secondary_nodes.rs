@@ -55,7 +55,7 @@ pub(super) fn process_params(
     //  - If the unnamed parameter is not actually empty, this could be problematic for
     //  generating the NodeId of the parameter names.
     // .unwrap_or_else(|| {
-    //     log::error!(target: LOG_TARGET_TRANSFORM,
+    //     tracing::error!(target: LOG_TARGET_TRANSFORM,
     //         "{} {} {} {} {}",
     //         "Error: Invariant Violated".log_error(),
     //         "Expected:".log_magenta(),
@@ -97,7 +97,7 @@ pub(super) fn process_generic_params(
         .name()
         .map(DataValue::from)
         .unwrap_or_else(|| {
-            log::error!(target: "transform", "{}: {} | {:?}", "Error".log_error(), "Invalid State, Generic Param without name", generic_param);
+            tracing::error!(target: "transform", "{}: {} | {:?}", "Error".log_error(), "Invalid State, Generic Param without name", generic_param);
             panic!("Invalid State")
         });
 
@@ -130,7 +130,7 @@ pub(super) fn process_generic_params(
                 (schema.default().to_string(), cozo_default),
             ]);
             let script = schema.script_put(&params);
-            log::trace!(target: LOG_TARGET_TRANSFORM,
+            tracing::trace!(target: LOG_TARGET_TRANSFORM,
                 "{}: {} | {}",
                 "Form Script".log_step(),
                 schema.relation.log_name(),
@@ -159,7 +159,7 @@ pub(super) fn process_generic_params(
                 ),
             ]);
             let script = schema.script_put(&params);
-            log::trace!(target: LOG_TARGET_TRANSFORM,
+            tracing::trace!(target: LOG_TARGET_TRANSFORM,
                 "{}: {} | {}",
                 "Form Script".log_step(),
                 schema.relation.log_name(),
@@ -181,7 +181,7 @@ pub(super) fn process_generic_params(
                 (schema.type_id().to_string(), type_id.to_cozo_uuid()),
             ]);
             let script = schema.script_put(&params);
-            log::trace!(target: LOG_TARGET_TRANSFORM,
+            tracing::trace!(target: LOG_TARGET_TRANSFORM,
                 "{}: {} | {}",
                 "Form Script".log_step(),
                 schema.relation.log_name(),
@@ -208,7 +208,7 @@ pub(super) fn process_fields(
     // Its a pretty good error log.
     //
     // .unwrap_or_else(|| {
-    //     log::error!(
+    //     tracing::error!(
     //         "{} {}\n{} {}\n{} {}\n{:#?}",
     //         "Error processing field".log_error(),
     //         field.name.log_name_debug(),
@@ -333,7 +333,7 @@ mod test {
     }
 
     fn log_db_result(db_result: cozo::NamedRows) {
-        log::info!(target: "transform_function",
+        tracing::info!(target: "transform_function",
             "{} {:#?}",
             "  Db return: ".log_step(),
             db_result,
