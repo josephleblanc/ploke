@@ -227,7 +227,9 @@ impl IndexerTask {
                     tracing::info!("Processed batch: {}/{}", state.processed, state.total);
                     if state.processed >= total {
                         if state.processed > total {
-                            tracing::warn!("state.processed > total | there is a miscount of nodes somewhere");
+                            tracing::warn!(
+                                "state.processed > total | there is a miscount of nodes somewhere"
+                            );
                         }
                         tracing::info!("Break: {} >= {}", state.processed, state.total);
                         break;
@@ -254,7 +256,7 @@ impl IndexerTask {
         }
 
         state.status = if state.processed >= state.total {
-            tracing::info!("Indexing completed");
+            tracing::info!("Indexing completed: {}/{}", state.processed, state.total);
             IndexStatus::Completed
         } else {
             tracing::warn!("Indexing cancelled");
@@ -447,7 +449,7 @@ mod tests {
     //  The issue: the test times out without receiving a completion signal.
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
-        let _tracing_handle = init_test_tracing(Level::DEBUG);
+        init_test_tracing(Level::TRACE);
         tracing::info!("Starting test_next_batch");
 
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -461,13 +463,14 @@ mod tests {
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let batch_size = 100;
 
-        let callback_manager = CallbackManager::new_bounded(db.as_ref(), 100)?;
+        let (callback_manager, db_callbacks) = CallbackManager::new_bounded(db.as_ref(), 100)?;
+        let counter = callback_manager.clone_counter();
 
         let idx_tag = IndexerTask::new(db, io, embedding_processor, cancellation_token, batch_size);
         let (progress_tx, mut progress_rx) = broadcast::channel(1000);
         let (control_tx, control_rx) = mpsc::channel(4);
 
-
+        let callback_handler = std::thread::spawn(move || callback_manager.run());
         let mut handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 
         let mut received_completed = false;
@@ -507,7 +510,50 @@ mod tests {
                     break;
                 }
 
+
             }
+
+            match db_callbacks.try_recv() {
+                Ok(c) => match c {
+                    Ok((call, header, rows)) => {
+                        let last_count = counter.fetch_and(1, std::sync::atomic::Ordering::Relaxed);
+                        tracing::trace!("first (header?) | {:?}",
+                            header,
+                        );
+                        tracing::trace!(
+                            "second (rows?) | {:?}",
+                            rows,
+                        );
+                        tracing::trace!("last count -- {} --", last_count);
+                    }
+                    Err(e) => {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}")
+                    }
+                },
+                Err(e) => {
+                    if e.is_disconnected() {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}");
+                    }
+                }
+            };
+        }
+        if handle.is_finished() {
+            tracing::info!("Indexer Handle is Finished: {:?}", handle);
+            tracing::info!("---> Trying to await the handle");
+            let handle_result = handle.await;
+            tracing::info!("-----> After awaiting the handle: {:?}", handle_result);
+        } else {
+            tracing::error!("Indexer Handle did not finish.")
+        }
+        if callback_handler.is_finished() {
+            tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+            tracing::info!("---> Trying to await the callback_handler");
+            tracing::info!(
+                "-----> After awaiting the callback_handler: {:?}",
+                callback_handler
+            );
+        } else {
+            tracing::error!("Indexer callback_handler did not finish.")
         }
 
         assert!(

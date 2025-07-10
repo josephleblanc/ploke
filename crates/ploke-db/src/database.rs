@@ -219,7 +219,7 @@ impl Database {
             // The result should contain information about how many rows were affected
             // This depends on CozoDB's response format - you may need to adjust this
             total_updated += result.rows.len();
-            tracing::debug!("total_updated: {}", total_updated);
+            tracing::debug!("[old method] total_updated: {}", total_updated);
         }
 
         Ok(total_updated)

@@ -113,7 +113,7 @@ impl CallbackManager {
         Arc::clone(&self.update_counter)
     }
 
-    pub async fn run(&self) -> Result<(), DbError> {
+    pub fn run(self) -> Result<(), DbError> {
         loop {
             let result = crossbeam_channel::select! {
                 recv(self.functions) -> msg => {
@@ -160,10 +160,10 @@ impl CallbackManager {
 }
 
 pub fn log_send(e: SendError<Result<Call, DbError>>) {
-    tracing::warn!("{}", e)
+    tracing::warn!("{: >28}{}", "[log_send] in callbacks.rs | ", e)
 }
 pub fn log_err(e: RecvError) -> DbError {
-    tracing::warn!("{}", e);
+    tracing::warn!("{: >28}{}", "[log_err] in callbacks.rs | ", e);
     DbError::CrossBeamSend(e.to_string())
 }
 
@@ -179,7 +179,6 @@ fn get_recvr(
         Entry::Vacant(vac) => Err(DbError::CallbackErr),
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::AtomicUsize;
