@@ -5,13 +5,15 @@ use std::{
 
 use cozo::{CallbackOp, NamedRows};
 use crossbeam_channel::{Receiver, RecvError, SendError, Sender};
+use tracing_subscriber::registry::Data;
 
 use crate::{Database, DbError, NodeType};
 
 pub struct CallbackManager {
     s: Sender<Result<Call, DbError>>,
+    db_arc: Arc<Database>,
     update_counter: Arc<AtomicUsize>,
-    unregister_codes: HashMap<NodeType, u32>,
+    unregister_codes: Arc<HashMap<NodeType, u32>>,
     max_calls: Option<AtomicUsize>,
     functions: Receiver<Call>,
     consts: Receiver<Call>,
@@ -42,12 +44,14 @@ impl Callback {
     }
 }
 type Call = (CallbackOp, NamedRows, NamedRows);
+type CallHelper = (
+    CallbackManager,
+    Receiver<Result<Call, DbError>>,
+    Arc<HashMap<NodeType, u32>>,
+);
 
 impl CallbackManager {
-    pub fn new_bounded(
-        db: &Database,
-        n: usize,
-    ) -> Result<(CallbackManager, Receiver<Result<Call, DbError>>), DbError> {
+    pub fn new_bounded(db: Arc<Database>, n: usize) -> Result<CallHelper, DbError> {
         let (s, r) = crossbeam_channel::bounded(n);
         let mut unregister_codes = HashMap::new();
         let mut sx: HashMap<NodeType, Receiver<Call>> = HashMap::new();
@@ -57,10 +61,13 @@ impl CallbackManager {
             sx.insert(ty, r);
         }
 
+        let codes_arc = Arc::new(unregister_codes);
+
         let callback_manager = Self {
             s,
+            db_arc: Arc::clone(&db),
             update_counter: Arc::new(AtomicUsize::new(0)),
-            unregister_codes,
+            unregister_codes: Arc::clone(&codes_arc),
             functions: get_recvr(NodeType::Function, &mut sx)?,
             consts: get_recvr(NodeType::Const, &mut sx)?,
             enums: get_recvr(NodeType::Enum, &mut sx)?,
@@ -74,11 +81,11 @@ impl CallbackManager {
             max_calls: None,
         };
 
-        Ok((callback_manager, r))
+        Ok((callback_manager, r, codes_arc))
     }
 
     pub fn new_unbounded(
-        db: &Database,
+        db: Arc<Database>,
     ) -> Result<(CallbackManager, Receiver<Result<Call, DbError>>), DbError> {
         let (s, r) = crossbeam_channel::unbounded();
         let mut unregister_codes = HashMap::new();
@@ -91,8 +98,9 @@ impl CallbackManager {
 
         let callback_manager = Self {
             s,
+            db_arc: Arc::clone(&db),
             update_counter: Arc::new(AtomicUsize::new(0)),
-            unregister_codes,
+            unregister_codes: Arc::new(unregister_codes),
             functions: get_recvr(NodeType::Function, &mut sx)?,
             consts: get_recvr(NodeType::Const, &mut sx)?,
             enums: get_recvr(NodeType::Enum, &mut sx)?,
@@ -115,39 +123,36 @@ impl CallbackManager {
 
     pub fn run(self) -> Result<(), DbError> {
         loop {
-            let result = crossbeam_channel::select! {
-                recv(self.functions) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.consts) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.enums) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.macros) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.modules) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.statics) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.structs) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.traits) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.type_alias) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                recv(self.unions) -> msg => {
-                    self.s.send(msg.map_err(log_err)).map_err(log_send)
-            },
-                    };
+            let msg_res = crossbeam_channel::select! {
+                recv(self.functions) -> msg => msg,
+                recv(self.consts) -> msg => msg,
+                recv(self.enums) -> msg => msg,
+                recv(self.macros) -> msg => msg,
+                recv(self.modules) -> msg => msg,
+                recv(self.statics) -> msg => msg,
+                recv(self.structs) -> msg => msg,
+                recv(self.traits) -> msg => msg,
+                recv(self.type_alias) -> msg => msg,
+                recv(self.unions) -> msg => msg,
+            };
+
+            match msg_res {
+                Ok(call) => {
+                    let result = self.s.send(Ok(call));
+                    if let Err(e) = result {
+                        // Consumer disconnected.
+                        log_send(e);
+                        break;
+                    }
+                }
+                Err(e) => {
+                    // A producer disconnected (db was dropped), log and exit.
+                    log_err(e);
+                    break;
+                }
+            }
         }
+        Ok(())
     }
 
     pub fn init_max(&mut self, max: AtomicUsize) -> Result<(), DbError> {
@@ -156,6 +161,27 @@ impl CallbackManager {
         }
         self.max_calls.replace(max);
         Ok(())
+    }
+}
+
+impl Drop for CallbackManager {
+    fn drop(&mut self) {
+        for (node_type, code) in self.unregister_codes.iter() {
+            tracing::info!(
+                "Unregistering callback for NodeType::{:?} with code {}",
+                node_type,
+                code
+            );
+            tracing::debug!(
+                "Unregistering callback for NodeType::{:?} | unregistered? {}",
+                node_type,
+                self.db_arc.unregister_callback(*code)
+                    .then(|| {
+                        tracing::error!("Failed to unregister callback for {:?}", node_type,);
+                    })
+                    .is_some()
+            );
+        }
     }
 }
 
@@ -223,21 +249,21 @@ mod tests {
     #[test]
     fn test_new_bounded() {
         let db = Database::init_with_schema().unwrap();
-        let result = CallbackManager::new_bounded(&db, 10);
+        let result = CallbackManager::new_bounded(Arc::new(db), 10);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_new_unbounded() {
         let db = Database::init_with_schema().unwrap();
-        let result = CallbackManager::new_unbounded(&db);
+        let result = CallbackManager::new_unbounded(Arc::new(db));
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_clone_counter() {
         let db = Database::init_with_schema().unwrap();
-        let (manager, _) = CallbackManager::new_unbounded(&db).unwrap();
+        let (manager, _) = CallbackManager::new_unbounded(Arc::new(db)).unwrap();
         let counter = manager.clone_counter();
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -245,7 +271,7 @@ mod tests {
     #[test]
     fn test_init_max() {
         let db = Database::init_with_schema().unwrap();
-        let (mut manager, _) = CallbackManager::new_unbounded(&db).unwrap();
+        let (mut manager, _) = CallbackManager::new_unbounded(Arc::new(db)).unwrap();
         let max = AtomicUsize::new(10);
         let result = manager.init_max(max);
         assert!(result.is_ok());

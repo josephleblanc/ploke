@@ -91,11 +91,6 @@ impl Database {
         Ok(QueryResult::from(result))
     }
 
-    // /// Create a new query builder
-    // pub fn create_query_builder(&self) -> QueryBuilder {
-    //     QueryBuilder::new(&self.db)
-    // }
-
     pub async fn mock_get_nodes_for_embedding(&self) -> Result<Vec<EmbeddingData>, DbError> {
         // TODO: The CozoScript query needs to be validated and might require adjustments
         // based on the final schema. For now, we'll return mock data.
@@ -197,12 +192,7 @@ impl Database {
     :update "#, rel_name, r#" {id, embedding}
 }
 "#].join("");
-            let script = format!(
-                "?[id, embedding] <- $updates\n:update {} {{ id, embedding }}\n",
-                rel_name
-            );
-
-            tracing::debug!("script: {}", script);
+            tracing::debug!("script: {}", script2);
 
             let result = self
                 .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
@@ -212,7 +202,9 @@ impl Database {
                     tracing::error!("{}", error_str);
                     DbError::Cozo(error_str)
                 }).inspect_err(|e| tracing::error!("{}", e));
-            tracing::debug!("full_result: {:#?}", result);
+            if result.is_err() {
+                tracing::error!("full_result: {:#?}", result);
+            }
             let result = result?;
 
             // Count the number of rows actually updated
@@ -451,23 +443,6 @@ mod tests {
         tracing::info!("Found {} nodes without embeddings", count);
         Ok(())
     }
-
-    // pub fn init_test_tracing(level: tracing::Level) {
-    //     let filter = tracing_subscriber::filter::Targets::new()
-    //         // .with_target("cozo", tracing::Level::ERROR)
-    //         .with_target("ploke-db", Level::TRACE);
-    //
-    //     tracing_subscriber::registry()
-    //         .with(
-    //             tracing_subscriber::fmt::layer()
-    //                 .with_writer(std::io::stderr) // Write to stderr
-    //                 .with_ansi(true) // Disable colors for cleaner output
-    //                 .pretty()
-    //                 .without_time(), // Optional: remove timestamps
-    //         )
-    //         .with(filter)
-    //         .init();
-    // }
 
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {

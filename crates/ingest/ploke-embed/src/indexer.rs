@@ -179,18 +179,6 @@ impl IndexerTask {
 
         progress_tx.send(state.clone())?;
 
-        // BUG: Infinite loop in `test_next_batch`, either
-        //
-        //      1. self.next_batch().await? never returns `None`
-        //          - `next_batch` calls `db.get_unembedded_node_data`, meaning it relies on the
-        //          `cursor` of the database return to return none.
-        //      2. never `send` the finishing trigger?
-        //
-        //      NOTE: To be clear, this loop never exits, and the timeout never triggers.
-        //      I think that suggests that the node hangs either when it is trying to send or after
-        //      the loop or something. Not exactly sure.
-        //      - Actually, we never get the "Break: " tracing message, so I think it hangs
-        //      sometime when processed
         while let Some(batch) = self.next_batch(total).await? {
             tracing::debug!("Retrieved batch of {} nodes", batch.len());
 
@@ -388,7 +376,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use cozo::MemStorage;
-    use ploke_db::{CallbackManager, Database};
+    use ploke_db::{CallbackManager, Database, NodeType};
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{init_test_tracing, setup_db_full};
     use tokio::{
@@ -449,7 +437,7 @@ mod tests {
     //  The issue: the test times out without receiving a completion signal.
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
-        init_test_tracing(Level::TRACE);
+        init_test_tracing(Level::DEBUG);
         tracing::info!("Starting test_next_batch");
 
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -461,12 +449,19 @@ mod tests {
         let embedding_processor = EmbeddingProcessor { source };
 
         let (cancellation_token, cancel_handle) = CancellationToken::new();
-        let batch_size = 100;
+        let batch_size = 8;
 
-        let (callback_manager, db_callbacks) = CallbackManager::new_bounded(db.as_ref(), 100)?;
+        let (callback_manager, db_callbacks, unreg_codes_arc) =
+            CallbackManager::new_bounded(Arc::clone(&db), 100)?;
         let counter = callback_manager.clone_counter();
 
-        let idx_tag = IndexerTask::new(db, io, embedding_processor, cancellation_token, batch_size);
+        let idx_tag = IndexerTask::new(
+            Arc::clone(&db),
+            io,
+            embedding_processor,
+            cancellation_token,
+            batch_size,
+        );
         let (progress_tx, mut progress_rx) = broadcast::channel(1000);
         let (control_tx, control_rx) = mpsc::channel(4);
 
@@ -515,16 +510,16 @@ mod tests {
 
             match db_callbacks.try_recv() {
                 Ok(c) => match c {
-                    Ok((call, header, rows)) => {
-                        let last_count = counter.fetch_and(1, std::sync::atomic::Ordering::Relaxed);
-                        tracing::trace!("first (header?) | {:?}",
-                            header,
-                        );
+                    Ok((call, new, old)) => {
+                        let new_count = new.rows.len();
+                        let last_count =
+                            counter.fetch_and(new_count, std::sync::atomic::Ordering::Relaxed);
                         tracing::trace!(
-                            "second (rows?) | {:?}",
-                            rows,
+                            "| header count: {} | old_count: {} | last_count: {}",
+                            new.rows.len(),
+                            old.rows.len(),
+                            last_count
                         );
-                        tracing::trace!("last count -- {} --", last_count);
                     }
                     Err(e) => {
                         tracing::debug!("[in IndexerTask.run db_callback | {e}")
@@ -539,9 +534,6 @@ mod tests {
         }
         if handle.is_finished() {
             tracing::info!("Indexer Handle is Finished: {:?}", handle);
-            tracing::info!("---> Trying to await the handle");
-            let handle_result = handle.await;
-            tracing::info!("-----> After awaiting the handle: {:?}", handle_result);
         } else {
             tracing::error!("Indexer Handle did not finish.")
         }

@@ -85,7 +85,7 @@ pub struct EmbeddingConfig {
     pub allow_fallback: bool,
     pub approximate_gelu: bool,
     pub use_pth: bool,
-    pub batch_size: usize,  // NEW: Configurable batch size
+    pub model_batch_size: usize,  // NEW: Configurable batch size
     pub max_length: Option<usize>,  // NEW: Optional max length override
 }
 
@@ -99,7 +99,7 @@ impl Default for EmbeddingConfig {
                     allow_fallback: true,
                     approximate_gelu: false,
                     use_pth: false,
-                    batch_size: 8,
+                    model_batch_size: 8,
                     max_length: None,
         }
     }
@@ -351,7 +351,7 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         
         let mut results = Vec::new();
         // FIXED: Use configurable batch size instead of hardcoded 8
-        for chunk in texts.chunks(self.config.batch_size) {
+        for chunk in texts.chunks(self.config.model_batch_size) {
             let batch_results = self.process_batch(chunk)?;
             results.extend(batch_results);
         }
@@ -360,39 +360,39 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
 
     #[instrument(
         skip(self, texts),
-        fields(batch_size, cursor),
+        fields(model_batch_size, cursor),
         level = "INFO"  // Demote to debug level
     )]
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         // Tokenize with attention masks
-        tracing::debug!("Processing tokens");
+        tracing::trace!("Processing tokens");
         let tokens = self.tokenizer.encode_batch(texts.to_vec(), true)?;
 
         // Prepare inputs with proper error context
-        tracing::debug!("Processing token_ids");
+        tracing::trace!("Processing token_ids");
         let token_ids: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_ids(), &self.device))
             .collect();
         
-        tracing::debug!("Processing attention_mask");
+        tracing::trace!("Processing attention_mask");
         let attention_mask: Result<Vec<Tensor>, _> = tokens.iter()
             .map(|t| Tensor::new(t.get_attention_mask(), &self.device))
             .collect();
 
         // FIXED: Keep token_ids as the correct integer type (U32/I64)
-        tracing::debug!("Processing token_ids with Tensor::stack");
+        tracing::trace!("Processing token_ids with Tensor::stack");
         let token_ids = Tensor::stack(&token_ids?, 0)?;
         
         // FIXED: Keep attention_mask as integer type initially, convert later if needed
-        tracing::debug!("Processing attention_mask with Tensor::stack");
+        tracing::trace!("Processing attention_mask with Tensor::stack");
         let attention_mask = Tensor::stack(&attention_mask?, 0)?;
 
         // FIXED: Create token_type_ids with the same dtype as token_ids (not F32)
-        tracing::debug!("Processing token-type ids with Tensor::zeros");
+        tracing::trace!("Processing token-type ids with Tensor::zeros");
         let token_type_ids = Tensor::zeros(token_ids.shape(), token_ids.dtype(), &self.device)?;
 
         // Forward pass with correct dtypes
-        tracing::debug!("Processing outputs with self.model.forward");
+        tracing::info!("Processing outputs with self.model.forward");
         let outputs = self.model.forward(
             &token_ids,
             &token_type_ids,
@@ -401,30 +401,30 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         .map_err(EmbeddingError::Tensor)?;
 
         // FIXED: Convert attention_mask to F32 only when needed for arithmetic operations
-        tracing::debug!("Prodcessing attention_mask_f32 with to_dtype(DType::F32)");
+        tracing::trace!("Prodcessing attention_mask_f32 with to_dtype(DType::F32)");
         let attention_mask_f32 = attention_mask.to_dtype(DType::F32)?;
 
         // Mean pooling with attention masks
-        tracing::debug!("Prodcessing attention_mask_f32 with attention_mask_f32.broadcase_as");
+        tracing::trace!("Prodcessing attention_mask_f32 with attention_mask_f32.broadcase_as");
         // Mean pooling with attention masks
         let weights = attention_mask_f32
             .unsqueeze(candle_core::D::Minus1)?
             .broadcast_as(outputs.shape())
             .map_err(|e| EmbeddingError::Dimension(e.to_string()))?;
         
-        tracing::debug!("Prodcessing sums");
+        tracing::trace!("Prodcessing sums");
         let sum_embeddings = (&outputs * &weights)?.sum_keepdim(1)?;
         let sum_weights = weights.sum_keepdim(1)?.clamp(1e-9, f32::MAX)?;
         let embeddings = (sum_embeddings / sum_weights)?;
 
         // Normalize embeddings
-        tracing::debug!("Normalize embeddings");
+        tracing::trace!("Normalize embeddings");
         let embeddings = embeddings.broadcast_div(
             &embeddings.sqr()?.sum_keepdim(1)?.sqrt()?
         )?;
 
         // Convert to Vec<Vec<f32>> with proper error handling
-        tracing::debug!("Convert to Vec<Vec<f32>> with proper error handling");
+        tracing::trace!("Convert to Vec<Vec<f32>> with proper error handling");
         let mut results = Vec::with_capacity(texts.len());
         for i in 0..texts.len() {
             let row = embeddings.i((i, ..))
