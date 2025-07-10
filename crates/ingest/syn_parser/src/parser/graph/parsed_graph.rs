@@ -97,33 +97,34 @@ impl ParsedCodeGraph {
 
         // Preserve crate context from any graph
         let mut found_context = new_graph.crate_context.take();
-        log::debug!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
+        log::trace!(target: "buggy", "First Context: {:#?}", new_graph.crate_context);
         for mut graph in graphs {
             if found_context.is_none() {
-                log::debug!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
+                log::trace!(target: "buggy", "Merging Context: {:#?}", graph.crate_context);
                 found_context = graph.crate_context.take();
             }
             new_graph.append_all(graph)?;
         }
-        log::debug!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
+
+        log::trace!(target: "buggy", "Penult Context: {:#?}", new_graph.crate_context);
         new_graph.crate_context = found_context;
-        log::debug!(target: "buggy", "Last Context: {:#?}", new_graph.crate_context);
+        log::trace!(target: "buggy", "Last Context: {:#?}", new_graph.crate_context);
+
+        #[cfg(feature = "validate")]
+        {
+            ParsedCodeGraph::debug_relationships(&new_graph);
+            log::debug!(target: "validate", 
+                "{} <- {}",
+                "Validating".log_step(),
+                new_graph.root_file().unwrap().display(),
+            );
+            assert!(new_graph.validate_unique_rels());
+        }
 
         Ok(new_graph)
     }
 
     pub fn append_all(&mut self, mut other: Self) -> Result<(), SynParserError> {
-        #[cfg(feature = "validate")]
-        {
-            ParsedCodeGraph::debug_relationships(self);
-            // log::debug!(target: "validate", 
-            //     "{}: {} <- {}",
-            //     "Validating".log_step(),
-                // self.root_file().unwrap().display(),
-                // other.root_file().unwrap().display()
-            // );
-            assert!(self.validate_unique_rels());
-        }
         self.graph.functions.append(&mut other.graph.functions);
         self.graph
             .defined_types
@@ -140,6 +141,18 @@ impl ParsedCodeGraph {
         self.graph
             .use_statements
             .append(&mut other.graph.use_statements);
+
+        #[cfg(feature = "validate")]
+        {
+            ParsedCodeGraph::debug_relationships(self);
+            log::debug!(target: "validate", 
+                "{} <- {}",
+                "Validating".log_step(),
+                self.file_path.as_os_str().to_string_lossy()
+            );
+            assert!(self.validate_unique_rels());
+        }
+
         Ok(())
     }
     //  We already have the following `Relation`s from parsing that will be useful here:
@@ -291,9 +304,8 @@ impl ParsedCodeGraph {
 
     pub fn get_root_module_checked(&self) -> Result<&ModuleNode, SynParserError> {
         // Ensure crate_context exists
-        eprintln!("crate_context: {:#?}", self.crate_context);
+        // eprintln!("crate_context: {:#?}", self.crate_context);
         // NOTE: Crate context not available for individual nodes.
-        // NOTE: Results in an error for crates which do not have a [lib] or [bin] section.
         let context = self
             .crate_context
             .as_ref() // Borrow the context

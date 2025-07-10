@@ -137,21 +137,43 @@ macro_rules! define_schema {
         }
 
         impl $schema_name {
+            pub fn script_identity(&self) -> String {
+                let fields = vec![
+                    $(
+                        if self.$field_name.st() != "id" {
+                            format!("{}", self.$field_name.st())
+                        } else { "skip_me_id".to_string() }
+                    ),+
+                ];
+                format!("{} {{ id => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+            }
+
             pub fn script_create(&self) -> String {
                 let fields = vec![
-                    $(format!("{}: {}", self.$field_name.st(), self.$field_name.dv())),+
+                    $(
+                        if self.$field_name.st() != "id" {
+                            format!("{}: {}", self.$field_name.st(), self.$field_name.dv())
+                        } else { "skip_me_id".to_string() }
+                    ),+
                 ];
-                format!(":create {} {{ {} }}", $relation, fields.join(", "))
+                format!(":create {} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-                let entry_names = params.keys().join(", ");
-                let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+                let key = "id";
+                let entry_names = params.keys().filter(|k| *k != key).join(", ");
+                let param_names = params.keys().filter(|k| *k != key).map(|k| { 
+                    format!("${}", k)
+                }).join(", ");
                 // Should come out looking like:
                 // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
                 let script = format!(
                     "?[{}] <- [[{}]] :put {}",
-                    entry_names, param_names, self.relation
+                    if params.keys().contains(&key.to_string()) {format!("{}, {}", key, entry_names ) }
+                    else { entry_names },
+                    if params.keys().contains(&key.to_string()) {format!("${}, {}", key, param_names )}
+                    else { param_names },
+                    self.script_identity()
                 );
                 script
             }

@@ -162,26 +162,8 @@ impl Database {
             Self::validate_embedding_vec(embedding)?;
         }
 
-        let scripts = NodeType::primary_nodes().into_iter().map(|node_type| {
-            let rel_name = node_type.relation_str();
-            let scpt = format!(
-                "{}{}{}{}\n",
-                // r#"
-                // ?[id, embedding] <- [[ $updates ]] 
-                // "#,
-                r#"?[id] <- $id 
-                ?[embedding] <- $embedding
-                "#,
-                r#" :update "#,
-                rel_name,
-                r#" { id, embedding }
-                "#,
-            );
-            scpt
-        });
-
-        // Convert updates to DataValue format
-        let updates_data: (Vec< DataValue>, Vec<DataValue> ) = updates
+        // Convert updates to DataValue format - as a list of [id, embedding] pairs
+        let updates_data: Vec<DataValue> = updates
             .into_iter()
             .map(|(id, embedding)| {
                 let id_val = DataValue::Uuid(UuidWrapper(id));
@@ -191,42 +173,41 @@ impl Database {
                         .map(|f| DataValue::Num(cozo::Num::Float(f as f64)))
                         .collect(),
                 );
-                ( id_val, embedding_val )
+                // Each update is a list containing [id, embedding]
+                DataValue::List(vec![id_val, embedding_val])
             })
-            .unzip();
-        let (update_ids, update_vecs) = updates_data;
+            .collect();
 
         let mut params = BTreeMap::new();
-        // params.insert("updates".to_string(), DataValue::List(updates_data));
-        params.insert("id".to_string(), DataValue::List( update_ids ));
-        params.insert("embedding".to_string(), DataValue::List( update_vecs ));
+        params.insert("updates".to_string(), DataValue::List(updates_data));
 
-        tracing::debug!("script: {}", scripts.clone().join(""));
+        let mut total_updated = 0;
 
-        // TODO: bench this sometime, might not be worth the overhead.
-        // - See if its always faster either sync or parallel
-        // - Try with different sized inputs, see if there is a tradeoff
-        // let inner_db = self.db.clone();
-        // let count = tokio::task::spawn_blocking(move || {
-        //     scripts.par_bridge().map(|( relation, script )| {
-        //         inner_db.run_script(&script, params.clone(), cozo::ScriptMutability::Mutable);
-        //     }).count()
-        // })
-        // .await
-        // .map_err(|e| DbError::Cozo(format!("Blocking task failed: {}", e)))?;
-        // Ok(count)
+        for node_type in NodeType::primary_nodes() {
+            let rel_name = node_type.relation_str();
+            let script = format!(
+                "?[id, embedding] <- $updates\n:update {} {{ id, embedding }}\n",
+                rel_name
+            );
 
-        let mut count = 0;
-        for script in scripts {
-            let result = self.run_script(&script, params.clone(), cozo::ScriptMutability::Mutable)
-                .map_err(|e| cozo::format_error_as_json(e, None) )
-                .map_err(|e| serde_json::to_string_pretty(&e).unwrap())
-                .inspect_err(|e| {
-                    tracing::error!("{}", e);
-                });
-            count += 1;
+            tracing::debug!("script: {}", script);
+
+            let result = self
+                .run_script(&script, params.clone(), cozo::ScriptMutability::Mutable)
+                .map_err(|e| {
+                    let error_json = cozo::format_error_as_json(e, None);
+                    let error_str = serde_json::to_string_pretty(&error_json).unwrap();
+                    tracing::error!("{}", error_str);
+                    DbError::Cozo(error_str)
+                })?;
+
+            // Count the number of rows actually updated
+            // The result should contain information about how many rows were affected
+            // This depends on CozoDB's response format - you may need to adjust this
+            total_updated += result.into_iter().count();
         }
-        Ok(count)
+
+        Ok(total_updated)
     }
 
     /// Validate that an embedding vector is non-empty
@@ -385,8 +366,6 @@ impl Database {
             .map(|n| n as usize)
             .ok_or(DbError::NotFound)
     }
-
-
 }
 
 #[cfg(test)]
@@ -588,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_embeddings_batch() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
 
