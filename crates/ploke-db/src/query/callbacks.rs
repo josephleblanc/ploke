@@ -25,6 +25,7 @@ pub struct CallbackManager {
     traits: Receiver<Call>,
     type_alias: Receiver<Call>,
     unions: Receiver<Call>,
+    shutdown: Receiver<()>,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,7 @@ type CallHelper = (
     CallbackManager,
     Receiver<Result<Call, DbError>>,
     Arc<HashMap<NodeType, u32>>,
+    Sender<()>,
 );
 
 impl CallbackManager {
@@ -60,6 +62,7 @@ impl CallbackManager {
             unregister_codes.insert(ty, unreg_code);
             sx.insert(ty, r);
         }
+        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
 
         let codes_arc = Arc::new(unregister_codes);
 
@@ -79,9 +82,10 @@ impl CallbackManager {
             type_alias: get_recvr(NodeType::TypeAlias, &mut sx)?,
             unions: get_recvr(NodeType::Union, &mut sx)?,
             max_calls: None,
+            shutdown: shutdown_rx,
         };
 
-        Ok((callback_manager, r, codes_arc))
+        Ok((callback_manager, r, codes_arc, shutdown_tx))
     }
 
     pub fn new_unbounded(
@@ -95,6 +99,8 @@ impl CallbackManager {
             unregister_codes.insert(ty, unreg_code);
             sx.insert(ty, r);
         }
+
+        let (shutdown_tx, shutdown_rx) = crossbeam_channel::bounded(1);
 
         let callback_manager = Self {
             s,
@@ -112,6 +118,7 @@ impl CallbackManager {
             type_alias: get_recvr(NodeType::TypeAlias, &mut sx)?,
             unions: get_recvr(NodeType::Union, &mut sx)?,
             max_calls: None,
+            shutdown: shutdown_rx,
         };
 
         Ok((callback_manager, r))
@@ -142,14 +149,16 @@ impl CallbackManager {
                     if let Err(e) = result {
                         // Consumer disconnected.
                         log_send(e);
-                        break;
                     }
                 }
                 Err(e) => {
                     // A producer disconnected (db was dropped), log and exit.
                     log_err(e);
-                    break;
                 }
+            }
+            if self.shutdown.try_recv().is_ok() { 
+                tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", "");
+                break
             }
         }
         Ok(())

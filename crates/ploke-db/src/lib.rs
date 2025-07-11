@@ -7,7 +7,7 @@ mod query;
 mod result;
 mod span;
 
-pub use database::{to_usize, Database};
+pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
 pub use query::{
     builder::FieldValue,

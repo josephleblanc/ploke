@@ -12,6 +12,7 @@ serde = { workspace = true, features = ["derive"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 thiserror = { workspace = true }
 cozo = { workspace = true }
+lazy_static = { workspace = true }
 
 [features]
 default = []

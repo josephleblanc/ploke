@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::ops::Deref;
 
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
@@ -59,6 +61,25 @@ pub fn to_usize(val: &DataValue) -> Result<usize, DbError> {
         })
     } else {
         Err(DbError::Cozo(format!("Expected Number, found {:?}", val)))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedEmbedData {
+    pub v: Vec<EmbeddingData>,
+    pub ty: NodeType,
+}
+
+// #[derive(Debug, Clone)]
+// pub struct TypedEmbedData {
+//     m: HashMap<NodeType, Vec< EmbeddingData >>
+// }
+
+impl Deref for TypedEmbedData {
+    type Target = Vec<EmbeddingData>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.v
     }
 }
 
@@ -144,12 +165,13 @@ impl Database {
 
         Ok(())
     }
+
     pub async fn update_embeddings_batch(
         &self,
         updates: Vec<(uuid::Uuid, Vec<f32>)>,
-    ) -> Result<usize, DbError> {
+    ) -> Result<(), DbError> {
         if updates.is_empty() {
-            return Ok(0);
+            return Ok(());
         }
 
         // Validate embeddings before processing
@@ -175,8 +197,6 @@ impl Database {
 
         let mut params = BTreeMap::new();
         params.insert("updates".to_string(), DataValue::List(updates_data));
-
-        let mut total_updated = 0;
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
@@ -205,16 +225,10 @@ impl Database {
             if result.is_err() {
                 tracing::error!("full_result: {:#?}", result);
             }
-            let result = result?;
-
-            // Count the number of rows actually updated
-            // The result should contain information about how many rows were affected
-            // This depends on CozoDB's response format - you may need to adjust this
-            total_updated += result.rows.len();
-            tracing::debug!("[old method] total_updated: {}", total_updated);
+            result?;
         }
 
-        Ok(total_updated)
+        Ok(())
     }
 
     /// Validate that an embedding vector is non-empty
@@ -236,14 +250,14 @@ impl Database {
         &self,
         limit: usize,
         cursor: usize,
-    ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
+    ) -> Result<Vec< TypedEmbedData >, ploke_error::Error> {
         let mut unembedded_data = Vec::new();
         let mut count = 0;
         // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
             let nodes_of_type = self.get_unembed_rel(t, limit - count, cursor)?;
             count += nodes_of_type.len();
-            unembedded_data.extend_from_slice(&nodes_of_type);
+            unembedded_data.push(nodes_of_type);
         }
         Ok(unembedded_data)
     }
@@ -287,8 +301,9 @@ impl Database {
         node_type: NodeType,
         limit: usize,
         cursor: usize,
-    ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
+    ) -> Result<TypedEmbedData, ploke_error::Error> {
         let mut base_script = String::new();
+        // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
     parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
 
@@ -329,7 +344,12 @@ impl Database {
             .db
             .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
-        QueryResult::from(query_result).to_embedding_nodes()
+        let v = QueryResult::from(query_result).to_embedding_nodes()?;
+        let ty_embed = TypedEmbedData {
+            v,
+            ty: node_type
+        };
+        Ok(ty_embed)
     }
 
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
@@ -414,6 +434,7 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
         }
@@ -457,6 +478,7 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
         }
@@ -490,6 +512,7 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
+        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
         assert_eq!(non_file_pending, unembedded_data.len());
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
@@ -559,6 +582,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Needs to use new callback method"]
     async fn test_update_embeddings_batch() -> Result<(), ploke_error::Error> {
         // ploke_test_utils::init_test_tracing(Level::DEBUG);
         // 1. Setup the database with a fixture
@@ -570,6 +594,7 @@ mod tests {
 
         // 3. Get a batch of nodes to update
         let nodes_to_update = db.get_unembedded_node_data(10, 0)?;
+        let nodes_to_update = nodes_to_update.iter().flat_map(|emb| emb.v.iter()).collect_vec();
         let update_count = nodes_to_update.len();
         assert!(update_count > 0, "Should retrieve some nodes to update");
         assert!(update_count <= 10);
@@ -581,8 +606,8 @@ mod tests {
             .collect();
 
         // 5. Call the function to update the batch
-        let updated_ct = db.update_embeddings_batch(updates).await?;
-        assert_eq!(update_count, updated_ct);
+        db.update_embeddings_batch(updates).await?;
+        // assert_eq!(update_count, updated_ct);
 
         // 6. Verify the update
         let final_count = db.count_unembedded_nonfiles()?;

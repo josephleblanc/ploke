@@ -3,12 +3,13 @@ use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use ploke_core::EmbeddingData;
-use ploke_db::Database;
+use ploke_db::{Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
+use tokio::time;
 use tracing::{info_span, instrument};
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
@@ -33,6 +34,10 @@ pub enum EmbeddingSource {
 //     }
 // }
 
+fn count_tyemb(tyemb_vec: &[TypedEmbedData]) -> usize {
+    tyemb_vec.iter().fold(0, |acc, i| acc + i.v.len())
+}
+
 impl EmbeddingProcessor {
     pub fn new(source: EmbeddingSource) -> Self {
         Self { source }
@@ -42,7 +47,7 @@ impl EmbeddingProcessor {
         &self,
         snippets: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        tracing::info!("Starting generate_embeddings with EmbeddingSource: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
+        tracing::trace!("Starting generate_embeddings with EmbeddingSource: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
             self,
             snippets.len(),
             snippets.first(),
@@ -96,18 +101,18 @@ pub type IndexProgress = f64;
 #[derive(Debug, Clone)]
 pub struct IndexingStatus {
     pub status: IndexStatus,
-    pub processed: usize,
-    pub total: usize,
+    pub recent_processed: usize,
+    pub num_not_proc: usize,
     pub current_file: Option<PathBuf>,
     pub errors: Vec<String>,
 }
 
 impl IndexingStatus {
     pub fn calc_progress(&self) -> IndexProgress {
-        if self.total == 0 {
+        if self.num_not_proc == 0 {
             0.0
         } else {
-            self.processed as f64 / self.total as f64
+            self.recent_processed as f64 / self.num_not_proc as f64
         }
     }
 }
@@ -160,26 +165,26 @@ impl IndexerTask {
     #[instrument(
         name = "Indexer::run",
         skip(self, progress_tx, control_rx),
-        fields(total, processed, status="Running")  // Track key state
+        fields(num_not_proc, recent_processed, status="Running")  // Track key state
     )]
     pub async fn run(
         &self,
         progress_tx: broadcast::Sender<IndexingStatus>,
         mut control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), EmbedError> {
-        let total = self.db.count_unembedded_nonfiles()?;
-        tracing::info!("Starting indexing with {} unembedded nodes", total);
+        let num_not_proc = self.db.count_unembedded_nonfiles()?;
+        tracing::info!("Starting indexing with {} unembedded nodes", num_not_proc);
         let mut state = IndexingStatus {
             status: IndexStatus::Running,
-            processed: 0,
-            total,
+            recent_processed: 0,
+            num_not_proc,
             current_file: None,
             errors: Vec::new(),
         };
-
         progress_tx.send(state.clone())?;
 
-        while let Some(batch) = self.next_batch(total).await? {
+        while let Some(batch) = self.next_batch(num_not_proc).await? {
+            // state.recent_processed = 0;
             tracing::debug!("Retrieved batch of {} nodes", batch.len());
 
             // Check for control commands
@@ -200,26 +205,36 @@ impl IndexerTask {
                 continue;
             }
 
-            state.current_file = batch.first().map(|n| n.file_path.clone());
-            progress_tx.send(state.clone())?;
-
             let batch_len = batch.len();
+            state.current_file = batch
+                .iter()
+                .filter_map(|v| v.first().map(|i| i.clone().file_path))
+                .next();
+
             match self
-                .process_batch(batch, |current, total| {
-                    tracing::info!("Indexed {current}/{total}")
+                .process_batch(batch, |current, num_not_proc| {
+                    tracing::info!("Indexed {current}/{num_not_proc}")
                 })
                 .await
             {
                 Ok(_) => {
-                    state.processed += batch_len;
-                    tracing::info!("Processed batch: {}/{}", state.processed, state.total);
-                    if state.processed >= total {
-                        if state.processed > total {
+                    state.recent_processed += batch_len;
+                    tracing::info!(
+                        "Processed batch: {}/{}",
+                        state.recent_processed,
+                        state.num_not_proc
+                    );
+                    if state.recent_processed >= num_not_proc {
+                        if state.recent_processed > num_not_proc {
                             tracing::warn!(
-                                "state.processed > total | there is a miscount of nodes somewhere"
+                                "state.recent_processed > num_not_proc | there is a miscount of nodes somewhere"
                             );
                         }
-                        tracing::info!("Break: {} >= {}", state.processed, state.total);
+                        tracing::info!(
+                            "Break: {} >= {}",
+                            state.recent_processed,
+                            state.num_not_proc
+                        );
                         break;
                     }
                 }
@@ -243,14 +258,19 @@ impl IndexerTask {
             progress_tx.send(state.clone())?;
         }
 
-        state.status = if state.processed >= state.total {
-            tracing::info!("Indexing completed: {}/{}", state.processed, state.total);
-            IndexStatus::Completed
+        if state.recent_processed >= state.num_not_proc {
+            tracing::info!(
+                "Indexing completed: {}/{}",
+                state.recent_processed,
+                state.num_not_proc
+            );
+            state.status = IndexStatus::Completed;
+            progress_tx.send(state)?;
         } else {
             tracing::warn!("Indexing cancelled");
-            IndexStatus::Cancelled
+            state.status = IndexStatus::Cancelled;
+            progress_tx.send(state)?;
         };
-        progress_tx.send(state)?;
         Ok(())
     }
 
@@ -261,27 +281,32 @@ impl IndexerTask {
     /// - If the cancellation token is cancelled, it returns an error.
     /// - If the batch is empty, it returns `None`; otherwise, it returns the batch.
     #[instrument(skip_all)]
-    async fn next_batch(&self, total: usize) -> Result<Option<Vec<EmbeddingData>>, EmbedError> {
+    async fn next_batch(
+        &self,
+        num_not_proc: usize,
+    ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
         let mut last_id_guard = self.cursor.lock().await;
-        let batch_min = self.batch_size.min(total);
+        let batch_min = self.batch_size.min(num_not_proc);
         let batch = self
             .db
             .get_unembedded_node_data(batch_min, *last_id_guard)
             .map_err(EmbedError::PlokeCore)?;
         tracing::debug!("old batch id: {:?}", last_id_guard);
 
-        *last_id_guard += batch.len();
+        let batch_rows = count_tyemb(&batch);
 
-        tracing::debug!("new batch id: {:?}", last_id_guard);
+        *last_id_guard += batch_rows;
+
+        tracing::debug!(
+            "new batch id: {:?} | batch: {} | batch_min: {batch_min} | last_id_guard: {last_id_guard}",
+            last_id_guard,
+            batch_rows,
+        );
 
         if self.cancellation_token.is_cancelled() {
             return Err(EmbedError::Cancelled("Processing cancelled".into()));
         }
 
-        tracing::debug!(
-            "batch: {} | batch_min: {batch_min} | last_id_guard: {last_id_guard}",
-            batch.len()
-        );
         match batch.is_empty() {
             true => Ok(None),
             false => Ok(Some(batch)),
@@ -291,17 +316,24 @@ impl IndexerTask {
     #[instrument(skip_all, fields(batch_size = nodes.len()))]
     pub async fn process_batch(
         &self,
-        nodes: Vec<EmbeddingData>,
+        nodes: Vec<TypedEmbedData>,
         report_progress: impl Fn(usize, usize) + Send + Sync,
     ) -> Result<(), EmbedError> {
+        let mut counter = 0;
         tracing::info!("process_batch with {} nodes of EmbeddingData", nodes.len());
 
-        let total_nodes = nodes.len();
-        tracing::info!("Processing batch of {} nodes", total_nodes);
+        let unproc_nodes = nodes.len();
+        tracing::info!("Processing batch of {} nodes", unproc_nodes);
         // TODO: Get rid of this `clone` somehow
+
+        let (ty_vec, emb_vec): (Vec<NodeType>, Vec<EmbeddingData>) = nodes.clone()
+            .into_iter()
+            .flat_map(|n| n.v.into_iter().map(move |emb| (n.ty, emb)))
+            .unzip();
+        let num_to_embed = emb_vec.len();
         let snippet_results = self
             .io
-            .get_snippets_batch(nodes.clone())
+            .get_snippets_batch(emb_vec.clone())
             .await
             .inspect_err(|e| {
                 tracing::error!(
@@ -314,28 +346,34 @@ impl IndexerTask {
                 EmbedError::SnippetFetch(ploke_io::IoError::Recv(arg0))
             })?;
 
-        let mut valid_snippets = Vec::new();
         let mut valid_nodes = Vec::new();
-        let mut valid_indices = Vec::new();
+        let mut valid_data= Vec::new();
+        let mut valid_snippets = Vec::new();
 
-        for (i, (node, snippet_result)) in nodes.into_iter().zip(snippet_results).enumerate() {
-            report_progress(i + 1, total_nodes);
+        for (ty, (emb, snippet_result)) in ty_vec
+            .into_iter()
+            .zip(emb_vec.into_iter().zip(snippet_results))
+        {
+            counter += 1;
+            report_progress(counter, unproc_nodes);
             match snippet_result {
                 Ok(snippet) => {
+                    valid_nodes.push(ty);
+                    valid_data.push(emb);
                     valid_snippets.push(snippet);
-                    valid_nodes.push(node);
-                    valid_indices.push(i + 1);
                 }
                 Err(e) => tracing::warn!("Snippet error: {:?}", e),
             }
         }
         tracing::info!(
-            "snippet results | valid_snippets: {}, valid_nodes: {}, valid_indices: {}",
-            valid_snippets.len(),
+            "snippet results | num_to_embed: {}, valid_nodes: {}, valid_emb_data: {}, valid_snippets: {}",
+            num_to_embed,
             valid_nodes.len(),
-            valid_indices.len(),
+            valid_data.len(),
+            valid_snippets.len(),
         );
 
+        if valid_snippets.is_empty() { panic!("AAaaaaaaaah") }
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
@@ -356,15 +394,15 @@ impl IndexerTask {
             }
         }
 
-        let updates = valid_nodes
+        let updates = valid_data
             .into_iter()
             .zip(embeddings)
-            .map(|(node, embedding)| (node.id, embedding))
+            .zip(valid_nodes.into_iter())
+            .map(|(( embs, embedding ), ty)| (embs.id, embedding))
             .collect();
 
+        tracing::info!("Updating database: ");
         self.db.update_embeddings_batch(updates).await?;
-
-        report_progress(total_nodes, total_nodes);
         tracing::info!("Finished processing batch");
         Ok(())
     }
@@ -373,7 +411,10 @@ impl IndexerTask {
 #[cfg(test)]
 mod tests {
 
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::{atomic::AtomicUsize, Arc},
+        time::Duration,
+    };
 
     use cozo::MemStorage;
     use ploke_db::{CallbackManager, Database, NodeType};
@@ -437,7 +478,7 @@ mod tests {
     //  The issue: the test times out without receiving a completion signal.
     #[tokio::test]
     async fn test_next_batch() -> Result<(), ploke_error::Error> {
-        init_test_tracing(Level::DEBUG);
+        init_test_tracing(Level::TRACE);
         tracing::info!("Starting test_next_batch");
 
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -451,8 +492,8 @@ mod tests {
         let (cancellation_token, cancel_handle) = CancellationToken::new();
         let batch_size = 8;
 
-        let (callback_manager, db_callbacks, unreg_codes_arc) =
-            CallbackManager::new_bounded(Arc::clone(&db), 100)?;
+        let (callback_manager, db_callbacks, unreg_codes_arc, shutdown) =
+            CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
         let counter = callback_manager.clone_counter();
 
         let idx_tag = IndexerTask::new(
@@ -466,11 +507,12 @@ mod tests {
         let (control_tx, control_rx) = mpsc::channel(4);
 
         let callback_handler = std::thread::spawn(move || callback_manager.run());
-        let mut handle = tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
+        let mut idx_handle =
+            tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 
         let mut received_completed = false;
         let start = Instant::now();
-        let timeout = Duration::from_secs(2400); // Increased timeout
+        let timeout = Duration::from_secs(1200); // Increased timeout
 
         loop {
             tokio::select! {
@@ -499,7 +541,7 @@ mod tests {
                     }
                 }
 
-                res = &mut handle => {
+                res = &mut idx_handle => {
                     let task_result = res.expect("Task panicked");
                     task_result?; // Propagate any errors
                     break;
@@ -513,12 +555,43 @@ mod tests {
                     Ok((call, new, old)) => {
                         let new_count = new.rows.len();
                         let last_count =
-                            counter.fetch_and(new_count, std::sync::atomic::Ordering::Relaxed);
+                            counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
+                        let header = new.headers.clone();
+                        let (i, first_row) = new
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .next()
+                            .map(|(i, mut r)| {
+                                r.pop();
+                                (i, r)
+                            })
+                            .expect("Could not find a first row.");
+                        let (j, last_row) = new
+                            .clone()
+                            .into_iter()
+                            .enumerate()
+                            .next_back()
+                            .map(|(j, mut r)| {
+                                r.pop();
+                                (j, r)
+                            })
+                            .expect("Could not find a last row.");
                         tracing::trace!(
-                            "| header count: {} | old_count: {} | last_count: {}",
+                            "| call_op: {} | new_count: {}, old_count: {} | 
+                            {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
+                            call,
                             new.rows.len(),
                             old.rows.len(),
-                            last_count
+                            "",
+                            "Header",
+                            header.join("|"),
+                            "FirstRow",
+                            i,
+                            first_row,
+                            "LastRow number ",
+                            j,
+                            last_row,
                         );
                     }
                     Err(e) => {
@@ -532,8 +605,8 @@ mod tests {
                 }
             };
         }
-        if handle.is_finished() {
-            tracing::info!("Indexer Handle is Finished: {:?}", handle);
+        if idx_handle.is_finished() {
+            tracing::info!("Indexer Handle is Finished: {:?}", idx_handle);
         } else {
             tracing::error!("Indexer Handle did not finish.")
         }

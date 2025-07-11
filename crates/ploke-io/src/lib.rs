@@ -1448,13 +1448,17 @@ mod tests {
         let data_expensive_clone = embedding_data.clone();
         // Add temporary tracing to inspect embedding data
         for data in &embedding_data {
+            let ty = data.ty;
+            for tyemb in data.iter() {
             tracing::trace!(target: "handle_data",
-                "EmbeddingData: id={}, file={}, range={}..{}",
-                data.id,
-                data.file_path.display(),
-                data.start_byte,
-                data.end_byte
+                "EmbeddingData: ty={:?}, id={}, file={}, range={}..{}",
+                ty,
+                tyemb.id,
+                tyemb.file_path.display(),
+                tyemb.start_byte,
+                tyemb.end_byte
             );
+            }
         }
         assert_ne!(0, embedding_data.len());
         tracing::debug!(target: "handle", "{:?}", embedding_data.len());
@@ -1465,7 +1469,8 @@ mod tests {
         let embeddings_count = embedding_data.len();
         let semaphore = Arc::new(Semaphore::new(50)); // defaulting to safe value
 
-        let snippets = IoManager::handle_read_snippet_batch(embedding_data, semaphore).await;
+        let embedding_data_nodes = embedding_data.into_iter().flat_map(|emb| emb.v).collect();
+        let snippets = IoManager::handle_read_snippet_batch(embedding_data_nodes, semaphore).await;
         assert_eq!(embeddings_count, snippets.len());
 
         let mut s_iter = snippets.iter();
@@ -1485,7 +1490,7 @@ mod tests {
                 Ok(snip) => {
                     correct += 1;
                     if let Some(embed_data) = data_expensive_clone
-                        .iter()
+                        .iter().flat_map(|emb| emb.v.iter())
                         .find(|emb| snip.contains(&emb.name))
                     {
                         tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);

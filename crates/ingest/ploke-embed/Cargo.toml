@@ -10,6 +10,7 @@ ploke-core = { path = "../../ploke-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+itertools = { workspace = true }
 
 # network
 reqwest = "0.12"

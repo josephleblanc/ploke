@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     database::{to_string, to_usize, to_uuid},
-    error::DbError,
+    error::DbError, NodeType,
 };
 use cozo::NamedRows;
 

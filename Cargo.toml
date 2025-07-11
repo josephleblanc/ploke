@@ -74,6 +74,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Convenience
 itertools = "0.14"
 
+# pre-caching 
+lazy_static = "1.4.0"
+
 # Ploke Core Types
 ploke-core = { path = "crates/ploke-core", version = "0.1.0" }
 

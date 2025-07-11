@@ -70,7 +70,7 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 #[cfg(feature = "test_setup")]
 pub fn setup_db_full_embeddings(
     fixture: &'static str,
-) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {
+) -> std::result::Result<std::vec::Vec<ploke_db::TypedEmbedData>, ploke_error::Error> {
     use ploke_core::EmbeddingData;
 
     let db = ploke_db::Database::new(setup_db_full(fixture)?);

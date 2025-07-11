@@ -3411,6 +3411,7 @@ name = "ploke-core"
 version = "0.1.0"
 dependencies = [
  "cozo",
+ "lazy_static",
  "proc-macro2",
  "serde",
  "thiserror 2.0.12",
@@ -3450,6 +3451,7 @@ dependencies = [
  "cozo",
  "futures",
  "hf-hub",
+ "itertools 0.14.0",
  "ploke-core",
  "ploke-db",
  "ploke-error",
