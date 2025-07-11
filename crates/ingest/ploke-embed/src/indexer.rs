@@ -5,12 +5,15 @@ use crate::{config::CozoConfig, error::truncate_string};
 use ploke_core::EmbeddingData;
 use ploke_db::{Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time;
 use tracing::{info_span, instrument};
+use uuid::Uuid;
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
 
@@ -47,8 +50,8 @@ impl EmbeddingProcessor {
         &self,
         snippets: Vec<String>,
     ) -> Result<Vec<Vec<f32>>, EmbedError> {
-        tracing::trace!("Starting generate_embeddings with EmbeddingSource: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
-            self,
+        tracing::trace!("Starting generate_embeddings with EmbeddingSource dimensions: {:#?} with {} snippets\nfirst snippet: {:?}\nlast snippet: {:?}",
+            self.dimensions(),
             snippets.len(),
             snippets.first(),
             snippets.last(),
@@ -141,7 +144,8 @@ pub struct IndexerTask {
     pub embedding_processor: EmbeddingProcessor,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
-    pub cursor: Arc<Mutex<usize>>,
+    pub cursors: Mutex<HashMap<NodeType, Uuid>>,
+    pub total_processed: AtomicUsize,
 }
 
 impl IndexerTask {
@@ -158,7 +162,8 @@ impl IndexerTask {
             embedding_processor,
             cancellation_token,
             batch_size,
-            cursor: Arc::new(Mutex::new(0)),
+            cursors: Mutex::new(HashMap::new()),
+            total_processed: AtomicUsize::new(0),
         }
     }
 
@@ -285,31 +290,45 @@ impl IndexerTask {
         &self,
         num_not_proc: usize,
     ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
-        let mut last_id_guard = self.cursor.lock().await;
-        let batch_min = self.batch_size.min(num_not_proc);
-        let batch = self
-            .db
-            .get_unembedded_node_data(batch_min, *last_id_guard)
-            .map_err(EmbedError::PlokeCore)?;
-        tracing::debug!("old batch id: {:?}", last_id_guard);
+        let mut batch = Vec::new();
+        let mut total_counted = 0;
 
-        let batch_rows = count_tyemb(&batch);
+        for node_type in NodeType::primary_nodes() {
+            let fetch_size = std::cmp::min(
+                self.batch_size.saturating_sub(total_counted),
+                num_not_proc.saturating_sub(self.total_processed.load(Ordering::SeqCst)),
+            );
 
-        *last_id_guard += batch_rows;
+            if fetch_size == 0 {
+                break;
+            }
+            let cursor = {
+                let cursors_lock = self.cursors.lock().await;
+                *cursors_lock.get(&node_type).unwrap_or(&Uuid::nil())
+            };
 
-        tracing::debug!(
-            "new batch id: {:?} | batch: {} | batch_min: {batch_min} | last_id_guard: {last_id_guard}",
-            last_id_guard,
-            batch_rows,
-        );
+            let nodes =
+                self.db
+                    .get_rel_with_cursor(node_type, fetch_size, cursor)?;
 
-        if self.cancellation_token.is_cancelled() {
-            return Err(EmbedError::Cancelled("Processing cancelled".into()));
+            if !nodes.is_empty() {
+                let mut cursors_lock = self.cursors.lock().await;
+                cursors_lock.insert(node_type, nodes.last().unwrap().id);
+
+                let node_count = nodes.len();
+                if node_count > 0 {
+                    total_counted += node_count;
+                    batch.push(nodes);
+                }
+            }
         }
 
-        match batch.is_empty() {
-            true => Ok(None),
-            false => Ok(Some(batch)),
+        self.total_processed
+            .fetch_add(total_counted, Ordering::SeqCst);
+        if !batch.is_empty() {
+            Ok(Some(batch))
+        } else {
+            Ok(None)
         }
     }
 
@@ -326,11 +345,13 @@ impl IndexerTask {
         tracing::info!("Processing batch of {} nodes", unproc_nodes);
         // TODO: Get rid of this `clone` somehow
 
-        let (ty_vec, emb_vec): (Vec<NodeType>, Vec<EmbeddingData>) = nodes.clone()
+        let (ty_vec, emb_vec): (Vec<NodeType>, Vec<EmbeddingData>) = nodes
+            .clone()
             .into_iter()
             .flat_map(|n| n.v.into_iter().map(move |emb| (n.ty, emb)))
             .unzip();
         let num_to_embed = emb_vec.len();
+        tracing::warn!("-- -- -- num to embed {} nodes -- -- --", num_to_embed);
         let snippet_results = self
             .io
             .get_snippets_batch(emb_vec.clone())
@@ -347,7 +368,7 @@ impl IndexerTask {
             })?;
 
         let mut valid_nodes = Vec::new();
-        let mut valid_data= Vec::new();
+        let mut valid_data = Vec::new();
         let mut valid_snippets = Vec::new();
 
         for (ty, (emb, snippet_result)) in ty_vec
@@ -373,7 +394,9 @@ impl IndexerTask {
             valid_snippets.len(),
         );
 
-        if valid_snippets.is_empty() { panic!("AAaaaaaaaah") }
+        if valid_snippets.is_empty() {
+            panic!("AAaaaaaaaah")
+        }
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
@@ -398,7 +421,7 @@ impl IndexerTask {
             .into_iter()
             .zip(embeddings)
             .zip(valid_nodes.into_iter())
-            .map(|(( embs, embedding ), ty)| (embs.id, embedding))
+            .map(|((embs, embedding), ty)| (embs.id, embedding))
             .collect();
 
         tracing::info!("Updating database: ");
@@ -515,41 +538,6 @@ mod tests {
         let timeout = Duration::from_secs(1200); // Increased timeout
 
         loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    if start.elapsed() > timeout {
-                        panic!("Test timed out without completion signal");
-                    }
-                }
-
-                status = progress_rx.recv() => {
-                    match status {
-                        Ok(status) if status.status == IndexStatus::Completed => {
-                            tracing::debug!("Progress: {:?}", status);
-                            received_completed = true;
-                        }
-                        Ok(status) => {
-                            tracing::debug!("Progress: {:?}", status);
-                            if matches!(status.status, IndexStatus::Failed(_)) {
-                                panic!("Indexing failed: {:?}", status.errors);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::debug!("Received Error: {:?}", e);
-                            break;
-                        }, // Channel closed
-                    }
-                }
-
-                res = &mut idx_handle => {
-                    let task_result = res.expect("Task panicked");
-                    task_result?; // Propagate any errors
-                    break;
-                }
-
-
-            }
-
             match db_callbacks.try_recv() {
                 Ok(c) => match c {
                     Ok((call, new, old)) => {
@@ -593,6 +581,7 @@ mod tests {
                             j,
                             last_row,
                         );
+                        tracing::trace!("=== === === counter: {:?} === === ===", counter);
                     }
                     Err(e) => {
                         tracing::debug!("[in IndexerTask.run db_callback | {e}")
@@ -604,6 +593,40 @@ mod tests {
                     }
                 }
             };
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if start.elapsed() > timeout {
+                        panic!("Test timed out without completion signal");
+                    }
+                }
+
+                status = progress_rx.recv() => {
+                    match status {
+                        Ok(status) if status.status == IndexStatus::Completed => {
+                            tracing::debug!("Progress: {:?}", status);
+                            received_completed = true;
+                        }
+                        Ok(status) => {
+                            tracing::debug!("Progress: {:?}", status);
+                            if matches!(status.status, IndexStatus::Failed(_)) {
+                                panic!("Indexing failed: {:?}", status.errors);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Received Error: {:?}", e);
+                            break;
+                        }, // Channel closed
+                    }
+                }
+
+                res = &mut idx_handle => {
+                    let task_result = res.expect("Task panicked");
+                    task_result?; // Propagate any errors
+                    break;
+                }
+
+
+            }
         }
         if idx_handle.is_finished() {
             tracing::info!("Indexer Handle is Finished: {:?}", idx_handle);
