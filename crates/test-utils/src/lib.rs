@@ -43,18 +43,26 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
 
 #[cfg(feature = "test_setup")]
 pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    use syn_parser::utils::LogStyle;
+
+    tracing::info!("Settup up database with setup_db_full");
     // initialize db
     let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    tracing::info!("{}: Initialize", "Database".log_step());
     db.initialize().expect("Failed to initialize database");
     // create and insert schema for all nodes
+    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
     ploke_transform::schema::create_schema_all(&db)?;
 
     // run the parser
+    tracing::info!("{}: run the parser", "Parse".log_step());
     let successful_graphs = test_run_phases_and_collect(fixture);
     // merge results from all files
+    tracing::info!("{}: merge the graphs", "Parse".log_step());
     let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
     // build module tree
+    tracing::info!("{}: build module tree", "Parse".log_step());
     let tree = merged.build_module_tree().unwrap_or_else(|e| {
         log::error!(target: "transform_function",
             "Error building tree: {}",
@@ -63,7 +71,9 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
         panic!()
     });
 
+    tracing::info!("{}: transform graph into db", "Transform".log_step());
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
+    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
     Ok(db)
 }
 
@@ -122,9 +132,11 @@ pub fn init_test_tracing(level: tracing::Level) {
     let filter = filter::Targets::new()
         .with_target("cozo", tracing::Level::WARN)
         .with_target("ploke", level)
-        .with_target("ploke-db", level)
-        .with_target("ploke-io", tracing::Level::TRACE)
-        .with_target("ploke-transform", tracing::Level::ERROR);
+        .with_target("ploke-db", tracing::Level::TRACE)
+        .with_target("ploke-embed", level)
+        .with_target("ploke-io", tracing::Level::ERROR)
+        .with_target("ploke-transform", tracing::Level::TRACE)
+        .with_target("transform", tracing::Level::TRACE);
 
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)

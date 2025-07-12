@@ -43,7 +43,7 @@ parse_cfg = "4.1.1"
 # target-lexicon = "0.13"         # Removed: Not needed until Phase 3/RAG
 
 # debugging
-log = { workspace = true }
+tracing = { workspace = true }
 colored = { workspace = true }
 
 # Convenience

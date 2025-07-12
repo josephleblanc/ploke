@@ -80,13 +80,11 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
 
     // -- secondary nodes --
+    ParamNodeSchema::create_and_insert_schema(db)?;
     AttributeNodeSchema::create_and_insert_schema(db)?;
-
-    create_and_insert_generic_schema(db)?;
-
     VariantNodeSchema::create_and_insert_schema(db)?;
     FieldNodeSchema::create_and_insert_schema(db)?;
-
+    create_and_insert_generic_schema(db)?;
 
     // -- associated nodes --
     MethodNodeSchema::create_and_insert_schema(db)?;

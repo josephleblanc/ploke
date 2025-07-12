@@ -130,6 +130,9 @@ pub fn transform_code_graph(
 }
 
 /// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
+// I'd like to log to terminal output for a test, probably using `tracing` after each one of there
+// transforms runs. Any ideas on how to do that? Should I use `instrument`? What would that look
+// like? Show me a complete example. AI?
 pub fn transform_parsed_graph(
     db: &Db<MemStorage>,
     parsed_graph: ParsedCodeGraph,
@@ -140,21 +143,33 @@ pub fn transform_parsed_graph(
         .crate_context
         .expect("Invariant: All Code Graphs must have a Crate Context");
 
+    tracing::info!("{}: Starting", "types".log_step());
     transform_types(db, code_graph.type_graph)?;
+    tracing::info!("{}: Starting", "functions".log_step());
     transform_functions(db, code_graph.functions, tree)?;
 
     //  TODO: Refactor CodeGraph to split these nodes into their own collections.
+    tracing::info!("{}: Starting", "defined_types".log_step());
     transform_defined_types(db, code_graph.defined_types)?;
 
+    tracing::info!("{}: Starting", "traits".log_step());
     transform_traits(db, code_graph.traits)?;
+    tracing::info!("{}: Starting", "impls".log_step());
     transform_impls(db, code_graph.impls)?;
+    tracing::info!("{}: Starting", "modules".log_step());
     transform_modules(db, code_graph.modules, crate_context.namespace)?;
+    tracing::info!("{}: Starting", "consts".log_step());
     transform_consts(db, code_graph.consts)?;
+    tracing::info!("{}: Starting", "statics".log_step());
     transform_statics(db, code_graph.statics)?;
+    tracing::info!("{}: Starting", "macros".log_step());
     transform_macros(db, code_graph.macros)?;
+    tracing::info!("{}: Starting", "imports".log_step());
     transform_imports(db, code_graph.use_statements)?;
+    tracing::info!("{}: Starting", "relations".log_step());
     transform_relations(db, code_graph.relations)?;
 
+    tracing::info!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
 
     Ok(())

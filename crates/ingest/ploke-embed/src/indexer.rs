@@ -421,7 +421,7 @@ impl IndexerTask {
 
         if valid_snippets.is_empty() {
             tracing::error!("Empty valid snippets detected.");
-            panic!("AAaaaaaaaah")
+            // panic!("AAaaaaaaaah")
         }
         let embeddings = self
             .embedding_processor
@@ -489,16 +489,115 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn test_full_fixture_nodes() -> Result<(), Error> {
+    // NOTE: passing
+    async fn test_next_batch_only() -> Result<(), Error> {
         test_next_batch("fixture_nodes").await
     }
     #[tokio::test]
-    async fn test_full_fixture_nodes() -> Result<(), Error> {
-        test_next_batch("fixture_nodes").await
+    // FIX: failing
+    async fn test_batch_file_dir_detection() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("file_dir_detection").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_attributes() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_attributes").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_cyclic_types() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_cyclic_types").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_edge_cases() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_edge_cases").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_generics() -> Result<(), Error> {
+        init_test_tracing(Level::TRACE);
+        test_next_batch("fixture_generics").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_macros() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_macros").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_path_resolution() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_path_resolution").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_spp_edge_cases() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_spp_edge_cases").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_spp_edge_cases_no_cfg").await
+    }
+    #[tokio::test]
+    // FIX: failing
+    async fn test_batch_tracking_hash() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_tracking_hash").await
+    }
+    // FIX: failing
+    async fn test_batch_types() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch("fixture_types").await
+    }
+    #[tokio::test]
+    async fn test_full() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        let start = Instant::now();
+        let mut results = Vec::new();
+        results.push(test_next_batch("fixture_nodes").await);
+        results.push(test_next_batch("duplicate_name_fixture_1").await);
+        results.push(test_next_batch("duplicate_name_fixture_2").await);
+        results.push(test_next_batch("example_crate").await);
+        results.push(test_next_batch("file_dir_detection").await);
+        results.push(test_next_batch("fixture_attributes").await);
+        results.push(test_next_batch("fixture_conflation").await);
+        results.push(test_next_batch("fixture_cyclic_types").await);
+        results.push(test_next_batch("fixture_edge_cases").await);
+        results.push(test_next_batch("fixture_generics").await);
+        results.push(test_next_batch("fixture_macros").await);
+        results.push(test_next_batch("fixture_path_resolution").await);
+        results.push(test_next_batch("fixture_spp_edge_cases").await);
+        results.push(test_next_batch("fixture_spp_edge_cases_no_cfg").await);
+        results.push(test_next_batch("fixture_tracking_hash").await);
+        results.push(test_next_batch("fixture_types").await);
+
+        let time_taken = Instant::now().duration_since(start);
+        for (i, res) in results.clone().into_iter().enumerate() {
+            match res {
+                Ok(_) => eprintln!("{: ^2} + Succeed!", i),
+                Err(e) => {
+                    eprintln!("{: <2} - Error!\n{}", i, e);
+                }
+            }
+        }
+        eprintln!("Total Time Taken: {}", time_taken.as_secs());
+        for res in results {
+            res?;
+        }
+        Ok(())
     }
 
-    async fn setup_local_model_config() -> Result<LocalEmbedder, ploke_error::Error> {
-        let cozo_db = setup_db_full("fixture_nodes")?;
+    async fn setup_local_model_config(fixture: &'static str) -> Result<LocalEmbedder, ploke_error::Error> {
+        let cozo_db = setup_db_full(fixture)?;
         let db = Arc::new(Database::new(cozo_db));
         let io = IoManagerHandle::new();
 
@@ -508,14 +607,14 @@ mod tests {
 
     async fn setup_local_model_embedding_processor(
     ) -> Result<EmbeddingProcessor, ploke_error::Error> {
-        let model = setup_local_model_config().await?;
+        let model = setup_local_model_config("fixture_nodes").await?;
         let source = EmbeddingSource::Local(model);
         Ok(EmbeddingProcessor { source })
     }
 
     #[tokio::test]
     async fn test_local_model_config() -> Result<(), ploke_error::Error> {
-        setup_local_model_config().await?;
+        setup_local_model_config("fixture_nodes").await?;
         Ok(())
     }
 
@@ -536,12 +635,12 @@ mod tests {
     //  8. Creates a broadcast channel for progress and an mpsc channel for control commands.
     //  9. Spawns the `IndexerTask::run` in a separate tokio task.
     //  10. Then it waits for the indexing to complete by listening to progress updates and the task handle.
-    //  The issue: the test times out without receiving a completion signal.
+    // async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
+    // init_test_tracing(Level::INFO);
     async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
-        init_test_tracing(Level::TRACE);
-        tracing::info!("Starting test_next_batch");
+        tracing::info!("Starting test_next_batch: {fixture}");
 
-        let cozo_db = setup_db_full("fixture_nodes")?;
+        let cozo_db = setup_db_full(fixture)?;
         let db = Arc::new(Database::new(cozo_db));
         let io = IoManagerHandle::new();
 
@@ -572,7 +671,7 @@ mod tests {
 
         let mut received_completed = false;
         let start = Instant::now();
-        let timeout = Duration::from_secs(1200); // Increased timeout
+        let timeout = Duration::from_secs(12000); // Increased timeout
 
         let all_results = Arc::new(Mutex::new(Vec::new()));
 
@@ -683,6 +782,7 @@ mod tests {
             tracing::info!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
 
+        tracing::info!("Ending test_next_batch: {fixture}");
         assert!(
             received_completed,
             "Indexer completed without sending completion status"

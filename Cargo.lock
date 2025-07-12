@@ -4800,7 +4800,6 @@ dependencies = [
  "flume",
  "itertools 0.14.0",
  "lazy_static",
- "log",
  "parse_cfg",
  "ploke-common",
  "ploke-core",
@@ -4818,6 +4817,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
  "walkdir",
 ]

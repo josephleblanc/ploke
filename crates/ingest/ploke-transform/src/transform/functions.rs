@@ -13,6 +13,7 @@ pub(super) fn transform_functions(
     functions: Vec<FunctionNode>,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
+    tracing::trace!("{}", "transform_functions".log_step());
     for mut function in functions.into_iter() {
         let function_any_id = function.id.as_any();
         // let schema = &FUNCTION_NODE_SCHEMA;
