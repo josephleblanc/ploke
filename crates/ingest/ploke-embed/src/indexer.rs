@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time;
@@ -189,8 +190,9 @@ impl IndexerTask {
         progress_tx.send(state.clone())?;
 
         while let Some(batch) = self.next_batch(num_not_proc).await? {
+            time::sleep(Duration::from_millis(500)).await;
             // state.recent_processed = 0;
-            tracing::debug!("Retrieved batch of {} nodes", batch.len());
+            let node_count = batch.iter().fold(0, |acc, b| acc + b.v.len());
 
             // Check for control commands
             if let Ok(cmd) = control_rx.try_recv() {
@@ -210,7 +212,6 @@ impl IndexerTask {
                 continue;
             }
 
-            let batch_len = batch.len();
             state.current_file = batch
                 .iter()
                 .filter_map(|v| v.first().map(|i| i.clone().file_path))
@@ -223,7 +224,7 @@ impl IndexerTask {
                 .await
             {
                 Ok(_) => {
-                    state.recent_processed += batch_len;
+                    state.recent_processed += node_count;
                     tracing::info!(
                         "Processed batch: {}/{}",
                         state.recent_processed,
@@ -261,6 +262,11 @@ impl IndexerTask {
             }
 
             progress_tx.send(state.clone())?;
+            tracing::debug!(
+                "Retrieved batch of {} nodes\nCurrent file: {:?}",
+                node_count,
+                state.current_file
+            );
         }
 
         if state.recent_processed >= state.num_not_proc {
@@ -285,7 +291,10 @@ impl IndexerTask {
     /// - It updates the `last_id` to the last node in the batch (if any).
     /// - If the cancellation token is cancelled, it returns an error.
     /// - If the batch is empty, it returns `None`; otherwise, it returns the batch.
-    #[instrument(skip_all)]
+    #[instrument(
+        skip_all,
+        fields(total_counted, num_not_proc, recent_processed, status="Running", batch_size)  // Track key state
+    )]
     async fn next_batch(
         &self,
         num_not_proc: usize,
@@ -293,25 +302,34 @@ impl IndexerTask {
         let mut batch = Vec::new();
         let mut total_counted = 0;
 
-        for node_type in NodeType::primary_nodes() {
-            let fetch_size = std::cmp::min(
-                self.batch_size.saturating_sub(total_counted),
-                num_not_proc.saturating_sub(self.total_processed.load(Ordering::SeqCst)),
-            );
+        let mut rel_count = 0;
+        for node_type in NodeType::primary_nodes().into_iter() {
+            let fetch_size =
+                std::cmp::min(self.batch_size, num_not_proc).saturating_sub(total_counted);
 
             if fetch_size == 0 {
                 break;
             }
             let cursor = {
                 let cursors_lock = self.cursors.lock().await;
-                *cursors_lock.get(&node_type).unwrap_or(&Uuid::nil())
+                *cursors_lock
+                    .get(&node_type)
+                    .or(Some(&Uuid::nil()))
+                    .ok_or_else(|| {
+                        EmbedError::NotImplemented("could not lock cursor".to_string())
+                    })?
             };
 
-            let nodes =
-                self.db
-                    .get_rel_with_cursor(node_type, fetch_size, cursor)?;
+            tracing::trace!(
+                "getting_rel {} with fetch_size = {fetch_size} and cursor {cursor}",
+                node_type.relation_str()
+            );
+            let nodes = self.db.get_rel_with_cursor(node_type, fetch_size, cursor)?;
 
             if !nodes.is_empty() {
+                tracing::info!("<<< Processing relation {rel_count} relations processed: {} | total_processed before: {:?} >>>", 
+                    node_type.relation_str(), self.total_processed);
+                rel_count += 1;
                 let mut cursors_lock = self.cursors.lock().await;
                 cursors_lock.insert(node_type, nodes.last().unwrap().id);
 
@@ -325,6 +343,10 @@ impl IndexerTask {
 
         self.total_processed
             .fetch_add(total_counted, Ordering::SeqCst);
+        tracing::info!(
+            "<<< | total_processed after: {:?} >>>",
+            self.total_processed,
+        );
         if !batch.is_empty() {
             Ok(Some(batch))
         } else {
@@ -332,17 +354,20 @@ impl IndexerTask {
         }
     }
 
-    #[instrument(skip_all, fields(batch_size = nodes.len()))]
+    #[instrument(skip_all, fields(batch_size))]
     pub async fn process_batch(
         &self,
         nodes: Vec<TypedEmbedData>,
         report_progress: impl Fn(usize, usize) + Send + Sync,
     ) -> Result<(), EmbedError> {
+        let node_count = nodes.iter().fold(0, |acc, b| acc + b.v.len());
         let mut counter = 0;
-        tracing::info!("process_batch with {} nodes of EmbeddingData", nodes.len());
+        tracing::info!(
+            "process_batch with {} relations and {} nodes of EmbeddingData",
+            nodes.len(),
+            node_count
+        );
 
-        let unproc_nodes = nodes.len();
-        tracing::info!("Processing batch of {} nodes", unproc_nodes);
         // TODO: Get rid of this `clone` somehow
 
         let (ty_vec, emb_vec): (Vec<NodeType>, Vec<EmbeddingData>) = nodes
@@ -376,7 +401,7 @@ impl IndexerTask {
             .zip(emb_vec.into_iter().zip(snippet_results))
         {
             counter += 1;
-            report_progress(counter, unproc_nodes);
+            report_progress(counter, node_count);
             match snippet_result {
                 Ok(snippet) => {
                     valid_nodes.push(ty);
@@ -395,6 +420,7 @@ impl IndexerTask {
         );
 
         if valid_snippets.is_empty() {
+            tracing::error!("Empty valid snippets detected.");
             panic!("AAaaaaaaaah")
         }
         let embeddings = self
@@ -424,7 +450,7 @@ impl IndexerTask {
             .map(|((embs, embedding), ty)| (embs.id, embedding))
             .collect();
 
-        tracing::info!("Updating database: ");
+        tracing::info!("Updating database... ");
         self.db.update_embeddings_batch(updates).await?;
         tracing::info!("Finished processing batch");
         Ok(())
@@ -435,18 +461,20 @@ impl IndexerTask {
 mod tests {
 
     use std::{
+        ops::Deref,
         sync::{atomic::AtomicUsize, Arc},
         time::Duration,
     };
 
-    use cozo::MemStorage;
+    use cozo::{CallbackOp, DataValue, MemStorage, NamedRows};
     use ploke_db::{CallbackManager, Database, NodeType};
+    use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{init_test_tracing, setup_db_full};
     use tokio::{
         sync::{
             broadcast::{self, error::TryRecvError},
-            mpsc,
+            mpsc, Mutex,
         },
         time::Instant,
     };
@@ -455,9 +483,19 @@ mod tests {
 
     use crate::{
         cancel_token::CancellationToken,
-        indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask},
+        error::EmbedError,
+        indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexerTask, IndexingStatus},
         local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
     };
+
+    #[tokio::test]
+    async fn test_full_fixture_nodes() -> Result<(), Error> {
+        test_next_batch("fixture_nodes").await
+    }
+    #[tokio::test]
+    async fn test_full_fixture_nodes() -> Result<(), Error> {
+        test_next_batch("fixture_nodes").await
+    }
 
     async fn setup_local_model_config() -> Result<LocalEmbedder, ploke_error::Error> {
         let cozo_db = setup_db_full("fixture_nodes")?;
@@ -499,8 +537,7 @@ mod tests {
     //  9. Spawns the `IndexerTask::run` in a separate tokio task.
     //  10. Then it waits for the indexing to complete by listening to progress updates and the task handle.
     //  The issue: the test times out without receiving a completion signal.
-    #[tokio::test]
-    async fn test_next_batch() -> Result<(), ploke_error::Error> {
+    async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
         init_test_tracing(Level::TRACE);
         tracing::info!("Starting test_next_batch");
 
@@ -537,51 +574,14 @@ mod tests {
         let start = Instant::now();
         let timeout = Duration::from_secs(1200); // Increased timeout
 
+        let all_results = Arc::new(Mutex::new(Vec::new()));
+
         loop {
             match db_callbacks.try_recv() {
                 Ok(c) => match c {
                     Ok((call, new, old)) => {
-                        let new_count = new.rows.len();
-                        let last_count =
-                            counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
-                        let header = new.headers.clone();
-                        let (i, first_row) = new
-                            .clone()
-                            .into_iter()
-                            .enumerate()
-                            .next()
-                            .map(|(i, mut r)| {
-                                r.pop();
-                                (i, r)
-                            })
-                            .expect("Could not find a first row.");
-                        let (j, last_row) = new
-                            .clone()
-                            .into_iter()
-                            .enumerate()
-                            .next_back()
-                            .map(|(j, mut r)| {
-                                r.pop();
-                                (j, r)
-                            })
-                            .expect("Could not find a last row.");
-                        tracing::trace!(
-                            "| call_op: {} | new_count: {}, old_count: {} | 
-                            {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
-                            call,
-                            new.rows.len(),
-                            old.rows.len(),
-                            "",
-                            "Header",
-                            header.join("|"),
-                            "FirstRow",
-                            i,
-                            first_row,
-                            "LastRow number ",
-                            j,
-                            last_row,
-                        );
-                        tracing::trace!("=== === === counter: {:?} === === ===", counter);
+                        log_stuff(call, new.clone(), old, Arc::clone(&counter));
+                        all_results.lock().await.push(new.to_owned());
                     }
                     Err(e) => {
                         tracing::debug!("[in IndexerTask.run db_callback | {e}")
@@ -602,19 +602,32 @@ mod tests {
 
                 status = progress_rx.recv() => {
                     match status {
-                        Ok(status) if status.status == IndexStatus::Completed => {
-                            tracing::debug!("Progress: {:?}", status);
-                            received_completed = true;
-                        }
                         Ok(status) => {
-                            tracing::debug!("Progress: {:?}", status);
-                            if matches!(status.status, IndexStatus::Failed(_)) {
-                                panic!("Indexing failed: {:?}", status.errors);
+                            match status.status {
+                                IndexStatus::Failed(s)=>{tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);tracing::debug!("Non-completed Progress: {:?}",status);}
+                                IndexStatus::Idle => {todo!()},
+                                IndexStatus::Running => {},
+                                IndexStatus::Paused => {todo!()},
+                                IndexStatus::Completed => {
+                                    tracing::debug!("Progress: {:?}", status);
+                                    received_completed = true;
+                                    tracing::error!("Indexer callback_handler did not finish.");
+                                    if callback_handler.is_finished() {
+                                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                                        let result = callback_handler.join().map_err(|e| EmbedError::JoinFailed("x".to_string()))?;
+                                        result?;
+                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        break;
+                                    }
+                                },
+                                IndexStatus::Cancelled => {
+                                    tracing::debug!("Cancelled Task | Progress: {:?}", status);
+                                    break;
+                                },
                             }
                         }
                         Err(e) => {
                             tracing::debug!("Received Error: {:?}", e);
-                            break;
                         }, // Channel closed
                     }
                 }
@@ -633,15 +646,41 @@ mod tests {
         } else {
             tracing::error!("Indexer Handle did not finish.")
         }
-        if callback_handler.is_finished() {
-            tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
-            tracing::info!("---> Trying to await the callback_handler");
-            tracing::info!(
-                "-----> After awaiting the callback_handler: {:?}",
-                callback_handler
-            );
-        } else {
-            tracing::error!("Indexer callback_handler did not finish.")
+        // if callback_handler.is_finished() {
+        //     tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+        // } else {
+        //     tracing::error!("Indexer callback_handler did not finish.");
+        // }
+        let all_pending_rows = db.get_pending_test()?;
+        let total_rows = all_results.lock_owned().await;
+        let mut not_found = Vec::new();
+        let mut found = Vec::new();
+        total_rows
+            .clone()
+            .into_iter()
+            .flat_map(|nr| nr.rows)
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+            .for_each(|(i, idx, name)| {
+                let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
+                tracing::info!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
+                let node_data = (i, name, idx);
+                if is_found {
+                    found.push(node_data);
+                } else {
+                    not_found.push(node_data);
+                }
+            });
+        for (i, name, idx) in not_found {
+            tracing::info!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
+        }
+        for (i, name, idx) in all_pending_rows
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+        {
+            tracing::info!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
 
         assert!(
@@ -649,5 +688,58 @@ mod tests {
             "Indexer completed without sending completion status"
         );
         Ok(())
+    }
+    fn log_row(r: Vec<DataValue>) {
+        for (i, row) in r.iter().enumerate() {
+            tracing::info!("{}: {:?}", i, row);
+        }
+    }
+    fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
+        let new_count = new.rows.len();
+        let last_count = counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
+        let header = new.headers.clone();
+        let (i, first_row) = new
+            .clone()
+            .into_iter()
+            .enumerate()
+            .next()
+            .map(|(i, mut r)| {
+                r.pop();
+                (i, r)
+            })
+            .unwrap_or_else(|| (0, vec![]));
+        let (j, last_row) = new
+            .clone()
+            .into_iter()
+            .enumerate()
+            .next_back()
+            .map(|(j, mut r)| {
+                r.pop();
+                (j, r)
+            })
+            .unwrap_or_else(|| (0, vec![]));
+        tracing::trace!(
+            "| call_op: {} | new_rows: {}, old_rows: {} | {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
+            call,
+            new.rows.len(),
+            old.rows.len(),
+            "",
+            "Header",
+            header.join("|"),
+            "FirstRow",
+            i,
+            first_row,
+            "LastRow number ",
+            j,
+            last_row,
+        );
+        tracing::trace!(
+            "{:=^80}\n{:=^30}ATOMIC COUNTER: {:?}\n{:=^30}{:=^80}",
+            "",
+            "",
+            counter,
+            "",
+            ""
+        );
     }
 }

@@ -118,17 +118,22 @@ pub fn init_tracing_v2() -> WorkerGuard {
 
 #[cfg(feature = "test_setup")]
 pub fn init_test_tracing(level: tracing::Level) {
+
     let filter = filter::Targets::new()
-        .with_target("cozo", tracing::Level::ERROR)
+        .with_target("cozo", tracing::Level::WARN)
         .with_target("ploke", level)
-        .with_target("", tracing::Level::ERROR);
+        .with_target("ploke-db", level)
+        .with_target("ploke-io", tracing::Level::TRACE)
+        .with_target("ploke-transform", tracing::Level::ERROR);
 
     let layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
+        .with_file(true)
+        .with_line_number(true)
         .with_target(false) // Show module path
         .with_level(true) // Show log level
         .without_time() // Remove timestamps
-        .compact(); // Use compact format
+        .pretty(); // Use compact format
     tracing_subscriber::registry()
         .with(layer)
         .with(filter)

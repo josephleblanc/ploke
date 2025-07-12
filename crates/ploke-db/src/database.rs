@@ -16,6 +16,8 @@ use itertools::Itertools;
 use ploke_core::EmbeddingData;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
+use tracing::instrument;
+use uuid::Uuid;
 
 /// Main database connection and query interface
 #[derive(Debug)]
@@ -69,11 +71,6 @@ pub struct TypedEmbedData {
     pub v: Vec<EmbeddingData>,
     pub ty: NodeType,
 }
-
-// #[derive(Debug, Clone)]
-// pub struct TypedEmbedData {
-//     m: HashMap<NodeType, Vec< EmbeddingData >>
-// }
 
 impl Deref for TypedEmbedData {
     type Target = Vec<EmbeddingData>;
@@ -201,18 +198,24 @@ impl Database {
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
 
-    let script2 = [r#"
+            let script2 = [
+                r#"
 {
     ?[new_id, new_embedding] <- $updates 
     :replace _new {new_id, new_embedding} 
 } 
 { 
     ?[id, embedding] := *_new{new_id: id, new_embedding: embedding}, 
-    *"#, rel_name, r#"{id}
-    :update "#, rel_name, r#" {id, embedding}
+    *"#,
+                rel_name,
+                r#"{id}
+    :update "#,
+                rel_name,
+                r#" {id, embedding}
 }
-"#].join("");
-            tracing::debug!("script: {}", script2);
+"#,
+            ]
+            .join("");
 
             let result = self
                 .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
@@ -221,7 +224,8 @@ impl Database {
                     let error_str = serde_json::to_string_pretty(&error_json).unwrap();
                     tracing::error!("{}", error_str);
                     DbError::Cozo(error_str)
-                }).inspect_err(|e| tracing::error!("{}", e));
+                })
+                .inspect_err(|e| tracing::error!("{}", e));
             if result.is_err() {
                 tracing::error!("full_result: {:#?}", result);
             }
@@ -250,13 +254,14 @@ impl Database {
         &self,
         limit: usize,
         cursor: usize,
-    ) -> Result<Vec< TypedEmbedData >, ploke_error::Error> {
+    ) -> Result<Vec<TypedEmbedData>, ploke_error::Error> {
         let mut unembedded_data = Vec::new();
         let mut count = 0;
         // TODO: Awkward. Improve this.
         for t in NodeType::primary_nodes() {
-            let nodes_of_type = self.get_unembed_rel(t, limit - count, cursor)?;
+            let nodes_of_type = self.get_unembed_rel(t, limit.saturating_sub(count), cursor)?;
             count += nodes_of_type.len();
+            tracing::info!("=== {count} ===");
             unembedded_data.push(nodes_of_type);
         }
         Ok(unembedded_data)
@@ -293,7 +298,7 @@ impl Database {
             .run_script(script, BTreeMap::new(), cozo::ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         // Ok(named_rows.flatten().len())
-        Self::into_usize(result, "count(id)")
+        Self::into_usize(result)
     }
 
     pub fn get_unembed_rel(
@@ -320,20 +325,18 @@ impl Database {
         ancestor[id, mod_id],
         is_root_module[mod_id],
         *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace }
+        *file_mod { owner_id: mod_id, file_path, namespace },
 
     ?[id, name, file_path, file_hash, hash, span, namespace] := 
         batch[id, name, file_path, file_hash, hash, span, namespace]
         :sort id
         :limit $limit
      "#;
-        let cursor_script = ":offset $cursor";
         let rel_name = node_type.relation_str();
 
         base_script.push_str(base_script_start);
         base_script.push_str(rel_name);
         base_script.push_str(base_script_end);
-        base_script.push_str(cursor_script);
 
         // Create parameters map
         let mut params = BTreeMap::new();
@@ -344,11 +347,85 @@ impl Database {
             .db
             .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
             .map_err(|e| DbError::Cozo(e.to_string()))?;
-        let v = QueryResult::from(query_result).to_embedding_nodes()?;
-        let ty_embed = TypedEmbedData {
-            v,
-            ty: node_type
-        };
+        let count_more_flat = query_result.rows.iter().flatten().count();
+        let count_less_flat = query_result.rows.len();
+        tracing::info!("== more_flat: {count_more_flat} | less_flat: {count_less_flat} ==");
+        let more_flat_row = query_result.rows.iter().flatten().next();
+        let less_flat_row = query_result.rows.first();
+        tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        let ty_embed = TypedEmbedData { v, ty: node_type };
+        Ok(ty_embed)
+    }
+
+    #[instrument(target = "specific_target", skip_all, fields(limit = 0))]
+    pub fn get_rel_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+    ) -> Result<TypedEmbedData, ploke_error::Error> {
+        let mut base_script = String::new();
+        // TODO: Add pre-registered fixed rules to the system.
+        let base_script_start = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+    needs_embedding[id, name, hash, span] := *"#;
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
+
+    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace, string_id] := 
+        needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{id: mod_id, tracking_hash: file_hash},
+        *file_mod { owner_id: mod_id, file_path, namespace },
+        to_string(id) > to_string($cursor),
+        string_id = to_string(id)
+
+    ?[id, name, file_path, file_hash, hash, span, namespace, string_id] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace, string_id]
+        :sort string_id
+        :limit $limit
+     "#;
+        let rel_name = node_type.relation_str();
+
+        base_script.push_str(base_script_start);
+        base_script.push_str(rel_name);
+        base_script.push_str(base_script_end);
+
+        // Create parameters map
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::Uuid(UuidWrapper(cursor)));
+
+        let query_result = self
+            .db
+            .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        let less_flat_row = query_result.rows.first();
+        let count_less_flat = query_result.rows.len();
+        if let Some(lfr) = less_flat_row {
+            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+        }
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        if !v.is_empty() {
+            tracing::info!(
+                "\n== after truncated, {} remain: {:?} ==\n{:=^80}",
+                v.len(),
+                v.iter().map(|c| &c.name).join(" | "),
+                ""
+            );
+        }
+        let ty_embed = TypedEmbedData { v, ty: node_type };
         Ok(ty_embed)
     }
 
@@ -376,15 +453,40 @@ impl Database {
                 query.push_str(" or ")
             }
         }
-
+        query.push_str("");
         let result = self
             .db
             .run_script_read_only(&query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
-        Self::into_usize(result, "count(id)")
+
+        // -- begin temporary
+        // let lhs = r#"?[ id, name ] := 
+        // "#;
+        // let mut query2: String = String::new();
+        // query2.push_str(lhs);
+        // for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
+        //     query2.push_str(&format!(
+        //         "*{} {{ id, embedding: null, tracking_hash, span, name }}",
+        //         primary_node.relation_str()
+        //     ));
+        //     if i + 1 < NodeType::primary_nodes().len() {
+        //         query2.push_str(" or ")
+        //     }
+        // }
+        // let result2 = self
+        //     .db
+        //     .run_script_read_only(&query2, Default::default())
+        //     .map_err(|e| DbError::Cozo(e.to_string()))?;
+        // for (i, row) in result2.rows.iter().enumerate() {
+        //     tracing::info!("{}: {:?}", i, row);
+        // }
+        // -- end temporary
+
+
+        Self::into_usize(result)
     }
 
-    pub fn into_usize(named_rows: NamedRows, col: &str) -> Result<usize, DbError> {
+    pub fn into_usize(named_rows: NamedRows) -> Result<usize, DbError> {
         named_rows
             .rows
             .first()
@@ -393,6 +495,28 @@ impl Database {
             .map(|n| n as usize)
             .ok_or(DbError::NotFound)
     }
+
+    pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
+        let lhs = r#"?[ id, name ] := 
+        "#;
+        let mut query2: String = String::new();
+        query2.push_str(lhs);
+        for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
+            query2.push_str(&format!(
+                "*{} {{ id, embedding: null, tracking_hash, span, name }}",
+                primary_node.relation_str()
+            ));
+            if i + 1 < NodeType::primary_nodes().len() {
+                query2.push_str(" or ")
+            }
+        }
+        let result2 = self
+            .db
+            .run_script_read_only(&query2, Default::default())
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(result2)
+    }
+    
 }
 
 #[cfg(test)]
@@ -434,7 +558,10 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
-        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
+        let unembedded_data = unembedded_data
+            .iter()
+            .flat_map(|emb| emb.v.iter())
+            .collect_vec();
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
         }
@@ -465,6 +592,21 @@ mod tests {
         Ok(())
     }
 
+
+    #[tokio::test]
+    async fn test_get_nodes_two() -> Result<(), ploke_error::Error> {
+
+        ploke_test_utils::init_test_tracing(Level::INFO);
+        // Initialize the logger to see output from Cozo
+        let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
+
+        let count1 = db.count_pending_embeddings()?;
+        tracing::debug!("Found {} nodes without embeddings", count1);
+        assert_ne!(0, count1);
+
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
         ploke_test_utils::init_test_tracing(Level::ERROR);
@@ -478,7 +620,10 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
-        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
+        let unembedded_data = unembedded_data
+            .iter()
+            .flat_map(|emb| emb.v.iter())
+            .collect_vec();
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
         }
@@ -492,6 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unembedded_counts() -> Result<(), ploke_error::Error> {
+        ploke_test_utils::init_test_tracing(Level::TRACE);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let all_pending = db.count_pending_embeddings()?;
@@ -512,7 +658,10 @@ mod tests {
         let cursor = 0;
 
         let unembedded_data = db.get_unembedded_node_data(limit, cursor)?;
-        let unembedded_data = unembedded_data.iter().flat_map(|emb| emb.v.iter()).collect_vec();
+        let unembedded_data = unembedded_data
+            .iter()
+            .flat_map(|emb| emb.v.iter())
+            .collect_vec();
         assert_eq!(non_file_pending, unembedded_data.len());
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
@@ -594,7 +743,10 @@ mod tests {
 
         // 3. Get a batch of nodes to update
         let nodes_to_update = db.get_unembedded_node_data(10, 0)?;
-        let nodes_to_update = nodes_to_update.iter().flat_map(|emb| emb.v.iter()).collect_vec();
+        let nodes_to_update = nodes_to_update
+            .iter()
+            .flat_map(|emb| emb.v.iter())
+            .collect_vec();
         let update_count = nodes_to_update.len();
         assert!(update_count > 0, "Should retrieve some nodes to update");
         assert!(update_count <= 10);

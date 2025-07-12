@@ -195,10 +195,10 @@ impl Drop for CallbackManager {
 }
 
 pub fn log_send(e: SendError<Result<Call, DbError>>) {
-    tracing::warn!("{: >28}{}", "[log_send] in callbacks.rs | ", e)
+    tracing::error!("{: >28}{}", "[log_send] in callbacks.rs | ", e)
 }
 pub fn log_err(e: RecvError) -> DbError {
-    tracing::warn!("{: >28}{}", "[log_err] in callbacks.rs | ", e);
+    tracing::error!("{: >28}{}", "[log_err] in callbacks.rs | ", e);
     DbError::CrossBeamSend(e.to_string())
 }
 

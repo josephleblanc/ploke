@@ -23,7 +23,7 @@ async fn debug_cozo_update_syntax() {
     let insert_script = r#"
     ?[id, embedding] <- [
         [to_uuid("11111111-1111-1111-1111-111111111111"), [1.0, 2.0, 3.0]],
-        [to_uuid("22222222-2222-2222-2222-222222222222"), [4.0, 5.0, 6.0]]
+        [to_uuid("33333333-3333-3333-3333-333333333333"), [4.0, 5.0, 6.0]]
     ]
     :insert test_table { id, embedding }
     "#;
