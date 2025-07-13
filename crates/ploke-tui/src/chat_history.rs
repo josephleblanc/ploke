@@ -200,8 +200,8 @@ pub struct Message {
     pub selected_child: Option<Uuid>,
     /// Text content of the message
     pub content: String,
-    /// The role of the message's speaker, e.g. User, Assistant, System, etc
-    pub role: MessageKind,
+    /// The kind of the message's speaker, e.g. User, Assistant, System, etc
+    pub kind: MessageKind,
 }
 
 /// Defines the author of a message.
@@ -320,7 +320,7 @@ impl ChatHistory {
             children: Vec::new(),
             selected_child: None,
             content: String::new(),
-            role: MessageKind::System,
+            kind: MessageKind::System,
         };
         let root_id = root.id;
 
@@ -337,13 +337,18 @@ impl ChatHistory {
     // TODO: Documentation, actually implement this (needs async?)
     pub fn add_message_user(&mut self, parent_id: Uuid, child_id: Uuid, content: String) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        let role = MessageKind::User;
-        self.add_child(parent_id, child_id, &content, status, role)
+        let kind = MessageKind::User;
+        self.add_child(parent_id, child_id, &content, status, kind)
     }
 
-    pub fn add_message_llm(&mut self, parent_id: Uuid, child_id: Uuid, role: MessageKind, content: String) -> Result<Uuid, ChatError> {
+    pub fn add_message_llm(&mut self, parent_id: Uuid, child_id: Uuid, kind: MessageKind, content: String) -> Result<Uuid, ChatError> {
         let status = MessageStatus::Completed;
-        self.add_child(parent_id, child_id, &content, status, role)
+        self.add_child(parent_id, child_id, &content, status, kind)
+    }
+
+    pub fn add_message_system(&mut self, parent_id: Uuid, child_id: Uuid, kind: MessageKind, content: String) -> Result<Uuid, ChatError> {
+        let status = MessageStatus::Completed;
+        self.add_child(parent_id, child_id, &content, status, kind)
     }
 
     /// Adds a new child message to the conversation tree.
@@ -357,7 +362,7 @@ impl ChatHistory {
         child_id: Uuid,
         content: &str,
         status: MessageStatus,
-        role: MessageKind,
+        kind: MessageKind,
     ) -> Result<Uuid, ChatError> {
         let child = Message {
             id: child_id,
@@ -367,7 +372,7 @@ impl ChatHistory {
             content: content.to_string(),
             status,
             metadata: None,
-            role,
+            kind,
         };
 
         let parent = self
@@ -410,8 +415,8 @@ impl ChatHistory {
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
         // Reuse add_child but with the sibling's parent
-        // NOTE: Assumes the same role (safe for sibling of message)
-        self.add_child(parent_id, sibling_id, content, status, sibling.role)
+        // NOTE: Assumes the same kind (safe for sibling of message)
+        self.add_child(parent_id, sibling_id, content, status, sibling.kind)
     }
 
     /// Gets the index position of a message within its parent's children list
@@ -517,7 +522,7 @@ impl ChatHistory {
         for message in self.get_full_path() {
             md.push_str(&format!(
                 "## [{}] {}\n\n{}\n\n",
-                message.role,
+                message.kind,
                 chrono::Utc::now().to_rfc3339(),
                 message.content
             ));

@@ -124,12 +124,12 @@ We will tackle the integration in three distinct, sequential phases. Each phase 
     *   **Goal:** Provide non-intrusive feedback to the user within the chat window, distinct from LLM prompts and responses.
     *   **Implementation:**
         1.  Refactor the `Message` struct in `app_state.rs`. Instead of overloading `Role`, we will introduce a new enum: `pub enum MessageKind { User, Assistant, SystemInfo(String) }`. The `Message` struct will contain this `MessageKind` instead of separate `role` and `content` fields.
-        2.  In the UI rendering logic, create a distinct visual style for `MessageKind::SystemInfo` (e.g., different color, italicized).
-        3.  When the `/index start` command is issued, the `StateManager` will add a `SystemInfo` message.
+        2.  In the UI rendering logic, create a distinct visual style for `MessageKind::System` (e.g., different color, italicized).
+        3.  When the `/index start` command is issued, the `StateManager` will add a `System` message.
         4.  **Workspace Path Handling:** The `/index` command will be updated to accept an optional path argument (e.g., `/index .`). If no path is provided, it will default to the current working directory.
-        5.  Ensure the logic that prepares context for the LLM explicitly ignores `MessageKind::SystemInfo` messages.
-    *   **Error Handling:** If reading the current directory for the index command fails, a `SystemInfo` message will be dispatched to the UI explaining the failure (e.g., "Error: Could not read directory permissions denied").
-    *   **Testing:** Verify `SystemInfo` messages appear with a distinct style and are excluded from LLM context.
+        5.  Ensure the logic that prepares context for the LLM explicitly ignores `MessageKind::System` messages.
+    *   **Error Handling:** If reading the current directory for the index command fails, a `System` message will be dispatched to the UI explaining the failure (e.g., "Error: Could not read directory permissions denied").
+    *   **Testing:** Verify `System` messages appear with a distinct style and are excluded from LLM context.
 
 2.  **Create Indexing Progress Bar:**
     *   **Goal:** Give the user clear, real-time feedback on the long-running indexing process.
@@ -192,7 +192,7 @@ We will tackle the integration in three distinct, sequential phases. Each phase 
     *   **Implementation:**
         1.  The `RAGEngine`'s main loop will listen for `Llm::Request` events on the `EventBus`.
         2.  Upon receiving a request, it will spawn a new Tokio task to handle the RAG pipeline for that single request, to avoid blocking the main `RAGEngine` loop. This task's main function will be annotated with `#[instrument(skip_all, fields(message_id = %request.id))]`.
-    *   **Error Handling:** The spawned task will be wrapped in an `instrument` span. If any step in the pipeline fails, the task will log the error at its specific step, and then fall back to sending the original, un-augmented prompt to the `LLMManager`. It can also dispatch a `SystemInfo` message to the UI (e.g., "Context retrieval failed.").
+    *   **Error Handling:** The spawned task will be wrapped in an `instrument` span. If any step in the pipeline fails, the task will log the error at its specific step, and then fall back to sending the original, un-augmented prompt to the `LLMManager`. It can also dispatch a `System` message to the UI (e.g., "Context retrieval failed.").
 
 2.  **The RAG Pipeline Steps (within the spawned task):**
     *   **Step 1: Generate Query Embedding:** The task will use the embedding model (from `ploke-embed`) to convert the user's chat message into a query vector.
@@ -219,7 +219,7 @@ We will tackle the integration in three distinct, sequential phases. Each phase 
 ## 5. Open Questions & Design Decisions
 
 1.  **Error Handling for Partial Indexing:**
-    *   **Decision:** Log the error, send a `SystemInfo` message to the UI, and continue with the rest of the batch. The `IndexerTask` will report a final `IndexingStatus::Completed` or `IndexingStatus::Error` with details. This is sufficient for the MVP.
+    *   **Decision:** Log the error, send a `System` message to the UI, and continue with the rest of the batch. The `IndexerTask` will report a final `IndexingStatus::Completed` or `IndexingStatus::Error` with details. This is sufficient for the MVP.
 2.  **Vector Index Management:**
     *   **Decision:** Completely rebuild the index at the end of every `/index start` run. As confirmed by CozoDB documentation, this is the required approach as indexes are not incremental.
 3.  **Frame Budget & Performance:**

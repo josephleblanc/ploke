@@ -100,7 +100,7 @@ impl App {
                 .iter()
                 .map(|m| RenderableMessage {
                     id: m.id,
-                    role: m.role,
+                    kind: m.kind,
                     content: m.content.clone(),
                 })
                 .collect::<Vec<RenderableMessage>>();
@@ -177,7 +177,7 @@ impl App {
             .map(|msg| {
                 let wrapped_text: String =
                     textwrap::fill(&msg.content, conversation_width as usize);
-                match msg.role {
+                match msg.kind {
                     MessageKind::User => ListItem::new(wrapped_text).blue(),
                     MessageKind::Assistant => ListItem::new(wrapped_text).green(),
                     MessageKind::System => ListItem::new(wrapped_text).magenta(),
@@ -438,7 +438,7 @@ impl App {
 #[derive(Debug, Clone)]
 struct RenderableMessage {
     id: Uuid,
-    role: MessageKind,
+    kind: MessageKind,
     content: String, // Add other fields if needed for drawing, e.g. status
 }
 

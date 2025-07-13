@@ -25,7 +25,7 @@ struct OpenAiRequest<'a> {
 
 #[derive(Serialize)]
 pub struct RequestMessage<'a> {
-    role: &'a str,
+    kind: &'a str,
     content: String,
 }
 
@@ -149,7 +149,7 @@ async fn prepare_and_run_llm_call(
         .iter()
         .filter(|msg| !msg.content.is_empty())
         .map(|msg| RequestMessage {
-            role: match msg.role {
+            kind: match msg.kind {
                 MessageKind::User => "user",
                 MessageKind::Assistant => "assistant",
                 MessageKind::System => "system",
@@ -260,7 +260,7 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
                     parent_id: pid,
                     child_id: Uuid::new_v4(),
                     content: c,
-                    role: MessageKind::Assistant,
+                    kind: MessageKind::Assistant,
                     target: ChatHistoryTarget::Main,
                 })
                 .await;

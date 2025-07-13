@@ -14,15 +14,6 @@ use crate::{
 
 use super::*;
 
-// pub struct AppState {
-//     pub chat_history: RwLock<ChatHistory>,
-//     pub system_status: RwLock<SystemStatus>,
-//     /// Stores user config. Low write (if ever), higher read.
-//
-//     // A channel to signal application shutdown.
-//     pub shutdown: tokio::sync::broadcast::Sender<()>,
-// }
-
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
 // TODO: Define the `RagContext` struct
@@ -173,8 +164,8 @@ pub enum StateCommand {
     /// and for creating the initial placeholder for an assistant's response.
     // TODO: Fold the `AddUserMessage` into `AddMessage`
     AddMessage {
-        /// The role of the message author (e.g., User or Assistant).
-        role: MessageKind,
+        /// The kind of the message author (e.g., User or Assistant).
+        kind: MessageKind,
         /// The content of the message. Can be empty for an initial assistant message.
         content: String,
         /// The specific chat history (e.g., main, scratchpad) to add the message to.
@@ -369,62 +360,30 @@ pub async fn state_manager(
                 }
             }
             StateCommand::AddUserMessage { content } => {
-                let mut chat_guard = state.chat.0.write().await;
-                let parent_id = chat_guard.current;
-                let child_id = Uuid::new_v4();
-
-                // Add the user's message to the history
-                if let Ok(user_message_id) =
-                    chat_guard.add_message_user(parent_id, child_id, content.clone())
-                {
-                    tracing::Span::current().record("msg_id", format!("{}", user_message_id));
-                    tracing::info!(
-                        content = %truncate_string(&content, 20),
-                        parent_id = %parent_id,
-                        "Adding user message"
-                    );
-
-                    // Update the current message to the one we just added
-                    chat_guard.current = user_message_id;
-
-                    // Notify the UI that the state has changed
-                    event_bus.send(MessageUpdatedEvent::new(user_message_id).into());
-
-                    // Trigger the LLM to generate a response to the user's message
-                    let llm_request = AppEvent::Llm(llm::Event::Request {
-                        request_id: Uuid::new_v4(),
-                        parent_id: user_message_id,
-                        prompt: content,
-                        parameters: Default::default(), // Using mock/default param
-                    });
-                    event_bus.send(llm_request);
-                } else {
-                    tracing::error!("Failed to add user message");
-                }
+                add_msg_immediate(&state, &event_bus, content, MessageKind::User).await;
             }
             StateCommand::AddMessage {
                 parent_id,
                 child_id,
                 content,
                 // TODO: Figure out if I should/need to do more with these
-                role,
+                kind,
                 target,
             } => {
                 let mut chat_guard = state.chat.0.write().await;
                 // For assistant messages, lthe status will be Generating initially
-                let status = if matches!(role, MessageKind::Assistant) {
+                let status = if matches!(kind, MessageKind::Assistant) {
                     MessageStatus::Generating
                 } else {
                     MessageStatus::Completed
                 };
 
                 if let Ok(new_message_id) =
-                    chat_guard.add_child(parent_id, child_id, &content, status, role.into())
+                    chat_guard.add_child(parent_id, child_id, &content, status, kind)
                 {
                     chat_guard.current = new_message_id;
                     event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
                 }
-                // chat_guard.add_message(parent_id, content);
             }
             StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
 
@@ -441,10 +400,10 @@ pub async fn state_manager(
                 let mut chat_guard = state.chat.0.write().await;
                 let child_id = Uuid::new_v4();
                 let status = MessageStatus::Generating;
-                let role = crate::chat_history::MessageKind::Assistant;
+                let kind = crate::chat_history::MessageKind::Assistant;
 
                 if let Ok(new_id) =
-                    chat_guard.add_child(parent_id, child_id, "Pending...", status, role)
+                    chat_guard.add_child(parent_id, child_id, "Pending...", status, kind)
                 {
                     // update the state of the current id to the newly generated pending message.
                     chat_guard.current = new_id;
@@ -461,18 +420,25 @@ pub async fn state_manager(
             }
             StateCommand::IndexWorkspace { workspace } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
-
                 // Extract task from mutex (consumes guard)
 
+                // let mut chat_guard = state.chat.0.write().await;
+                add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    "Indexing...".to_string(),
+                    MessageKind::System,
+                )
+                .await;
                 let event_bus_clone = event_bus.clone();
                 let progress_tx = event_bus.index_tx.clone();
                 let progress_rx = event_bus.index_subscriber();
 
                 let state_arc = state.indexer_task.as_ref().map(Arc::clone);
-                if let Some( indexer_task ) = state_arc  {
+                if let Some(indexer_task) = state_arc {
                     tokio::spawn(async move {
                         let indexing_result = IndexerTask::index_workspace(
-                            indexer_task ,
+                            indexer_task,
                             workspace,
                             progress_tx,
                             progress_rx,
@@ -525,6 +491,54 @@ pub async fn state_manager(
     }
 }
 
+async fn add_msg_immediate(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    content: String,
+    kind: MessageKind,
+) {
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+    let child_id = Uuid::new_v4();
+
+    let message_wrapper = match kind { 
+        MessageKind::User => { 
+            chat_guard.add_message_user(parent_id, child_id, content.clone()) 
+        },
+        MessageKind::System => chat_guard.add_message_system(parent_id, child_id, kind, content.clone()),
+        MessageKind::Assistant => todo!(),
+        MessageKind::Tool => todo!(),
+    };
+    // Add the user's message to the history
+    if let Ok(message_id) = message_wrapper {
+        tracing::Span::current().record("msg_id", format!("{}", message_id));
+        tracing::info!(
+            content = %truncate_string(&content, 20),
+            parent_id = %parent_id,
+            "Adding message"
+        );
+
+        // Update the current message to the one we just added
+        chat_guard.current = message_id;
+
+        // Notify the UI that the state has changed
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+
+        if kind == MessageKind::User {
+            // Trigger the LLM to generate a response to the user's message
+            let llm_request = AppEvent::Llm(llm::Event::Request {
+                request_id: Uuid::new_v4(),
+                parent_id: message_id,
+                prompt: content,
+                parameters: Default::default(), // Using mock/default param
+            });
+            event_bus.send(llm_request);
+        }
+    } else {
+        tracing::error!("Failed to add user message");
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -543,7 +557,12 @@ mod tests {
         tokio::spawn(state_manager(state_clone, cmd_rx, Arc::new(event_bus)));
 
         // Start indexing
-        cmd_tx.send(StateCommand::IndexWorkspace{ workspace: "fixture_nodes".to_string() }).await.unwrap();
+        cmd_tx
+            .send(StateCommand::IndexWorkspace {
+                workspace: "fixture_nodes".to_string(),
+            })
+            .await
+            .unwrap();
 
         // Verify RUNNING state
         let guard = state.indexing_state.read().await;
