@@ -139,21 +139,22 @@ async fn prepare_and_run_llm_call(
     let history_guard = state.chat.0.read().await;
     let path = history_guard.get_current_path();
 
-     let context_path = if path.len() > 1 {
-         &path[..path.len() - 1]
-     } else {
-         &path[..]
-     };
+    let context_path = if path.len() > 1 {
+        &path[..path.len() - 1]
+    } else {
+        &path[..]
+    };
 
     let messages: Vec<RequestMessage> = context_path
         .iter()
-        .filter(|msg| !msg.content.is_empty())
+        .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
         .map(|msg| RequestMessage {
             kind: match msg.kind {
                 MessageKind::User => "user",
                 MessageKind::Assistant => "assistant",
                 MessageKind::System => "system",
                 MessageKind::Tool => todo!(),
+                MessageKind::SysInfo => "sysinfo",
             },
             content: msg.content.clone(), // can this clone be remove somehow?
         })
@@ -265,10 +266,18 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
                 })
                 .await;
         }
-        Event::Request { request_id, parent_id, prompt, parameters } => todo!("Implement Me!"),
+        Event::Request {
+            request_id,
+            parent_id,
+            prompt,
+            parameters,
+        } => todo!("Implement Me!"),
         Event::PartialResponse { request_id, delta } => todo!("Implement Me!"),
         Event::Error { request_id, error } => todo!("Implement Me!"),
-        Event::Status { active_requests, queue_depth } => todo!("Implement Me!"),
+        Event::Status {
+            active_requests,
+            queue_depth,
+        } => todo!("Implement Me!"),
         Event::ModelChanged { new_model } => todo!("Implement Me!"),
     }
 }

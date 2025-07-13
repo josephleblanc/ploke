@@ -180,8 +180,9 @@ impl App {
                 match msg.kind {
                     MessageKind::User => ListItem::new(wrapped_text).blue(),
                     MessageKind::Assistant => ListItem::new(wrapped_text).green(),
-                    MessageKind::System => ListItem::new(wrapped_text).magenta(),
+                    MessageKind::System => ListItem::new(wrapped_text).gray(),
                     MessageKind::Tool => todo!(),
+                    MessageKind::SysInfo => ListItem::new(wrapped_text).magenta(),
                 }
                 // ListItem::new(wrapped_text)
             })

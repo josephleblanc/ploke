@@ -427,7 +427,7 @@ pub async fn state_manager(
                     &state,
                     &event_bus,
                     "Indexing...".to_string(),
-                    MessageKind::System,
+                    MessageKind::SysInfo,
                 )
                 .await;
                 let event_bus_clone = event_bus.clone();
@@ -505,9 +505,10 @@ async fn add_msg_immediate(
         MessageKind::User => { 
             chat_guard.add_message_user(parent_id, child_id, content.clone()) 
         },
-        MessageKind::System => chat_guard.add_message_system(parent_id, child_id, kind, content.clone()),
+        MessageKind::System => todo!(),
         MessageKind::Assistant => todo!(),
         MessageKind::Tool => todo!(),
+        MessageKind::SysInfo => chat_guard.add_message_system(parent_id, child_id, kind, content.clone()),
     };
     // Add the user's message to the history
     if let Ok(message_id) = message_wrapper {
