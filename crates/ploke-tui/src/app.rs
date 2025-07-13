@@ -1,4 +1,4 @@
-use crate::{app_state::ListNavigation, chat_history::Role, user_config::CommandStyle};
+use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -178,9 +178,10 @@ impl App {
                 let wrapped_text: String =
                     textwrap::fill(&msg.content, conversation_width as usize);
                 match msg.role {
-                    Role::User => ListItem::new(wrapped_text).blue(),
-                    Role::Assistant => ListItem::new(wrapped_text).green(),
-                    Role::System => ListItem::new(wrapped_text).magenta(),
+                    MessageKind::User => ListItem::new(wrapped_text).blue(),
+                    MessageKind::Assistant => ListItem::new(wrapped_text).green(),
+                    MessageKind::System => ListItem::new(wrapped_text).magenta(),
+                    MessageKind::Tool => todo!(),
                 }
                 // ListItem::new(wrapped_text)
             })
@@ -437,7 +438,7 @@ impl App {
 #[derive(Debug, Clone)]
 struct RenderableMessage {
     id: Uuid,
-    role: Role,
+    role: MessageKind,
     content: String, // Add other fields if needed for drawing, e.g. status
 }
 

@@ -1,3 +1,4 @@
+use crate::chat_history::MessageKind;
 use ploke_embed::indexer::{IndexStatus, IndexerCommand, IndexerTask};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
@@ -6,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    llm::{ChatHistoryTarget, LLMParameters},
     system::SystemEvent,
     utils::helper::truncate_string,
 };
@@ -173,7 +174,7 @@ pub enum StateCommand {
     // TODO: Fold the `AddUserMessage` into `AddMessage`
     AddMessage {
         /// The role of the message author (e.g., User or Assistant).
-        role: MessageRole,
+        role: MessageKind,
         /// The content of the message. Can be empty for an initial assistant message.
         content: String,
         /// The specific chat history (e.g., main, scratchpad) to add the message to.
@@ -411,7 +412,7 @@ pub async fn state_manager(
             } => {
                 let mut chat_guard = state.chat.0.write().await;
                 // For assistant messages, lthe status will be Generating initially
-                let status = if matches!(role, MessageRole::Assistant) {
+                let status = if matches!(role, MessageKind::Assistant) {
                     MessageStatus::Generating
                 } else {
                     MessageStatus::Completed
@@ -440,7 +441,7 @@ pub async fn state_manager(
                 let mut chat_guard = state.chat.0.write().await;
                 let child_id = Uuid::new_v4();
                 let status = MessageStatus::Generating;
-                let role = crate::chat_history::Role::Assistant;
+                let role = crate::chat_history::MessageKind::Assistant;
 
                 if let Ok(new_id) =
                     chat_guard.add_child(parent_id, child_id, "Pending...", status, role)
