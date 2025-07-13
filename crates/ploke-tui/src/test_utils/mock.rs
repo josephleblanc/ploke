@@ -25,6 +25,7 @@ pub fn create_mock_db(num_unindexed: usize) -> Arc<Database> {
     todo!("define and insert params, ensure db.run_script works correctly");
     
     // db.run_script(script, params, ScriptMutability::Mutable).unwrap();
+    #[allow(unreachable_code)]
     db
 }
 

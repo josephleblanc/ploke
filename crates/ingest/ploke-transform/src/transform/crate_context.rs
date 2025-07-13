@@ -64,11 +64,12 @@ fn process_crate_context(
     Ok(ctx_params)
 }
 
+#[allow(clippy::ptr_arg)]
 fn cozo_file(file: &PathBuf) -> Result<&str, TransformError> {
     let f = file
         .as_os_str()
         .to_str()
-        .ok_or_else(|| TransformError::Transformation(format!("Could not parse root file")))?;
+        .ok_or_else(|| TransformError::Transformation("Could not parse root file".to_string()))?;
     Ok(f)
 }
 

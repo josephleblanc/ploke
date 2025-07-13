@@ -184,7 +184,7 @@ mod test {
     use crate::schema::secondary_nodes::ParamNodeSchema;
     use crate::transform::functions::script_put;
     use crate::transform::functions::{process_func, process_generic_params};
-    use ploke_test_utils::{init_test_tracing, setup_db_full};
+    use ploke_test_utils::init_test_tracing;
 
     #[test]
     fn func_transform() -> Result<(), TransformError> {

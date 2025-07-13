@@ -152,36 +152,6 @@ async fn debug_cozo_update_syntax() {
     let result = db.run_script(update_conditional_realistic, Default::default(), ScriptMutability::Mutable);
     println!("Update literal result: {:?}", result);
 
-    let create_script = r#"
-    "#;
-    println!("\n=== Test 8: Debug - conditional update realistic ===");
-    let update_param_script = r#"
-{
-    :create second_test_table {
-        id: Uuid
-        =>
-        embedding: [Float]
-    }
-}
-{
-        ?[id, embedding] <- [
-            [to_uuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"), [9090.0, 2020.0, 3030.0]]
-        ]
-        :put second_test_table { id, embedding }
-}
-{
-    ?[test_id, test_embedding] <- $updates 
-    :replace _test {test_id, test_embedding} 
-} 
-
-%if { ?[id] := 
-        *_test {test_id: id}, 
-        *test_table { id }
-} %then { 
-    ?[id, embedding] <- $updates 
-    :update test_table { id, embedding } } 
-%end 
-"#;
     let update_param_script2 = r#"
 {
     ?[test_id, test_embedding] <- $updates 
@@ -233,30 +203,3 @@ async fn debug_cozo_update_syntax() {
 }
 
 // Helper function to test different parameter structures
-fn test_different_param_structures() {
-    println!("\n=== Testing different parameter structures ===");
-    
-    // Structure 1: List of [id, embedding] pairs
-    let uuid_val = DataValue::Uuid(cozo::UuidWrapper(uuid::uuid!("11111111-1111-1111-1111-111111111111")));
-    let embedding_val = DataValue::List(vec![
-        DataValue::Num(cozo::Num::Float(1.0)),
-        DataValue::Num(cozo::Num::Float(2.0)),
-    ]);
-    
-    let structure1 = DataValue::List(vec![
-        DataValue::List(vec![uuid_val.clone(), embedding_val.clone()])
-    ]);
-    println!("Structure 1 (our current): {:?}", structure1);
-    
-    // Structure 2: Maybe it expects named fields?
-    // This is probably not right, but let's see
-    let structure2 = DataValue::List(vec![
-        DataValue::List(vec![
-            DataValue::Str("id".into()),
-            uuid_val.clone(),
-            DataValue::Str("embedding".into()),
-            embedding_val.clone(),
-        ])
-    ]);
-    println!("Structure 2 (with field names): {:?}", structure2);
-}

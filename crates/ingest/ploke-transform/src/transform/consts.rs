@@ -77,7 +77,6 @@ mod tests {
     use crate::{
         error::TransformError,
         schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema},
-        utils::log_db_error,
     };
 
     use super::transform_consts;

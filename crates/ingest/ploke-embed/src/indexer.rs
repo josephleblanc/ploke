@@ -250,7 +250,7 @@ impl IndexerTask {
 
                 res = &mut idx_handle => {
                     let task_result = res.expect("Task panicked");
-                    task_result.as_ref().map_err(|e| tracing::debug!("Error: {}", e.to_string())); // Propagate any errors
+                    let _ = task_result.as_ref().map_err(|e| tracing::debug!("Error: {}", e.to_string())); // Propagate any errors
                     break;
                 }
 
@@ -900,7 +900,7 @@ mod tests {
         let mut idx_handle =
             tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 
-        let mut received_completed = AtomicBool::new(false);
+        let received_completed = AtomicBool::new(false);
         let start = Instant::now();
         let timeout = Duration::from_secs(1200); // Increased timeout
 
