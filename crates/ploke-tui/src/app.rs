@@ -131,13 +131,31 @@ impl App {
                 // Application events
                 Ok(app_event) = self.event_rx.recv() => {
                     match app_event {
-                        AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
+                        AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
                             self.sync_list_selection().await;
                         }
-                        AppEvent::IndexingProgress(state) => {
+                        AppEvent::IndexingProgress(state)=>{
                             self.indexing_state = Some(state);
                         }
-                        _ => {}
+                        AppEvent::Ui(ui_event) => {},
+                        AppEvent::Llm(event) => {},
+                        AppEvent::System(system_event) => {},
+                        AppEvent::Error(error_event) => {},
+                        AppEvent::IndexingStarted => {},
+                        AppEvent::IndexingCompleted => {
+                            tracing::info!("Indexing Succeeded!");
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg: String::from("IndexingSucceeded"),
+                                kind: MessageKind::SysInfo,
+                            })
+                        },
+                        AppEvent::IndexingFailed => {
+                            tracing::error!("Indexing Failed");
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg: String::from("Indexing Failed"),
+                                kind: MessageKind::SysInfo,
+                            })
+                        },
                     }
                 }
             }
@@ -364,7 +382,9 @@ impl App {
 
         match cmd_str {
             "help" => self.show_command_help(),
-            "index start" => self.send_cmd(StateCommand::IndexWorkspace { workspace: "fixture_nodes".to_string() }),
+            "index start" => self.send_cmd(StateCommand::IndexWorkspace {
+                workspace: "fixture_nodes".to_string(),
+            }),
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),

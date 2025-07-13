@@ -169,18 +169,34 @@ impl IndexerTask {
         }
     }
 
+    pub async fn index_workspace_test(
+        task: Arc<Self>,
+        workspace_dir: String,
+        // db_callback: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), EmbedError>>
+        progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
+        mut progress_rx: broadcast::Receiver<IndexingStatus>,
+        control_rx: mpsc::Receiver<IndexerCommand>,
+    ) -> Result<(), ploke_error::Error> {
+        return Err(ploke_error::Error::Internal(
+            ploke_error::InternalError::NotImplemented("Error forwarding works".to_string()),
+        ));
+    }
+
     // TODO: Consider returning a reset version of Self instead of consuming self here.
     // In the same vein consider not dropping the callback item.
     pub async fn index_workspace(
         task: Arc<Self>,
         workspace_dir: String,
         // db_callback: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), EmbedError>>
-        progress_tx: broadcast::Sender<IndexingStatus>,
+        progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
         mut progress_rx: broadcast::Receiver<IndexingStatus>,
         control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), ploke_error::Error> {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
+        return Err(ploke_error::Error::Internal(
+            ploke_error::InternalError::NotImplemented("Error forwarding works".to_string()),
+        ));
         let db_clone = Arc::clone(&task.db);
         let (callback_manager, db_callbacks, _, shutdown) =
             CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;
@@ -317,7 +333,7 @@ impl IndexerTask {
     )]
     pub async fn run(
         &self,
-        progress_tx: broadcast::Sender<IndexingStatus>,
+        progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
         mut control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), EmbedError> {
         let num_not_proc = self.db.count_unembedded_nonfiles()?;
@@ -896,12 +912,13 @@ mod tests {
             cancellation_token,
             batch_size,
         );
-        let (progress_tx, mut progress_rx) = broadcast::channel(1000);
+        let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
+        let progress_tx_arc = Arc::new( progress_tx_nonarc );
         let (control_tx, control_rx) = mpsc::channel(4);
 
         let callback_handler = std::thread::spawn(move || callback_manager.run());
         let mut idx_handle =
-            tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
+            tokio::spawn(async move { idx_tag.run(progress_tx_arc, control_rx).await });
 
         let received_completed = AtomicBool::new(false);
         let callback_closed = AtomicBool::new(false);
@@ -1037,7 +1054,11 @@ mod tests {
         //  Bad solution. Fix it later.
         // tokio::time::sleep(Duration::from_millis(300)).await;
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
-        tracing::info!("updated rows: {}, pending db callback: {}", not_found.len(), found.len());
+        tracing::info!(
+            "updated rows: {}, pending db callback: {}",
+            not_found.len(),
+            found.len()
+        );
         tracing::info!("Ending test_next_batch: {fixture}: total count {inner}, counter {total_count} | {inner}/{total_count}");
         assert!(
             total_count == counter.load(std::sync::atomic::Ordering::SeqCst),

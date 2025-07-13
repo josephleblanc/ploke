@@ -194,7 +194,7 @@ pub enum AppEvent {
     IndexingProgress(indexer::IndexingStatus),
     IndexingStarted,
     IndexingCompleted,
-    IndexingFailed(String),
+    IndexingFailed,
 }
 
 impl AppEvent {
@@ -209,7 +209,7 @@ impl AppEvent {
             AppEvent::IndexingProgress(_) => EventPriority::Realtime,
             AppEvent::IndexingStarted => EventPriority::Background,
             AppEvent::IndexingCompleted => EventPriority::Background,
-            AppEvent::IndexingFailed(_) => EventPriority::Background,
+            AppEvent::IndexingFailed => EventPriority::Realtime,
         }
     }
 }
@@ -238,7 +238,7 @@ pub struct EventBus {
     background_tx: broadcast::Sender<AppEvent>,
     error_tx: broadcast::Sender<ErrorEvent>,
     // NOTE: dedicated for indexing manager control
-    index_tx: broadcast::Sender<indexer::IndexingStatus>,
+    index_tx: Arc< broadcast::Sender<indexer::IndexingStatus> >,
 }
 
 /// Convenience struct to help with the initialization of EventBus
@@ -267,7 +267,7 @@ impl EventBus {
             realtime_tx: broadcast::channel(b.realtime_cap).0,
             background_tx: broadcast::channel(b.background_cap).0,
             error_tx: broadcast::channel(b.error_cap).0,
-            index_tx: broadcast::channel(b.index_cap).0,
+            index_tx: Arc::new(broadcast::channel(b.index_cap).0),
         }
     }
 

@@ -176,6 +176,14 @@ pub enum StateCommand {
         child_id: Uuid,
     },
 
+    /// Adds a new message from the provided string and type.
+    /// This has much less flexibility than the `AddMessage` above, but is more convenient to use
+    /// for certain kinds of system messages.
+    AddMessageImmediate {
+        msg: String,
+        kind: MessageKind,
+    },
+
     /// Adds a new user message and sets it as the current message.
     // TODO: consider if this needs more fields, or if it can/should be folded into the
     // `AddMessage` above
@@ -291,6 +299,7 @@ impl StateCommand {
             StateCommand::PauseIndexing => "PauseIndexing",
             StateCommand::ResumeIndexing => "ResumeIndexing",
             StateCommand::CancelIndexing => "CancelIndexing",
+            StateCommand::AddMessageImmediate { .. } => "AddMessageImmediatetodo!()",
             // ... other variants
         }
     }
@@ -385,6 +394,9 @@ pub async fn state_manager(
                     event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
                 }
             }
+            StateCommand::AddMessageImmediate { msg, kind } => {
+                add_msg_immediate(&state, &event_bus, msg, kind).await;
+            }
             StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
 
             StateCommand::NavigateList { direction } => {
@@ -431,12 +443,12 @@ pub async fn state_manager(
                 )
                 .await;
                 let event_bus_clone = event_bus.clone();
-                let progress_tx = event_bus.index_tx.clone();
+                let progress_tx = Arc::clone(&event_bus.index_tx);
                 let progress_rx = event_bus.index_subscriber();
 
                 let state_arc = state.indexer_task.as_ref().map(Arc::clone);
                 if let Some(indexer_task) = state_arc {
-                    tokio::spawn(async move {
+                    let res = tokio::spawn(async move {
                         let indexing_result = IndexerTask::index_workspace(
                             indexer_task,
                             workspace,
@@ -445,16 +457,16 @@ pub async fn state_manager(
                             control_rx,
                         )
                         .await;
-                        // let task_with_updates = indexer_task; // Recover task after operation
-                        //
-                        // // Restore token to app state
-                        // state.indexer_task.replace(task_with_updates);
-
                         match indexing_result {
                             Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
-                            Err(e) => event_bus_clone.send(AppEvent::IndexingFailed(e.to_string())),
+                            Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
                         }
-                    });
+                    })
+                    .await;
+                    // match res {
+                    //     Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
+                    //     Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
+                    // }
                 }
             }
             StateCommand::PauseIndexing => {
@@ -501,14 +513,16 @@ async fn add_msg_immediate(
     let parent_id = chat_guard.current;
     let child_id = Uuid::new_v4();
 
-    let message_wrapper = match kind { 
-        MessageKind::User => { 
-            chat_guard.add_message_user(parent_id, child_id, content.clone()) 
-        },
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, child_id, content.clone()),
         MessageKind::System => todo!(),
-        MessageKind::Assistant => todo!(),
+        MessageKind::Assistant => {
+            chat_guard.add_message_llm(parent_id, child_id, kind, content.clone())
+        }
         MessageKind::Tool => todo!(),
-        MessageKind::SysInfo => chat_guard.add_message_system(parent_id, child_id, kind, content.clone()),
+        MessageKind::SysInfo => {
+            chat_guard.add_message_system(parent_id, child_id, kind, content.clone())
+        }
     };
     // Add the user's message to the history
     if let Ok(message_id) = message_wrapper {

@@ -17,29 +17,29 @@ use crate::{
 
 use super::*;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct RequestMessage<'a> {
     kind: &'a str,
     content: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct OpenAiResponse {
     choices: Vec<Choice>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct Choice {
     message: ResponseMessage,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct ResponseMessage {
     content: String,
 }
@@ -101,14 +101,16 @@ pub async fn process_llm_request(
 
     // Prepare and execute the API call, then create the final update command.
     let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider).await {
-        Ok(content) => StateCommand::UpdateMessage {
+        Ok(content) => 
+        { 
+            StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
                 content: Some(content),
                 status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
-        },
+        } }
         Err(e) => {
             log::error!("LLM API call failed: {}", e);
             StateCommand::UpdateMessage {
@@ -160,6 +162,7 @@ async fn prepare_and_run_llm_call(
         })
         .collect();
 
+    log::info!("Sending conversation histor message with content: {:#?}", messages);
     // Release the lock before the network call
     drop(history_guard);
 
