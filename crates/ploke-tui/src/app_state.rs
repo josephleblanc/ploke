@@ -465,9 +465,9 @@ pub async fn state_manager(
 
                 let event_bus_clone = event_bus.clone();
                 let progress_tx = event_bus.index_tx.clone();
-                let mut progress_rx = event_bus.index_subscriber();
+                let progress_rx = event_bus.index_subscriber();
 
-                let state_arc = state.indexer_task.as_ref().map(|x| Arc::clone(&x));
+                let state_arc = state.indexer_task.as_ref().map(Arc::clone);
                 if let Some( indexer_task ) = state_arc  {
                     tokio::spawn(async move {
                         let indexing_result = IndexerTask::index_workspace(

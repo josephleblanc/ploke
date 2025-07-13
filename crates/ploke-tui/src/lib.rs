@@ -1,3 +1,5 @@
+#![allow(unused_variables, unused_imports, dead_code)]
+
 pub mod app;
 pub mod app_state;
 pub mod chat_history;

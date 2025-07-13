@@ -119,12 +119,11 @@ impl App {
                     if let Some(Ok(event)) = maybe_event {
                         match event {
                             Event::Key(key_event) =>{ self.on_key_event(key_event); }
-                            // Event::FocusGained => {},
-                            // Event::FocusLost => {},
-                            // Event::Mouse(mouse_event) => {},
-                            // Event::Paste(_) => {},
-                            // Event::Resize(_, _) => {},
-                            _ => {}
+                            Event::FocusGained => {},
+                            Event::FocusLost => {},
+                            Event::Mouse(mouse_event) => {},
+                            Event::Paste(_) => {},
+                            Event::Resize(_, _) => {},
                         }
                     }
                 }
