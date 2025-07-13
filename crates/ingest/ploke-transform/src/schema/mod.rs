@@ -62,6 +62,12 @@ impl CozoField {
 /// Create schema for all nodes and enter them into the database.
 /// This step must only be run once to avoid errors from the database.
 pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::TransformError> {
+    // -- secondary nodes --
+    ParamNodeSchema::create_and_insert_schema(db)?;
+    AttributeNodeSchema::create_and_insert_schema(db)?;
+    VariantNodeSchema::create_and_insert_schema(db)?;
+    FieldNodeSchema::create_and_insert_schema(db)?;
+    create_and_insert_generic_schema(db)?;
     // ---- primary nodes ----
     ConstNodeSchema::create_and_insert_schema(db)?;
     EnumNodeSchema::create_and_insert_schema(db)?;
@@ -79,12 +85,6 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     FileModuleNodeSchema::create_and_insert_schema(db)?;
 
 
-    // -- secondary nodes --
-    ParamNodeSchema::create_and_insert_schema(db)?;
-    AttributeNodeSchema::create_and_insert_schema(db)?;
-    VariantNodeSchema::create_and_insert_schema(db)?;
-    FieldNodeSchema::create_and_insert_schema(db)?;
-    create_and_insert_generic_schema(db)?;
 
     // -- associated nodes --
     MethodNodeSchema::create_and_insert_schema(db)?;

@@ -29,12 +29,14 @@ pub(super) fn transform_functions(
             let param_params = process_params(&function, param_schema, i, param);
             let script = script_put(&param_params, param_schema.relation);
 
+            tracing::trace!("{}: {}\n{}\n{:#?}", "transform_functions".log_step(), "script", script, param_params);
             db.run_script(&script, param_params, ScriptMutability::Mutable)?;
         }
 
         // Add generic parameters
         for (i, generic_param) in function.generic_params.into_iter().enumerate() {
             let (params, script) = process_generic_params(function_any_id, i as i64, generic_param);
+            tracing::trace!("{}: {}\n{}", "transform_functions".log_step(), "script", script);
             db.run_script(&script, params, ScriptMutability::Mutable)?;
         }
 
@@ -175,23 +177,22 @@ mod test {
     use syn_parser::parser::nodes::AsAnyNodeId;
     use syn_parser::parser::ParsedCodeGraph;
     use syn_parser::utils::{LogStyle, LogStyleDebug};
+    use tracing::Level;
 
     use crate::error::TransformError;
     use crate::schema::primary_nodes::FunctionNodeSchema;
     use crate::schema::secondary_nodes::ParamNodeSchema;
     use crate::transform::functions::script_put;
     use crate::transform::functions::{process_func, process_generic_params};
+    use ploke_test_utils::{init_test_tracing, setup_db_full};
 
     #[test]
     fn func_transform() -> Result<(), TransformError> {
+        init_test_tracing(Level::TRACE);
         // TODO: Make separate tests for each of these steps:
         //  - function processing
         //  - param processing
         //  - [✔] generic param processing
-        let _ = env_logger::builder()
-            .is_test(true)
-            .format_timestamp(None) // Disable timestamps
-            .try_init();
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_types");

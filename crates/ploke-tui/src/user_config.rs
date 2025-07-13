@@ -46,7 +46,7 @@ impl Config {
                     allow_fallback: true,
                     approximate_gelu: false,
                     use_pth: false,
-                    batch_size: 8,
+                    model_batch_size: 8,
                     max_length: None,
                 };
                 let embedder = LocalEmbedder::new(embedder_config)?;
@@ -73,7 +73,7 @@ impl Config {
                     allow_fallback: true,
                     approximate_gelu: false,
                     use_pth: false,
-                    batch_size: 8,
+                    model_batch_size: 8,
                     max_length: None,
                 };
                 let default_embedder = LocalEmbedder::new(embedder_config)?;

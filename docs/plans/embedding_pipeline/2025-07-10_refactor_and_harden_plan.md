@@ -475,11 +475,3 @@ Yes. The existing code already uses the tracing crate with spans and structured 
 
 The plan offers robust foundational trajectory but requires tightening of probabilistic hardening before SLO-critical production ingress. Prioritize **keyset pagination** → **error reconstitution** → **permission scoping** sequencing to maximally unravel prototype-to-production tension.
 
-
-crates/ingest/ploke-embed/src/indexer.rs crates/ingest/ploke-embed/src/local/mod.rs
-crates/ploke-db/src/database.rs          crates/ploke-db/src/query/callbacks.rs
-Help me debug this program. Be exhaustive in your assessment of the error
-state, why it occurs, and determine whether the root cause is in the test or in
-the implementation. Provide a clear and full explanation, along with a diagram
-and explanation of the low-level details, that will provide the information
-required to assess and understand the situation.

@@ -268,7 +268,9 @@ pub enum StateCommand {
     },
 
     /// Triggers a background task to index the entire workspace.
-    IndexWorkspace,
+    IndexWorkspace {
+        workspace: String,
+    },
     PauseIndexing,
     ResumeIndexing,
     CancelIndexing,
@@ -293,7 +295,7 @@ impl StateCommand {
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
-            StateCommand::IndexWorkspace => "IndexWorkspace",
+            StateCommand::IndexWorkspace { .. } => "IndexWorkspace",
             StateCommand::PauseIndexing => "PauseIndexing",
             StateCommand::ResumeIndexing => "ResumeIndexing",
             StateCommand::CancelIndexing => "CancelIndexing",
@@ -456,32 +458,38 @@ pub async fn state_manager(
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
-            StateCommand::IndexWorkspace => {
-                let (control_tx, control_rx) = mpsc::channel(4);
+            StateCommand::IndexWorkspace { workspace } => {
+                let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
+
+                // Extract task from mutex (consumes guard)
+
+                let event_bus_clone = event_bus.clone();
                 let progress_tx = event_bus.index_tx.clone();
+                let mut progress_rx = event_bus.index_subscriber();
 
-                // Store control handle
-                {
-                    let mut ctrl_guard = state.indexing_control.lock().await;
-                    *ctrl_guard = Some(control_tx);
-                }
+                let state_arc = state.indexer_task.as_ref().map(|x| Arc::clone(&x));
+                if let Some( indexer_task ) = state_arc  {
+                    tokio::spawn(async move {
+                        let indexing_result = IndexerTask::index_workspace(
+                            indexer_task ,
+                            workspace,
+                            progress_tx,
+                            progress_rx,
+                            control_rx,
+                        )
+                        .await;
+                        // let task_with_updates = indexer_task; // Recover task after operation
+                        //
+                        // // Restore token to app state
+                        // state.indexer_task.replace(task_with_updates);
 
-                if let Some(indexer_task_arc) = &state.indexer_task {
-                    tokio::spawn({
-                        let event_bus = event_bus.clone();
-                        let indexer_task = indexer_task_arc.clone();
-                        async move {
-                            event_bus.send(AppEvent::IndexingStarted);
-                            if let Err(e) = indexer_task.run(progress_tx, control_rx).await {
-                                event_bus.send(AppEvent::IndexingFailed(e.to_string()));
-                            } else {
-                                event_bus.send(AppEvent::IndexingCompleted);
-                            }
+                        match indexing_result {
+                            Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
+                            Err(e) => event_bus_clone.send(AppEvent::IndexingFailed(e.to_string())),
                         }
                     });
                 }
             }
-
             StateCommand::PauseIndexing => {
                 if let Some(ctrl) = &mut *state.indexing_control.lock().await {
                     ctrl.send(IndexerCommand::Pause).await.ok();
@@ -534,7 +542,7 @@ mod tests {
         tokio::spawn(state_manager(state_clone, cmd_rx, Arc::new(event_bus)));
 
         // Start indexing
-        cmd_tx.send(StateCommand::IndexWorkspace).await.unwrap();
+        cmd_tx.send(StateCommand::IndexWorkspace{ workspace: "fixture_nodes".to_string() }).await.unwrap();
 
         // Verify RUNNING state
         let guard = state.indexing_state.read().await;

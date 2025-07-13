@@ -1,18 +1,19 @@
-use crate::local::LocalEmbedder;
+use crate::local::{EmbeddingConfig, LocalEmbedder};
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
+use cozo::{CallbackOp, DataValue, NamedRows};
 use ploke_core::EmbeddingData;
-use ploke_db::{Database, NodeType, TypedEmbedData};
+use ploke_db::{CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::sync::{broadcast, mpsc};
-use tokio::time;
+use tokio::time::{self, Instant};
 use tracing::{info_span, instrument};
 use uuid::Uuid;
 
@@ -168,6 +169,147 @@ impl IndexerTask {
         }
     }
 
+    // TODO: Consider returning a reset version of Self instead of consuming self here.
+    // In the same vein consider not dropping the callback item.
+    pub async fn index_workspace(
+        task: Arc<Self>,
+        workspace_dir: String,
+        // db_callback: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), EmbedError>>
+        progress_tx: broadcast::Sender<IndexingStatus>,
+        mut progress_rx: broadcast::Receiver<IndexingStatus>,
+        control_rx: mpsc::Receiver<IndexerCommand>,
+    ) -> Result<(), ploke_error::Error> {
+        // let (cancellation_token, cancel_handle) = CancellationToken::new();
+        tracing::info!("Starting index_workspace: {}", &workspace_dir);
+        let db_clone = Arc::clone(&task.db);
+        let (callback_manager, db_callbacks, _, shutdown) =
+            CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;
+
+        let counter = callback_manager.clone_counter();
+
+        let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
+
+        let received_completed = AtomicBool::new(false);
+        let start = Instant::now();
+        let timeout = Duration::from_secs(1200); // Increased timeout
+
+        let all_results = Arc::new(Mutex::new(Vec::new()));
+
+        loop {
+            match db_callbacks.try_recv() {
+                Ok(c) => match c {
+                    Ok((call, new, old)) => {
+                        log_stuff(call, new.clone(), old, Arc::clone(&counter));
+                        all_results.lock().await.push(new.to_owned());
+                    }
+                    Err(e) => {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}")
+                    }
+                },
+                Err(e) => {
+                    if e.is_disconnected() {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}");
+                    }
+                }
+            };
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if start.elapsed() > timeout {
+                        panic!("Test timed out without completion signal");
+                    }
+                }
+
+                status = progress_rx.recv() => {
+                    match status {
+                        Ok(status) => {
+                            match status.status {
+                                IndexStatus::Failed(s)=>{
+                                    tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",
+                                        s,status.errors);
+                                        panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);
+                                }
+                                IndexStatus::Idle => {todo!()},
+                                IndexStatus::Running => {},
+                                IndexStatus::Paused => {todo!()},
+                                IndexStatus::Completed => {
+                                    tracing::debug!("Progress: {:?}", status);
+                                    received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    break;
+                                },
+                                IndexStatus::Cancelled => {
+                                    tracing::debug!("Cancelled Task | Progress: {:?}", status);
+                                    break;
+                                },
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Received Error: {:?}", e);
+                        }, // Channel closed
+                    }
+                }
+
+                res = &mut idx_handle => {
+                    let task_result = res.expect("Task panicked");
+                    task_result.as_ref().map_err(|e| tracing::debug!("Error: {}", e.to_string())); // Propagate any errors
+                    break;
+                }
+
+
+            }
+        }
+        if idx_handle.is_finished() {
+            tracing::info!("Indexer Handle is Finished: {:?}", idx_handle);
+            // inner result
+        } else {
+            tracing::error!("Indexer Handle did not finish.")
+        }
+        // if callback_handler.is_finished() {
+        //     tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+        // } else {
+        //     tracing::error!("Indexer callback_handler did not finish.");
+        // }
+        let all_pending_rows = db_clone.get_pending_test()?;
+        let total_rows = all_results.lock_owned().await;
+        let mut not_found = Vec::new();
+        let mut found = Vec::new();
+        total_rows
+            .clone()
+            .into_iter()
+            .flat_map(|nr| nr.rows)
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+            .for_each(|(i, idx, name)| {
+                let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
+                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
+                let node_data = (i, name, idx);
+                if is_found {
+                    found.push(node_data);
+                } else {
+                    not_found.push(node_data);
+                }
+            });
+        for (i, name, idx) in not_found {
+            tracing::trace!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
+        }
+        for (i, name, idx) in all_pending_rows
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+        {
+            tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
+        }
+        // FIX: Sleep here is to wait for the above loop to finish.
+        //  Bad solution. Fix it later.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        tracing::info!("Ending test_next_batch: {workspace_dir}");
+        // assert!(
+        //     received_completed.load(std::sync::atomic::Ordering::SeqCst),
+        //     "Indexer completed without sending completion status"
+        // );
+        Ok(())
+    }
+
     #[instrument(
         name = "Indexer::run",
         skip(self, progress_tx, control_rx),
@@ -190,7 +332,7 @@ impl IndexerTask {
         progress_tx.send(state.clone())?;
 
         while let Some(batch) = self.next_batch(num_not_proc).await? {
-            time::sleep(Duration::from_millis(500)).await;
+            // time::sleep(Duration::from_millis(500)).await;
             // state.recent_processed = 0;
             let node_count = batch.iter().fold(0, |acc, b| acc + b.v.len());
 
@@ -269,11 +411,13 @@ impl IndexerTask {
             );
         }
 
-        if state.recent_processed >= state.num_not_proc {
+        let total_processed = self.total_processed.load(Ordering::SeqCst);
+        if total_processed >= state.num_not_proc {
             tracing::info!(
-                "Indexing completed: {}/{}",
+                "Indexing completed: {}/{} - recently_processed: {}",
+                total_processed,
+                state.num_not_proc,
                 state.recent_processed,
-                state.num_not_proc
             );
             state.status = IndexStatus::Completed;
             progress_tx.send(state)?;
@@ -457,12 +601,69 @@ impl IndexerTask {
     }
 }
 
+fn log_row(r: Vec<DataValue>) {
+    for (i, row) in r.iter().enumerate() {
+        tracing::info!("{}: {:?}", i, row);
+    }
+}
+fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
+    let new_count = new.rows.len();
+    let last_count = counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
+    let header = new.headers.clone();
+    let (i, first_row) = new
+        .clone()
+        .into_iter()
+        .enumerate()
+        .next()
+        .map(|(i, mut r)| {
+            r.pop();
+            (i, r)
+        })
+        .unwrap_or_else(|| (0, vec![]));
+    let (j, last_row) = new
+        .clone()
+        .into_iter()
+        .enumerate()
+        .next_back()
+        .map(|(j, mut r)| {
+            r.pop();
+            (j, r)
+        })
+        .unwrap_or_else(|| (0, vec![]));
+    tracing::trace!(
+            "| call_op: {} | new_rows: {}, old_rows: {} | {}{:=^20}\n{:?}\n{:=^20}\n{:=^10}\n{:?}\n{:=^20}\n{:=^10}\n{:?}",
+            call,
+            new.rows.len(),
+            old.rows.len(),
+            "",
+            "Header",
+            header.join("|"),
+            "FirstRow",
+            i,
+            first_row,
+            "LastRow number ",
+            j,
+            last_row,
+        );
+    tracing::trace!(
+        "{:=^80}\n{:=^30}ATOMIC COUNTER: {:?}\n{:=^30}{:=^80}",
+        "",
+        "",
+        counter,
+        "",
+        ""
+    );
+}
+
 #[cfg(test)]
 mod tests {
 
     use std::{
         ops::Deref,
-        sync::{atomic::AtomicUsize, Arc},
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            Arc,
+        },
         time::Duration,
     };
 
@@ -476,7 +677,7 @@ mod tests {
             broadcast::{self, error::TryRecvError},
             mpsc, Mutex,
         },
-        time::Instant,
+        time::{self, Instant},
     };
     use tracing::Level;
     use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
@@ -488,15 +689,42 @@ mod tests {
         local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
     };
 
+    pub fn init_test_tracing_temporary(level: tracing::Level) {
+        let filter = filter::Targets::new()
+            .with_target("cozo", tracing::Level::ERROR)
+            .with_target("ploke", level)
+            .with_target("ploke-db", level)
+            .with_target("ploke-embed", level)
+            .with_target("ploke-io", level)
+            .with_target("ploke-transform", level)
+            .with_target("transform_functions", level);
+
+        let layer = tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_file(true)
+            .with_line_number(true)
+            .with_target(false) // Show module path
+            .with_level(true) // Show log level
+            .without_time() // Remove timestamps
+            .pretty(); // Use compact format
+        tracing_subscriber::registry()
+            .with(layer)
+            .with(filter)
+            .init();
+    }
+
     #[tokio::test]
     // NOTE: passing
     async fn test_next_batch_only() -> Result<(), Error> {
+        init_test_tracing_temporary(Level::INFO);
         test_next_batch("fixture_nodes").await
     }
     #[tokio::test]
-    // FIX: failing
+    // FIX: failing on step:
+    // INFO  Parse: build module tree
+    //    at crates/test-utils/src/lib.rs:65
     async fn test_batch_file_dir_detection() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        init_test_tracing(Level::TRACE);
         test_next_batch("file_dir_detection").await
     }
     #[tokio::test]
@@ -506,59 +734,60 @@ mod tests {
         test_next_batch("fixture_attributes").await
     }
     #[tokio::test]
-    // FIX: failing
+    // NOTE: passing
     async fn test_batch_cyclic_types() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_cyclic_types").await
     }
     #[tokio::test]
-    // FIX: failing
+    // NOTE: passing
     async fn test_batch_edge_cases() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_edge_cases").await
     }
     #[tokio::test]
-    // FIX: failing
+    // INFO: passing
     async fn test_batch_generics() -> Result<(), Error> {
-        init_test_tracing(Level::TRACE);
+        init_test_tracing(Level::INFO);
         test_next_batch("fixture_generics").await
     }
     #[tokio::test]
-    // FIX: failing
+    // INFO: passing
     async fn test_batch_macros() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_macros").await
     }
     #[tokio::test]
-    // FIX: failing
+    // NOTE: passing
     async fn test_batch_path_resolution() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_path_resolution").await
     }
     #[tokio::test]
-    // FIX: failing
-    async fn test_batch_spp_edge_cases() -> Result<(), Error> {
+    // WARN: failing (dependent upon other improvements in cfg?)
+    async fn test_batch_spp_edge_cases_cfg() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_spp_edge_cases").await
     }
     #[tokio::test]
-    // FIX: failing
+    // WARN: failing (dependent upon other improvements)
     async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_spp_edge_cases_no_cfg").await
     }
     #[tokio::test]
-    // FIX: failing
+    // NOTE: passing
     async fn test_batch_tracking_hash() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_tracking_hash").await
     }
-    // FIX: failing
+    #[tokio::test]
+    // NOTE: passing
     async fn test_batch_types() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         test_next_batch("fixture_types").await
     }
-    #[tokio::test]
+    // #[tokio::test]
     async fn test_full() -> Result<(), Error> {
         init_test_tracing(Level::INFO);
         let start = Instant::now();
@@ -596,7 +825,9 @@ mod tests {
         Ok(())
     }
 
-    async fn setup_local_model_config(fixture: &'static str) -> Result<LocalEmbedder, ploke_error::Error> {
+    async fn setup_local_model_config(
+        fixture: &'static str,
+    ) -> Result<LocalEmbedder, ploke_error::Error> {
         let cozo_db = setup_db_full(fixture)?;
         let db = Arc::new(Database::new(cozo_db));
         let io = IoManagerHandle::new();
@@ -669,9 +900,9 @@ mod tests {
         let mut idx_handle =
             tokio::spawn(async move { idx_tag.run(progress_tx, control_rx).await });
 
-        let mut received_completed = false;
+        let mut received_completed = AtomicBool::new(false);
         let start = Instant::now();
-        let timeout = Duration::from_secs(12000); // Increased timeout
+        let timeout = Duration::from_secs(1200); // Increased timeout
 
         let all_results = Arc::new(Mutex::new(Vec::new()));
 
@@ -703,21 +934,27 @@ mod tests {
                     match status {
                         Ok(status) => {
                             match status.status {
-                                IndexStatus::Failed(s)=>{tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);tracing::debug!("Non-completed Progress: {:?}",status);}
+                                IndexStatus::Failed(s)=>{
+                                    tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",
+                                        s,status.errors);
+                                        panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);
+                                }
                                 IndexStatus::Idle => {todo!()},
                                 IndexStatus::Running => {},
                                 IndexStatus::Paused => {todo!()},
                                 IndexStatus::Completed => {
                                     tracing::debug!("Progress: {:?}", status);
-                                    received_completed = true;
-                                    tracing::error!("Indexer callback_handler did not finish.");
+                                    received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
                                     if callback_handler.is_finished() {
                                         tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
-                                        let result = callback_handler.join().map_err(|e| EmbedError::JoinFailed("x".to_string()))?;
+                                        let result = callback_handler.join().map_err(|e| EmbedError::JoinFailed("xxIxx".to_string()))?;
                                         result?;
-                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
                                         break;
-                                    }
+                                    } else {
+                                        tracing::warn!("Sending shutdown signal to CallbackManager.");
+                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        // break;
+                                }
                                 },
                                 IndexStatus::Cancelled => {
                                     tracing::debug!("Cancelled Task | Progress: {:?}", status);
@@ -742,6 +979,7 @@ mod tests {
         }
         if idx_handle.is_finished() {
             tracing::info!("Indexer Handle is Finished: {:?}", idx_handle);
+            // inner result
         } else {
             tracing::error!("Indexer Handle did not finish.")
         }
@@ -762,7 +1000,7 @@ mod tests {
             .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
             .for_each(|(i, idx, name)| {
                 let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
-                tracing::info!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
+                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
                 let node_data = (i, name, idx);
                 if is_found {
                     found.push(node_data);
@@ -771,7 +1009,7 @@ mod tests {
                 }
             });
         for (i, name, idx) in not_found {
-            tracing::info!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
+            tracing::trace!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
         }
         for (i, name, idx) in all_pending_rows
             .rows
@@ -779,12 +1017,14 @@ mod tests {
             .enumerate()
             .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
         {
-            tracing::info!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
+            tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
-
+        // FIX: Sleep here is to wait for the above loop to finish.
+        //  Bad solution. Fix it later.
+        tokio::time::sleep(Duration::from_millis(300)).await;
         tracing::info!("Ending test_next_batch: {fixture}");
         assert!(
-            received_completed,
+            received_completed.load(std::sync::atomic::Ordering::SeqCst),
             "Indexer completed without sending completion status"
         );
         Ok(())

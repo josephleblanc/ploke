@@ -459,30 +459,6 @@ impl Database {
             .run_script_read_only(&query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
-        // -- begin temporary
-        // let lhs = r#"?[ id, name ] := 
-        // "#;
-        // let mut query2: String = String::new();
-        // query2.push_str(lhs);
-        // for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
-        //     query2.push_str(&format!(
-        //         "*{} {{ id, embedding: null, tracking_hash, span, name }}",
-        //         primary_node.relation_str()
-        //     ));
-        //     if i + 1 < NodeType::primary_nodes().len() {
-        //         query2.push_str(" or ")
-        //     }
-        // }
-        // let result2 = self
-        //     .db
-        //     .run_script_read_only(&query2, Default::default())
-        //     .map_err(|e| DbError::Cozo(e.to_string()))?;
-        // for (i, row) in result2.rows.iter().enumerate() {
-        //     tracing::info!("{}: {:?}", i, row);
-        // }
-        // -- end temporary
-
-
         Self::into_usize(result)
     }
 

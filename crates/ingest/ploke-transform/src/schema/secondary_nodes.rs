@@ -6,12 +6,12 @@ use crate::define_schema;
 // TODO: Test and evaluate with queries.
 define_schema!(ParamNodeSchema {
     "param",
-    name: "String",
     function_id: "Uuid",
+    is_mutable: "Bool",
+    is_self: "Bool",
+    name: "String?",
     param_index: "Int",
     type_id: "Uuid",
-    is_mutable: "Bool",
-    is_self: "Bool"
 });
 
 // TODO: Link to:

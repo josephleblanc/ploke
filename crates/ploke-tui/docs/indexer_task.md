@@ -91,7 +91,7 @@ sequenceDiagram
     - [x]  Recognizing this as a long-running operation, it spawns a new Tokio task to
     act as an "Indexer." This is critical to prevent blocking the state_manager,
     which must remain responsive to other commands.
-    - [ ] The Indexer task is given clones of the necessary handles: a ploke-db
+    - [?] The Indexer task is given clones of the necessary handles: a ploke-db
     handle, an IoManagerHandle, and a ploke-rag handle.
 - [x]  Database Query (Indexer Task -> `ploke-db`):
     - The Indexer task sends a single, batched query to ploke-db to fetch all

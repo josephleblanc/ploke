@@ -88,29 +88,27 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // 1 Implement the cancellation token propagation in IndexerTask
     // 2 Add error handling for embedder initialization failures
     // 3 Complete the UI progress reporting integration
-    let indexer_task = IndexerTask {
-        db: db_handle.clone(),
-        io: io_handle.clone(),
-        embedding_processor: processor, // Use configured processor
-        cancellation_token: CancellationToken::new().0,
-        batch_size: 1024,
-        cursor: Arc::new(Mutex::new(0)),
-    };
+    let indexer_task = IndexerTask::new(
+        db_handle.clone(),
+        io_handle.clone(),
+        processor, // Use configured processor
+        CancellationToken::new().0,
+        8,
+    );
 
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::default(),
         system: SystemState::default(),
         indexing_state: RwLock::new(None), // Initialize as None
-        indexer_task: Some(Arc::new(indexer_task)),
+        indexer_task: Some(Arc::new( indexer_task )),
         indexing_control: Arc::new(Mutex::new(None)),
     });
-
-    let (cancellation_token, cancel_handle) = CancellationToken::new();
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
+    let (cancellation_token, cancel_handle) = CancellationToken::new();
     let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
     let file_manager = FileManager::new(
         io_handle.clone(),

@@ -23,6 +23,7 @@ ploke-transform = { path = "../ploke-transform" }
 # concurrency
 tokio = { workspace = true }
 rayon = { workspace = true }
+crossbeam-channel = { workspace = true }
 
 # error handling
 thiserror = { workspace = true }

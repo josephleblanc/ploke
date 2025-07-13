@@ -141,6 +141,8 @@ impl CallbackManager {
                 recv(self.traits) -> msg => msg,
                 recv(self.type_alias) -> msg => msg,
                 recv(self.unions) -> msg => msg,
+                default(std::time::Duration::from_millis(100)) => continue,
+                // recv(self.shutdown) -> msg => {tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", ""); break;},
             };
 
             match msg_res {
@@ -154,6 +156,7 @@ impl CallbackManager {
                 Err(e) => {
                     // A producer disconnected (db was dropped), log and exit.
                     log_err(e);
+                    break;
                 }
             }
             if self.shutdown.try_recv().is_ok() { 
