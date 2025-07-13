@@ -141,8 +141,8 @@ impl CallbackManager {
                 recv(self.traits) -> msg => msg,
                 recv(self.type_alias) -> msg => msg,
                 recv(self.unions) -> msg => msg,
+                recv(self.shutdown) -> msg => {tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", ""); break;},
                 default(std::time::Duration::from_millis(100)) => continue,
-                // recv(self.shutdown) -> msg => {tracing::info!("{:=<}SHUTODWN RECEIVED: CALLBACK{:=<}", "", ""); break;},
             };
 
             match msg_res {
