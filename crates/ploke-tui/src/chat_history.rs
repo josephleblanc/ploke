@@ -44,6 +44,7 @@ impl fmt::Display for MessageStatus {
     }
 }
 
+use ratatui::widgets::ScrollbarState;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -304,6 +305,8 @@ pub struct ChatHistory {
     pub current: Uuid,
     /// Final message in the currently selected message list.
     pub tail: Uuid,
+    /// Scroll bar support
+    pub scroll_bar: Option<ScrollbarState>,
 }
 
 impl ChatHistory {
@@ -332,6 +335,7 @@ impl ChatHistory {
             current: root_id,
             // new list has same root/tail
             tail: root_id,
+            scroll_bar: None,
         }
     }
 
@@ -509,7 +513,7 @@ impl ChatHistory {
             Some(id)
         })
         // TODO: This collect could probably be removed by implementing the double ended iterator
-            // trait for something. Or maybe using VecDeque for the conversation history.
+        // trait for something. Or maybe using VecDeque for the conversation history.
         .collect::<Vec<_>>() // Collect to reverse order
         .into_iter()
         .rev()

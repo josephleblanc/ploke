@@ -1,3 +1,4 @@
+#![allow(unused_mut)]
 use crate::local::{EmbeddingConfig, LocalEmbedder};
 use crate::providers::hugging_face::HuggingFaceBackend;
 use crate::providers::openai::OpenAIBackend;
@@ -115,7 +116,7 @@ pub struct IndexingStatus {
 impl IndexingStatus {
     pub fn calc_progress(&self) -> IndexProgress {
         if self.num_not_proc == 0 {
-            0.0
+            0.1
         } else {
             self.recent_processed as f64 / self.num_not_proc as f64
         }
@@ -169,6 +170,7 @@ impl IndexerTask {
         }
     }
 
+    #[allow(unused_variables)]
     pub async fn index_workspace_test(
         task: Arc<Self>,
         workspace_dir: String,
@@ -177,13 +179,15 @@ impl IndexerTask {
         mut progress_rx: broadcast::Receiver<IndexingStatus>,
         control_rx: mpsc::Receiver<IndexerCommand>,
     ) -> Result<(), ploke_error::Error> {
-        return Err(ploke_error::Error::Internal(
+        time::sleep(Duration::from_secs(2)).await;
+        Err(ploke_error::Error::Internal(
             ploke_error::InternalError::NotImplemented("Error forwarding works".to_string()),
-        ));
+        ))
     }
 
     // TODO: Consider returning a reset version of Self instead of consuming self here.
     // In the same vein consider not dropping the callback item.
+    #[allow(unused_mut)]
     pub async fn index_workspace(
         task: Arc<Self>,
         workspace_dir: String,
@@ -194,9 +198,6 @@ impl IndexerTask {
     ) -> Result<(), ploke_error::Error> {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
-        return Err(ploke_error::Error::Internal(
-            ploke_error::InternalError::NotImplemented("Error forwarding works".to_string()),
-        ));
         let db_clone = Arc::clone(&task.db);
         let (callback_manager, db_callbacks, _, shutdown) =
             CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;

@@ -334,6 +334,8 @@ impl From<MessageUpdatedEvent> for AppEvent {
 //         msg_id = tracing::field::Empty
 //     )
 // )]
+// TODO: Disentangle the event_bus sender from this most likely.
+// - Needs to be evaluated against new implementation of EventBus
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
@@ -449,7 +451,7 @@ pub async fn state_manager(
                 let state_arc = state.indexer_task.as_ref().map(Arc::clone);
                 if let Some(indexer_task) = state_arc {
                     let res = tokio::spawn(async move {
-                        let indexing_result = IndexerTask::index_workspace(
+                        let indexing_result = IndexerTask::index_workspace_test(
                             indexer_task,
                             workspace,
                             progress_tx,

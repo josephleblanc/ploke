@@ -54,7 +54,7 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
     ploke_transform::schema::create_schema_all(&db)?;
 
-    // run the parser
+    // run the parse
     tracing::info!("{}: run the parser", "Parse".log_step());
     let successful_graphs = test_run_phases_and_collect(fixture);
     // merge results from all files

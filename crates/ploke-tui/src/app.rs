@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::widgets::Gauge;
+use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use textwrap::wrap;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -46,6 +47,10 @@ pub struct App {
     pub mode: Mode,
     command_style: CommandStyle,
     indexing_state: Option<indexer::IndexingStatus>,
+    input_vscroll: u16,
+    input_scrollstate: ScrollbarState,
+    convo_vscroll: u16,
+    convo_scrollstate: ScrollbarState,
 }
 
 impl App {
@@ -66,6 +71,11 @@ impl App {
             mode: Mode::default(),
             command_style,
             indexing_state: None,
+
+            input_vscroll: 0,
+            input_scrollstate: ScrollbarState::default(),
+            convo_vscroll: 0,
+            convo_scrollstate: ScrollbarState::default(),
         }
     }
 
@@ -78,6 +88,7 @@ impl App {
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        terminal.show_cursor()?;
         self.running = true;
         let mut crossterm_events = crossterm::event::EventStream::new();
 
@@ -88,6 +99,20 @@ impl App {
         while self.running {
             let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
             let frame_start = Instant::now();
+
+            // FIX: This doesn't work because it locates the cursor relative to the top left of the
+            // screen, but there must be a better way to handle the offset correctly.
+            // if let Ok(cursor_pos) = terminal.get_cursor_position() {
+            //     match self.mode {
+            //         Mode::Normal if cursor_pos.y > self.convo_vscroll => {
+            //             self.convo_vscroll = cursor_pos.y;
+            //         }
+            //         Mode::Insert if cursor_pos.y > self.input_vscroll => {
+            //             self.input_vscroll = cursor_pos.y;
+            //         }
+            //         _ => {}
+            //     }
+            // }
 
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
@@ -144,6 +169,7 @@ impl App {
                         AppEvent::IndexingStarted => {},
                         AppEvent::IndexingCompleted => {
                             tracing::info!("Indexing Succeeded!");
+                            self.indexing_state = None;
                             self.send_cmd(StateCommand::AddMessageImmediate {
                                 msg: String::from("IndexingSucceeded"),
                                 kind: MessageKind::SysInfo,
@@ -151,6 +177,7 @@ impl App {
                         },
                         AppEvent::IndexingFailed => {
                             tracing::error!("Indexing Failed");
+                            self.indexing_state = None;
                             self.send_cmd(StateCommand::AddMessageImmediate {
                                 msg: String::from("Indexing Failed"),
                                 kind: MessageKind::SysInfo,
@@ -158,6 +185,7 @@ impl App {
                         },
                     }
                 }
+
             }
             let frame_duration = frame_start.elapsed();
             if frame_duration > Duration::from_millis(16) {
@@ -179,11 +207,15 @@ impl App {
             .constraints(vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
-                Constraint::Length(1),
+                Constraint::Length(4),
             ])
             .split(frame.area());
 
-        let status_layout = layout_statusline(4, main_layout[2]);
+        let status_layout = layout_statusline(5, main_layout[2]);
+
+        // ---------- Scroll State -------------
+        // let convo_length = convo.height;
+        // self.convo_scrollstate = self.convo_scrollstate.content_length(convo_length as usize);
 
         // ---------- Prepare Widgets ----------
         // Render message tree
@@ -223,17 +255,22 @@ impl App {
             _ => "Input",
         };
 
+        // Guess at the amount of scroll needed:
+
+        // ---------- Text Wrap ----------------
         let input_width = main_layout[1].width.saturating_sub(2);
-        let input = Paragraph::new(textwrap::fill(
-            self.input_buffer.as_str(),
-            input_width as usize,
-        ))
-        .block(Block::bordered().title(input_title))
-        .style(match self.mode {
-            Mode::Normal => Style::default(),
-            Mode::Insert => Style::default().fg(Color::Yellow),
-            Mode::Command => Style::default().fg(Color::Cyan),
-        });
+        let input_wrapped = textwrap::wrap(self.input_buffer.as_str(), input_width as usize);
+        self.input_scrollstate = self.input_scrollstate.content_length(input_wrapped.len());
+
+        let input_text = Text::from_iter(input_wrapped);
+        let input = Paragraph::new(input_text)
+            .scroll((self.input_vscroll, 0))
+            .block(Block::bordered().title(input_title))
+            .style(match self.mode {
+                Mode::Normal => Style::default(),
+                Mode::Insert => Style::default().fg(Color::Yellow),
+                Mode::Command => Style::default().fg(Color::Cyan),
+            });
         // Add progress bar at bottom if indexing
         if let Some(state) = &self.indexing_state {
             let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
@@ -257,10 +294,27 @@ impl App {
         let list_len = Paragraph::new(format!("List Len: {}", list_len));
         let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
 
+        // -- Handle Scrollbars --
+        // TODO: how to make this work?
+
         // ---------- Render widgets in layout ----------
         // -- top level
         frame.render_stateful_widget(list, main_layout[0], &mut self.list);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            main_layout[0],
+            &mut self.convo_scrollstate,
+        );
         frame.render_widget(input, main_layout[1]);
+        // frame.render_stateful_widget(
+        //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        //         .begin_symbol(Some("↑"))
+        //         .end_symbol(Some("↓")),
+        //     main_layout[1].inner(Margin {vertical: 1, horizontal: 0}),
+        //     &mut self.input_scrollstate,
+        // );
 
         // -- first nested
         frame.render_widget(status_bar, status_layout[0]);
@@ -311,6 +365,22 @@ impl App {
     }
 
     fn handle_insert_mode(&mut self, key: KeyEvent) {
+        if key.modifiers == KeyModifiers::CONTROL {
+            match key.code {
+                KeyCode::Char('a') => {
+                    self.input_buffer
+                        .push_str("Agnostic anthromoporcine agrippa");
+                }
+                // FIX: testing
+                KeyCode::Up => {
+                    self.input_scrollstate.prev();
+                }
+                KeyCode::Down => {
+                    self.input_scrollstate.next();
+                }
+                _ => {}
+            }
+        }
         match key.code {
             // 1. UI-Local State Change: Switch mode
             KeyCode::Esc => self.mode = Mode::Normal,
@@ -343,6 +413,13 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.input_buffer.pop();
+            }
+            // FIX: testing
+            KeyCode::Up => {
+                self.convo_scrollstate.next();
+            }
+            KeyCode::Down => {
+                self.convo_scrollstate.prev();
             }
             _ => {}
         }

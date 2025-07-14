@@ -8,6 +8,7 @@ pub mod llm;
 pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
+pub mod parser;
 
 #[cfg(test)]
 mod test_utils;
@@ -18,9 +19,10 @@ use app_state::{
 };
 use file_man::FileManager;
 use llm::llm_manager;
+use parser::run_parse;
 use ploke_embed::{
     cancel_token::CancellationToken,
-    indexer::{self, IndexerTask, IndexingStatus},
+    indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
@@ -42,6 +44,8 @@ use ratatui::{
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
+
+pub static TARGET_DIR_FIXTURE: &str = "fixture_nodes";
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -70,6 +74,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
+
+    run_parse(Arc::clone( &db_handle ), TARGET_DIR_FIXTURE)?;
 
     // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
     // spawning state meager below.
@@ -103,7 +109,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         config: ConfigState::default(),
         system: SystemState::default(),
         indexing_state: RwLock::new(None), // Initialize as None
-        indexer_task: Some(Arc::new( indexer_task )),
+        indexer_task: Some(Arc::new(indexer_task)),
         indexing_control: Arc::new(Mutex::new(None)),
     });
 
@@ -129,6 +135,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         cmd_tx.clone(), // Clone for each subsystem
         config.provider.clone(),
     ));
+    tokio::spawn( run_event_bus(Arc::clone(&event_bus)) );
 
     let terminal = ratatui::init();
     let app = App::new(config.command_style, state, cmd_tx, &event_bus);
@@ -238,7 +245,7 @@ pub struct EventBus {
     background_tx: broadcast::Sender<AppEvent>,
     error_tx: broadcast::Sender<ErrorEvent>,
     // NOTE: dedicated for indexing manager control
-    index_tx: Arc< broadcast::Sender<indexer::IndexingStatus> >,
+    index_tx: Arc<broadcast::Sender<indexer::IndexingStatus>>,
 }
 
 /// Convenience struct to help with the initialization of EventBus
@@ -261,6 +268,51 @@ impl Default for EventBusCaps {
     }
 }
 
+async fn run_event_bus(event_bus: Arc< EventBus >) -> Result<()> {
+    use broadcast::error::RecvError;
+    let mut index_rx = event_bus.index_subscriber();
+    // more here?
+    loop {
+        tokio::select! {
+            index_event = index_rx.recv() => {
+                match index_event {
+                    Ok(status) => { match status.status {
+                        IndexStatus::Running => {
+                            let result = event_bus.realtime_tx.send(AppEvent::IndexingProgress(status));
+                            tracing::info!("{:?}", result);
+                            continue
+                        },
+                        IndexStatus::Completed => {
+                            let result = event_bus.realtime_tx.send(AppEvent::IndexingStarted);
+                            tracing::info!("{:?}", result);
+                            break;
+                        },
+                        IndexStatus::Cancelled => {
+                            // WARN: Consider whether this should count as a failure or not
+                            // when doing better error handling later.
+                            let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
+                            tracing::warn!("{:?}", result);
+                            break;
+                        },
+                        _ => {},
+                    }
+                    },
+                    Err(e) => { match e {
+                        RecvError::Closed => {
+                            tracing::trace!("indexing task event channel closed {}", e.to_string());
+                            break
+                        },
+                        RecvError::Lagged(_) => {
+                            tracing::trace!("indexing task event channel lagging {}", e.to_string())
+                        },
+                    }},
+
+                }
+            }
+        };
+    }
+    Ok(())
+}
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {
         Self {
@@ -270,6 +322,7 @@ impl EventBus {
             index_tx: Arc::new(broadcast::channel(b.index_cap).0),
         }
     }
+
 
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
