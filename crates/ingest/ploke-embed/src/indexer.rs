@@ -676,15 +676,18 @@ fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<Atom
 mod tests {
 
     use std::{
-        collections::BTreeMap, ops::Deref, sync::{
+        collections::BTreeMap,
+        ops::Deref,
+        sync::{
             atomic::{AtomicBool, AtomicUsize},
             Arc,
-        }, time::Duration
+        },
+        time::Duration,
     };
 
     use cozo::{CallbackOp, DataValue, MemStorage, NamedRows};
     use itertools::Itertools;
-    use ploke_db::{CallbackManager, Database, DbError, NodeType};
+    use ploke_db::{hnsw_all_types, CallbackManager, Database, DbError, NodeType};
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{init_test_tracing, setup_db_full};
@@ -913,7 +916,7 @@ mod tests {
             batch_size,
         );
         let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
-        let progress_tx_arc = Arc::new( progress_tx_nonarc );
+        let progress_tx_arc = Arc::new(progress_tx_nonarc);
         let (control_tx, control_rx) = mpsc::channel(4);
 
         let callback_handler = std::thread::spawn(move || callback_manager.run());
@@ -1148,7 +1151,7 @@ mod tests {
             batch_size,
         );
         let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
-        let progress_tx_arc = Arc::new( progress_tx_nonarc );
+        let progress_tx_arc = Arc::new(progress_tx_nonarc);
         let (control_tx, control_rx) = mpsc::channel(4);
 
         let callback_handler = std::thread::spawn(move || callback_manager.run());
@@ -1286,19 +1289,48 @@ mod tests {
         {
             tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
-        let db_ret = ploke_db::create_index(&db, NodeType::Function);
-        tracing::info!("db_ret = {:?}", db_ret);
+        for ty in NodeType::primary_nodes() {
+            let db_ret = ploke_db::create_index_warn(&db, ty, cozo::ScriptMutability::Mutable);
+            tracing::info!("db_ret = {:?}", db_ret);
+        }
 
-        let indexed_count = ploke_db::search_similar(&db, ef, k);
-        tracing::info!("db_ret = {:?}", indexed_count);
-        let db_ret = db.run_script("::indices function", BTreeMap::new(), cozo::ScriptMutability::Immutable);
+        let mut no_error = true;
+        for ty in NodeType::primary_nodes() {
+            match ploke_db::hnsw_of_type(&db, ty, ef, k) {
+                Ok(indexed_count) => {
+                    tracing::info!("db_ret = {:?}", indexed_count);
+                }
+                Err(w) if w.is_warning() => {
+                    tracing::warn!("No index found for rel: {}", ty.relation_str());
+                }
+                Err(e) => {
+                    tracing::error!("{}", e.to_string());
+                }
+            };
+        }
+        assert!(no_error);
+        let db_ret = db
+            .run_script(
+                "::indices function",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Immutable,
+            )
+            .map_err(DbError::from)?;
         tracing::info!("db_ret = {:?}", db_ret);
         if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!("CallbackManager not closed?");
         }
-        // FIX: Sleep here is to wait for the above loop to finish.
-        //  Bad solution. Fix it later.
-        // tokio::time::sleep(Duration::from_millis(300)).await;
+        match hnsw_all_types(&db, k, ef) {
+            Ok(indexed_count) => {
+                tracing::info!("db_ret = {:?}", indexed_count);
+            }
+            Err(w) if w.is_warning() => {
+                tracing::warn!("No index found for unknown rel");
+            }
+            Err(e) => {
+                tracing::error!("{}", e.to_string());
+            }
+        };
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
             "updated rows: {}, pending db callback: {}",
@@ -1311,16 +1343,87 @@ mod tests {
             // received_completed.load(std::sync::atomic::Ordering::SeqCst),
             "Indexer completed without sending completion status: Miscount: {inner}/{total_count}"
         );
-            // .filter_map(|r| r.last().map(|c| c.get_slice().unwrap()))
-            // .collect::<Vec<f32>>();
-        // ploke_db::search_similar(&db, &query_embedding, k, ef);
+        // .filter_map(|r| r.last().map(|c| c.get_slice().unwrap()))
+        // .collect::<Vec<f32>>();
+        // ploke_db::(&db, &query_embedding, k, ef);
         Ok(())
     }
-    // NOTE: passing
     #[tokio::test]
-    async fn test_batch_th_ss() -> Result<(), Error> {
+    // NOTE: passing
+    async fn test_batch_ss_nodes() -> Result<(), Error> {
+        init_test_tracing_temporary(Level::INFO);
+        test_next_batch_ss("fixture_nodes").await
+    }
+
+    #[tokio::test]
+    #[ignore = "requires further improvement of syn_parser"]
+    // FIX: failing on step:
+    // INFO  Parse: build module tree
+    //    at crates/test-utils/src/lib.rs:65
+    async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
+        init_test_tracing(Level::TRACE);
+        test_next_batch_ss("file_dir_detection").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_attributes() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_attributes").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_cyclic_types() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_cyclic_types").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_edge_cases() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_edge_cases").await
+    }
+    #[tokio::test]
+    // INFO: passing
+    async fn test_batch_ss_generics() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_generics").await
+    }
+    #[tokio::test]
+    // INFO: passing
+    async fn test_batch_ss_macros() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_macros").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_path_resolution() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_path_resolution").await
+    }
+    #[tokio::test]
+    #[ignore = "requires further improvement of syn_parser"]
+    // WARN: failing (dependent upon other improvements in cfg?)
+    async fn test_batch_ss_spp_edge_cases_cfg() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_spp_edge_cases").await
+    }
+    #[tokio::test]
+    #[ignore = "requires further improvement of syn_parser"]
+    // WARN: failing (dependent upon other improvements)
+    async fn test_batch_ss_spp_edge_cases_no_cfg() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_spp_edge_cases_no_cfg").await
+    }
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_tracking_hash() -> Result<(), Error> {
         init_test_tracing_temporary(Level::INFO);
         test_next_batch_ss("fixture_tracking_hash").await
     }
-
+    #[tokio::test]
+    // NOTE: passing
+    async fn test_batch_ss_types() -> Result<(), Error> {
+        init_test_tracing(Level::INFO);
+        test_next_batch_ss("fixture_types").await
+    }
 }

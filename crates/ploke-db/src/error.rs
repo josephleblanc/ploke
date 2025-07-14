@@ -4,6 +4,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone, PartialEq)]
 pub enum DbError {
+    #[error("Conversion Error: {0}")]
+    UuidConv(#[from] uuid::Error),
+
     #[error("Database error: {0}")]
     Cozo(String),
 
@@ -34,7 +37,9 @@ pub enum DbWarning {
 
 impl From<cozo::Error> for DbError {
     fn from(value: cozo::Error) -> Self {
-        Self::Cozo(value.to_string())
+        let e = value.to_string();
+        tracing::trace!("Cozo Error: {}", e);
+        Self::Cozo(e)
     }
 }
 

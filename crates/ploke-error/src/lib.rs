@@ -28,3 +28,9 @@ pub enum Error {
     #[error("{msg} {0}", msg = "TransformError: ")]
     TransformError(String),
 }
+
+impl Error {
+    pub fn is_warning(&self) -> bool {
+        matches!(self, Error::Warning(_))
+    }
+}
