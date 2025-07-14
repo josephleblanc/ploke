@@ -267,6 +267,24 @@ impl Database {
         Ok(unembedded_data)
     }
 
+    /// Fetches all primary nodes that already have an embedding.
+    pub fn get_embedded_node_data(
+        &self,
+        limit: usize,
+        cursor: usize,
+    ) -> Result<Vec<TypedEmbedData>, ploke_error::Error> {
+        let mut unembedded_data = Vec::new();
+        let mut count = 0;
+        // TODO: Awkward. Improve this.
+        for t in NodeType::primary_nodes() {
+            let nodes_of_type = self.get_embed_rel(t, limit.saturating_sub(count), cursor)?;
+            count += nodes_of_type.len();
+            tracing::info!("=== {count} ===");
+            unembedded_data.push(nodes_of_type);
+        }
+        Ok(unembedded_data)
+    }
+
     // TODO: finish integrating get_file_data into the batch embedding process.
     // Most likely this will involve repalcing the Vec<EmbeddingData> with a hashmap.
     pub fn get_file_data(&self) -> Result<Vec<FileData>, ploke_error::Error> {
@@ -322,6 +340,64 @@ impl Database {
 
     batch[id, name, file_path, file_hash, hash, span, namespace] := 
         needs_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{id: mod_id, tracking_hash: file_hash},
+        *file_mod { owner_id: mod_id, file_path, namespace },
+
+    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace]
+        :sort id
+        :limit $limit
+     "#;
+        let rel_name = node_type.relation_str();
+
+        base_script.push_str(base_script_start);
+        base_script.push_str(rel_name);
+        base_script.push_str(base_script_end);
+
+        // Create parameters map
+        let mut params = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::from(cursor as i64));
+
+        let query_result = self
+            .db
+            .run_script(&base_script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let count_more_flat = query_result.rows.iter().flatten().count();
+        let count_less_flat = query_result.rows.len();
+        tracing::info!("== more_flat: {count_more_flat} | less_flat: {count_less_flat} ==");
+        let more_flat_row = query_result.rows.iter().flatten().next();
+        let less_flat_row = query_result.rows.first();
+        tracing::info!("== \nmore_flat: {more_flat_row:?}\nless_flat: {less_flat_row:?}\n ==");
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        let ty_embed = TypedEmbedData { v, ty: node_type };
+        Ok(ty_embed)
+    }
+
+    pub fn get_embed_rel(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: usize,
+    ) -> Result<TypedEmbedData, ploke_error::Error> {
+        let mut base_script = String::new();
+        // TODO: Add pre-registered fixed rules to the system.
+        let base_script_start = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+    has_embedding[id, name, hash, span] := *"#;
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, !is_null(embedding)
+
+    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+        has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
         *module{id: mod_id, tracking_hash: file_hash},

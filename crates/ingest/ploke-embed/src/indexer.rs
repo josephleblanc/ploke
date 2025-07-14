@@ -676,16 +676,15 @@ fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<Atom
 mod tests {
 
     use std::{
-        ops::Deref,
-        sync::{
+        collections::BTreeMap, ops::Deref, sync::{
             atomic::{AtomicBool, AtomicUsize},
             Arc,
-        },
-        time::Duration,
+        }, time::Duration
     };
 
     use cozo::{CallbackOp, DataValue, MemStorage, NamedRows};
-    use ploke_db::{CallbackManager, Database, NodeType};
+    use itertools::Itertools;
+    use ploke_db::{CallbackManager, Database, DbError, NodeType};
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::{init_test_tracing, setup_db_full};
@@ -1121,4 +1120,207 @@ mod tests {
             ""
         );
     }
+
+    async fn test_next_batch_ss(fixture: &'static str) -> Result<(), ploke_error::Error> {
+        tracing::info!("Starting test_next_batch: {fixture}");
+
+        let cozo_db = setup_db_full(fixture)?;
+        let db = Arc::new(Database::new(cozo_db));
+        let total_count = db.count_unembedded_nonfiles()?;
+        let io = IoManagerHandle::new();
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = EmbeddingProcessor { source };
+
+        let (cancellation_token, cancel_handle) = CancellationToken::new();
+        let batch_size = 8;
+
+        let (callback_manager, db_callbacks, unreg_codes_arc, shutdown) =
+            CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
+        let counter = callback_manager.clone_counter();
+
+        let idx_tag = IndexerTask::new(
+            Arc::clone(&db),
+            io,
+            embedding_processor,
+            cancellation_token,
+            batch_size,
+        );
+        let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
+        let progress_tx_arc = Arc::new( progress_tx_nonarc );
+        let (control_tx, control_rx) = mpsc::channel(4);
+
+        let callback_handler = std::thread::spawn(move || callback_manager.run());
+        let mut idx_handle =
+            tokio::spawn(async move { idx_tag.run(progress_tx_arc, control_rx).await });
+
+        let received_completed = AtomicBool::new(false);
+        let callback_closed = AtomicBool::new(false);
+        let start = Instant::now();
+        let timeout = Duration::from_secs(1200); // Increased timeout
+
+        let all_results = Arc::new(Mutex::new(Vec::new()));
+
+        loop {
+            match db_callbacks.try_recv() {
+                Ok(c) => match c {
+                    Ok((call, new, old)) => {
+                        log_stuff(call, new.clone(), old, Arc::clone(&counter));
+                        all_results.lock().await.push(new.to_owned());
+                    }
+                    Err(e) => {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}")
+                    }
+                },
+                Err(e) => {
+                    if e.is_disconnected() {
+                        tracing::debug!("[in IndexerTask.run db_callback | {e}");
+                        break;
+                    }
+                }
+            };
+            tokio::select! {
+                biased;
+
+                status = progress_rx.recv() => {
+                    match status {
+                        Ok(status) => {
+                            match status.status {
+                                IndexStatus::Failed(s)=>{
+                                    tracing::debug!("Indexing failed with message: {}\nErrors: {:?}",
+                                        s,status.errors);
+                                    panic!("Indexing failed with message: {}\nErrors: {:?}",s,status.errors);
+                                }
+                                IndexStatus::Idle => {todo!()},
+                                IndexStatus::Running => {},
+                                IndexStatus::Paused => {todo!()},
+                                IndexStatus::Completed => {
+                                    tracing::debug!("Progress: {:?}", status);
+                                    received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    if callback_handler.is_finished() {
+                                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                                        callback_handler.join().expect("Callback errror - not finished")?;
+                                        break;
+                                    } else {
+                                        tracing::warn!("Sending shutdown signal to CallbackManager.");
+                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        // break;
+                                    }
+                                },
+                                IndexStatus::Cancelled => {
+                                    tracing::debug!("Cancelled Task | Progress: {:?}", status);
+                                    break;
+                                },
+                            }
+                        }
+                        Err(e) => {
+                            tracing::debug!("Received Error: {:?}", e);
+                        }, // Channel closed
+                    }
+                }
+
+                res = &mut idx_handle => {
+                    if callback_handler.is_finished() {
+                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                        callback_handler.join().expect("Callback errror - not finished")?;
+                        break;
+                    } else {
+                        tracing::warn!("Sending shutdown signal to CallbackManager.");
+                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        // break;
+                    }
+                    let task_result = res.expect("Task panicked");
+                    task_result?; // Propagate any errors
+                    break;
+                }
+
+
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if start.elapsed() > timeout {
+                        panic!("Test timed out without completion signal");
+                    }
+                }
+            }
+        }
+        if idx_handle.is_finished() {
+            tracing::info!("Indexer Handle is Finished: {:?}", idx_handle);
+            // inner result
+        } else {
+            tracing::error!("Indexer Handle did not finish.")
+        }
+        let all_pending_rows = db.get_pending_test()?;
+        let total_rows = all_results.lock_owned().await;
+        let mut not_found = Vec::new();
+        let mut found = Vec::new();
+        total_rows
+            .clone()
+            .into_iter()
+            .flat_map(|nr| nr.rows)
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+            .for_each(|(i, idx, name)| {
+                let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
+                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
+                let node_data = (i, name, idx);
+                if is_found {
+                    found.push(node_data);
+                } else {
+                    not_found.push(node_data);
+                }
+            });
+        let k = 2;
+        let ef = 2;
+        // tracing::info!("{:?}", query_embedding);
+        for (i, name, idx) in not_found.iter() {
+            tracing::trace!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
+        }
+        let mut test_vec: Vec<Vec<f32>> = Vec::new();
+        for (i, name, idx) in all_pending_rows
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+        {
+            tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
+        }
+        let db_ret = ploke_db::create_index(&db, NodeType::Function);
+        tracing::info!("db_ret = {:?}", db_ret);
+
+        let indexed_count = ploke_db::search_similar(&db, ef, k);
+        tracing::info!("db_ret = {:?}", indexed_count);
+        let db_ret = db.run_script("::indices function", BTreeMap::new(), cozo::ScriptMutability::Immutable);
+        tracing::info!("db_ret = {:?}", db_ret);
+        if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!("CallbackManager not closed?");
+        }
+        // FIX: Sleep here is to wait for the above loop to finish.
+        //  Bad solution. Fix it later.
+        // tokio::time::sleep(Duration::from_millis(300)).await;
+        let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
+        tracing::info!(
+            "updated rows: {}, pending db callback: {}",
+            not_found.len(),
+            found.len()
+        );
+        tracing::info!("Ending test_next_batch: {fixture}: total count {inner}, counter {total_count} | {inner}/{total_count}");
+        assert!(
+            total_count == counter.load(std::sync::atomic::Ordering::SeqCst),
+            // received_completed.load(std::sync::atomic::Ordering::SeqCst),
+            "Indexer completed without sending completion status: Miscount: {inner}/{total_count}"
+        );
+            // .filter_map(|r| r.last().map(|c| c.get_slice().unwrap()))
+            // .collect::<Vec<f32>>();
+        // ploke_db::search_similar(&db, &query_embedding, k, ef);
+        Ok(())
+    }
+    // NOTE: passing
+    #[tokio::test]
+    async fn test_batch_th_ss() -> Result<(), Error> {
+        init_test_tracing_temporary(Level::INFO);
+        test_next_batch_ss("fixture_tracking_hash").await
+    }
+
 }
