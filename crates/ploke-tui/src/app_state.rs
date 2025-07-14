@@ -445,30 +445,61 @@ pub async fn state_manager(
                 )
                 .await;
                 let event_bus_clone = event_bus.clone();
+                // let progress_tx = Arc::clone(&event_bus.index_tx);
                 let progress_tx = Arc::clone(&event_bus.index_tx);
                 let progress_rx = event_bus.index_subscriber();
 
                 let state_arc = state.indexer_task.as_ref().map(Arc::clone);
                 if let Some(indexer_task) = state_arc {
-                    let res = tokio::spawn(async move {
-                        let indexing_result = IndexerTask::index_workspace_test(
-                            indexer_task,
-                            workspace,
-                            progress_tx,
-                            progress_rx,
-                            control_rx,
-                        )
+                    if let Ok((callback_manager, db_callbacks, unreg_codes_arc, shutdown)) =
+                        ploke_db::CallbackManager::new_bounded(Arc::clone(&indexer_task.db), 1000)
+                    {
+                        let counter = callback_manager.clone_counter();
+                        let callback_handler = std::thread::spawn(move || callback_manager.run());
+                        let res = tokio::spawn(async move {
+                            let indexing_result = IndexerTask::index_workspace(
+                                indexer_task,
+                                workspace,
+                                progress_tx,
+                                progress_rx,
+                                control_rx,
+                                callback_handler,
+                                db_callbacks,
+                                counter,
+                                shutdown,
+                            )
+                            .await;
+                            tracing::info!("Indexer task returned");
+                            match indexing_result {
+                                Ok(_) => { 
+                                    tracing::info!("Sending Indexing Completed");
+                                    event_bus_clone.send(AppEvent::IndexingCompleted)
+                                },
+                                Err(e) => { 
+                                    tracing::warn!("Sending Indexing Failed with error message: {}", e.to_string());
+                                    event_bus_clone.send(AppEvent::IndexingFailed) 
+                                },
+                            }
+                        })
                         .await;
-                        match indexing_result {
-                            Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
-                            Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
+                        match res {
+                            Ok(_) => { 
+                                tracing::info!("Sending Indexing Completed");
+                            },
+                            Err(e) => { 
+                                tracing::warn!("Sending Indexing Failed with error message: {}", e.to_string());
+                            },
                         }
-                    })
-                    .await;
-                    // match res {
-                    //     Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
-                    //     Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
-                    // }
+                        // match callback_handler.join() {
+                        //     Ok(r) => { 
+                        //         tracing::info!("Callback Handler Completed: {:?}", r);
+                        //     },
+                        //     Err(e) => { 
+                        //         tracing::warn!("Callback Handler Failed with error message: {:?}", e);
+                        //     },
+                        // }
+                        tracing::info!("Indexer task returned");
+                    }
                 }
             }
             StateCommand::PauseIndexing => {

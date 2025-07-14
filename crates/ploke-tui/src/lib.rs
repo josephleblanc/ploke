@@ -5,10 +5,10 @@ pub mod app_state;
 pub mod chat_history;
 pub mod file_man;
 pub mod llm;
+pub mod parser;
 pub mod tracing_setup;
 pub mod user_config;
 pub mod utils;
-pub mod parser;
 
 #[cfg(test)]
 mod test_utils;
@@ -75,7 +75,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
-    run_parse(Arc::clone( &db_handle ), TARGET_DIR_FIXTURE)?;
+    run_parse(Arc::clone(&db_handle), TARGET_DIR_FIXTURE)?;
 
     // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
     // spawning state meager below.
@@ -135,7 +135,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         cmd_tx.clone(), // Clone for each subsystem
         config.provider.clone(),
     ));
-    tokio::spawn( run_event_bus(Arc::clone(&event_bus)) );
+    tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
     let terminal = ratatui::init();
     let app = App::new(config.command_style, state, cmd_tx, &event_bus);
@@ -215,7 +215,7 @@ impl AppEvent {
             AppEvent::Error(_) => EventPriority::Background,
             AppEvent::IndexingProgress(_) => EventPriority::Realtime,
             AppEvent::IndexingStarted => EventPriority::Background,
-            AppEvent::IndexingCompleted => EventPriority::Background,
+            AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
         }
     }
@@ -268,48 +268,53 @@ impl Default for EventBusCaps {
     }
 }
 
-async fn run_event_bus(event_bus: Arc< EventBus >) -> Result<()> {
+async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     use broadcast::error::RecvError;
     let mut index_rx = event_bus.index_subscriber();
     // more here?
     loop {
-        tokio::select! {
-            index_event = index_rx.recv() => {
-                match index_event {
-                    Ok(status) => { match status.status {
-                        IndexStatus::Running => {
-                            let result = event_bus.realtime_tx.send(AppEvent::IndexingProgress(status));
-                            tracing::info!("{:?}", result);
-                            continue
-                        },
-                        IndexStatus::Completed => {
-                            let result = event_bus.realtime_tx.send(AppEvent::IndexingStarted);
-                            tracing::info!("{:?}", result);
-                            break;
-                        },
-                        IndexStatus::Cancelled => {
-                            // WARN: Consider whether this should count as a failure or not
-                            // when doing better error handling later.
-                            let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
-                            tracing::warn!("{:?}", result);
-                            break;
-                        },
-                        _ => {},
+        tracing::trace!("event bus received IndexStatus");
+        // tokio::select! {
+        // index_event = index_rx.recv() => {
+        let index_event = index_rx.recv().await;
+        match index_event {
+            Ok(status) => {
+                match status.status {
+                    IndexStatus::Running => {
+                        tracing::warn!("event bus sending {:?}", status.status);
+                        let result = event_bus
+                            .realtime_tx
+                            .send(AppEvent::IndexingProgress(status));
+                        tracing::warn!("with result {:?}", result);
+                        continue;
                     }
-                    },
-                    Err(e) => { match e {
-                        RecvError::Closed => {
-                            tracing::trace!("indexing task event channel closed {}", e.to_string());
-                            break
-                        },
-                        RecvError::Lagged(_) => {
-                            tracing::trace!("indexing task event channel lagging {}", e.to_string())
-                        },
-                    }},
-
+                    IndexStatus::Completed => {
+                        let result = event_bus.realtime_tx.send(AppEvent::IndexingStarted);
+                        tracing::warn!("event bus sending {:?} with result {:?}", status.status, result);
+                        break;
+                    }
+                    IndexStatus::Cancelled => {
+                        // WARN: Consider whether this should count as a failure or not
+                        // when doing better error handling later.
+                        let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
+                        tracing::warn!("event bus sending {:?} with result {:?}", status.status, result);
+                        break;
+                    }
+                    _ => {}
                 }
             }
-        };
+            Err(e) => match e {
+                RecvError::Closed => {
+                    tracing::trace!("indexing task event channel closed {}", e.to_string());
+                    break;
+                }
+                RecvError::Lagged(_) => {
+                    tracing::trace!("indexing task event channel lagging {}", e.to_string())
+                }
+            },
+        }
+        // }
+        // };
     }
     Ok(())
 }
@@ -322,7 +327,6 @@ impl EventBus {
             index_tx: Arc::new(broadcast::channel(b.index_cap).0),
         }
     }
-
 
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();

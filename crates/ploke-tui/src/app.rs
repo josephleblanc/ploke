@@ -171,7 +171,7 @@ impl App {
                             tracing::info!("Indexing Succeeded!");
                             self.indexing_state = None;
                             self.send_cmd(StateCommand::AddMessageImmediate {
-                                msg: String::from("IndexingSucceeded"),
+                                msg: String::from("Indexing Succeeded"),
                                 kind: MessageKind::SysInfo,
                             })
                         },
@@ -207,7 +207,9 @@ impl App {
             .constraints(vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
-                Constraint::Length(4),
+                Constraint::Length(1),
+                Constraint::Length(3),
+                Constraint::Length(1)
             ])
             .split(frame.area());
 
@@ -280,7 +282,7 @@ impl App {
                 .ratio(state.calc_progress())
                 .gauge_style(Style::new().light_blue());
 
-            frame.render_widget(gauge, main_layout[2]); // Bottom area
+            frame.render_widget(gauge, main_layout[3]); // Bottom area
         }
 
         // Render Mode to text
