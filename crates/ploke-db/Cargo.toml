@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 cozo = { workspace = true }
 ploke-transform = { path = "../ingest/ploke-transform" }
+ploke-core = { path = "../ploke-core" }
 syn_parser = { path = "../ingest/syn_parser" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -15,14 +16,21 @@ uuid = { workspace = true }
 # error handling
 ploke-error = { path = "../ploke-error" }
 thiserror = "1.0"
-log = { workspace = true }
 
 # pre-caching the schema fields for queries
 lazy_static = "1.4.0" # Added lazy_static
 
-[dev-dependencies]
+# concurrency
 tokio = { workspace = true }
-ploke-transform = { path = "../ingest/ploke-transform" }
+rayon = { workspace = true }
+crossbeam-channel = "0.5.15"
+
+# logging
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+ploke-test-utils = { path = "../test-utils" }
 
 [features]
 defaults = []

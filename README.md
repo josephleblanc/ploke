@@ -349,9 +349,19 @@ We are deeply committed to creating a project that has clean, idiomatic rust tha
   - See [parser_error_handling]
 </details>
 
-## Current Focus: TUI Prototype
+## Current Focus: RAG & TUI Integration
 
-Our immediate focus is on the Terminal User Interface that forms the primary user-facing interface with the LLM.
+Our immediate focus is on integrating the RAG and TUI.
+
+## 📜 License
+
+Ploke is licensed under a **dual-license model**:
+
+- **Open Source License**: You may use, modify, and redistribute Ploke under the terms of the [GNU General Public License v3.0 (GPL-3.0)](https://www.gnu.org/licenses/gpl-3.0.en.html).
+- **Commercial License**: If you would like to use Ploke as part of a proprietary product, SaaS offering, or any commercial service without complying with GPL-3.0, you must obtain a commercial license.
+
+To inquire about commercial licensing, please contact:
+📩 **team@ploke.dev**
 
 [uuid_refactor]:./docs/plans/uuid_refactor
 [00_overview]:./docs/plans/uuid_refactor/00_overview_batch_processing_model.md

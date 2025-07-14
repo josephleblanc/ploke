@@ -43,7 +43,13 @@ pub enum FatalError {
     },
 
     #[error("Content changed for {path:?}")]
-    ContentMismatch { path: PathBuf },
+    ContentMismatch {
+        name: String,
+        id: uuid::Uuid,
+        file_tracking_hash: uuid::Uuid,
+        namespace: uuid::Uuid,
+        path: PathBuf,
+    },
 
     #[error("Shutdown initiated")]
     ShutdownInitiated,
@@ -59,16 +65,27 @@ impl Clone for FatalError {
     fn clone(&self) -> Self {
         match self {
             Self::SyntaxError(s) => Self::SyntaxError(s.clone()),
-            Self::DuplicateModulePath { path, existing_id, conflicting_id } => Self::DuplicateModulePath {
+            Self::DuplicateModulePath {
+                path,
+                existing_id,
+                conflicting_id,
+            } => Self::DuplicateModulePath {
                 path: path.clone(),
                 existing_id: existing_id.clone(),
                 conflicting_id: conflicting_id.clone(),
             },
-            Self::UnresolvedReExport { import_id, target_path } => Self::UnresolvedReExport {
+            Self::UnresolvedReExport {
+                import_id,
+                target_path,
+            } => Self::UnresolvedReExport {
                 import_id: import_id.clone(),
                 target_path: target_path.clone(),
             },
-            Self::RecursionLimit { start_node, depth, limit } => Self::RecursionLimit {
+            Self::RecursionLimit {
+                start_node,
+                depth,
+                limit,
+            } => Self::RecursionLimit {
                 start_node: start_node.clone(),
                 depth: *depth,
                 limit: *limit,
@@ -78,12 +95,28 @@ impl Clone for FatalError {
                 source: source.clone(),
             },
             Self::DatabaseCorruption(s) => Self::DatabaseCorruption(s.clone()),
-            Self::FileOperation { operation, path, source } => Self::FileOperation {
-                operation: *operation,
+            Self::FileOperation {
+                operation,
+                path,
+                source,
+            } => Self::FileOperation {
+                operation,
                 path: path.clone(),
                 source: Arc::clone(source),
             },
-            Self::ContentMismatch { path } => Self::ContentMismatch { path: path.clone() },
+            Self::ContentMismatch {
+                name,
+                id,
+                file_tracking_hash,
+                namespace,
+                path,
+            } => Self::ContentMismatch { 
+                path: path.clone(),
+                name: name.clone(),
+                id: *id,
+                file_tracking_hash: *file_tracking_hash,
+                namespace: *namespace,
+            },
             Self::ShutdownInitiated => Self::ShutdownInitiated,
             Self::Utf8 { path, source } => Self::Utf8 {
                 path: path.clone(),

@@ -2,8 +2,11 @@
 
 use thiserror::Error;
 
-#[derive(Error, Debug, Clone)]
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum DbError {
+    #[error("Conversion Error: {0}")]
+    UuidConv(#[from] uuid::Error),
+
     #[error("Database error: {0}")]
     Cozo(String),
 
@@ -12,12 +15,32 @@ pub enum DbError {
 
     #[error("Invalid query construction: {0}")]
     QueryConstruction(String),
+
+    #[error("Item not found")]
+    NotFound,
+
+    #[error("Error encountered for callback construction")]
+    CallbackErr,
+
+    #[error("Do not change the max of the callback")]
+    CallbackSetCheck,
+
+    #[error("Error receiving message: {0}")]
+    CrossBeamSend(String)
 }
 
 #[derive(Error, Debug)]
 pub enum DbWarning {
     #[error("Invalid query build attempt: {0}")]
     QueryBuild(String),
+}
+
+impl From<cozo::Error> for DbError {
+    fn from(value: cozo::Error) -> Self {
+        let e = value.to_string();
+        tracing::trace!("Cozo Error: {}", e);
+        Self::Cozo(e)
+    }
 }
 
 // impl std::fmt::Display for crate::Error {

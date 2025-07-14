@@ -1,3 +1,38 @@
+//! A Rust source code parser and analyzer.
+//!
+//! `syn_parser` provides tools to perform a discovery phase on a Rust crate,
+//! parse all its source files into abstract syntax trees, and build a structured,
+
+//! queryable representation of the code.
+//!
+//! The main entry points are [`run_phases_and_collect`] and [`run_phases_and_merge`].
+//!
+//! # Examples
+//!
+//! A typical use case involves running the parser on a fixture crate and
+//! accessing the resulting code graph and module tree for analysis.
+//!
+//! ```no_run
+//! use syn_parser::{run_phases_and_merge, ParserOutput, error::SynParserError};
+//!
+//! fn main() -> Result<(), SynParserError> {
+//!     // The `fixture_name` should correspond to a directory in the `tests/fixtures`
+//!     // directory of the `ploke` workspace.
+//!     let fixture_name = "simple_crate";
+//!
+//!     // `run_phases_and_merge` handles discovery, parallel parsing, and tree construction.
+//!     let mut parser_output: ParserOutput = run_phases_and_merge(fixture_name)?;
+//!
+//!     // Extract the code graph and module tree for analysis.
+//!     if let (Some(graph), Some(tree)) = (parser_output.extract_merged_graph(), parser_output.extract_module_tree()) {
+//!         println!("Successfully parsed and built module tree.");
+//!         println!("Found {} functions in the graph.", graph.functions().len());
+//!         println!("Module tree root: {:?}", tree.root());
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 pub mod discovery;
 pub mod error;
 pub mod parser;
@@ -17,9 +52,29 @@ pub use ploke_core::TypeId; // Re-export the enum/struct from ploke-core
 pub use parser::nodes::test_ids::TestIds;
 
 // Main types for access in other crates
-pub use parser::graph::ParsedCodeGraph;
+pub use parser::graph::{GraphAccess, ParsedCodeGraph};
 pub use resolve::module_tree::ModuleTree;
 
+/// Runs the discovery and parsing phases and collects the `ParsedCodeGraph`s.
+///
+/// This function is useful when you need to inspect the parsed data for each
+/// file individually before merging.
+///
+/// # Arguments
+///
+/// * `fixture_name` - The name of the test fixture crate to run the phases on.
+///
+/// # Returns
+///
+/// A `Result` containing a `Vec` of `ParsedCodeGraph`s on success, or a
+/// `SynParserError` if a critical error occurs during discovery or if all
+/// files fail to parse.
+///
+/// # Panics
+///
+/// This function will panic if the initial discovery phase fails (e.g., the
+/// fixture directory or its `Cargo.toml` cannot be found). This is intended
+/// for test environments where fixtures are expected to be present.
 pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph>, SynParserError > {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
@@ -40,9 +95,9 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph
             return Err(SynParserError::MultipleErrors(error_list));
         } else {
             // Some succeeded - log errors but continue
-            eprintln!("{} files had errors:\n{}",
+            eprintln!( "{} files had errors: {}",
                 error_list.len(),
-                error_list.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n")
+                error_list.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")
             );
         }
     }
@@ -51,6 +106,25 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph
     Ok(successes.into_iter().map(Result::unwrap).collect())   
 }
 
+/// Runs the full parsing pipeline and returns a `ParserOutput`.
+///
+/// This is the primary entry point for parsing a crate. It performs the
+/// discovery phase, parallel parsing of all files, merges the results into a
+/// single `ParsedCodeGraph`, and finally constructs the `ModuleTree`.
+///
+/// # Arguments
+///
+/// * `fixture_name` - The name of the test fixture crate to parse.
+///
+/// # Returns
+///
+/// A `Result` containing a `ParserOutput` on success, or a `SynParserError`
+/// on failure.
+///
+/// # Panics
+///
+/// This function will panic if the initial discovery phase fails, similar to
+/// [`run_phases_and_collect`].
 pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, SynParserError> {
     let parsed_graphs = run_phases_and_collect(fixture_name)?;
     let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
@@ -61,6 +135,7 @@ pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, SynParse
     })
 }
 
+/// The output of the parser, containing the merged `ParsedCodeGraph` and `ModuleTree`.
 #[allow(dead_code, reason = "Primary output of this crate, not used locally")]
 pub struct ParserOutput {
     merged_graph: Option<ParsedCodeGraph>,
@@ -68,11 +143,14 @@ pub struct ParserOutput {
 }
 
 impl ParserOutput {
+    /// Extracts the `ParsedCodeGraph` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_merged_graph(&mut self) -> Option<ParsedCodeGraph> {
         self.merged_graph.take()
     }
 
+    /// Extracts the `ModuleTree` from the `ParserOutput`, leaving `None` in its place.
     pub fn extract_module_tree(&mut self) -> Option<ModuleTree> {
         self.module_tree.take()
     }
 }
+

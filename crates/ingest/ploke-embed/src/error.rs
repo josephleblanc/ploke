@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use crate::local;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum EmbedError {
@@ -14,8 +15,11 @@ pub enum EmbedError {
     #[error("Local model error: {0}")]
     LocalModel(String),
 
-    #[error("Hugging Face API error: status {status}, body: {body}")]
-    HuggingFaceApi { status: u16, body: String },
+    #[error("Network Error: {0}")]
+    Network(String),
+
+    #[error("Feature not implemented: {0}")]
+    NotImplemented(String),
 
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
     DimensionMismatch { expected: usize, actual: usize },
@@ -31,6 +35,24 @@ pub enum EmbedError {
     
     #[error("Ploke core error: {0}")]
     PlokeCore(#[from] ploke_error::Error),
+
+    #[error("Broadcast send error: {0}")]
+    BroadcastSendError(String),
+
+    #[error("HTTP Error {status} at {url}: {body}")]
+    HttpError {
+        status: u16,
+        body: String,
+        url: String,
+    },
+    #[error("Join handle failed for thread: {0}")]
+    JoinFailed(String),
+}
+
+impl From<tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>> for EmbedError {
+    fn from(e: tokio::sync::broadcast::error::SendError<crate::indexer::IndexingStatus>) -> Self {
+        EmbedError::BroadcastSendError(e.to_string())
+    }
 }
 
 impl From<candle_core::Error> for EmbedError {
@@ -51,12 +73,15 @@ impl From<tokenizers::Error> for EmbedError {
     }
 }
 
-impl From<ApiError> for EmbedError {
-    fn from(e: ApiError) -> Self {
-        EmbedError::HuggingFaceApi {
-            status: e.status,
-            body: e.body,
-        }
+impl From<local::EmbeddingError> for EmbedError {
+    fn from(e: local::EmbeddingError) -> Self {
+        EmbedError::LocalModel(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for EmbedError {
+    fn from(e: reqwest::Error) -> Self {
+        EmbedError::Network(e.to_string())
     }
 }
 
@@ -66,16 +91,11 @@ impl From<EmbedError> for ploke_error::Error {
     }
 }
 
-#[derive(Debug)]
-pub struct ApiError {
-    pub status: u16,
-    pub body: String,
-}
-
-impl std::fmt::Display for ApiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "API error: status {} body {}", self.status, self.body)
+/// Helper to truncate strings for error display
+pub fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_owned()
+    } else {
+        format!("{}…", &s[..max_len])
     }
 }
-
-impl std::error::Error for ApiError {}

@@ -1,25 +1,18 @@
-use ploke_embed::indexer::IndexerTask;
-use tokio::sync::{RwLock, mpsc, oneshot};
+use crate::chat_history::MessageKind;
+use ploke_embed::indexer::{IndexStatus, IndexerCommand, IndexerTask};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 // logging
 
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
-    llm::{ChatHistoryTarget, LLMParameters, MessageRole},
+    llm::{ChatHistoryTarget, LLMParameters},
+    system::SystemEvent,
     utils::helper::truncate_string,
 };
 
 use super::*;
-
-// pub struct AppState {
-//     pub chat_history: RwLock<ChatHistory>,
-//     pub system_status: RwLock<SystemStatus>,
-//     /// Stores user config. Low write (if ever), higher read.
-//
-//     // A channel to signal application shutdown.
-//     pub shutdown: tokio::sync::broadcast::Sender<()>,
-// }
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
@@ -30,18 +23,73 @@ pub struct AppState {
     pub chat: ChatState,     // High-write frequency
     pub config: ConfigState, // Read-heavy
     pub system: SystemState, // Medium-write
+
+    // crate-external processes
+    pub indexing_state: RwLock<Option<IndexingStatus>>,
+    pub indexer_task: Option<Arc<indexer::IndexerTask>>,
+    pub indexing_control: Arc<Mutex<Option<mpsc::Sender<indexer::IndexerCommand>>>>,
 }
 
 // TODO: Implement Deref for all three *State items below
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ChatState(pub RwLock<ChatHistory>);
+
+impl ChatState {
+    pub fn new(history: ChatHistory) -> Self {
+        ChatState(RwLock::new(history))
+    }
+}
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
-#[derive(Debug)]
+
+#[derive(Debug, Default)]
 pub struct ConfigState(RwLock<Config>);
-#[derive(Debug)]
+
+impl ConfigState {
+    pub fn new(config: Config) -> Self {
+        ConfigState(RwLock::new(config))
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct SystemState(RwLock<SystemStatus>);
+
+impl SystemState {
+    pub fn new(status: SystemStatus) -> Self {
+        SystemState(RwLock::new(status))
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
+
+impl IndexingState {
+    pub fn new(status: IndexingStatus) -> Self {
+        IndexingState(Arc::new(Mutex::new(status)))
+    }
+}
+
+impl std::ops::Deref for ConfigState {
+    type Target = RwLock<Config>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for SystemState {
+    type Target = RwLock<SystemStatus>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for IndexingState {
+    type Target = Arc<Mutex<IndexingStatus>>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Config {
@@ -68,6 +116,9 @@ impl Default for AppState {
             chat: ChatState(RwLock::new(ChatHistory::new())),
             config: ConfigState(RwLock::new(Config::default())),
             system: SystemState(RwLock::new(SystemStatus::default())),
+            indexing_state: RwLock::new(None),
+            indexer_task: None,
+            indexing_control: Arc::new(Mutex::new(None)),
             // TODO: This needs to be handled elsewhere if not handled in AppState
             // shutdown: tokio::sync::broadcast::channel(1).0,
         }
@@ -113,8 +164,8 @@ pub enum StateCommand {
     /// and for creating the initial placeholder for an assistant's response.
     // TODO: Fold the `AddUserMessage` into `AddMessage`
     AddMessage {
-        /// The role of the message author (e.g., User or Assistant).
-        role: MessageRole,
+        /// The kind of the message author (e.g., User or Assistant).
+        kind: MessageKind,
         /// The content of the message. Can be empty for an initial assistant message.
         content: String,
         /// The specific chat history (e.g., main, scratchpad) to add the message to.
@@ -123,6 +174,14 @@ pub enum StateCommand {
         parent_id: Uuid,
         /// The ID of the new message to be added as a child of the parent_id message
         child_id: Uuid,
+    },
+
+    /// Adds a new message from the provided string and type.
+    /// This has much less flexibility than the `AddMessage` above, but is more convenient to use
+    /// for certain kinds of system messages.
+    AddMessageImmediate {
+        msg: String,
+        kind: MessageKind,
     },
 
     /// Adds a new user message and sets it as the current message.
@@ -172,9 +231,6 @@ pub enum StateCommand {
     /// Loads application state from a file, replacing the current state.
     LoadState,
 
-    /// Triggers a background task to index the entire workspace.
-    IndexWorkspace,
-
     // --- LLM and Agent Commands ---
     /// Submits the current chat history to the LLM for a response.
     /// The `state_manager` will prepare the prompt and dispatch it to the `llm_manager`.
@@ -210,6 +266,14 @@ pub enum StateCommand {
         parent_id: Uuid,
         responder: oneshot::Sender<Uuid>,
     },
+
+    /// Triggers a background task to index the entire workspace.
+    IndexWorkspace {
+        workspace: String,
+    },
+    PauseIndexing,
+    ResumeIndexing,
+    CancelIndexing,
 }
 
 impl StateCommand {
@@ -231,7 +295,11 @@ impl StateCommand {
             StateCommand::NavigateBranch { .. } => "NavigateBranch",
             StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
-            StateCommand::IndexWorkspace => "IndexWorkspace",
+            StateCommand::IndexWorkspace { .. } => "IndexWorkspace",
+            StateCommand::PauseIndexing => "PauseIndexing",
+            StateCommand::ResumeIndexing => "ResumeIndexing",
+            StateCommand::CancelIndexing => "CancelIndexing",
+            StateCommand::AddMessageImmediate { .. } => "AddMessageImmediatetodo!()",
             // ... other variants
         }
     }
@@ -266,6 +334,8 @@ impl From<MessageUpdatedEvent> for AppEvent {
 //         msg_id = tracing::field::Empty
 //     )
 // )]
+// TODO: Disentangle the event_bus sender from this most likely.
+// - Needs to be evaluated against new implementation of EventBus
 pub async fn state_manager(
     state: Arc<AppState>,
     mut cmd_rx: mpsc::Receiver<StateCommand>,
@@ -301,62 +371,33 @@ pub async fn state_manager(
                 }
             }
             StateCommand::AddUserMessage { content } => {
-                let mut chat_guard = state.chat.0.write().await;
-                let parent_id = chat_guard.current;
-                let child_id = Uuid::new_v4();
-
-                // Add the user's message to the history
-                if let Ok(user_message_id) =
-                    chat_guard.add_message_user(parent_id, child_id, content.clone())
-                {
-                    tracing::Span::current().record("msg_id", format!("{}", user_message_id));
-                    tracing::info!(
-                        content = %truncate_string(&content, 20),
-                        parent_id = %parent_id,
-                        "Adding user message"
-                    );
-
-                    // Update the current message to the one we just added
-                    chat_guard.current = user_message_id;
-
-                    // Notify the UI that the state has changed
-                    event_bus.send(MessageUpdatedEvent::new(user_message_id).into());
-
-                    // Trigger the LLM to generate a response to the user's message
-                    let llm_request = AppEvent::Llm(llm::Event::Request {
-                        request_id: Uuid::new_v4(),
-                        parent_id: user_message_id,
-                        prompt: content,
-                        parameters: Default::default(), // Using mock/default param
-                    });
-                    event_bus.send(llm_request);
-                } else {
-                    tracing::error!("Failed to add user message");
-                }
+                add_msg_immediate(&state, &event_bus, content, MessageKind::User).await;
             }
             StateCommand::AddMessage {
                 parent_id,
                 child_id,
                 content,
                 // TODO: Figure out if I should/need to do more with these
-                role,
+                kind,
                 target,
             } => {
                 let mut chat_guard = state.chat.0.write().await;
                 // For assistant messages, lthe status will be Generating initially
-                let status = if matches!(role, MessageRole::Assistant) {
+                let status = if matches!(kind, MessageKind::Assistant) {
                     MessageStatus::Generating
                 } else {
                     MessageStatus::Completed
                 };
 
                 if let Ok(new_message_id) =
-                    chat_guard.add_child(parent_id, child_id, &content, status, role.into())
+                    chat_guard.add_child(parent_id, child_id, &content, status, kind)
                 {
                     chat_guard.current = new_message_id;
                     event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
                 }
-                // chat_guard.add_message(parent_id, content);
+            }
+            StateCommand::AddMessageImmediate { msg, kind } => {
+                add_msg_immediate(&state, &event_bus, msg, kind).await;
             }
             StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
 
@@ -373,10 +414,10 @@ pub async fn state_manager(
                 let mut chat_guard = state.chat.0.write().await;
                 let child_id = Uuid::new_v4();
                 let status = MessageStatus::Generating;
-                let role = crate::chat_history::Role::Assistant;
+                let kind = crate::chat_history::MessageKind::Assistant;
 
                 if let Ok(new_id) =
-                    chat_guard.add_child(parent_id, child_id, "Pending...", status, role)
+                    chat_guard.add_child(parent_id, child_id, "Pending...", status, kind)
                 {
                     // update the state of the current id to the newly generated pending message.
                     chat_guard.current = new_id;
@@ -391,41 +432,160 @@ pub async fn state_manager(
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
+            StateCommand::IndexWorkspace { workspace } => {
+                let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
+                // Extract task from mutex (consumes guard)
 
-            StateCommand::IndexWorkspace => {
-                // TODO: This is a mock implementation. We need to pass the correct handles
-                // to the real IndexerTask.
-                // Indexer Task will:
-                // 1. calling the database to get the non-indexed nodes in the graph using
-                //    `get_nodes_for_embedding`
-                // 2. calling the `get_snippets_batch` function to retrieve the code snippets from
-                //    the target location
-                // 3. then either:
-                //      a. processing the embeddings locally, likely using `candle` or an
-                //      alternative
-                //      b. sending the embeddings to a remote API that can process the code
-                //      snippets into embeddings.
-                // 4. calling the `index_embeddings` function to create the hnsw index for the
-                //    embeddings.
-                // 5. return here and likely sending some kind of event to alert the rest of the
-                //    systems, either through events or by changing state, that the embeddings are
-                //    finished.
-                //
-                // - Note that we will want to ensure there are some other features built in as
-                // well, such as a progress bar in the TUI that shows the ongoing progress of the
-                // embeddings and ways to fail gracefully if the program is terminated early, and
-                // ways to save our progress in processing the embeddings if possible, perhaps
-                // through some kind of streaming mechanism or something, I don't know very much
-                // about how vector embeddings are handled remotely or locally, and don't know if
-                // there are streaming options available for vector embeddings services
-                // specifically or through the `candle` crate, which I've never used.
-                tokio::spawn(async move {
-                    tracing::info!("IndexerTask started");
-                });
+                // let mut chat_guard = state.chat.0.write().await;
+                add_msg_immediate(
+                    &state,
+                    &event_bus,
+                    "Indexing...".to_string(),
+                    MessageKind::SysInfo,
+                )
+                .await;
+                let event_bus_clone = event_bus.clone();
+                let progress_tx = Arc::clone(&event_bus.index_tx);
+                let progress_rx = event_bus.index_subscriber();
+
+                let state_arc = state.indexer_task.as_ref().map(Arc::clone);
+                if let Some(indexer_task) = state_arc {
+                    let res = tokio::spawn(async move {
+                        let indexing_result = IndexerTask::index_workspace_test(
+                            indexer_task,
+                            workspace,
+                            progress_tx,
+                            progress_rx,
+                            control_rx,
+                        )
+                        .await;
+                        match indexing_result {
+                            Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
+                            Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
+                        }
+                    })
+                    .await;
+                    // match res {
+                    //     Ok(_) => event_bus_clone.send(AppEvent::IndexingCompleted),
+                    //     Err(e) => event_bus_clone.send(AppEvent::IndexingFailed),
+                    // }
+                }
             }
+            StateCommand::PauseIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Pause).await.ok();
+                }
+            }
+
+            StateCommand::ResumeIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Resume).await.ok();
+                }
+            }
+
+            StateCommand::CancelIndexing => {
+                if let Some(ctrl) = &mut *state.indexing_control.lock().await {
+                    ctrl.send(IndexerCommand::Cancel).await.ok();
+                }
+            }
+            StateCommand::SaveState => {
+                let serialized_content = {
+                    let guard = state.chat.0.read().await;
+                    guard.format_for_persistence().as_bytes().to_vec()
+                };
+                event_bus.send(AppEvent::System(SystemEvent::SaveRequested(
+                    serialized_content,
+                )))
+            }
+
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
         };
+    }
+}
+
+async fn add_msg_immediate(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    content: String,
+    kind: MessageKind,
+) {
+    let mut chat_guard = state.chat.0.write().await;
+    let parent_id = chat_guard.current;
+    let child_id = Uuid::new_v4();
+
+    let message_wrapper = match kind {
+        MessageKind::User => chat_guard.add_message_user(parent_id, child_id, content.clone()),
+        MessageKind::System => todo!(),
+        MessageKind::Assistant => {
+            chat_guard.add_message_llm(parent_id, child_id, kind, content.clone())
+        }
+        MessageKind::Tool => todo!(),
+        MessageKind::SysInfo => {
+            chat_guard.add_message_system(parent_id, child_id, kind, content.clone())
+        }
+    };
+    // Add the user's message to the history
+    if let Ok(message_id) = message_wrapper {
+        tracing::Span::current().record("msg_id", format!("{}", message_id));
+        tracing::info!(
+            content = %truncate_string(&content, 20),
+            parent_id = %parent_id,
+            "Adding message"
+        );
+
+        // Update the current message to the one we just added
+        chat_guard.current = message_id;
+
+        // Notify the UI that the state has changed
+        event_bus.send(MessageUpdatedEvent::new(message_id).into());
+
+        if kind == MessageKind::User {
+            // Trigger the LLM to generate a response to the user's message
+            let llm_request = AppEvent::Llm(llm::Event::Request {
+                request_id: Uuid::new_v4(),
+                parent_id: message_id,
+                prompt: content,
+                parameters: Default::default(), // Using mock/default param
+            });
+            event_bus.send(llm_request);
+        }
+    } else {
+        tracing::error!("Failed to add user message");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[tokio::test]
+    async fn indexing_lifecycle() {
+        // Setup
+        let state = Arc::new(AppState::default());
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let state_clone = state.clone();
+
+        let event_bus = EventBus::new(EventBusCaps::default());
+
+        // Start state manager
+        tokio::spawn(state_manager(state_clone, cmd_rx, Arc::new(event_bus)));
+
+        // Start indexing
+        cmd_tx
+            .send(StateCommand::IndexWorkspace {
+                workspace: "fixture_nodes".to_string(),
+            })
+            .await
+            .unwrap();
+
+        // Verify RUNNING state
+        let guard = state.indexing_state.read().await;
+        assert!(guard.as_ref().unwrap().status == IndexStatus::Running);
+
+        // TODO:
+        // ... similar checks for pause/resume/cancel
     }
 }

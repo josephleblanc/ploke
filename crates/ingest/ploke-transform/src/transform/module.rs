@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
+use cozo::UuidWrapper;
 use syn_parser::utils::LogStyleDebug;
+use uuid::Uuid;
 
 use crate::{
     macro_traits::CommonFields,
@@ -22,11 +24,14 @@ pub struct FileModuleNode {
     file_attrs: Vec<Attribute>,
     /// Inner documentation (`//! ...`) found at the top of the module file.
     file_docs: Option<String>,
+    /// The namespace stored in the crate_context node in the database.
+    name_space: Uuid,
 }
 
 pub(super) fn transform_modules(
     db: &Db<MemStorage>,
     modules: Vec<ModuleNode>,
+    namespace: Uuid,
 ) -> Result<(), TransformError> {
     for module in modules.into_iter() {
         // let schema = &FUNCTION_NODE_SCHEMA;
@@ -40,7 +45,7 @@ pub(super) fn transform_modules(
                 .map(DataValue::from)
                 .collect::<Vec<DataValue>>(),
         );
-        let cozo_module_kind = process_module_def(db, module.module_def, module.id)?;
+        let cozo_module_kind = process_module_def(db, module.module_def, module.id, namespace)?;
 
         module_params.insert(schema.path().to_string(), cozo_path);
         module_params.insert(schema.module_kind().to_string(), cozo_module_kind.into());
@@ -58,7 +63,7 @@ pub(super) fn transform_modules(
         // temporary clone() for logging
         db.run_script(&script, module_params.clone(), ScriptMutability::Mutable)
             .inspect_err(|_| {
-                log::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
+                tracing::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
                     "Error processing module".log_error(),
                     module.name.log_name(),
                     module.id.to_string().log_id(),
@@ -80,6 +85,7 @@ fn process_module_def(
     db: &Db<MemStorage>,
     module_def: ModuleKind,
     module_id: ModuleNodeId,
+    namespace: Uuid,
 ) -> Result<String, TransformError> {
     let schema = &FileModuleNodeSchema::SCHEMA;
 
@@ -95,7 +101,7 @@ fn process_module_def(
                 .into_os_string()
                 .into_string()
                 .unwrap_or_else(|f| {
-                    log::error!(target: "db", "{} {} ({}) {:?}",
+                    tracing::error!(target: "db", "{} {} ({}) {:?}",
                         "Error in file path:".log_error(),
                         "ModuleNode ID",
                         module_id.to_string().log_name(),
@@ -119,12 +125,14 @@ fn process_module_def(
                 let script = attr_schema.script_put(&attr_params);
                 db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
             }
+            let cozo_namespace = DataValue::Uuid(UuidWrapper(namespace));
 
             let params = BTreeMap::from([
                 (schema.file_docs().to_string(), cozo_file_docs),
                 (schema.owner_id().to_string(), cozo_owner),
                 (schema.file_path().to_string(), cozo_file_path.into()),
                 (schema.items().to_string(), cozo_items),
+                (schema.namespace().to_string(), cozo_namespace)
             ]);
             let put_script = schema.script_put(&params);
             db.run_script(&put_script, params, ScriptMutability::Mutable)?;
@@ -172,7 +180,7 @@ mod tests {
         FileModuleNodeSchema::create_and_insert_schema(&db)?;
 
         // transform and insert impls into cozo
-        transform_modules(&db, merged.graph.modules)?;
+        transform_modules(&db, merged.graph.modules, merged.crate_namespace)?;
 
         Ok(())
     }

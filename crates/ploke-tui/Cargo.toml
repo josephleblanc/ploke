@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# parser
+syn_parser = { path = "../ingest/syn_parser" }
+ploke-transform = { path = "../ingest/ploke-transform" }
+
 # ui
 ratatui = "0.29"
 crossterm = { version = "0.29", features = ["event-stream", "serde"] }
@@ -36,6 +40,9 @@ dirs = "5.0"
 config = { version = "0.14", features = ["toml"] }
 dotenvy = "0.15"
 
+# file io
+tempfile = "3.8"
+
 # user-facing error handling
 color-eyre = "0.6"
 
@@ -54,3 +61,11 @@ chrono = "0.4"
 uuid = { workspace = true }
 
 futures = "0.3" # For .fuse() on streams
+
+[dev-dependencies]
+tempfile = "3.4"
+wiremock = "0.5.14"
+tokio-test = "0.4"
+test-context = "0.1"
+fake = "4.3.0"
+cozo = { workspace = true }

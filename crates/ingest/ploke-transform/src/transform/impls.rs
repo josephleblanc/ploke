@@ -26,7 +26,7 @@ pub(super) fn transform_impls(
             let method_params = process_methods(imple_any_id, method);
             let script = method_schema.script_put(&method_params);
 
-            log::trace!(
+            tracing::trace!(
                 "  {} {} {:?}",
                 "method put:".log_step(),
                 script,
@@ -37,7 +37,7 @@ pub(super) fn transform_impls(
 
         imple_params.insert(schema.methods().to_string(), DataValue::List(method_ids));
         let script = schema.script_put(&imple_params);
-        log::trace!(
+        tracing::trace!(
             "  {} {} {:?}",
             "impl put:".log_step(),
             script,
@@ -48,7 +48,7 @@ pub(super) fn transform_impls(
         // Add generic parameters
         for (i, generic_param) in imple.generic_params.into_iter().enumerate() {
             let (params, script) = process_generic_params(imple_any_id, i as i64, generic_param);
-            log::trace!(
+            tracing::trace!(
                 "  {} {} {:?}",
                 "generic_param put:".log_step(),
                 script,
@@ -64,7 +64,7 @@ pub(super) fn transform_impls(
         //     let attr_params = process_attributes(imple.id.as_any(), i, attr);
         //
         //     let script = attr_schema.script_put(&attr_params);
-        //     log::trace!("  {} {} {:?}", "attr put:".log_step(), script, attr_params);
+        //     tracing::trace!("  {} {} {:?}", "attr put:".log_step(), script, attr_params);
         //     db.run_script(&script, attr_params, ScriptMutability::Mutable)?;
         // }
     }
@@ -96,6 +96,7 @@ fn process_impl(imple: &ImplNode) -> BTreeMap<String, DataValue> {
         (schema.span().to_string(), cozo_span),
         (schema.trait_type().to_string(), cozo_trait_id_ty),
         (schema.cfgs().to_string(), cozo_cfgs),
+        (schema.embedding().to_string(), DataValue::Null)
     ])
 }
 
@@ -139,7 +140,7 @@ mod tests {
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
         // let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        //     log::error!(target: "transform_function",
+        //     tracing::error!(target: "transform_function",
         //         "Error building tree: {}",
         //         e
         //     );

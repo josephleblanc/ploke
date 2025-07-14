@@ -57,6 +57,7 @@ rayon = "1.10.0"
 flume = "0.11.1"
 tokio = { version = "1.44.1", features = ["full"] }
 dashmap = "6.1.0"
+crossbeam-channel = "0.5.15"
 
 # Data structures and algorithms
 cozo = "0.7.6"
@@ -73,6 +74,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Convenience
 itertools = "0.14"
+
+# pre-caching 
+lazy_static = "1.4.0"
 
 # Ploke Core Types
 ploke-core = { path = "crates/ploke-core", version = "0.1.0" }

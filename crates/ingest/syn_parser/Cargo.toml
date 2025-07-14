@@ -44,6 +44,7 @@ parse_cfg = "4.1.1"
 
 # debugging
 log = { workspace = true }
+tracing = { workspace = true }
 colored = { workspace = true }
 
 # Convenience

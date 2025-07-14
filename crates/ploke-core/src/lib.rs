@@ -12,10 +12,25 @@ pub const PROJECT_NAMESPACE_UUID: uuid::Uuid = uuid::Uuid::from_bytes([
     0xf7, 0xf4, 0xa9, 0xa0, 0x1b, 0x1a, 0x4b, 0x0e, 0x9c, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a, 0x1a,
 ]);
 
+
+use std::path::PathBuf;
+
 // Add top-level serde imports for derives
 use serde::{Deserialize, Serialize};
 
 pub mod graph;
+
+#[derive(Debug, Clone)]
+pub struct EmbeddingData {
+    pub id: Uuid,
+    pub name: String,
+    pub file_path: PathBuf,
+    pub file_tracking_hash: TrackingHash,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    pub node_tracking_hash: TrackingHash,
+    pub namespace: Uuid
+}
 
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
@@ -792,6 +807,7 @@ mod ids {
 }
 
 pub use ids::*;
+use uuid::Uuid;
 
 /// Error type for ID conversions.
 #[derive(thiserror::Error, Debug, Clone, PartialEq, Eq)] // Removed Copy

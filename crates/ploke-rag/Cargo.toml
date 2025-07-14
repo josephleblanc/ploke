@@ -1,6 +1,12 @@
 [package]
 name = "ploke-rag"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+ploke-db = { path = "../ploke-db" }
+ploke-embed = { path = "../ingest/ploke-embed" }
+ploke-error = { path = "../ploke-error" }
+
+thiserror = { workspace = true }
+tokio = { workspace = true }

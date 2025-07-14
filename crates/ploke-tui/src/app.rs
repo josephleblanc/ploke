@@ -1,4 +1,4 @@
-use crate::{app_state::ListNavigation, chat_history::Role, user_config::CommandStyle};
+use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 
 use super::*;
 use std::time::{Duration, Instant};
@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use textwrap::wrap;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -40,10 +42,15 @@ pub struct App {
     event_rx: tokio::sync::broadcast::Receiver<AppEvent>,
     /// User input buffer
     // (add more buffers for editing other messages later?)
-    input_buffer: String,
+    pub input_buffer: String,
     /// Input mode for vim-like multi-modal editing experience
-    mode: Mode,
+    pub mode: Mode,
     command_style: CommandStyle,
+    indexing_state: Option<indexer::IndexingStatus>,
+    input_vscroll: u16,
+    input_scrollstate: ScrollbarState,
+    convo_vscroll: u16,
+    convo_scrollstate: ScrollbarState,
 }
 
 impl App {
@@ -63,6 +70,12 @@ impl App {
             input_buffer: String::new(),
             mode: Mode::default(),
             command_style,
+            indexing_state: None,
+
+            input_vscroll: 0,
+            input_scrollstate: ScrollbarState::default(),
+            convo_vscroll: 0,
+            convo_scrollstate: ScrollbarState::default(),
         }
     }
 
@@ -75,6 +88,7 @@ impl App {
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        terminal.show_cursor()?;
         self.running = true;
         let mut crossterm_events = crossterm::event::EventStream::new();
 
@@ -85,6 +99,20 @@ impl App {
         while self.running {
             let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
             let frame_start = Instant::now();
+
+            // FIX: This doesn't work because it locates the cursor relative to the top left of the
+            // screen, but there must be a better way to handle the offset correctly.
+            // if let Ok(cursor_pos) = terminal.get_cursor_position() {
+            //     match self.mode {
+            //         Mode::Normal if cursor_pos.y > self.convo_vscroll => {
+            //             self.convo_vscroll = cursor_pos.y;
+            //         }
+            //         Mode::Insert if cursor_pos.y > self.input_vscroll => {
+            //             self.input_vscroll = cursor_pos.y;
+            //         }
+            //         _ => {}
+            //     }
+            // }
 
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
@@ -97,7 +125,7 @@ impl App {
                 .iter()
                 .map(|m| RenderableMessage {
                     id: m.id,
-                    role: m.role,
+                    kind: m.kind,
                     content: m.content.clone(),
                 })
                 .collect::<Vec<RenderableMessage>>();
@@ -116,12 +144,11 @@ impl App {
                     if let Some(Ok(event)) = maybe_event {
                         match event {
                             Event::Key(key_event) =>{ self.on_key_event(key_event); }
-                            // Event::FocusGained => {},
-                            // Event::FocusLost => {},
-                            // Event::Mouse(mouse_event) => {},
-                            // Event::Paste(_) => {},
-                            // Event::Resize(_, _) => {},
-                            _ => {}
+                            Event::FocusGained => {},
+                            Event::FocusLost => {},
+                            Event::Mouse(mouse_event) => {},
+                            Event::Paste(_) => {},
+                            Event::Resize(_, _) => {},
                         }
                     }
                 }
@@ -129,12 +156,36 @@ impl App {
                 // Application events
                 Ok(app_event) = self.event_rx.recv() => {
                     match app_event {
-                        AppEvent::MessageUpdated(_) | AppEvent::UpdateFailed(_) => {
+                        AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
                             self.sync_list_selection().await;
                         }
-                        _ => {}
+                        AppEvent::IndexingProgress(state)=>{
+                            self.indexing_state = Some(state);
+                        }
+                        AppEvent::Ui(ui_event) => {},
+                        AppEvent::Llm(event) => {},
+                        AppEvent::System(system_event) => {},
+                        AppEvent::Error(error_event) => {},
+                        AppEvent::IndexingStarted => {},
+                        AppEvent::IndexingCompleted => {
+                            tracing::info!("Indexing Succeeded!");
+                            self.indexing_state = None;
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg: String::from("IndexingSucceeded"),
+                                kind: MessageKind::SysInfo,
+                            })
+                        },
+                        AppEvent::IndexingFailed => {
+                            tracing::error!("Indexing Failed");
+                            self.indexing_state = None;
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg: String::from("Indexing Failed"),
+                                kind: MessageKind::SysInfo,
+                            })
+                        },
                     }
                 }
+
             }
             let frame_duration = frame_start.elapsed();
             if frame_duration > Duration::from_millis(16) {
@@ -156,11 +207,15 @@ impl App {
             .constraints(vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
-                Constraint::Length(1),
+                Constraint::Length(4),
             ])
             .split(frame.area());
 
-        let status_layout = layout_statusline(4, main_layout[2]);
+        let status_layout = layout_statusline(5, main_layout[2]);
+
+        // ---------- Scroll State -------------
+        // let convo_length = convo.height;
+        // self.convo_scrollstate = self.convo_scrollstate.content_length(convo_length as usize);
 
         // ---------- Prepare Widgets ----------
         // Render message tree
@@ -172,10 +227,12 @@ impl App {
             .map(|msg| {
                 let wrapped_text: String =
                     textwrap::fill(&msg.content, conversation_width as usize);
-                match msg.role {
-                    Role::User => ListItem::new(wrapped_text).blue(),
-                    Role::Assistant => ListItem::new(wrapped_text).green(),
-                    Role::System => ListItem::new(wrapped_text).magenta(),
+                match msg.kind {
+                    MessageKind::User => ListItem::new(wrapped_text).blue(),
+                    MessageKind::Assistant => ListItem::new(wrapped_text).green(),
+                    MessageKind::System => ListItem::new(wrapped_text).gray(),
+                    MessageKind::Tool => todo!(),
+                    MessageKind::SysInfo => ListItem::new(wrapped_text).magenta(),
                 }
                 // ListItem::new(wrapped_text)
             })
@@ -198,17 +255,33 @@ impl App {
             _ => "Input",
         };
 
+        // Guess at the amount of scroll needed:
+
+        // ---------- Text Wrap ----------------
         let input_width = main_layout[1].width.saturating_sub(2);
-        let input = Paragraph::new(textwrap::fill(
-            self.input_buffer.as_str(),
-            input_width as usize,
-        ))
-        .block(Block::bordered().title(input_title))
-        .style(match self.mode {
-            Mode::Normal => Style::default(),
-            Mode::Insert => Style::default().fg(Color::Yellow),
-            Mode::Command => Style::default().fg(Color::Cyan),
-        });
+        let input_wrapped = textwrap::wrap(self.input_buffer.as_str(), input_width as usize);
+        self.input_scrollstate = self.input_scrollstate.content_length(input_wrapped.len());
+
+        let input_text = Text::from_iter(input_wrapped);
+        let input = Paragraph::new(input_text)
+            .scroll((self.input_vscroll, 0))
+            .block(Block::bordered().title(input_title))
+            .style(match self.mode {
+                Mode::Normal => Style::default(),
+                Mode::Insert => Style::default().fg(Color::Yellow),
+                Mode::Command => Style::default().fg(Color::Cyan),
+            });
+        // Add progress bar at bottom if indexing
+        if let Some(state) = &self.indexing_state {
+            let progress_block = Block::default().borders(Borders::TOP).title(" Indexing ");
+
+            let gauge = Gauge::default()
+                .block(progress_block)
+                .ratio(state.calc_progress())
+                .gauge_style(Style::new().light_blue());
+
+            frame.render_widget(gauge, main_layout[2]); // Bottom area
+        }
 
         // Render Mode to text
         let status_bar = Block::default()
@@ -221,10 +294,27 @@ impl App {
         let list_len = Paragraph::new(format!("List Len: {}", list_len));
         let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
 
+        // -- Handle Scrollbars --
+        // TODO: how to make this work?
+
         // ---------- Render widgets in layout ----------
         // -- top level
         frame.render_stateful_widget(list, main_layout[0], &mut self.list);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            main_layout[0],
+            &mut self.convo_scrollstate,
+        );
         frame.render_widget(input, main_layout[1]);
+        // frame.render_stateful_widget(
+        //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        //         .begin_symbol(Some("↑"))
+        //         .end_symbol(Some("↓")),
+        //     main_layout[1].inner(Margin {vertical: 1, horizontal: 0}),
+        //     &mut self.input_scrollstate,
+        // );
 
         // -- first nested
         frame.render_widget(status_bar, status_layout[0]);
@@ -275,6 +365,22 @@ impl App {
     }
 
     fn handle_insert_mode(&mut self, key: KeyEvent) {
+        if key.modifiers == KeyModifiers::CONTROL {
+            match key.code {
+                KeyCode::Char('a') => {
+                    self.input_buffer
+                        .push_str("Agnostic anthromoporcine agrippa");
+                }
+                // FIX: testing
+                KeyCode::Up => {
+                    self.input_scrollstate.prev();
+                }
+                KeyCode::Down => {
+                    self.input_scrollstate.next();
+                }
+                _ => {}
+            }
+        }
         match key.code {
             // 1. UI-Local State Change: Switch mode
             KeyCode::Esc => self.mode = Mode::Normal,
@@ -308,11 +414,18 @@ impl App {
             KeyCode::Backspace => {
                 self.input_buffer.pop();
             }
+            // FIX: testing
+            KeyCode::Up => {
+                self.convo_scrollstate.next();
+            }
+            KeyCode::Down => {
+                self.convo_scrollstate.prev();
+            }
             _ => {}
         }
     }
 
-    fn handle_command_mode(&mut self, key: KeyEvent) {
+    pub fn handle_command_mode(&mut self, key: KeyEvent) {
         // if !self.input_buffer.starts_with('/') {
         //     self.mode = Mode::Normal;
         // }
@@ -345,8 +458,13 @@ impl App {
         };
 
         match cmd_str {
-            "index" => self.send_cmd(StateCommand::IndexWorkspace),
             "help" => self.show_command_help(),
+            "index start" => self.send_cmd(StateCommand::IndexWorkspace {
+                workspace: "fixture_nodes".to_string(),
+            }),
+            "index pause" => self.send_cmd(StateCommand::PauseIndexing),
+            "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
+            "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
@@ -418,10 +536,122 @@ impl App {
 #[derive(Debug, Clone)]
 struct RenderableMessage {
     id: Uuid,
-    role: Role,
+    kind: MessageKind,
     content: String, // Add other fields if needed for drawing, e.g. status
 }
 
 fn truncate_uuid(id: Uuid) -> String {
     id.to_string().chars().take(8).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::app::{App, Mode};
+    use crate::app_state::{AppState, StateCommand};
+    use crate::user_config::CommandStyle;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ploke_embed::indexer::{IndexStatus, IndexingStatus};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use tokio::sync::{broadcast, mpsc};
+    use uuid::Uuid;
+
+    // Helper function to create a test terminal
+    fn build_test_terminal() -> Terminal<TestBackend> {
+        let backend = TestBackend::new(100, 30);
+        Terminal::new(backend).unwrap()
+    }
+
+    // Helper function to render terminal with delay
+    fn draw_terminal_with_delay(
+        terminal: &mut Terminal<TestBackend>,
+        app: &App,
+        _delay: Duration,
+    ) -> Vec<String> {
+        todo!()
+    }
+
+    #[tokio::test]
+    async fn user_starts_and_monitors_indexing() {
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+        let event_bus = Arc::new(EventBus::new(EventBusCaps {
+            realtime_cap: 100,
+            background_cap: 100,
+            error_cap: 100,
+            index_cap: 100,
+        }));
+
+        // Initialize app
+        let mut app = App::new(
+            CommandStyle::Slash,
+            Arc::new(AppState::default()),
+            cmd_tx,
+            &event_bus,
+        );
+
+        // Start indexing via command
+        app.mode = Mode::Command;
+        app.input_buffer = "/index start fixture_nodes".into();
+        app.handle_command_mode(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Verify command was sent
+        assert!(matches!(
+            cmd_rx.recv().await,
+            Some(StateCommand::IndexWorkspace { .. })
+        ));
+    }
+    //     // Simulate progress
+    //     event_bus.send(AppEvent::IndexingProgress(IndexingStatus {
+    //         status: IndexStatus::Running,
+    //         recent_processed: 5,
+    //         total: 100,
+    //         current_file: None,
+    //         errors: Vec::new(),
+    //     }));
+    //
+    //     // Render
+    //     let mut terminal = build_test_terminal();
+    //     let frames = draw_terminal_with_delay(&mut terminal, &app, Duration::from_millis(50));
+    //
+    //     // Verify progress appears
+    //     let frame_string = frames.join("");
+    //     assert!(frame_string.contains("Indexing"));
+    //     assert!(frame_string.contains("5/100"));
+    // }
+
+    // use crate::test_utils::mock::MockBehavior;
+    // use mockall::{Sequence, predicate::*};
+    // use ploke_embed::{
+    //     error::{EmbedError, truncate_string},
+    //     indexer::IndexingStatus,
+    // };
+    //
+    // #[tokio::test]
+    // async fn http_error_propagation() {
+    //     // Setup
+    //     let (mut progress_rx, state) = setup_test_environment(MockBehavior::RateLimited, 10).await;
+    //
+    //     // Capture progress state
+    //     let mut status: Option<IndexingStatus> = None;
+    //     while let Ok(progress) = progress_rx.recv().await {
+    //         if progress.total > 0 {
+    //             status = Some(progress);
+    //             break;
+    //         }
+    //     }
+    //
+    //     // Add generated embeddings
+    //     run_embedding_phase(&state).await;
+    //
+    //     // Verify error
+    //     let status = status.unwrap();
+    //     assert!(!status.errors.is_empty());
+    //     assert!(status.errors[0].contains("429"));
+    //     assert!(status.errors[0].contains("Rate Limited"));
+    // }
 }

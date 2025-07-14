@@ -225,7 +225,7 @@ pub(super) fn transform_types(
 
         db.run_script(&script, params, ScriptMutability::Mutable)
             .inspect_err(|&_| {
-                log::error!(target: "db", "{} {}\n{} {}",
+                tracing::error!(target: "db", "{} {}\n{} {}",
                     "Error:".log_error().bold(),
                     format_args!("running script {}", &script.log_path()),
                     "type_node info:".log_foreground_primary_debug(),

@@ -11,11 +11,28 @@ syn_parser = { path = "../ingest/syn_parser" }
 ploke-core = { path = "../ploke-core" } # Needed for Uuid types if test-utils uses them directly
 # common error types for workspace
 ploke-error = { path = "../ploke-error" }
+
+ploke-transform = { path = "../ingest/ploke-transform" }
+
+cozo = { workspace = true }
+
+tokio = { workspace = true }
+
 uuid = { workspace = true, features = ["v5", "serde"] }
 serde = { workspace = true, features = ["derive"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 log = { workspace = true }
+ploke-db = { path = "../ploke-db" }
+
+
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = "0.2"
+chrono = "0.4"
+
+[dev-dependencies]
 
 [features]
-default = []
+default = ["test_setup"]
+test_setup = []
 # Feature flag for the UUID refactor in test-utils (REMOVED)

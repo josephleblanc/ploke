@@ -3,6 +3,7 @@
 // -- external
 use cozo::{DataValue, Db, MemStorage, Num, ScriptMutability};
 
+use crate_context::transform_crate_context;
 // -- from workspace
 use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
@@ -10,6 +11,7 @@ use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::Visibility
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::utils::LogStyle;
+use syn_parser::ParsedCodeGraph;
 
 // ---- local imports ----
 // -- error handling --
@@ -27,16 +29,17 @@ use imports::transform_imports;
 use macros::transform_macros;
 use module::transform_modules;
 use statics::transform_statics;
-use type_node::transform_types;
 use std::collections::BTreeMap;
 use structs::transform_structs;
 use traits::transform_traits;
 use type_alias::transform_type_aliases;
+use type_node::transform_types;
 use unions::transform_unions;
-
 
 mod fields;
 mod secondary_nodes;
+// -- special case nodes --
+mod crate_context;
 // -- primary nodes --
 mod consts;
 mod edges;
@@ -66,11 +69,13 @@ use crate::schema::secondary_nodes::AttributeNodeSchema;
 
 // -- edges
 
+#[deprecated = "Use transform_parsed_graph instead"]
 /// Transforms a CodeGraph into CozoDB relations
 pub fn transform_code_graph(
     db: &Db<MemStorage>,
     code_graph: CodeGraph,
     tree: &ModuleTree,
+    namespace: uuid::Uuid,
 ) -> Result<(), TransformError> {
     // Transform types
     // [✔] Refactored
@@ -99,7 +104,7 @@ pub fn transform_code_graph(
 
     // Transform modules
     // [✔] Refactored
-    transform_modules(db, code_graph.modules)?;
+    transform_modules(db, code_graph.modules, namespace)?;
 
     // Transform consts
     // [✔] Refactored
@@ -120,6 +125,52 @@ pub fn transform_code_graph(
     // Transform relations
     // [✔] Refactored
     transform_relations(db, code_graph.relations)?;
+
+    Ok(())
+}
+
+/// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
+// I'd like to log to terminal output for a test, probably using `tracing` after each one of there
+// transforms runs. Any ideas on how to do that? Should I use `instrument`? What would that look
+// like? Show me a complete example. AI?
+pub fn transform_parsed_graph(
+    db: &Db<MemStorage>,
+    parsed_graph: ParsedCodeGraph,
+    tree: &ModuleTree,
+) -> Result<(), TransformError> {
+    let code_graph = parsed_graph.graph;
+    let crate_context = parsed_graph
+        .crate_context
+        .expect("Invariant: All Code Graphs must have a Crate Context");
+
+    tracing::info!("{}: Starting", "types".log_step());
+    transform_types(db, code_graph.type_graph)?;
+    tracing::info!("{}: Starting", "functions".log_step());
+    transform_functions(db, code_graph.functions, tree)?;
+
+    //  TODO: Refactor CodeGraph to split these nodes into their own collections.
+    tracing::info!("{}: Starting", "defined_types".log_step());
+    transform_defined_types(db, code_graph.defined_types)?;
+
+    tracing::info!("{}: Starting", "traits".log_step());
+    transform_traits(db, code_graph.traits)?;
+    tracing::info!("{}: Starting", "impls".log_step());
+    transform_impls(db, code_graph.impls)?;
+    tracing::info!("{}: Starting", "modules".log_step());
+    transform_modules(db, code_graph.modules, crate_context.namespace)?;
+    tracing::info!("{}: Starting", "consts".log_step());
+    transform_consts(db, code_graph.consts)?;
+    tracing::info!("{}: Starting", "statics".log_step());
+    transform_statics(db, code_graph.statics)?;
+    tracing::info!("{}: Starting", "macros".log_step());
+    transform_macros(db, code_graph.macros)?;
+    tracing::info!("{}: Starting", "imports".log_step());
+    transform_imports(db, code_graph.use_statements)?;
+    tracing::info!("{}: Starting", "relations".log_step());
+    transform_relations(db, code_graph.relations)?;
+
+    tracing::info!("{}: Starting", "crate_context".log_step());
+    transform_crate_context(db, crate_context)?;
 
     Ok(())
 }
@@ -156,11 +207,10 @@ mod tests {
 
     use crate::{error::TransformError, schema::create_schema_all};
 
-    use super::transform_code_graph;
+    use super::{crate_context::transform_crate_context, transform_code_graph, transform_parsed_graph};
 
     #[test]
-    fn test_insert_all() -> Result<(), TransformError> { 
-
+    fn test_insert_all() -> Result<(), TransformError> {
         // initialize db
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
@@ -174,14 +224,52 @@ mod tests {
 
         // build module tree
         let tree = merged.build_module_tree().unwrap_or_else(|e| {
-            log::error!(target: "transform_function",
+            tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e
             );
             panic!()
         });
 
-        transform_code_graph(&db, merged.graph, &tree)?;
+        transform_parsed_graph(&db, merged, &tree)?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[deprecated = "use test_insert_all instead"]
+    fn test_insert_all_deprecated() -> Result<(), TransformError> {
+        // initialize db
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        // create and insert schema for all nodes
+        create_schema_all(&db)?;
+
+        // run the parser
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
+        // merge results from all files
+        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+
+        // build module tree
+        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+            tracing::error!(target: "transform_function",
+                "Error building tree: {}",
+                e
+            );
+            panic!()
+        });
+
+        transform_code_graph(&db, merged.graph, &tree, merged.crate_namespace)?;
+
+        // NOTE: NEW
+        // Recently added this section, so if there are issues, it is likely due to this new function.
+        // Note that there is the standard unit test with this item.
+        transform_crate_context(
+            &db,
+            merged
+                .crate_context
+                .expect("Merged Graphs must have a Code Context."),
+        )?;
         Ok(())
     }
 }

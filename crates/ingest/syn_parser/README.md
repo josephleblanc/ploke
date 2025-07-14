@@ -1,5 +1,41 @@
 # syn_parser
 
+> [!WARNING]
+> This README is under review and may not be accurate. It is subject to change.
+
+<details>
+<summary>Files to Document</summary>
+
+- [ ] `src/lib.rs`
+- [ ] `src/discovery.rs`
+- [ ] `src/error.rs`
+- [ ] `src/config/mod.rs`
+- [ ] `src/config/options.rs`
+- [ ] `src/parser/mod.rs`
+- [ ] `src/parser/channel.rs`
+- [ ] `src/parser/relations.rs`
+- [ ] `src/parser/types.rs`
+- [ ] `src/parser/utils.rs`
+- [ ] `src/parser/visibility.rs`
+- [ ] `src/parser/graph/`
+- [ ] `src/parser/nodes/`
+- [ ] `src/parser/visitor/`
+- [ ] `src/resolve/mod.rs`
+- [ ] `src/resolve/error.rs`
+- [ ] `src/resolve/id_resolver.rs`
+- [ ] `src/resolve/logging.rs`
+- [ ] `src/resolve/module_tree.rs`
+- [ ] `src/resolve/path_resolver.rs`
+- [ ] `src/resolve/relation_indexer.rs`
+- [ ] `src/resolve/tests.rs`
+- [ ] `src/resolve/traversal.rs`
+- [ ] `src/utils/mod.rs`
+- [ ] `src/utils/logging.rs`
+- [ ] `src/utils/test_setup.rs`
+
+</details>
+
+
 A comprehensive Rust code parser and analyzer built on the `syn` crate.
 
 ## Overview
@@ -83,6 +119,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Documentation Strategy
+
+This crate aims to follow the documentation style of the Tokio project, emphasizing:
+
+- **Example-Driven Explanations**: Every major concept and API should be introduced with a clear, runnable example.
+- **Focus on "What" and "How"**: Documentation should be user-centric, first explaining *what* a component does and *how* to use it effectively.
+- **Crate-Level Overview**: The crate root (`lib.rs`) must provide a high-level guide, explaining the crate's purpose and how its main components fit together.
+- **Testable Documentation**: All code examples are tested as part of the standard test suite to ensure they are always correct and up-to-date.
+- **Complete Public API Coverage**: Every public function, struct, enum, trait, and macro must be documented. We use `#![warn(missing_docs)]` to help enforce this.
 
 ## Integration with ploke
 

@@ -20,10 +20,12 @@ pub mod primary_nodes;
 pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
+pub mod crate_node;
 
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
 use cozo::{Db, MemStorage};
+use crate_node::CrateContextSchema;
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
 use primary_nodes::*;
@@ -60,6 +62,12 @@ impl CozoField {
 /// Create schema for all nodes and enter them into the database.
 /// This step must only be run once to avoid errors from the database.
 pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::TransformError> {
+    // -- secondary nodes --
+    ParamNodeSchema::create_and_insert_schema(db)?;
+    AttributeNodeSchema::create_and_insert_schema(db)?;
+    VariantNodeSchema::create_and_insert_schema(db)?;
+    FieldNodeSchema::create_and_insert_schema(db)?;
+    create_and_insert_generic_schema(db)?;
     // ---- primary nodes ----
     ConstNodeSchema::create_and_insert_schema(db)?;
     EnumNodeSchema::create_and_insert_schema(db)?;
@@ -77,14 +85,6 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     FileModuleNodeSchema::create_and_insert_schema(db)?;
 
 
-    // -- secondary nodes --
-    AttributeNodeSchema::create_and_insert_schema(db)?;
-
-    create_and_insert_generic_schema(db)?;
-
-    VariantNodeSchema::create_and_insert_schema(db)?;
-    FieldNodeSchema::create_and_insert_schema(db)?;
-
 
     // -- associated nodes --
     MethodNodeSchema::create_and_insert_schema(db)?;
@@ -94,6 +94,9 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- edges --
     SyntacticRelationSchema::create_and_insert_schema(db)?;
+
+    // -- crate_context --
+    CrateContextSchema::create_and_insert_schema(db)?;
     Ok(())
 }
 
@@ -132,27 +135,59 @@ macro_rules! define_schema {
         }
 
         impl $schema_name {
+            pub fn script_identity(&self) -> String {
+                let fields = vec![
+                    $(
+                        if self.$field_name.st() != "id" {
+                            format!("{}", self.$field_name.st())
+                        } else { "skip_me_id".to_string() }
+                    ),+
+                ];
+                if fields.contains(&"skip_me_id".to_string()) {
+                    format!("{} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+
+                } else {
+                    format!("{} {{ {} }}", $relation, fields.iter().join(", "))
+                }
+            }
+
             pub fn script_create(&self) -> String {
                 let fields = vec![
-                    $(format!("{}: {}", self.$field_name.st(), self.$field_name.dv())),+
+                    $(
+                        if self.$field_name.st() != "id" {
+                            format!("{}: {}", self.$field_name.st(), self.$field_name.dv())
+                        } else { "skip_me_id".to_string() }
+                    ),+
                 ];
-                format!(":create {} {{ {} }}", $relation, fields.join(", "))
+                if fields.contains(&"skip_me_id".to_string()) {
+                    format!(":create {} {{ id: Uuid => {} }}", $relation, fields.iter().filter(|k| *k != "skip_me_id").join(", "))
+
+                } else {
+                    format!(":create {} {{ {} }}", $relation, fields.iter().join(", "))
+                }
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-                let entry_names = params.keys().join(", ");
-                let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+                let key = "id";
+                let entry_names = params.keys().filter(|k| *k != key).join(", ");
+                let param_names = params.keys().filter(|k| *k != key).map(|k| { 
+                    format!("${}", k)
+                }).join(", ");
                 // Should come out looking like:
                 // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
                 let script = format!(
                     "?[{}] <- [[{}]] :put {}",
-                    entry_names, param_names, self.relation
+                    if params.keys().contains(&key.to_string()) {format!("{}, {}", key, entry_names ) }
+                    else { entry_names },
+                    if params.keys().contains(&key.to_string()) {format!("${}, {}", key, param_names )}
+                    else { param_names },
+                    self.script_identity()
                 );
                 script
             }
 
             pub fn log_create_script(&self) {
-                log::info!(target: "db",
+                tracing::info!(target: "db",
                     "{} {}: {:?}",
                     "Printing schema".log_header(),
                     $relation.log_name(),
@@ -200,7 +235,7 @@ pub(crate) fn create_and_insert_generic_schema(db: &Db<MemStorage>) -> Result<()
 }
 
 pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
-    log::info!(target: "db",
+    tracing::info!(target: "db",
         "{} {:?}",
         "  Db return: ".log_step(),
         db_result,

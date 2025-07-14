@@ -10,6 +10,7 @@ ploke-core = { path = "../../ploke-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+itertools = { workspace = true }
 
 # network
 reqwest = "0.12"
@@ -22,6 +23,7 @@ ploke-transform = { path = "../ploke-transform" }
 # concurrency
 tokio = { workspace = true }
 rayon = { workspace = true }
+crossbeam-channel = { workspace = true }
 
 # error handling
 thiserror = { workspace = true }
@@ -34,6 +36,12 @@ candle-transformers = "0.9"
 candle-nn = "0.9"
 hf-hub = { version = "0.4", features = ["tokio"] }
 tokenizers = "0.21"
+
+[dev-dependencies]
+ploke-test-utils = { path = "../../test-utils" }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
 
 
 [features]

@@ -14,6 +14,20 @@ syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
 uuid = { workspace = true, features = ["v5", "serde"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-error = "0.2"
+
+ploke-common = { path = "../common" }
+syn_parser = { path = "../ingest/syn_parser" }
+
 
 [dev-dependencies]
+ploke-db = { path = "../ploke-db" }
+ploke-test-utils = { path = "../test-utils" }
 tempfile = "3.10.1"
+mockall = "0.12"
+seahash = "4.1"                               # For hash operations in examples
+
+# [features]
+# testing = ["ploke-test-utils/test_setup"]

@@ -2,6 +2,7 @@ use syn_parser::utils::LogStyleDebug;
 
 use crate::macro_traits::HasAnyNodeId;
 use crate::schema::primary_nodes::ImportNodeSchema;
+use crate::utils::log_db_error;
 
 use super::*;
 
@@ -34,6 +35,8 @@ pub(super) fn transform_imports(
         import_params.insert(schema.import_kind().to_string(), cozo_import_kind.into());
         import_params.insert(schema.original_name().to_string(), cozo_original_name);
         import_params.insert(schema.is_glob().to_string(), import.is_glob.into());
+        import_params.insert(schema.embedding().to_string(), DataValue::Null);
+
         import_params.insert(
             schema.is_self_import().to_string(),
             import.is_self_import.into(),
@@ -48,9 +51,10 @@ pub(super) fn transform_imports(
 
         let script = schema.script_put(&import_params);
         // temporary clone() for logging
+
         db.run_script(&script, import_params.clone(), ScriptMutability::Mutable)
             .inspect_err(|_| {
-                log::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
+                tracing::error!(target: "db", "{} {} {}\n  {} {}\n  {} {}\n{} {:#?}",
                     "Error processing import".log_error(),
                     import.visible_name.log_name(),
                     import.id.to_string().log_id(),
@@ -61,8 +65,12 @@ pub(super) fn transform_imports(
                     "import_params:".log_step(),
                     import_params
                 );
+
                 schema.log_create_script();
-            })?;
+            })
+            .map_err(log_db_error)?;
+
+
     }
 
     Ok(())
@@ -159,7 +167,7 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
 
     use crate::{
-        schema::{log_db_result, primary_nodes::ImportNodeSchema}, 
+        schema::{log_db_result, primary_nodes::ImportNodeSchema},
         transform::imports::transform_imports,
     };
 
@@ -181,22 +189,28 @@ mod tests {
         // create and insert attribute schema
         // create_attribute_schema(&db)?;
 
+
         pub(crate) fn create_import_schema(
             db: &Db<MemStorage>,
         ) -> Result<(), Box<dyn std::error::Error>> {
             let import_schema = ImportNodeSchema::SCHEMA;
+
             let db_result = db.run_script(
                 &import_schema.script_create(),
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
             )?;
+
             log_db_result(db_result);
+
             Ok(())
         }
         create_import_schema(&db)?;
 
+
         // transform and insert impls into cozo
         transform_imports(&db, merged.graph.use_statements)?;
+
 
         Ok(())
     }
