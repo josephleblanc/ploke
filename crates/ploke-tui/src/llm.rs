@@ -54,7 +54,7 @@ struct ResponseMessage {
     content: String,
 }
 
-pub async fn llm_manager(
+pub async fn llm_manager_old(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
@@ -79,6 +79,52 @@ pub async fn llm_manager(
         }
     }
 }
+ pub async fn llm_manager(
+     mut event_rx: broadcast::Receiver<AppEvent>,
+     state: Arc<AppState>,
+     cmd_tx: mpsc::Sender<StateCommand>,
+     provider: ProviderConfig,
+     mut llm_rx: mpsc::Receiver<llm::Event>,
+ ) {
+     let client = Client::new();
+     let mut pending_requests = Vec::new();
+     let mut ready_contexts = std::collections::HashMap::new();
+
+     while let Ok(event) = event_rx.recv().await {
+         match event {
+             AppEvent::Llm(request @ llm::Event::Request { parent_id, .. }) => {
+                 tracing::info!("Received LLM request for parent_id: {}", parent_id);
+                 pending_requests.push(request);
+             }
+             AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
+                 tracing::info!("Received context for parent_id: {}", parent_id);
+                 ready_contexts.insert(parent_id, context);
+
+                 // Process any pending requests that now have context
+                 pending_requests.retain(|req| {
+                     if let llm::Event::Request { parent_id: req_parent, .. } = req {
+                         if let Some(context) = ready_contexts.remove(req_parent) {
+                             tokio::spawn(process_llm_request(
+                                 req.clone(),
+                                 Arc::clone(&state),
+                                 cmd_tx.clone(),
+                                 client.clone(),
+                                 provider.clone(),
+                                 Some(context),
+                             ));
+                             false // Remove from pending
+                         } else {
+                             true // Keep waiting
+                         }
+                     } else {
+                         true
+                     }
+                 });
+             }
+             _ => {}
+         }
+     }
+ }
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails

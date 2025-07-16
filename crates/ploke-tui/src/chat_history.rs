@@ -675,7 +675,7 @@ impl ChatHistory {
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
-        .find_map(|id| self.messages.get(&id).map(|m| m.content.clone()));
+        .find_map(|id| self.messages.get(&id).filter(|m| m.kind == MessageKind::User).map(|m| m.content.clone()));
         Ok(msg)
     }
 }

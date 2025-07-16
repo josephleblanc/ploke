@@ -70,13 +70,13 @@ impl FileManager {
                     tracing::info!("Finished reading snippets, collected output: {:?}", output);
                     match self
                         .context_tx
-                        .send(RagEvent::ContextSnippets(output.clone()))
+                        .send(RagEvent::ContextSnippets(output))
                         .await
                     {
                         Ok(_) => {
                             tracing::trace!("Exiting send CodeSnippets with Ok");
-                            self.event_tx
-                                .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
+                            // self.event_tx
+                            //     .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
                         }
                         Err(e) => {
                             tracing::trace!(

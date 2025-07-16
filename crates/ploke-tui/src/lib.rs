@@ -117,6 +117,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         indexing_control: Arc::new(Mutex::new(None)),
         db: db_handle,
         embedder: Arc::clone(&proc_arc),
+        io_handle: io_handle.clone(),
     });
 
     // Create command channel with backpressure
@@ -124,13 +125,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
 
     let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
     let (llm_event_tx, llm_event_rx) = mpsc::channel(10);
-    let context_manager = ContextManager {
-        rag_event_rx,
-        event_bus: Arc::clone(&event_bus),
-        code_context: None,
-        messages: None,
-        llm_handle: llm_event_tx,
-    };
+    let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus), llm_event_tx);
     tokio::spawn(context_manager.run());
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();

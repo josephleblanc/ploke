@@ -53,6 +53,8 @@ pub struct ContextManager {
     pub code_context: Option<CodeContext>,
     pub messages: Option<Vec<Message>>,
     pub llm_handle: mpsc::Sender<llm::Event>,
+    state: ContextState, // Add state tracking
+    pending_parent_id: Option< Uuid >,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +68,16 @@ impl From<Vec<String>> for CodeContext {
     }
 }
 
+
+#[derive(Debug)]
+enum ContextState {
+    Idle,
+    WaitingForSnippets,
+    HasSnippets(CodeContext),
+    HasMessages(Vec<Message>),
+    Ready(CodeContext, Vec<Message>, Uuid),
+}
+
 impl ContextManager {
     #[instrument(skip_all, fields(code_context))]
     pub async fn run(mut self) {
@@ -76,66 +88,158 @@ impl ContextManager {
             }
         }
     }
+
+    #[instrument(skip_all, fields(self.context_state))]
     pub async fn handle_rag_events(&mut self, rag_event: RagEvent) {
         tracing::info!("Starting handle_rag_events: {:?}", rag_event);
         use RagEvent::*;
+
         match rag_event {
-            ContextSnippets(items) => { 
-                tracing::info!("within ContextSnippets: {:?}", items);
-                self.code_context = Some(items.into()) ;
-                tracing::info!("within ConstructContext");
-                let prompt = self.construct_context(id);
-                match self.llm_handle.send(prompt).await {
-                    Ok(_) => tracing::info!("LLM conext sent"),
-                    Err(e) => {
-                        tracing::error!(
-                            "Other end has already dropped? Have error: {}",
-                            e.to_string()
-                        );
-                    }
-                };
-            },
-            UserMessages(msgs) => { 
-                tracing::info!("within UserMessages: {:?}", msgs);
-                self.messages = Some(msgs) 
-            },
+            ContextSnippets(items) => {
+                self.code_context = Some(items.clone().into());
+
+                tracing::info!(
+                    "within ContextSnippets with items.len(): {}
+                    code_context.is_some() {} --- messages.is_some() {}
+                    self.pending_parent_id: {:?}", 
+                    items.len(), self.code_context.is_some(), self.messages.is_some(), self.pending_parent_id
+                );
+                // Check if we have both snippets and messages to process
+                if let (Some(context), Some(messages), Some(parent_id)) = (
+                    self.code_context.take(),
+                    self.messages.take(),
+                    self.pending_parent_id,
+                ) {
+                    self.send_prompt_to_llm(context, messages, parent_id).await;
+                } else {
+                    // Store snippets and wait for messages
+                    self.state = ContextState::HasSnippets(items.into());
+                }
+            }
+            UserMessages(msgs) => {
+                self.messages = Some(msgs.clone());
+
+
+                tracing::info!(
+                    "within UserMessages with msgs.len(): {}
+                    code_context.is_some() {} --- messages.is_some() {}
+                    self.pending_parent_id: {:?}", 
+                    msgs.len(), self.code_context.is_some(), self.messages.is_some(), self.pending_parent_id
+                );
+                // Check if we have both snippets and messages
+                if let (Some(context), Some(messages), Some(parent_id)) = (
+                    self.code_context.take(),
+                    self.messages.take(),
+                    self.pending_parent_id,
+                ) {
+                    self.send_prompt_to_llm(context, messages, parent_id).await;
+                } else {
+                    self.state = ContextState::HasMessages(msgs);
+                }
+            }
             ConstructContext(id) => {
-                tracing::info!("within ConstructContext");
-                let prompt = self.construct_context(id);
-                match self.llm_handle.send(prompt).await {
-                    Ok(_) => tracing::info!("LLM conext sent"),
-                    Err(e) => {
-                        tracing::error!(
-                            "Other end has already dropped? Have error: {}",
-                            e.to_string()
-                        );
+                tracing::info!(
+                    "within ConstructContext with id: {}
+                    code_context.is_some() {} --- messages.is_some() {}", 
+                    id, self.code_context.is_some(), self.messages.is_some()
+                );
+
+                // Check if we have all required components
+                match (self.code_context.take(), self.messages.take()) {
+                    (Some(context), Some(messages)) => {
+                        self.send_prompt_to_llm(context, messages, id).await;
                     }
-                };
-            } // _ => {}
+                    (Some(context), None) => {
+                        // Store snippets, wait for messages
+                        self.pending_parent_id = Some(id);
+                        self.state = ContextState::HasSnippets(context);
+                    }
+                    (None, Some(messages)) => {
+                        // Store messages, wait for snippets
+                        self.pending_parent_id = Some(id);
+                        self.state = ContextState::HasMessages(messages);
+                    }
+                    (None, None) => {
+                        // Wait for both
+                        self.pending_parent_id = Some(id);
+                        self.state = ContextState::WaitingForSnippets;
+                    }
+                }
+            }
         }
     }
-    pub fn construct_context(&mut self, parent_id: Uuid) -> llm::Event {
-        tracing::info!("within construct_context with parent_id {}", parent_id);
-        let mut base: Vec<( MessageKind, String )> = Vec::from([
+
+    async fn send_prompt_to_llm(
+        &mut self,
+        context: CodeContext,
+        messages: Vec<Message>,
+        parent_id: Uuid,
+    ) {
+        let prompt = self.construct_context(context, messages, parent_id);
+        match self.llm_handle.send(prompt).await {
+            Ok(_) => tracing::info!("LLM context sent successfully"),
+            Err(e) => {
+                tracing::error!("Failed to send context to LLM: {}", e.to_string());
+            }
+        };
+        self.state = ContextState::Idle;
+        self.pending_parent_id = None;
+    }
+
+    fn construct_context(
+        &self,
+        context: CodeContext,
+        messages: Vec<Message>,
+        parent_id: Uuid,
+    ) -> llm::Event {
+        tracing::info!(
+            "constructing context with {} snippets and {} messages",
+            context.snippets.len(),
+            messages.len()
+        );
+
+        let mut base: Vec<(MessageKind, String)> = Vec::from([
             (MessageKind::System, String::from(PROMPT_HEADER)),
             (MessageKind::System, String::from(PROMPT_CODE)),
         ]);
 
-        if let Some(cc) = self.code_context.take() {
-            base.extend(cc.snippets.into_iter().map(|c| (MessageKind::System, c)));
-        }
-
-        self.messages.take().map(|msgs| {
-            let msgs = msgs
+        // Add code snippets
+        base.extend(
+            context
+                .snippets
                 .into_iter()
-                .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
-                .map(|msg| (msg.kind, msg.content.clone() ));
-            base.extend(msgs);
-        });
+                .map(|c| (MessageKind::System, c)),
+        );
+
+        // Add conversation messages
+        let msgs = messages
+            .into_iter()
+            .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
+            .map(|msg| (msg.kind, msg.content));
+        base.extend(msgs);
 
         llm::Event::PromptConstructed {
             parent_id,
             prompt: base,
+        }
+    }
+}
+
+// Update ContextManager::new() to include state initialization
+impl ContextManager {
+    pub fn new(
+        rag_event_rx: mpsc::Receiver<RagEvent>,
+        event_bus: Arc<EventBus>,
+        llm_handle: mpsc::Sender<llm::Event>,
+    ) -> Self {
+        Self {
+            rag_event_rx,
+            event_bus,
+            code_context: None,
+            messages: None,
+            llm_handle,
+            state: ContextState::Idle,
+            pending_parent_id: None,
         }
     }
 }

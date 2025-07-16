@@ -1,6 +1,7 @@
 use crate::chat_history::{Message, MessageKind};
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
+use ploke_io::IoManagerHandle;
 use syn_parser::parser::types::TypeNode;
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
@@ -37,6 +38,7 @@ pub struct AppState {
 
     pub db: Arc<Database>,
     pub embedder: Arc<EmbeddingProcessor>,
+    pub io_handle: IoManagerHandle
 }
 
 // TODO: Implement Deref for all three *State items below
@@ -108,7 +110,7 @@ pub struct Config {
 
 // State access API (read-only)
 impl AppState {
-    pub fn new(db: Arc<Database>, embedder: Arc<EmbeddingProcessor>) -> Self {
+    pub fn new(db: Arc<Database>, embedder: Arc<EmbeddingProcessor>, io_handle: IoManagerHandle) -> Self {
         Self {
             chat: ChatState(RwLock::new(ChatHistory::new())),
             config: ConfigState(RwLock::new(Config::default())),
@@ -118,6 +120,7 @@ impl AppState {
             indexing_control: Arc::new(Mutex::new(None)),
             db,
             embedder,
+            io_handle,
             // TODO: This needs to be handled elsewhere if not handled in AppState
             // shutdown: tokio::sync::broadcast::channel(1).0,
         }
@@ -590,7 +593,7 @@ pub async fn state_manager(
                 .await;
                 let chat_guard = state.chat.0.read().await;
                 if let Ok(Some(last_user_msg)) = chat_guard.last_user_msg() {
-                    tracing::info!("Start embedding user message");
+                    tracing::info!("Start embedding user message: {}", last_user_msg);
                     let temp_embed = state
                         .embedder
                         .generate_embeddings(vec![last_user_msg])
@@ -601,20 +604,51 @@ pub async fn state_manager(
                     drop(chat_guard);
                     let embeddings = temp_embed.first().expect("No results from vector search");
                     tracing::info!("Finish embedding user message");
+                    match search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function) {
+             Ok(ty_emb_data) => {
+                 tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
+
+                 // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
+                 let snippets = state.io_handle.get_snippets_batch(ty_emb_data.v).await
+                     .unwrap_or_default()
+                     .into_iter()
+                     .filter_map(|r| r.ok())
+                     .collect::<Vec<String>>();
+
+                 // Send snippets directly to context manager
+                 let _ = context_tx.send(RagEvent::ContextSnippets(snippets)).await;
+
+                 // Then trigger context construction with the correct parent ID
+                 let chat_guard = state.chat.0.read().await;
+                 let parent_id = chat_guard.tail;
+                 drop(chat_guard);
+
+                 let messages: Vec<Message> = state.chat.0.read().await.messages.iter()
+                     .map(|m| m.1.clone()).collect();
+
+                 let _ = context_tx.send(RagEvent::UserMessages(messages)).await;
+                 let _ = context_tx.send(RagEvent::ConstructContext(parent_id)).await;
+             },
+             Err(_) => {
+                 tracing::error!("The attempt to create the index at the database failed");
+             }
+         };
                     // TODO: Hardcoded to only search functions right now, need to update it to
                     // search for all node types in teh query in search_similar.
-                    match search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function) {
-                        Ok(ty_emb_data) => { 
-                            tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
-                            event_bus.send(AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)))
-                        },
-                        Err(_) => {
-                            tracing::error!(
-                                "The attempt to create the index at the database failed"
-                            )
-                        }
-                    };
-                    tracing::trace!("adding message on finishing embedding user messaage");
+                    //
+                    // NOTE: Commented out while trying alternate solution
+                    // match search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function) {
+                    //     Ok(ty_emb_data) => { 
+                    //         tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
+                    //         event_bus.send(AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)))
+                    //     },
+                    //     Err(_) => {
+                    //         tracing::error!(
+                    //             "The attempt to create the index at the database failed"
+                    //         )
+                    //     }
+                    // };
+                    // tracing::trace!("adding message on finishing embedding user messaage");
                 }
             }
             StateCommand::ForwardContext => {
