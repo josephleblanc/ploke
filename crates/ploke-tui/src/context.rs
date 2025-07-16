@@ -53,7 +53,6 @@ pub struct ContextManager {
     pub code_context: Option<CodeContext>,
     pub messages: Option<Vec<Message>>,
     pub llm_handle: mpsc::Sender<llm::Event>,
-    state: ContextState, // Add state tracking
     pending_parent_id: Option< Uuid >,
 }
 
@@ -68,16 +67,6 @@ impl From<Vec<String>> for CodeContext {
     }
 }
 
-
-#[derive(Debug)]
-enum ContextState {
-    Idle,
-    WaitingForSnippets,
-    HasSnippets(CodeContext),
-    HasMessages(Vec<Message>),
-    Ready(CodeContext, Vec<Message>, Uuid),
-}
-
 impl ContextManager {
     #[instrument(skip_all, fields(code_context))]
     pub async fn run(mut self) {
@@ -89,7 +78,7 @@ impl ContextManager {
         }
     }
 
-    #[instrument(skip_all, fields(self.context_state))]
+    #[instrument(skip_all)]
     pub async fn handle_rag_events(&mut self, rag_event: RagEvent) {
         tracing::info!("Starting handle_rag_events: {:?}", rag_event);
         use RagEvent::*;
@@ -102,70 +91,61 @@ impl ContextManager {
                     "within ContextSnippets with items.len(): {}
                     code_context.is_some() {} --- messages.is_some() {}
                     self.pending_parent_id: {:?}", 
-                    items.len(), self.code_context.is_some(), self.messages.is_some(), self.pending_parent_id
+                    items.len(), 
+                    self.code_context.is_some(), 
+                    self.messages.is_some(), 
+                    self.pending_parent_id
                 );
-                // Check if we have both snippets and messages to process
-                if let (Some(context), Some(messages), Some(parent_id)) = (
-                    self.code_context.take(),
-                    self.messages.take(),
-                    self.pending_parent_id,
-                ) {
-                    self.send_prompt_to_llm(context, messages, parent_id).await;
-                } else {
-                    // Store snippets and wait for messages
-                    self.state = ContextState::HasSnippets(items.into());
-                }
+                
+                // Check if we have everything needed to proceed
+                self.try_construct_and_send_context().await;
             }
             UserMessages(msgs) => {
                 self.messages = Some(msgs.clone());
-
 
                 tracing::info!(
                     "within UserMessages with msgs.len(): {}
                     code_context.is_some() {} --- messages.is_some() {}
                     self.pending_parent_id: {:?}", 
-                    msgs.len(), self.code_context.is_some(), self.messages.is_some(), self.pending_parent_id
+                    msgs.len(), 
+                    self.code_context.is_some(), 
+                    self.messages.is_some(), 
+                    self.pending_parent_id
                 );
-                // Check if we have both snippets and messages
-                if let (Some(context), Some(messages), Some(parent_id)) = (
-                    self.code_context.take(),
-                    self.messages.take(),
-                    self.pending_parent_id,
-                ) {
-                    self.send_prompt_to_llm(context, messages, parent_id).await;
-                } else {
-                    self.state = ContextState::HasMessages(msgs);
-                }
+                
+                // Check if we have everything needed to proceed
+                self.try_construct_and_send_context().await;
             }
             ConstructContext(id) => {
                 tracing::info!(
                     "within ConstructContext with id: {}
                     code_context.is_some() {} --- messages.is_some() {}", 
-                    id, self.code_context.is_some(), self.messages.is_some()
+                    id, 
+                    self.code_context.is_some(), 
+                    self.messages.is_some()
                 );
 
-                // Check if we have all required components
-                match (self.code_context.take(), self.messages.take()) {
-                    (Some(context), Some(messages)) => {
-                        self.send_prompt_to_llm(context, messages, id).await;
-                    }
-                    (Some(context), None) => {
-                        // Store snippets, wait for messages
-                        self.pending_parent_id = Some(id);
-                        self.state = ContextState::HasSnippets(context);
-                    }
-                    (None, Some(messages)) => {
-                        // Store messages, wait for snippets
-                        self.pending_parent_id = Some(id);
-                        self.state = ContextState::HasMessages(messages);
-                    }
-                    (None, None) => {
-                        // Wait for both
-                        self.pending_parent_id = Some(id);
-                        self.state = ContextState::WaitingForSnippets;
-                    }
-                }
+                self.pending_parent_id = Some(id);
+                self.try_construct_and_send_context().await;
             }
+        }
+    }
+
+    async fn try_construct_and_send_context(&mut self) {
+        if let (Some(context), Some(messages), Some(parent_id)) = (
+            self.code_context.take(),
+            self.messages.take(),
+            self.pending_parent_id.take(),
+        ) {
+            self.send_prompt_to_llm(context, messages, parent_id).await;
+        } else {
+            // Not all components ready yet, keep them stored
+            tracing::debug!(
+                "Waiting for more components - context: {}, messages: {}, parent_id: {}",
+                self.code_context.is_some(),
+                self.messages.is_some(),
+                self.pending_parent_id.is_some()
+            );
         }
     }
 
@@ -182,7 +162,6 @@ impl ContextManager {
                 tracing::error!("Failed to send context to LLM: {}", e.to_string());
             }
         };
-        self.state = ContextState::Idle;
         self.pending_parent_id = None;
     }
 
@@ -238,7 +217,6 @@ impl ContextManager {
             code_context: None,
             messages: None,
             llm_handle,
-            state: ContextState::Idle,
             pending_parent_id: None,
         }
     }
