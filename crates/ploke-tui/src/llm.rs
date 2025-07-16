@@ -84,7 +84,6 @@ pub async fn llm_manager_old(
      state: Arc<AppState>,
      cmd_tx: mpsc::Sender<StateCommand>,
      provider: ProviderConfig,
-     mut llm_rx: mpsc::Receiver<llm::Event>,
  ) {
      let client = Client::new();
      let mut pending_requests = Vec::new();
