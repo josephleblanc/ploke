@@ -183,7 +183,7 @@ impl UpdateFailedEvent {
 /// - Links to its parent message (if any)
 /// - List of child messages forming conversation branches
 /// - Unique identifier and content storage
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
@@ -227,6 +227,18 @@ impl std::fmt::Display for MessageKind {
             MessageKind::System => write!(f, "System"),
             MessageKind::Tool => todo!(),
             MessageKind::SysInfo => write!(f, "SysInfo"),
+        }
+    }
+}
+
+impl Into<&'static str> for MessageKind {
+    fn into(self) -> &'static str {
+        match self {
+            MessageKind::User => "User",
+            MessageKind::Assistant => "Assistant",
+            MessageKind::System => "System",
+            MessageKind::Tool => "Tool",
+            MessageKind::SysInfo => "SysInfo"
         }
     }
 }
@@ -651,6 +663,20 @@ impl ChatHistory {
 
         self.current = siblings[new_idx];
         Ok(self.current)
+    }
+
+    pub fn last_user_msg(&self) -> Result<Option< String >> {
+        let mut current = self.current;
+        let msg = std::iter::from_fn(move || {
+            let id = current;
+            current = self.messages.get(&id).and_then(|m| m.parent)?;
+            Some(id)
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .find_map(|id| self.messages.get(&id).map(|m| m.content.clone()));
+        Ok(msg)
     }
 }
 

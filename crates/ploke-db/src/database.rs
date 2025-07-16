@@ -85,6 +85,11 @@ impl Database {
     pub fn new(db: Db<MemStorage>) -> Self {
         Self { db }
     }
+    pub fn new_init() -> Result<Self, ploke_error::Error> {
+        let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
+        db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(Self {db})
+    }
 
     pub fn init_with_schema() -> Result<Self, ploke_error::Error> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
@@ -568,7 +573,6 @@ impl Database {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(result2)
     }
-    
 }
 
 #[cfg(test)]
@@ -644,10 +648,8 @@ mod tests {
         Ok(())
     }
 
-
     #[tokio::test]
     async fn test_get_nodes_two() -> Result<(), ploke_error::Error> {
-
         ploke_test_utils::init_test_tracing(Level::INFO);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);

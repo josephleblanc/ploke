@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::instrument;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
@@ -25,8 +26,17 @@ struct OpenAiRequest<'a> {
 
 #[derive(Serialize, Debug)]
 pub struct RequestMessage<'a> {
-    kind: &'a str,
-    content: String,
+    pub kind: &'a str,
+    pub content: String,
+}
+
+impl RequestMessage<'_> {
+    pub fn new_system(content: String) -> Self {
+        Self {
+            kind: "system",
+            content,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -49,17 +59,22 @@ pub async fn llm_manager(
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     provider: ProviderConfig,
+    mut llm_rx: mpsc::Receiver<llm::Event>,
 ) {
     let client = Client::new();
 
     while let Ok(event) = event_rx.recv().await {
         if let AppEvent::Llm(request @ llm::Event::Request { .. }) = event {
+            tracing::info!("Calling llm_rx.recv().await...");
+            let context = llm_rx.recv().await;
+            tracing::error!("llm_rx.recv().await returned with context: {:?}", context);
             tokio::spawn(process_llm_request(
                 request,
                 Arc::clone(&state),
                 cmd_tx.clone(),
                 client.clone(),
                 provider.clone(), // Clone the provider config
+                context,
             ));
         }
     }
@@ -73,7 +88,10 @@ pub async fn process_llm_request(
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     provider: ProviderConfig,
+    context: Option<llm::Event>,
 ) {
+
+    tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         llm::Event::Request { parent_id, .. } => parent_id,
         _ => return, // Not a request, do nothing
@@ -100,17 +118,15 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider).await {
-        Ok(content) => 
-        { 
-            StateCommand::UpdateMessage {
+    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider, context).await {
+        Ok(content) => StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
                 content: Some(content),
                 status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
-        } }
+        },
         Err(e) => {
             log::error!("LLM API call failed: {}", e);
             StateCommand::UpdateMessage {
@@ -132,10 +148,12 @@ pub async fn process_llm_request(
     }
 }
 
+#[instrument(skip(provider,state,client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     provider: &ProviderConfig,
+    context: Option<llm::Event>,
 ) -> Result<String, LlmError> {
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
@@ -146,23 +164,29 @@ async fn prepare_and_run_llm_call(
     } else {
         &path[..]
     };
+    tracing::info!("Inside prepare_and_run_llm_call");
 
-    let messages: Vec<RequestMessage> = context_path
-        .iter()
-        .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
-        .map(|msg| RequestMessage {
-            kind: match msg.kind {
-                MessageKind::User => "user",
-                MessageKind::Assistant => "assistant",
-                MessageKind::System => "system",
-                MessageKind::Tool => todo!(),
-                MessageKind::SysInfo => "sysinfo",
-            },
-            content: msg.content.clone(), // can this clone be remove somehow?
-        })
-        .collect();
+    let messages: Vec<RequestMessage> =
+        if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
+            prompt.into_iter().map(|(k, c)| RequestMessage {
+                kind: k.into(),
+                content: c.clone(), // can this clone be remove somehow?
+            }).collect()
+        } else {
+            context_path
+                .iter()
+                .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
+                .map(|msg| RequestMessage {
+                    kind: msg.kind.into(),
+                    content: msg.content.clone(), // can this clone be remove somehow?
+                })
+                .collect()
+        };
 
-    log::info!("Sending conversation histor message with content: {:#?}", messages);
+    log::info!(
+        "Sending conversation histor message with content: {:#?}",
+        messages
+    );
     // Release the lock before the network call
     drop(history_guard);
 
@@ -201,6 +225,16 @@ async fn prepare_and_run_llm_call(
         .unwrap_or_else(|| "No content received from API.".to_string());
 
     Ok(content)
+}
+
+fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
+    match msg.kind {
+        MessageKind::User => "user",
+        MessageKind::Assistant => "assistant",
+        MessageKind::System => "system",
+        MessageKind::Tool => todo!(),
+        MessageKind::SysInfo => "sysinfo",
+    }
 }
 
 // Backpressure-aware command sender
@@ -282,6 +316,7 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
             queue_depth,
         } => todo!("Implement Me!"),
         Event::ModelChanged { new_model } => todo!("Implement Me!"),
+        Event::PromptConstructed { prompt, parent_id } => todo!(),
     }
 }
 
@@ -336,6 +371,11 @@ pub enum Event {
     ModelChanged {
         new_model: String, // e.g., "claude-3-opus"
     },
+    /// Prompt constructed to be sent to the LLM
+    PromptConstructed {
+        prompt: Vec<(MessageKind, String)>,
+        parent_id: Uuid,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -358,6 +398,7 @@ impl Event {
                 queue_depth,
             } => todo!(),
             Event::ModelChanged { new_model } => todo!(),
+            Event::PromptConstructed { prompt, parent_id } => *parent_id,
         }
     }
 }

@@ -4,7 +4,7 @@ use fmt::format::FmtSpan;
 
 pub fn init_tracing() -> WorkerGuard {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("trace,cozo=error,tokenizers=error"));  // Default to 'info' level
+        .unwrap_or_else(|_| EnvFilter::new("info,ploke_db=trace,cozo=error,tokenizer=error"));  // Default to 'info' level
     
     // File appender with custom timestamp format
     let log_dir = "logs";
@@ -21,8 +21,8 @@ pub fn init_tracing() -> WorkerGuard {
     
     let file_subscriber = fmt_layer
         .with_writer(non_blocking_file)
-        .with_ansi(false)
-        .compact();
+        .pretty()
+        .with_ansi(false);
 
     tracing_subscriber::registry()
         .with(filter)

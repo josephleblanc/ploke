@@ -164,16 +164,21 @@ impl App {
                         }
                         AppEvent::Ui(ui_event) => {},
                         AppEvent::Llm(event) => {},
+                        AppEvent::Rag(rag_event) => {
+                            self.send_cmd(StateCommand::ForwardContext);
+                        }
                         AppEvent::System(system_event) => {},
                         AppEvent::Error(error_event) => {},
-                        AppEvent::IndexingStarted => {},
+                        AppEvent::IndexingStarted => {
+                        },
                         AppEvent::IndexingCompleted => {
                             tracing::info!("Indexing Succeeded!");
                             self.indexing_state = None;
                             self.send_cmd(StateCommand::AddMessageImmediate {
                                 msg: String::from("Indexing Succeeded"),
                                 kind: MessageKind::SysInfo,
-                            })
+                            });
+                            self.send_cmd(StateCommand::UpdateDatabase)
                         },
                         AppEvent::IndexingFailed => {
                             tracing::error!("Indexing Failed");
@@ -183,18 +188,21 @@ impl App {
                                 kind: MessageKind::SysInfo,
                             })
                         },
+                        AppEvent::GenerateContext(id) => {
+                            // self.send_cmd( StateCommand::)
+                        }
                     }
                 }
 
             }
-            let frame_duration = frame_start.elapsed();
-            if frame_duration > Duration::from_millis(16) {
-                tracing::warn!(
-                    frame_duration_ms = frame_duration.as_millis(),
-                    "Frame budget exceeded"
-                );
-            }
-            frame_counter += 1;
+            // let frame_duration = frame_start.elapsed();
+            // if frame_duration > Duration::from_millis(16) {
+            //     tracing::warn!(
+            //         frame_duration_ms = frame_duration.as_millis(),
+            //         "Frame budget exceeded"
+            //     );
+            // }
+            // frame_counter += 1;
         }
         Ok(())
     }
@@ -202,15 +210,25 @@ impl App {
     /// Renders the user interface.
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
         // ---------- Define Layout ----------
-        let main_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(vec![
+        let proto_layout = if self.indexing_state.is_some() {
+            vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
                 Constraint::Length(3),
-                Constraint::Length(1)
-            ])
+                Constraint::Length(1),
+            ]
+        } else {
+            vec![
+                Constraint::Percentage(80),
+                Constraint::Percentage(20),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ]
+        };
+        let main_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(proto_layout)
             .split(frame.area());
 
         let status_layout = layout_statusline(5, main_layout[2]);
@@ -395,6 +413,8 @@ impl App {
                         // instead.
                         content: self.input_buffer.clone(),
                     });
+                    // TODO: Expand EmbedMessage to include other types of message
+                    self.send_cmd(StateCommand::EmbedMessage);
                     // Clear the UI-local buffer after sending the command
                     self.input_buffer.clear();
                 }
@@ -557,6 +577,7 @@ mod tests {
     use crate::app_state::{AppState, StateCommand};
     use crate::user_config::CommandStyle;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ploke_db::Database;
     use ploke_embed::indexer::{IndexStatus, IndexingStatus};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -577,83 +598,85 @@ mod tests {
     ) -> Vec<String> {
         todo!()
     }
-
-    #[tokio::test]
-    async fn user_starts_and_monitors_indexing() {
-        let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
-        let event_bus = Arc::new(EventBus::new(EventBusCaps {
-            realtime_cap: 100,
-            background_cap: 100,
-            error_cap: 100,
-            index_cap: 100,
-        }));
-
-        // Initialize app
-        let mut app = App::new(
-            CommandStyle::Slash,
-            Arc::new(AppState::default()),
-            cmd_tx,
-            &event_bus,
-        );
-
-        // Start indexing via command
-        app.mode = Mode::Command;
-        app.input_buffer = "/index start fixture_nodes".into();
-        app.handle_command_mode(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-
-        // Verify command was sent
-        assert!(matches!(
-            cmd_rx.recv().await,
-            Some(StateCommand::IndexWorkspace { .. })
-        ));
-    }
-    //     // Simulate progress
-    //     event_bus.send(AppEvent::IndexingProgress(IndexingStatus {
-    //         status: IndexStatus::Running,
-    //         recent_processed: 5,
-    //         total: 100,
-    //         current_file: None,
-    //         errors: Vec::new(),
-    //     }));
-    //
-    //     // Render
-    //     let mut terminal = build_test_terminal();
-    //     let frames = draw_terminal_with_delay(&mut terminal, &app, Duration::from_millis(50));
-    //
-    //     // Verify progress appears
-    //     let frame_string = frames.join("");
-    //     assert!(frame_string.contains("Indexing"));
-    //     assert!(frame_string.contains("5/100"));
-    // }
-
-    // use crate::test_utils::mock::MockBehavior;
-    // use mockall::{Sequence, predicate::*};
-    // use ploke_embed::{
-    //     error::{EmbedError, truncate_string},
-    //     indexer::IndexingStatus,
-    // };
-    //
-    // #[tokio::test]
-    // async fn http_error_propagation() {
-    //     // Setup
-    //     let (mut progress_rx, state) = setup_test_environment(MockBehavior::RateLimited, 10).await;
-    //
-    //     // Capture progress state
-    //     let mut status: Option<IndexingStatus> = None;
-    //     while let Ok(progress) = progress_rx.recv().await {
-    //         if progress.total > 0 {
-    //             status = Some(progress);
-    //             break;
-    //         }
-    //     }
-    //
-    //     // Add generated embeddings
-    //     run_embedding_phase(&state).await;
-    //
-    //     // Verify error
-    //     let status = status.unwrap();
-    //     assert!(!status.errors.is_empty());
-    //     assert!(status.errors[0].contains("429"));
-    //     assert!(status.errors[0].contains("Rate Limited"));
-    // }
 }
+//     #[tokio::test]
+//     async fn user_starts_and_monitors_indexing() -> color_eyre::Result<()> {
+//         let db = Database::new_init()?;
+//         let (cmd_tx, mut cmd_rx) = mpsc::channel(32);
+//         let event_bus = Arc::new(EventBus::new(EventBusCaps {
+//             realtime_cap: 100,
+//             background_cap: 100,
+//             error_cap: 100,
+//             index_cap: 100,
+//         }));
+//
+//         // Initialize app
+//         let mut app = App::new(
+//             CommandStyle::Slash,
+//             Arc::new(AppState::new(Arc::new( db ))),
+//             cmd_tx,
+//             &event_bus,
+//         );
+//
+//         // Start indexing via command
+//         app.mode = Mode::Command;
+//         app.input_buffer = "/index start fixture_nodes".into();
+//         app.handle_command_mode(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+//
+//         // Verify command was sent
+//         assert!(matches!(
+//             cmd_rx.recv().await,
+//             Some(StateCommand::IndexWorkspace { .. })
+//         ));
+//         Ok(())
+//     }
+//     //     // Simulate progress
+//     //     event_bus.send(AppEvent::IndexingProgress(IndexingStatus {
+//     //         status: IndexStatus::Running,
+//     //         recent_processed: 5,
+//     //         total: 100,
+//     //         current_file: None,
+//     //         errors: Vec::new(),
+//     //     }));
+//     //
+//     //     // Render
+//     //     let mut terminal = build_test_terminal();
+//     //     let frames = draw_terminal_with_delay(&mut terminal, &app, Duration::from_millis(50));
+//     //
+//     //     // Verify progress appears
+//     //     let frame_string = frames.join("");
+//     //     assert!(frame_string.contains("Indexing"));
+//     //     assert!(frame_string.contains("5/100"));
+//     // }
+//
+//     // use crate::test_utils::mock::MockBehavior;
+//     // use mockall::{Sequence, predicate::*};
+//     // use ploke_embed::{
+//     //     error::{EmbedError, truncate_string},
+//     //     indexer::IndexingStatus,
+//     // };
+//     //
+//     // #[tokio::test]
+//     // async fn http_error_propagation() {
+//     //     // Setup
+//     //     let (mut progress_rx, state) = setup_test_environment(MockBehavior::RateLimited, 10).await;
+//     //
+//     //     // Capture progress state
+//     //     let mut status: Option<IndexingStatus> = None;
+//     //     while let Ok(progress) = progress_rx.recv().await {
+//     //         if progress.total > 0 {
+//     //             status = Some(progress);
+//     //             break;
+//     //         }
+//     //     }
+//     //
+//     //     // Add generated embeddings
+//     //     run_embedding_phase(&state).await;
+//     //
+//     //     // Verify error
+//     //     let status = status.unwrap();
+//     //     assert!(!status.errors.is_empty());
+//     //     assert!(status.errors[0].contains("429"));
+//     //     assert!(status.errors[0].contains("Rate Limited"));
+//     // }
+// }

@@ -3,6 +3,8 @@
 pub mod app;
 pub mod app_state;
 pub mod chat_history;
+pub mod context;
+pub mod database;
 pub mod file_man;
 pub mod llm;
 pub mod parser;
@@ -17,6 +19,7 @@ use app::App;
 use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
 };
+use context::ContextManager;
 use file_man::FileManager;
 use llm::llm_manager;
 use parser::run_parse;
@@ -91,6 +94,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let event_bus = Arc::new(EventBus::new(event_bus_caps));
 
     let processor = config.load_embedding_processor()?;
+    let proc_arc = Arc::new(processor);
 
     // TODO:
     // 1 Implement the cancellation token propagation in IndexerTask
@@ -99,7 +103,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let indexer_task = IndexerTask::new(
         db_handle.clone(),
         io_handle.clone(),
-        processor, // Use configured processor
+        Arc::clone(&proc_arc), // Use configured processor
         CancellationToken::new().0,
         8,
     );
@@ -111,22 +115,42 @@ pub async fn try_main() -> color_eyre::Result<()> {
         indexing_state: RwLock::new(None), // Initialize as None
         indexer_task: Some(Arc::new(indexer_task)),
         indexing_control: Arc::new(Mutex::new(None)),
+        db: db_handle,
+        embedder: Arc::clone(&proc_arc),
     });
 
     // Create command channel with backpressure
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+    let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+    let (llm_event_tx, llm_event_rx) = mpsc::channel(10);
+    let context_manager = ContextManager {
+        rag_event_rx,
+        event_bus: Arc::clone(&event_bus),
+        code_context: None,
+        messages: None,
+        llm_handle: llm_event_tx,
+    };
+    tokio::spawn(context_manager.run());
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
     let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
     let file_manager = FileManager::new(
         io_handle.clone(),
         event_bus.subscribe(EventPriority::Background),
+        event_bus.background_tx.clone(),
+        rag_event_tx.clone(),
     );
 
     tokio::spawn(file_manager.run());
 
     // Spawn state manager first
-    tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone()));
+    tokio::spawn(state_manager(
+        state.clone(),
+        cmd_rx,
+        event_bus.clone(),
+        rag_event_tx,
+    ));
 
     // Spawn subsystems with backpressure-aware command sender
     tokio::spawn(llm_manager(
@@ -134,6 +158,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
         config.provider.clone(),
+        llm_event_rx,
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
@@ -171,6 +196,8 @@ impl std::fmt::Display for UiError {
 }
 
 pub mod system {
+    use ploke_db::TypedEmbedData;
+
     use crate::UiError;
 
     #[derive(Clone, Debug)]
@@ -178,11 +205,26 @@ pub mod system {
         SaveRequested(Vec<u8>), // Serialized content
         MutationFailed(UiError),
         CommandDropped(&'static str),
+        ReadSnippet(TypedEmbedData),
+        CompleteReadSnip(Vec<String>),
     }
 }
 
 // Other domains: file, rag, agent, system, ...
 
+pub mod ploke_rag {
+    use crate::chat_history::Message;
+
+    use super::*;
+    #[derive(Clone, Debug)]
+    pub enum RagEvent {
+        ContextSnippets(Vec<String>),
+        UserMessages(Vec<Message>),
+        ConstructContext(Uuid),
+    }
+}
+
+use ploke_rag::RagEvent;
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),
@@ -194,6 +236,7 @@ pub enum AppEvent {
     System(system::SystemEvent),
     // A message was successfully updated. UI should refresh this message.
     MessageUpdated(MessageUpdatedEvent),
+    Rag(RagEvent),
 
     // An attempt to update a message was rejected. UI should show an error.
     UpdateFailed(UpdateFailedEvent),
@@ -202,6 +245,7 @@ pub enum AppEvent {
     IndexingStarted,
     IndexingCompleted,
     IndexingFailed,
+    GenerateContext(Uuid),
 }
 
 impl AppEvent {
@@ -217,7 +261,12 @@ impl AppEvent {
             AppEvent::IndexingStarted => EventPriority::Background,
             AppEvent::IndexingCompleted => EventPriority::Realtime,
             AppEvent::IndexingFailed => EventPriority::Realtime,
+            AppEvent::Rag(rag_event) => EventPriority::Background,
+            AppEvent::GenerateContext(_) => EventPriority::Background,
         }
+    }
+    pub fn is_system(&self) -> bool {
+        matches!(self, AppEvent::System(_))
     }
 }
 
@@ -240,12 +289,14 @@ pub enum EventPriority {
     Background,
 }
 
+#[derive(Debug)]
 pub struct EventBus {
     realtime_tx: broadcast::Sender<AppEvent>,
     background_tx: broadcast::Sender<AppEvent>,
     error_tx: broadcast::Sender<ErrorEvent>,
     // NOTE: dedicated for indexing manager control
     index_tx: Arc<broadcast::Sender<indexer::IndexingStatus>>,
+    // NOTE: Dedicated for context control
 }
 
 /// Convenience struct to help with the initialization of EventBus
@@ -271,50 +322,92 @@ impl Default for EventBusCaps {
 async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     use broadcast::error::RecvError;
     let mut index_rx = event_bus.index_subscriber();
+    let mut bg_rx = event_bus.background_tx.subscribe();
     // more here?
     loop {
-        tracing::trace!("event bus received IndexStatus");
-        // tokio::select! {
-        // index_event = index_rx.recv() => {
-        let index_event = index_rx.recv().await;
-        match index_event {
-            Ok(status) => {
-                match status.status {
-                    IndexStatus::Running => {
-                        tracing::warn!("event bus sending {:?}", status.status);
-                        let result = event_bus
-                            .realtime_tx
-                            .send(AppEvent::IndexingProgress(status));
-                        tracing::warn!("with result {:?}", result);
-                        continue;
+        tokio::select! {
+            bg_event = bg_rx.recv() => {
+            tracing::trace!("event bus received a background event: {:?}", bg_event);
+                match bg_event {
+                    Ok(AppEvent::System(sys_event)) => match sys_event {
+                        system::SystemEvent::CompleteReadSnip(items) => {
+                            tracing::info!("event bus Sent RAG event with snippets: {:#?}", items);
+                            event_bus.send(AppEvent::Rag(RagEvent::ContextSnippets(items)));
+                        }
+                        _ => {}
+                    },
+                    Ok(_) => {}
+                    Err(e) => {
+                        match e {
+                            RecvError::Closed => {
+                                tracing::trace!("System Event event channel closed {}", e.to_string());
+                                break;
+                            }
+                            RecvError::Lagged(lag) => {
+                                tracing::trace!(
+                                    "System Event event channel lagging {} with {} messages",
+                                    e.to_string(),
+                                    lag
+                                )
+                            }
+                        };
                     }
-                    IndexStatus::Completed => {
-                        let result = event_bus.realtime_tx.send(AppEvent::IndexingStarted);
-                        tracing::warn!("event bus sending {:?} with result {:?}", status.status, result);
-                        break;
-                    }
-                    IndexStatus::Cancelled => {
-                        // WARN: Consider whether this should count as a failure or not
-                        // when doing better error handling later.
-                        let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
-                        tracing::warn!("event bus sending {:?} with result {:?}", status.status, result);
-                        break;
-                    }
-                    _ => {}
                 }
             }
-            Err(e) => match e {
-                RecvError::Closed => {
-                    tracing::trace!("indexing task event channel closed {}", e.to_string());
-                    break;
+            index_event = index_rx.recv() => {
+            // let index_event = index_rx.recv().await;
+            tracing::trace!("event bus received IndexStatus");
+            match index_event {
+                Ok(status) => {
+                    match status.status {
+                        IndexStatus::Running => {
+                            tracing::warn!("event bus sending {:?}", status.status);
+                            let result = event_bus
+                                .realtime_tx
+                                .send(AppEvent::IndexingProgress(status));
+                            tracing::warn!("with result {:?}", result);
+                            continue;
+                        }
+                        IndexStatus::Completed => {
+                            let result = event_bus.realtime_tx.send(AppEvent::IndexingCompleted);
+                            tracing::warn!(
+                                "event bus sending {:?} with result {:?}",
+                                status.status,
+                                result
+                            );
+                            continue;
+                        }
+                        IndexStatus::Cancelled => {
+                            // WARN: Consider whether this should count as a failure or not
+                            // when doing better error handling later.
+                            let result = event_bus.realtime_tx.send(AppEvent::IndexingFailed);
+                            tracing::warn!(
+                                "event bus sending {:?} with result {:?}",
+                                status.status,
+                                result
+                            );
+                            continue;
+                        }
+                        _ => {}
+                    }
                 }
-                RecvError::Lagged(_) => {
-                    tracing::trace!("indexing task event channel lagging {}", e.to_string())
-                }
-            },
-        }
-        // }
-        // };
+                Err(e) => match e {
+                    RecvError::Closed => {
+                        tracing::trace!("indexing task event channel closed {}", e.to_string());
+                        // break;
+                    }
+                    RecvError::Lagged(lag) => {
+                        tracing::trace!(
+                            "indexing task event channel lagging {} with {} messages",
+                            e.to_string(),
+                            lag
+                        )
+                    }
+                },
+            }
+            }
+            // };
+        };
     }
     Ok(())
 }

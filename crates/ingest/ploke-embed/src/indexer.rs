@@ -62,7 +62,11 @@ impl EmbeddingProcessor {
         match &self.source {
             EmbeddingSource::Local(backend) => {
                 let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
-                Ok(backend.embed_batch(&text_slices)?)
+                Ok(backend.embed_batch(&text_slices).inspect(|v| {
+                    tracing::trace!("OK Returning from embed_batch with vec(s): {:?}", v);
+                }).inspect_err(|e| {
+                    tracing::trace!("Error Returning from embed_batch with error: {:?}", e.to_string());
+                    })?)
             }
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
             EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
@@ -144,7 +148,7 @@ pub enum IndexerCommand {
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
-    pub embedding_processor: EmbeddingProcessor,
+    pub embedding_processor: Arc< EmbeddingProcessor >,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
@@ -155,7 +159,7 @@ impl IndexerTask {
     pub fn new(
         db: Arc<Database>,
         io: IoManagerHandle,
-        embedding_processor: EmbeddingProcessor,
+        embedding_processor: Arc< EmbeddingProcessor >,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
@@ -353,6 +357,7 @@ impl IndexerTask {
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
+
         // tracing::info!(
         //     "Indexer completed? {}",
         //     received_completed.load(std::sync::atomic::Ordering::SeqCst),
@@ -944,7 +949,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            embedding_processor,
+            Arc::new( embedding_processor ),
             cancellation_token,
             batch_size,
         );
@@ -1176,7 +1181,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            embedding_processor,
+            Arc::new( embedding_processor ),
             cancellation_token,
             batch_size,
         );
@@ -1320,7 +1325,7 @@ mod tests {
             tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
         for ty in NodeType::primary_nodes() {
-            let db_ret = ploke_db::create_index_warn(&db, ty, cozo::ScriptMutability::Mutable);
+            let db_ret = ploke_db::create_index_warn(&db, ty);
             tracing::info!("db_ret = {:?}", db_ret);
         }
 
