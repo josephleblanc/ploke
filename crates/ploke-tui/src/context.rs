@@ -52,7 +52,6 @@ pub struct ContextManager {
     pub event_bus: Arc<EventBus>,
     pub code_context: Option<CodeContext>,
     pub messages: Option<Vec<Message>>,
-    pub llm_handle: mpsc::Sender<llm::Event>,
     pending_parent_id: Option< Uuid >,
 }
 
@@ -156,12 +155,8 @@ impl ContextManager {
         parent_id: Uuid,
     ) {
         let prompt = self.construct_context(context, messages, parent_id);
-        match self.llm_handle.send(prompt).await {
-            Ok(_) => tracing::info!("LLM context sent successfully"),
-            Err(e) => {
-                tracing::error!("Failed to send context to LLM: {}", e.to_string());
-            }
-        };
+        self.event_bus.send(AppEvent::Llm(prompt));
+        tracing::info!("LLM context sent successfully via event bus");
         self.pending_parent_id = None;
     }
 
@@ -209,14 +204,12 @@ impl ContextManager {
     pub fn new(
         rag_event_rx: mpsc::Receiver<RagEvent>,
         event_bus: Arc<EventBus>,
-        llm_handle: mpsc::Sender<llm::Event>,
     ) -> Self {
         Self {
             rag_event_rx,
             event_bus,
             code_context: None,
             messages: None,
-            llm_handle,
             pending_parent_id: None,
         }
     }
