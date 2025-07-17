@@ -78,7 +78,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
-    run_parse(Arc::clone(&db_handle), Some(TARGET_DIR_FIXTURE.into()))?;
+    // Initial parse is now optional - user can run indexing on demand
+    // run_parse(Arc::clone(&db_handle), Some(TARGET_DIR_FIXTURE.into()))?;
 
     // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
     // spawning state meager below.
