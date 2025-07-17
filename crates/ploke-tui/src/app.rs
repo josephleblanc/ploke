@@ -490,9 +490,36 @@ impl App {
 
         match cmd_str {
             "help" => self.show_command_help(),
-            "index start" => self.send_cmd(StateCommand::IndexWorkspace {
-                workspace: "fixture_tracking_hash".to_string(),
-            }),
+            cmd if cmd.starts_with("index start") => {
+                let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
+                let workspace = if parts.len() >= 3 {
+                    parts[2].to_string()
+                } else {
+                    // Default to current directory if no path provided
+                    ".".to_string()
+                };
+
+                // Validate the directory exists
+                match std::fs::metadata(&workspace) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        self.send_cmd(StateCommand::IndexWorkspace { workspace });
+                    }
+                    Ok(_) => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Error: '{}' is not a directory", workspace),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                    Err(e) => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Error accessing directory '{}': {}", workspace, e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                }
+            }
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
@@ -504,12 +531,15 @@ impl App {
         }
     }
 
-    fn show_command_help(&self) {
-        // TODO: Add these as system messages.
-        eprintln!("Available commands:");
-        eprintln!("  index - Run workspace indexing");
-        eprintln!("  help  - Show this help");
-    }
+     fn show_command_help(&self) {
+         self.send_cmd(StateCommand::AddMessageImmediate {
+             msg: "Available commands:\n  index start [directory] - Run workspace indexing on
+ specified directory (defaults to current dir)\n  index pause - Pause indexing\n  index resume -
+ Resume indexing\n  index cancel - Cancel indexing\n  help - Show this help".to_string(),
+             kind: MessageKind::SysInfo,
+             new_msg_id: Uuid::new_v4(),
+         });
+     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
         use chat_history::NavigationDirection::{Next, Previous};

@@ -23,12 +23,12 @@ use syn_parser::{
 ///
 /// // When user provides a path, it should be returned
 /// let user_path = PathBuf::from("/some/path");
-/// let result = crate::parser::resolve_target_dir(Some(user_path.clone()));
+/// let result = ploke_tui::parser::resolve_target_dir(Some(user_path.clone()));
 /// assert_eq!(result.unwrap(), user_path);
 ///
 /// // When no path is provided, it should return current directory
 /// let current_dir = env::current_dir().unwrap();
-/// let result = crate::parser::resolve_target_dir(None);
+/// let result = ploke_tui::parser::resolve_target_dir(None);
 /// assert_eq!(result.unwrap(), current_dir);
 /// ```
 pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_error::Error> {
@@ -37,33 +37,6 @@ pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_er
         None => env::current_dir().map_err(SynParserError::from)?,
     };
     Ok(target_dir)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_resolve_target_dir_with_user_path() {
-        let expected_path = PathBuf::from("/tmp/test/path");
-        let result = resolve_target_dir(Some(expected_path.clone()));
-        assert_eq!(result.unwrap(), expected_path);
-    }
-
-    #[test]
-    fn test_resolve_target_dir_without_user_path() {
-        let expected_path = env::current_dir().unwrap();
-        let result = resolve_target_dir(None);
-        assert_eq!(result.unwrap(), expected_path);
-    }
-
-    #[test]
-    fn test_resolve_target_dir_with_empty_path() {
-        let empty_path = PathBuf::new();
-        let result = resolve_target_dir(Some(empty_path.clone()));
-        assert_eq!(result.unwrap(), empty_path);
-    }
 }
 
 pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), ploke_error::Error> {
@@ -95,4 +68,31 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
         "Setup".log_step()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_resolve_target_dir_with_user_path() {
+        let expected_path = PathBuf::from("/tmp/test/path");
+        let result = resolve_target_dir(Some(expected_path.clone()));
+        assert_eq!(result.unwrap(), expected_path);
+    }
+
+    #[test]
+    fn test_resolve_target_dir_without_user_path() {
+        let expected_path = env::current_dir().unwrap();
+        let result = resolve_target_dir(None);
+        assert_eq!(result.unwrap(), expected_path);
+    }
+
+    #[test]
+    fn test_resolve_target_dir_with_empty_path() {
+        let empty_path = PathBuf::new();
+        let result = resolve_target_dir(Some(empty_path.clone()));
+        assert_eq!(result.unwrap(), empty_path);
+    }
 }
