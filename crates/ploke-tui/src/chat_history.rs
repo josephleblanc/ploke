@@ -667,6 +667,8 @@ impl ChatHistory {
         Ok(self.current)
     }
 
+    // Ok, I've adjusted the function to be correct. Can you add some documentation here describing
+    // the correct functionality AI!
     pub fn last_user_msg(&self) -> Result<Option<(Uuid, String)>> {
         let mut current = self.current;
         let msg_with_id = std::iter::from_fn(move || {
@@ -674,9 +676,6 @@ impl ChatHistory {
             current = self.messages.get(&id).and_then(|m| m.parent)?;
             Some(id)
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
         .find_map(|id| {
             self.messages
                 .get(&id)
