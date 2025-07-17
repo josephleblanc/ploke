@@ -314,6 +314,7 @@ impl Default for EventBusCaps {
 async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     use broadcast::error::RecvError;
     let mut index_rx = event_bus.index_subscriber();
+    #[allow(unused_mut)]
     let mut bg_rx = event_bus.background_tx.subscribe();
     // more here?
     loop {
@@ -401,7 +402,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
             // };
         };
     }
-    Ok(())
+    // Ok(())
 }
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {
