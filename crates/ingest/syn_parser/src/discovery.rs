@@ -37,6 +37,8 @@ use walkdir::WalkDir;
 // * Currently uses same namespace for all crates with no project.
 //  * Fine for now. Evaluate potential for pros/cons of this approach another time.
 
+// Ok go ahead and implement the error conversions, along with documentation for the conversions
+// and the reasoning behind why those conversions are a good fit AI!
 /// Errors that can occur during the discovery phase.
 #[derive(Error, Debug, Clone)] // Add Clone derive
 pub enum DiscoveryError {
