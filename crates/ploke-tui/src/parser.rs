@@ -10,7 +10,7 @@ use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::
 pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_error::Error> {
     match user_dir {
         Some(p) => Ok(p),
-        None => env::current_dir().map_err(Into::into),
+        None => env::current_dir().map_err(ploke_error::Error::from),
     }
 }
 
@@ -22,13 +22,13 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
     tracing::info!("{}: run the parser on {}", "Parse".log_step(), target.display());
 
     let discovery_output = run_discovery_phase(&target, &[target.clone()])
-        .map_err(Into::into)?;
+        .map_err(ploke_error::Error::from)?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);
 
     let graphs: Vec<_> = results.into_iter().collect::<Result<_, _>>()
-        .map_err(Into::into)?;
+        .map_err(ploke_error::Error::from)?;
 
     let merged = ParsedCodeGraph::merge_new(graphs)?;
     let tree = merged.build_module_tree()?;
