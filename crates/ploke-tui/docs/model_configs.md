@@ -288,3 +288,26 @@ struct ProviderConfig {
 ---
 
 
+## Model switching:
+
+ 1 crates/ploke-tui/src/user_config.rs
+   • add a tiny helper so we can mutate the active provider (today it is read-only).
+   • expose a canonical list of aliases so the UI can offer tab-completion.
+ 2 crates/ploke-tui/src/app_state.rs
+   • new state-command variants:
+   – SwitchModel { alias_or_id: String }
+   – ListModels (optional, for help)
+   • teach state_manager to update ProviderRegistry::active_provider and broadcast a new
+   AppEvent::ModelChanged { alias: String }.
+ 3 crates/ploke-tui/src/app.rs
+   • normal-mode keymap: m (or <space>m) to enter “model picker”.
+   • tiny overlay widget that shows the last two segments of the model id, e.g.
+   “…gpt-4-turbo” or the alias “gpt4”.
+   • flash animation:
+   – on ModelChanged event, set a flash_until: Instant in App.
+   – in draw() render the widget with bright yellow fg, then fade to dim gray over ~1 s.
+   • optional: /model <alias> slash command (reuse the same state-command).
+ 4 crates/ploke-tui/src/llm/mod.rs
+   • make prepare_and_run_llm_call read the current active_provider each time (no caching), so
+   the change is honoured immediately.
+

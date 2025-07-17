@@ -95,10 +95,10 @@ impl App {
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
 
-        let mut frame_counter = 0;
+        // let mut frame_counter = 0;
         while self.running {
-            let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
-            let frame_start = Instant::now();
+            // let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
+            // let frame_start = Instant::now();
 
             // FIX: This doesn't work because it locates the cursor relative to the top left of the
             // screen, but there must be a better way to handle the offset correctly.

@@ -176,8 +176,11 @@ impl ProviderRegistry {
 
     /// Returns a provider either by id or by alias.
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
-        let provider_id = self.aliases.get(alias).unwrap_or(&alias.to_string());
-        self.providers.iter().find(|p| p.id == *provider_id)
+        if let Some( provider_id ) = self.aliases.get(alias) {
+            self.providers.iter().find(|p| p.id == *provider_id)
+        } else {
+            self.providers.iter().find(|p| p.id == *alias)
+        }
     }
 
     /// Attempts to switch the active provider.
