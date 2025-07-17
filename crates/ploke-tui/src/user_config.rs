@@ -66,7 +66,7 @@ pub enum CommandStyle {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
-    pub provider: ProviderConfig,
+    pub providers: ProviderRegistry,
     #[serde(default)]
     pub command_style: CommandStyle,
     #[serde(default)]
@@ -135,8 +135,19 @@ pub struct EmbeddingConfig {
     pub cozo: Option<CozoConfig>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ProviderRegistry {
+    pub providers: Vec<ProviderConfig>,
+    #[serde(default = "default_active_provider")]
+    pub active_provider: String,
+    #[serde(default)]
+    pub aliases: std::collections::HashMap<String, String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderConfig {
+    /// Unique identifier for this provider configuration
+    pub id: String,
     /// The API key for the provider.
     pub api_key: String,
     /// The base URL for the API endpoint.
@@ -146,22 +157,74 @@ pub struct ProviderConfig {
     /// The model to use, e.g., "openai/gpt-4o" or "anthropic/claude-3-haiku".
     #[serde(default = "default_model")]
     pub model: String,
+    /// Optional display name for UI
+    pub display_name: Option<String>,
+    /// Provider type for request formatting
+    #[serde(default)]
+    pub provider_type: ProviderType,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub enum ProviderType {
+    #[default]
+    OpenRouter,
+    OpenAI,
+    Anthropic,
+    Custom,
+}
+
+impl ProviderRegistry {
+    pub fn get_active_provider(&self) -> Option<&ProviderConfig> {
+        self.providers.iter().find(|p| p.id == self.active_provider)
+    }
+
+    pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
+        let provider_id = self.aliases.get(alias).unwrap_or(&alias.to_string());
+        self.providers.iter().find(|p| p.id == *provider_id)
+    }
+
+    pub fn list_available(&self) -> Vec<(String, String)> {
+        self.providers
+            .iter()
+            .map(|p| {
+                let name = p.display_name.as_ref().unwrap_or(&p.id);
+                (p.id.clone(), name.clone())
+            })
+            .collect()
+    }
 }
 
 impl ProviderConfig {
-    // TODO: proper error handling
     pub fn form_request(
         &self,
-        message: RequestMessage,
-    ) -> Result<Request, Box<dyn std::error::Error>> {
+        messages: Vec<crate::llm::RequestMessage>,
+    ) -> Result<reqwest::Request, Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
-        let request = client
-            .post(chat_url())
-            .bearer_auth(self.api_key.clone())
-            .json(&message)
-            .build()?;
-        Ok(request)
+        let url = format!("{}/chat/completions", self.base_url);
+        
+        let request = match self.provider_type {
+            ProviderType::OpenRouter | ProviderType::OpenAI => {
+                let payload = crate::llm::OpenAiRequest {
+                    model: &self.model,
+                    messages,
+                };
+                client.post(&url).bearer_auth(&self.api_key).json(&payload)
+            }
+            ProviderType::Anthropic => {
+                // Anthropic-specific formatting
+                client.post(&url).bearer_auth(&self.api_key)
+            }
+            ProviderType::Custom => {
+                client.post(&url).bearer_auth(&self.api_key)
+            }
+        };
+        
+        request.build().map_err(|e| e.into())
     }
+}
+
+fn default_active_provider() -> String {
+    "default".to_string()
 }
 
 fn default_base_url() -> String {
@@ -177,12 +240,19 @@ fn default_model() -> String {
 }
 
 // Add a default implementation for when the config file is missing
-impl Default for ProviderConfig {
+impl Default for ProviderRegistry {
     fn default() -> Self {
         Self {
-            api_key: String::new(), // Will be loaded from env var
-            base_url: default_base_url(),
-            model: default_model(),
+            providers: vec![ProviderConfig {
+                id: "default".to_string(),
+                api_key: String::new(),
+                base_url: default_base_url(),
+                model: default_model(),
+                display_name: Some("Default".to_string()),
+                provider_type: ProviderType::OpenRouter,
+            }],
+            active_provider: "default".to_string(),
+            aliases: std::collections::HashMap::new(),
         }
     }
 }
