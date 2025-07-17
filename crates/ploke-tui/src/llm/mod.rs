@@ -257,25 +257,32 @@ async fn prepare_and_run_llm_call(
     };
     tracing::info!("Inside prepare_and_run_llm_call");
 
-    let messages: Vec<RequestMessage> =
+    let mut messages: Vec<RequestMessage> = Vec::new();
+
+    // Prepend system prompt if provided
+    if let Some(sys) = params.system_prompt.as_ref() {
+        messages.push(RequestMessage::new_system(sys.clone()));
+    }
+
+    // Append the rest of the conversation
+    messages.extend(
         if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
             prompt
                 .into_iter()
                 .map(|(k, c)| RequestMessage {
                     kind: k.into(),
-                    content: c.clone(), // can this clone be remove somehow?
+                    content: c.clone(),
                 })
-                .collect()
         } else {
             context_path
                 .iter()
                 .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
                 .map(|msg| RequestMessage {
                     kind: msg.kind.into(),
-                    content: msg.content.clone(), // can this clone be remove somehow?
+                    content: msg.content.clone(),
                 })
-                .collect()
-        };
+        },
+    );
 
     log::info!(
         "Sending conversation history message with content: {:#?}",
@@ -626,6 +633,10 @@ pub struct LLMParameters {
     /// Safety/system controls
     #[serde(default)]
     pub safety_settings: SafetySettings,
+
+    /// Optional system prompt to steer the model
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 /// Metadata about LLM execution
