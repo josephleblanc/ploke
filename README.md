@@ -38,17 +38,17 @@ This will open the terminal user interface. To use it to chat with LLMs, you'll
 just need an Openrouter API key in your environment under OPENROUTER_API_KEY
 (support for other endpoints coming soon).
 
-Currently, you can demo the project by using the `/index start` command, and
-`ploke` will process a fixture. Once this is complete (1-2 minutes), you can
-ask questions in the LLM chat and semantic search will work automatically in
-the background.
+Currently, you can demo the project by using the `/index start <your absolute path>` command, and `ploke` will process a fixture. Once this is complete, you can ask questions in the LLM chat and our RAG semantic search will work to provide the LLM with context automatically in the background.
 
 ## 🚧 Under Construction 🚧
 
 ploke is in rapid development, and can be considered in a prototype or alpha state. The core functionality works right now: 
-- facilitate LLM calls 
-- parse your code into a vector-graph database 
-- automatically query your code base using our RAG 
+- [x] facilitate LLM calls 
+- [x] parse your code into a vector-graph database 
+- [x] automatically query your code base using our RAG (basic prototype queries, naive rag)
+- [x] parse a target rust crate (must have `Cargo.toml` and `src/lib.rs` or `src/main.rs`) into the database/rag pipeline
+- [ ] Select models that can be used as the LLM endpoint
+- [ ] Support for other API endpoints beyond OpenRouter
 
 However, there are many features we are working on adding
 
