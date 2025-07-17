@@ -22,13 +22,13 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
     tracing::info!("{}: run the parser on {}", "Parse".log_step(), target.display());
 
     let discovery_output = run_discovery_phase(&target, &[target.clone()])
-        .map_err(|e| ploke_error::Error::SynParser(e))?;
+        .map_err(Into::into)?;
 
     let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
         analyze_files_parallel(&discovery_output, 0);
 
     let graphs: Vec<_> = results.into_iter().collect::<Result<_, _>>()
-        .map_err(|e| ploke_error::Error::SynParser(e))?;
+        .map_err(Into::into)?;
 
     let merged = ParsedCodeGraph::merge_new(graphs)?;
     let tree = merged.build_module_tree()?;
