@@ -58,7 +58,7 @@ If you do run into a crash, please consider opening a PR, and we'll be more
 than happy to work on it with you. Our goal is to triage and either fix or
 document every issue as they come.
 
-If you want to check out the project before then, you can download and run the `feature/ploke-ui` crate to test out the `cozo` database on the test fixtures (might break on larger projects), or the `feature/ploke-tui-concurrent` branch to see an early funcitoning version of the working terminal user interface (Accepts OpenRouter API keys as global shell variable only).
+If you want to check out the project before then, you can download and run the `feature/ploke-ui` crate to test out the `cozo` database on the test fixtures (might break on larger projects), or the `feature/ploke-tui-concurrent` branch to see an early functioning version of the working terminal user interface (Accepts OpenRouter API keys as global shell variable only).
 
 
 ### Intro
