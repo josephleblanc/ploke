@@ -708,6 +708,20 @@ pub async fn state_manager(
                 }
             }
 
+            StateCommand::SwitchModel { alias_or_id } => {
+                let mut cfg = state.config.write().await;
+                if cfg.providers.set_active(&alias_or_id) {
+                    event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
+                        alias_or_id.clone(),
+                    )));
+                } else {
+                    event_bus.send(AppEvent::Error(ErrorEvent {
+                        message: format!("Unknown model '{}'", alias_or_id),
+                        severity: ErrorSeverity::Warning,
+                    }));
+                }
+            }
+
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
