@@ -507,8 +507,37 @@ pub enum LlmError {
 }
 
 impl From<LlmError> for ploke_error::Error {
-    // Implement these conversions AI!
-
+    fn from(error: LlmError) -> Self {
+        match error {
+            LlmError::Request(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::new(format!("LLM Request Error: {}", msg))
+            ),
+            LlmError::Api { status, message } => ploke_error::Error::Internal(
+                ploke_error::InternalError::new(format!("LLM API Error {}: {}", status, message))
+            ),
+            LlmError::RateLimited => ploke_error::Error::Warning(
+                ploke_error::WarningError::new("LLM Rate Limit Exceeded".to_string())
+            ),
+            LlmError::Authentication => ploke_error::Error::Error(
+                ploke_error::Error::UiError("LLM Authentication Failed - Check API Key".to_string())
+            ),
+            LlmError::Timeout => ploke_error::Error::Warning(
+                ploke_error::WarningError::new("LLM Request Timed Out".to_string())
+            ),
+            LlmError::ContentFilter => ploke_error::Error::Warning(
+                ploke_error::WarningError::new("LLM Response Blocked by Content Filter".to_string())
+            ),
+            LlmError::Serialization(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::new(format!("LLM Serialization Error: {}", msg))
+            ),
+            LlmError::Deserialization(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::new(format!("LLM Deserialization Error: {}", msg))
+            ),
+            LlmError::Unknown(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::new(format!("LLM Unknown Error: {}", msg))
+            ),
+        }
+    }
 }
 
 /// Parameters for controlling LLM generation behavior
