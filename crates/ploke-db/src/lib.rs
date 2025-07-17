@@ -10,7 +10,7 @@ mod span;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
-pub use index::{create_index, create_index_warn, hnsw_all_types, hnsw_of_type};
+pub use index::{create_index, create_index_warn, hnsw_all_types, hnsw_of_type, search_similar, replace_index_warn};
 pub use query::{
     builder::FieldValue,
     builder::NodeType,

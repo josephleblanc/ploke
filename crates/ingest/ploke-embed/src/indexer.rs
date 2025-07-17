@@ -62,7 +62,11 @@ impl EmbeddingProcessor {
         match &self.source {
             EmbeddingSource::Local(backend) => {
                 let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
-                Ok(backend.embed_batch(&text_slices)?)
+                Ok(backend.embed_batch(&text_slices).inspect(|v| {
+                    tracing::trace!("OK Returning from embed_batch with vec(s): {:?}", v);
+                }).inspect_err(|e| {
+                    tracing::trace!("Error Returning from embed_batch with error: {:?}", e.to_string());
+                    })?)
             }
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
             EmbeddingSource::OpenAI(backend) => backend.compute_batch(snippets).await,
@@ -144,7 +148,7 @@ pub enum IndexerCommand {
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
-    pub embedding_processor: EmbeddingProcessor,
+    pub embedding_processor: Arc< EmbeddingProcessor >,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
@@ -155,7 +159,7 @@ impl IndexerTask {
     pub fn new(
         db: Arc<Database>,
         io: IoManagerHandle,
-        embedding_processor: EmbeddingProcessor,
+        embedding_processor: Arc< EmbeddingProcessor >,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
@@ -195,14 +199,17 @@ impl IndexerTask {
         progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
         mut progress_rx: broadcast::Receiver<IndexingStatus>,
         control_rx: mpsc::Receiver<IndexerCommand>,
+        callback_handler: std::thread::JoinHandle<Result<(), ploke_db::DbError>>,
+        db_callbacks: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), ploke_db::DbError>>,
+        counter: Arc<AtomicUsize>,
+        shutdown: crossbeam_channel::Sender<()>,
     ) -> Result<(), ploke_error::Error> {
         // let (cancellation_token, cancel_handle) = CancellationToken::new();
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
         let db_clone = Arc::clone(&task.db);
-        let (callback_manager, db_callbacks, _, shutdown) =
-            CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;
-
-        let counter = callback_manager.clone_counter();
+        let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
+        // let (callback_manager, db_callbacks, _, shutdown) =
+        //     CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;
 
         let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
 
@@ -210,8 +217,11 @@ impl IndexerTask {
         let start = Instant::now();
         let timeout = Duration::from_secs(1200); // Increased timeout
 
+        let callback_closed = AtomicBool::new(false);
         let all_results = Arc::new(Mutex::new(Vec::new()));
 
+        let mut ticker = time::interval(Duration::from_secs(1));
+        ticker.tick().await;
         loop {
             match db_callbacks.try_recv() {
                 Ok(c) => match c {
@@ -226,15 +236,12 @@ impl IndexerTask {
                 Err(e) => {
                     if e.is_disconnected() {
                         tracing::debug!("[in IndexerTask.run db_callback | {e}");
+                        break;
                     }
                 }
             };
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(100)) => {
-                    if start.elapsed() > timeout {
-                        panic!("Test timed out without completion signal");
-                    }
-                }
+                biased;
 
                 status = progress_rx.recv() => {
                     match status {
@@ -251,7 +258,16 @@ impl IndexerTask {
                                 IndexStatus::Completed => {
                                     tracing::debug!("Progress: {:?}", status);
                                     received_completed.store(true, std::sync::atomic::Ordering::SeqCst);
-                                    break;
+                                    if callback_handler.is_finished() {
+                                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                                        callback_handler.join().expect("Callback errror - not finished")?;
+                                        break;
+                                    } else {
+                                        tracing::warn!("Sending shutdown signal to CallbackManager.");
+                                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                                        // break;
+                                    }
                                 },
                                 IndexStatus::Cancelled => {
                                     tracing::debug!("Cancelled Task | Progress: {:?}", status);
@@ -266,11 +282,35 @@ impl IndexerTask {
                 }
 
                 res = &mut idx_handle => {
+                    if callback_handler.is_finished() {
+                        callback_closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                        tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
+                        callback_handler.join().expect("Callback errror - not finished")?;
+                        break;
+                    } else {
+                        tracing::warn!("Sending shutdown signal to CallbackManager.");
+                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        // break;
+                    }
                     let task_result = res.expect("Task panicked");
-                    let _ = task_result.as_ref().map_err(|e| tracing::debug!("Error: {}", e.to_string())); // Propagate any errors
+                    task_result?; // Propagate any errors
                     break;
                 }
+                // res = &mut idx_handle => {
+                //     let task_result = res.expect("Task panicked");
+                //     let _ = task_result.as_ref().map_err(|e| tracing::debug!("idx_handle ended with error: {}", e.to_string())); // Propagate any errors
+                //     break;
+                // }
 
+                x = ticker.tick() => {
+                    tracing::info!("Ticking with time: {:.2}", x.duration_since(start).as_secs_f32());
+                }
+
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    if start.elapsed() > timeout {
+                        panic!("Test timed out without completion signal");
+                    }
+                }
 
             }
         }
@@ -280,33 +320,31 @@ impl IndexerTask {
         } else {
             tracing::error!("Indexer Handle did not finish.")
         }
-        // if callback_handler.is_finished() {
-        //     tracing::info!("Callback Handler is Finished: {:?}", callback_handler);
-        // } else {
-        //     tracing::error!("Indexer callback_handler did not finish.");
-        // }
+        if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!("CallbackManager not closed?");
+        }
         let all_pending_rows = db_clone.get_pending_test()?;
-        let total_rows = all_results.lock_owned().await;
-        let mut not_found = Vec::new();
-        let mut found = Vec::new();
-        total_rows
+        let total_non_indexed_rows = all_results.lock_owned().await;
+        let mut indexed = Vec::new();
+        let mut not_indexed = Vec::new();
+        total_non_indexed_rows
             .clone()
             .into_iter()
             .flat_map(|nr| nr.rows)
             .enumerate()
             .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
             .for_each(|(i, idx, name)| {
-                let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
-                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
+                let is_not_indexed = all_pending_rows.rows.iter().any(|r| r[0] == idx);
+                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_not_indexed, name, idx);
                 let node_data = (i, name, idx);
-                if is_found {
-                    found.push(node_data);
+                if is_not_indexed {
+                    not_indexed.push(node_data);
                 } else {
-                    not_found.push(node_data);
+                    indexed.push(node_data);
                 }
             });
-        for (i, name, idx) in not_found {
-            tracing::trace!(target: "dbg_rows", "row not found {: <2} | {:?} {: >30}", i, name, idx);
+        for (i, name, idx) in indexed {
+            tracing::trace!(target: "dbg_rows", "row indexed {: <2} | {:?} {: >30}", i, name, idx);
         }
         for (i, name, idx) in all_pending_rows
             .rows
@@ -314,15 +352,15 @@ impl IndexerTask {
             .enumerate()
             .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
         {
-            tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
+            tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} {: >30}", i, name, idx);
         }
-        // FIX: Sleep here is to wait for the above loop to finish.
-        //  Bad solution. Fix it later.
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        tracing::info!("Ending test_next_batch: {workspace_dir}");
-        // assert!(
+        tracing::info!("Ending index_workspace: {workspace_dir}");
+        let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
+        tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
+
+        // tracing::info!(
+        //     "Indexer completed? {}",
         //     received_completed.load(std::sync::atomic::Ordering::SeqCst),
-        //     "Indexer completed without sending completion status"
         // );
         Ok(())
     }
@@ -911,7 +949,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            embedding_processor,
+            Arc::new( embedding_processor ),
             cancellation_token,
             batch_size,
         );
@@ -1053,9 +1091,6 @@ mod tests {
         if !callback_closed.load(std::sync::atomic::Ordering::Relaxed) {
             tracing::warn!("CallbackManager not closed?");
         }
-        // FIX: Sleep here is to wait for the above loop to finish.
-        //  Bad solution. Fix it later.
-        // tokio::time::sleep(Duration::from_millis(300)).await;
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
             "updated rows: {}, pending db callback: {}",
@@ -1146,7 +1181,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            embedding_processor,
+            Arc::new( embedding_processor ),
             cancellation_token,
             batch_size,
         );
@@ -1290,7 +1325,7 @@ mod tests {
             tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
         }
         for ty in NodeType::primary_nodes() {
-            let db_ret = ploke_db::create_index_warn(&db, ty, cozo::ScriptMutability::Mutable);
+            let db_ret = ploke_db::create_index_warn(&db, ty);
             tracing::info!("db_ret = {:?}", db_ret);
         }
 

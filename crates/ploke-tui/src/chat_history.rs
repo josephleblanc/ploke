@@ -183,7 +183,7 @@ impl UpdateFailedEvent {
 /// - Links to its parent message (if any)
 /// - List of child messages forming conversation branches
 /// - Unique identifier and content storage
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Message {
     /// Unique identifier for the message
     pub id: Uuid,
@@ -227,6 +227,18 @@ impl std::fmt::Display for MessageKind {
             MessageKind::System => write!(f, "System"),
             MessageKind::Tool => todo!(),
             MessageKind::SysInfo => write!(f, "SysInfo"),
+        }
+    }
+}
+
+impl Into<&'static str> for MessageKind {
+    fn into(self) -> &'static str {
+        match self {
+            MessageKind::User => "User",
+            MessageKind::Assistant => "Assistant",
+            MessageKind::System => "System",
+            MessageKind::Tool => "Tool",
+            MessageKind::SysInfo => "SysInfo",
         }
     }
 }
@@ -374,6 +386,8 @@ impl ChatHistory {
     }
 
     /// Adds a new child message to the conversation tree.
+    /// Takes some data from the state of the chat history, modifies chat history state to include
+    /// the new child and message, and returns the new child id.
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
@@ -547,6 +561,21 @@ impl ChatHistory {
             .collect()
     }
 
+    /// Gets the full conversation path from root to tail message for user and LLM messages only.
+    ///
+    /// Traverses the message hierarchy from the currently active message
+    /// back to the root, then reverses the order for display purposes.
+    ///
+    /// # Example
+    /// For a conversation path A -> B -> C (where C is tail):
+    /// Returns [A, B, C]
+    pub fn clone_current_path_conv(&self) -> Vec<Message> {
+        self.current_path_ids_conv()
+            .filter_map(|id| self.messages.get(&id))
+            .cloned()
+            .collect()
+    }
+
     /// Gets the parent UUID of a specified message if it exists.
     ///
     /// # Arguments
@@ -651,6 +680,31 @@ impl ChatHistory {
 
         self.current = siblings[new_idx];
         Ok(self.current)
+    }
+
+    /// Finds the most recent user message in the conversation chain leading to the current message.
+    ///
+    /// This function traverses backwards from the current message through its parent chain,
+    /// looking for the first (nearest to current) message with `MessageKind::User`.
+    /// 
+    /// # Returns
+    /// - `Ok(Some((id, content)))` - The UUID and content of the most recent user message
+    /// - `Ok(None)` - No user message found in the chain (only possible with root message)
+    /// - `Err(ChatError)` - If message lookup fails
+    pub fn last_user_msg(&self) -> Result<Option<(Uuid, String)>> {
+        let mut current = self.current;
+        let msg_with_id = std::iter::from_fn(move || {
+            let id = current;
+            current = self.messages.get(&id).and_then(|m| m.parent)?;
+            Some(id)
+        })
+        .find_map(|id| {
+            self.messages
+                .get(&id)
+                .filter(|m| m.kind == MessageKind::User)
+                .map(|m| (m.id, m.content.clone()))
+        });
+        Ok(msg_with_id)
     }
 }
 

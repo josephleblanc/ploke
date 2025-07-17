@@ -3,7 +3,7 @@
 - [✅] Batch processing architecture
 - [✅] Cancellation support (`cancel_token.rs`)
 - [✅] Progress reporting (`indexer.rs`)
-- [⚠️] HNSW index initialization (`database.rs` - hardcoded dimensions)
+- [✅] HNSW index initialization (`database.rs` - hardcoded dimensions)
 - [❌] State persistence for resume capability
 
 ### 2. Embedding Providers

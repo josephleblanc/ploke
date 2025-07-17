@@ -351,10 +351,12 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         
         let mut results = Vec::new();
         // FIXED: Use configurable batch size instead of hardcoded 8
+        tracing::info!("Starting embed_batch for texts {:?}", texts);
         for chunk in texts.chunks(self.config.model_batch_size) {
             let batch_results = self.process_batch(chunk)?;
             results.extend(batch_results);
         }
+        tracing::info!("Returning from embed_batch with results {:?}", results);
         Ok(results)
     }
 
@@ -364,6 +366,7 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         level = "INFO"  // Demote to debug level
     )]
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+        tracing::info!("Starting process_batch for texts {:?}", texts);
         // Tokenize with attention masks
         let tokens = self.tokenizer.encode_batch(texts.to_vec(), true)?;
 
@@ -424,6 +427,11 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
             results.push(row.to_vec1()?);
         }
 
+        tracing::info!("Returning {} embedding(s) with length {:?} from process_batch: {:?}", 
+            results.len(), 
+            results.first().map(|i| i.len()), 
+            results
+        );
         Ok(results)
     }
 }

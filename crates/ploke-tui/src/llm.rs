@@ -5,6 +5,7 @@ use tokio::sync::{
     mpsc::{self, error::TrySendError},
     oneshot,
 };
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -25,8 +26,17 @@ struct OpenAiRequest<'a> {
 
 #[derive(Serialize, Debug)]
 pub struct RequestMessage<'a> {
-    kind: &'a str,
-    content: String,
+    pub kind: &'a str,
+    pub content: String,
+}
+
+impl RequestMessage<'_> {
+    pub fn new_system(content: String) -> Self {
+        Self {
+            kind: "system",
+            content,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -51,33 +61,86 @@ pub async fn llm_manager(
     provider: ProviderConfig,
 ) {
     let client = Client::new();
+    let mut pending_requests = Vec::new();
+    let mut ready_contexts = std::collections::HashMap::new();
 
     while let Ok(event) = event_rx.recv().await {
-        if let AppEvent::Llm(request @ llm::Event::Request { .. }) = event {
-            tokio::spawn(process_llm_request(
-                request,
-                Arc::clone(&state),
-                cmd_tx.clone(),
-                client.clone(),
-                provider.clone(), // Clone the provider config
-            ));
+        match event {
+            AppEvent::Llm(request @ llm::Event::Request { parent_id, new_msg_id, .. }) => {
+                tracing::info!("Received LLM request for parent_id: {}
+                new_msg_id: {}
+                ", parent_id, new_msg_id);
+                pending_requests.push(request);
+            }
+            AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
+                tracing::info!("Received context for parent_id: {}", parent_id);
+                ready_contexts.insert(parent_id, context);
+
+                // Process any pending requests that now have context
+                pending_requests.retain(|req| {
+                    if let llm::Event::Request {
+                        new_msg_id: req_parent,
+                        // parent_id: req_parent,
+                        ..
+                    } = req
+                    {
+                        tracing::info!(
+                            "pending_requests found match for req_parent: {}",
+                            req_parent
+                        );
+                        if let Some(context) = ready_contexts.remove(req_parent) {
+                            tracing::info!(
+                                "ready_contexts found match for req_parent: {}",
+                                req_parent
+                            );
+                            tokio::spawn(process_llm_request(
+                                req.clone(),
+                                Arc::clone(&state),
+                                cmd_tx.clone(),
+                                client.clone(),
+                                provider.clone(),
+                                Some(context),
+                            ));
+                            tracing::info!("removing id from pending_requests");
+                            false // Remove from pending
+                        } else {
+                            tracing::info!("keep id from pending_requests
+                                found pending_request but not ready_context
+                                checking if ready_contexts removed req_parent during conditional: {}", 
+                                ready_contexts.contains_key(req_parent));
+                            true // Keep waiting
+                        }
+                    } else {
+                        tracing::info!("keep id from pending_requests\nno matched pending_requests");
+                        true
+                    }
+                });
+            }
+            _ => {}
         }
     }
 }
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
+#[instrument(skip(state, client, provider))]
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
     provider: ProviderConfig,
+    context: Option<llm::Event>,
 ) {
+    tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request { parent_id, .. } => parent_id,
-        _ => return, // Not a request, do nothing
+        llm::Event::Request { parent_id, new_msg_id, .. } => new_msg_id,
+        _ => {
+            tracing::info!("Not a Request, do nothing");
+            return;
+        } // Not a request, do nothing
     };
+    tracing::info!("Inside process_llm_request");
 
     // This part remains the same: create a placeholder message first.
     let (responder_tx, responder_rx) = oneshot::channel();
@@ -100,17 +163,15 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider).await {
-        Ok(content) => 
-        { 
-            StateCommand::UpdateMessage {
+    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider, context).await {
+        Ok(content) => StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
                 content: Some(content),
                 status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
-        } }
+        },
         Err(e) => {
             log::error!("LLM API call failed: {}", e);
             StateCommand::UpdateMessage {
@@ -132,10 +193,12 @@ pub async fn process_llm_request(
     }
 }
 
+#[instrument(skip(provider, state, client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
     provider: &ProviderConfig,
+    context: Option<llm::Event>,
 ) -> Result<String, LlmError> {
     // Get the conversation history from AppState
     let history_guard = state.chat.0.read().await;
@@ -146,23 +209,32 @@ async fn prepare_and_run_llm_call(
     } else {
         &path[..]
     };
+    tracing::info!("Inside prepare_and_run_llm_call");
 
-    let messages: Vec<RequestMessage> = context_path
-        .iter()
-        .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
-        .map(|msg| RequestMessage {
-            kind: match msg.kind {
-                MessageKind::User => "user",
-                MessageKind::Assistant => "assistant",
-                MessageKind::System => "system",
-                MessageKind::Tool => todo!(),
-                MessageKind::SysInfo => "sysinfo",
-            },
-            content: msg.content.clone(), // can this clone be remove somehow?
-        })
-        .collect();
+    let messages: Vec<RequestMessage> =
+        if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
+            prompt
+                .into_iter()
+                .map(|(k, c)| RequestMessage {
+                    kind: k.into(),
+                    content: c.clone(), // can this clone be remove somehow?
+                })
+                .collect()
+        } else {
+            context_path
+                .iter()
+                .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
+                .map(|msg| RequestMessage {
+                    kind: msg.kind.into(),
+                    content: msg.content.clone(), // can this clone be remove somehow?
+                })
+                .collect()
+        };
 
-    log::info!("Sending conversation histor message with content: {:#?}", messages);
+    log::info!(
+        "Sending conversation histor message with content: {:#?}",
+        messages
+    );
     // Release the lock before the network call
     drop(history_guard);
 
@@ -201,6 +273,16 @@ async fn prepare_and_run_llm_call(
         .unwrap_or_else(|| "No content received from API.".to_string());
 
     Ok(content)
+}
+
+fn kind_to_str<'a>(msg: &'a &'a Message) -> &'a str {
+    match msg.kind {
+        MessageKind::User => "user",
+        MessageKind::Assistant => "assistant",
+        MessageKind::System => "system",
+        MessageKind::Tool => todo!(),
+        MessageKind::SysInfo => "sysinfo",
+    }
 }
 
 // Backpressure-aware command sender
@@ -269,19 +351,12 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
                 })
                 .await;
         }
-        Event::Request {
-            request_id,
-            parent_id,
-            prompt,
-            parameters,
-        } => todo!("Implement Me!"),
-        Event::PartialResponse { request_id, delta } => todo!("Implement Me!"),
-        Event::Error { request_id, error } => todo!("Implement Me!"),
-        Event::Status {
-            active_requests,
-            queue_depth,
-        } => todo!("Implement Me!"),
-        Event::ModelChanged { new_model } => todo!("Implement Me!"),
+        Event::Request { .. } => todo!("Implement Me!"),
+        Event::PartialResponse { .. } => todo!("Implement Me!"),
+        Event::Error { .. } => todo!("Implement Me!"),
+        Event::Status { .. } => todo!("Implement Me!"),
+        Event::ModelChanged { .. } => todo!("Implement Me!"),
+        Event::PromptConstructed { .. } => todo!("Imlement me!"),
     }
 }
 
@@ -301,6 +376,7 @@ pub enum Event {
         parent_id: Uuid,  // Message this responds to
         prompt: String,   // Input to LLM
         parameters: Parameters, // Generation settings
+        new_msg_id: Uuid
                           // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
@@ -336,6 +412,11 @@ pub enum Event {
     ModelChanged {
         new_model: String, // e.g., "claude-3-opus"
     },
+    /// Prompt constructed to be sent to the LLM
+    PromptConstructed {
+        prompt: Vec<(MessageKind, String)>,
+        parent_id: Uuid,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -358,6 +439,7 @@ impl Event {
                 queue_depth,
             } => todo!(),
             Event::ModelChanged { new_model } => todo!(),
+            Event::PromptConstructed { prompt, parent_id } => *parent_id,
         }
     }
 }
