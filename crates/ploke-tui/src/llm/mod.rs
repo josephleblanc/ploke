@@ -345,6 +345,8 @@ impl CommandSender {
     }
 }
 
+pub mod registry;
+
 // --- Supporting Types ---
 
 /// Specifies which chat history a command should operate on.

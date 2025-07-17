@@ -183,6 +183,20 @@ impl ProviderRegistry {
         }
     }
 
+    /// Merge the curated defaults with user overrides.
+    ///
+    /// Any user-defined provider with the same `id` *replaces* the corresponding default;
+    /// any missing fields in the user config (e.g. `api_key`) are **not** filled from the
+    /// default to avoid accidental credential leakage.
+    pub fn with_defaults(mut self) -> Self {
+        for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
+            if !self.providers.iter().any(|p| &p.id == id) {
+                self.providers.push(default.clone());
+            }
+        }
+        self
+    }
+
     /// Attempts to switch the active provider.
     ///
     /// # Returns

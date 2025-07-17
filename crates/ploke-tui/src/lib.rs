@@ -84,6 +84,9 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .build()?
         .try_deserialize::<crate::user_config::Config>()?;
 
+    // Merge curated defaults with user overrides
+    config.providers = config.providers.with_defaults();
+
     if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
         if let Some(default_provider) = config.providers.providers.iter_mut().find(|p| p.id == "default") {
             default_provider.api_key = openrouter_api_key;
