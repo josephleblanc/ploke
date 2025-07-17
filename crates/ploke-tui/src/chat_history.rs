@@ -667,8 +667,15 @@ impl ChatHistory {
         Ok(self.current)
     }
 
-    // Ok, I've adjusted the function to be correct. Can you add some documentation here describing
-    // the correct functionality AI!
+    /// Finds the most recent user message in the conversation chain leading to the current message.
+    ///
+    /// This function traverses backwards from the current message through its parent chain,
+    /// looking for the first (nearest to current) message with `MessageKind::User`.
+    /// 
+    /// # Returns
+    /// - `Ok(Some((id, content)))` - The UUID and content of the most recent user message
+    /// - `Ok(None)` - No user message found in the chain (only possible with root message)
+    /// - `Err(ChatError)` - If message lookup fails
     pub fn last_user_msg(&self) -> Result<Option<(Uuid, String)>> {
         let mut current = self.current;
         let msg_with_id = std::iter::from_fn(move || {
