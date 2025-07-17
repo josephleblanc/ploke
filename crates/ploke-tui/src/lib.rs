@@ -47,7 +47,6 @@ use ratatui::{
 // for list
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
@@ -304,7 +303,7 @@ pub enum EventPriority {
 }
 
 // Import the error handling traits
-use ploke_error::{ErrorSeverity, ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
+use ploke_error::{ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
 
 // Implement the ResultExt trait for Results with ploke_error::Error
 impl<T, E: Into<ploke_error::Error> + std::fmt::Display> PlokeResultExt<T, E> for Result<T, E> {

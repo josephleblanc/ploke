@@ -185,14 +185,7 @@ pub async fn process_llm_request(
     // Prepare and execute the API call, then create the final update command.
     let provider = providers.get_active_provider().ok_or(LlmError::Unknown(
         "No active provider configured".to_string(),
-    ))?; // We've got an issue here - can't call this within something that itself doesn't return
-    // and this is a problem in a few places in the code base. The problem is that we want to have
-    // a good way to log and handle errors within our runtime, so we probably want to use an event
-    // to manage this. What kind of approach could we use that would be general to all the
-    // `ploke_error` types we are handling so we can choose to, e.g. log them, send another event
-    // to present them to the user, send an event to present a toast message, etc.
-    // Would an event system for errors work here? And would we want to just put that into the
-    // `event_bus` or use another system AI?
+    ))?; 
     let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
         .await
         .map(|content| StateCommand::UpdateMessage {
