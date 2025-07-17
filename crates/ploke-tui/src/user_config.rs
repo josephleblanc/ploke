@@ -174,8 +174,8 @@ impl ProviderRegistry {
     }
 
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
-        // We need to fix the `alias.to_string()`, it currently is dropped AI!
-        let provider_id = self.aliases.get(alias).unwrap_or(&alias.to_string());
+        let alias_string = alias.to_string();
+        let provider_id = self.aliases.get(alias).unwrap_or(&alias_string);
         self.providers.iter().find(|p| p.id == *provider_id)
     }
 
