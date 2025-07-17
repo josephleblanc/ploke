@@ -5,6 +5,7 @@ pub mod app_state;
 pub mod chat_history;
 pub mod context;
 pub mod database;
+pub mod error;
 pub mod file_man;
 pub mod llm;
 pub mod parser;
@@ -20,6 +21,7 @@ use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
 };
 use context::ContextManager;
+use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use llm::llm_manager;
 use parser::run_parse;
@@ -294,7 +296,6 @@ pub struct ErrorEvent {
     pub severity: ErrorSeverity,
 }
 
-pub use ploke_error::ErrorSeverity;
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
@@ -303,11 +304,10 @@ pub enum EventPriority {
 }
 
 // Import the error handling traits
-use ploke_error::{ErrorSeverity, ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
 
 // Implement the ResultExt trait for Results with ploke_error::Error
 // This implementation is only for Result<T, ploke_error::Error> to comply with orphan rule
-impl<T> PlokeResultExt<T, ploke_error::Error> for Result<T, ploke_error::Error> {
+impl<T> ResultExt<ploke_error::Error> for Result<T, ploke_error::Error> {
     fn emit_event(self, severity: ErrorSeverity) -> Result<T, ploke_error::Error> {
         if let Err(ref e) = self {
             let message = e.to_string();
@@ -331,7 +331,7 @@ impl<T> PlokeResultExt<T, ploke_error::Error> for Result<T, ploke_error::Error> 
     }
 }
 
-impl PlokeErrorExt for ploke_error::Error {
+impl ErrorExt for ploke_error::Error {
     fn emit_event(&self, severity: ErrorSeverity) {
         let message = self.to_string();
         tokio::spawn(async move {

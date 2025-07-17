@@ -147,7 +147,7 @@ pub async fn process_llm_request(
     client: Client,
     providers: crate::user_config::ProviderRegistry,
     context: Option<llm::Event>,
-)  {
+) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         llm::Event::Request {
@@ -183,36 +183,42 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let provider = providers.get_active_provider().ok_or(LlmError::Unknown(
-        "No active provider configured".to_string(),
-    )).map_err(ploke_error::Error::from).emit_warning(); 
-    let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
-        .await
-        .map(|content| StateCommand::UpdateMessage {
-            id: assistant_message_id,
-            update: MessageUpdate {
-                content: Some(content),
-                status: Some(MessageStatus::Completed),
-                ..Default::default()
-            },
-        })
-        .unwrap_or_else(|e| {
-            let err_string = e.to_string();
-            StateCommand::UpdateMessage {
+    if let Ok(provider) = providers
+        .get_active_provider()
+        .ok_or(LlmError::Unknown(
+            "No active provider configured".to_string(),
+        ))
+        .map_err(ploke_error::Error::from)
+        .emit_warning()
+    {
+        let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
+            .await
+            .map(|content| StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(format!("Error: {}", err_string)),
-                    status: Some(MessageStatus::Error {
-                        description: err_string,
-                    }),
+                    content: Some(content),
+                    status: Some(MessageStatus::Completed),
                     ..Default::default()
                 },
-            }
-        });
+            })
+            .unwrap_or_else(|e| {
+                let err_string = e.to_string();
+                StateCommand::UpdateMessage {
+                    id: assistant_message_id,
+                    update: MessageUpdate {
+                        content: Some(format!("Error: {}", err_string)),
+                        status: Some(MessageStatus::Error {
+                            description: err_string,
+                        }),
+                        ..Default::default()
+                    },
+                }
+            });
 
-    // Send the final update command to the state manager.
-    if cmd_tx.send(update_cmd).await.is_err() {
-        log::error!("Failed to send final UpdateMessage: channel closed.");
+        // Send the final update command to the state manager.
+        if cmd_tx.send(update_cmd).await.is_err() {
+            log::error!("Failed to send final UpdateMessage: channel closed.");
+        }
     }
 }
 
@@ -514,23 +520,23 @@ impl From<LlmError> for ploke_error::Error {
                     std::io::Error::new(std::io::ErrorKind::ConnectionAborted, msg),
                 )),
             ),
-            LlmError::Api { status, message } => ploke_error::Error::Internal(
-                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
-                    std::io::Error::new(
+            LlmError::Api { status, message } => {
+                ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
+                    std::sync::Arc::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("API error {}: {}", status, message),
-                    ),
-                )),
-            ),
+                    )),
+                ))
+            }
             LlmError::RateLimited => ploke_error::Error::Warning(
                 ploke_error::WarningError::PlokeDb("Rate limit exceeded".to_string()),
             ),
-            LlmError::Authentication => ploke_error::Error::Fatal(
-                ploke_error::FatalError::PathResolution {
+            LlmError::Authentication => {
+                ploke_error::Error::Fatal(ploke_error::FatalError::PathResolution {
                     path: "Authentication failed - check API key".to_string(),
                     source: None,
-                },
-            ),
+                })
+            }
             LlmError::Timeout => ploke_error::Error::Internal(
                 ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
                     std::io::Error::new(std::io::ErrorKind::TimedOut, "Request timed out"),
@@ -542,9 +548,12 @@ impl From<LlmError> for ploke_error::Error {
             LlmError::Serialization(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::CompilerError(format!("Serialization error: {}", msg)),
             ),
-            LlmError::Deserialization(msg) => ploke_error::Error::Internal(
-                ploke_error::InternalError::CompilerError(format!("Deserialization error: {}", msg)),
-            ),
+            LlmError::Deserialization(msg) => {
+                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+                    "Deserialization error: {}",
+                    msg
+                )))
+            }
             LlmError::Unknown(msg) => ploke_error::Error::Internal(
                 ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
             ),
