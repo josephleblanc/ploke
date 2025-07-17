@@ -193,17 +193,18 @@ pub async fn process_llm_request(
     // to present them to the user, send an event to present a toast message, etc.
     // Would an event system for errors work here? And would we want to just put that into the
     // `event_bus` or use another system AI?
-    let update_cmd = match prepare_and_run_llm_call(&state, &client, provider, context).await {
-        Ok(content) => StateCommand::UpdateMessage {
+    let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
+        .await
+        .map(|content| StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
                 content: Some(content),
                 status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
-        },
-        Err(e) => {
-            log::error!("LLM API call failed: {}", e);
+        })
+        .unwrap_or_else(|e| {
+            e.emit_error();
             StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
@@ -214,8 +215,7 @@ pub async fn process_llm_request(
                     ..Default::default()
                 },
             }
-        }
-    };
+        });
 
     // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {

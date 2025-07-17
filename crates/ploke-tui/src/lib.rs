@@ -38,6 +38,7 @@ use std::sync::Arc;
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
 use futures::{FutureExt, StreamExt};
+use once_cell::sync::Lazy;
 use ratatui::{
     DefaultTerminal, Frame,
     style::Stylize,
@@ -46,9 +47,24 @@ use ratatui::{
 // for list
 use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
+
+static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
+
+/// Set the global event bus for error handling
+pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
+    *GLOBAL_EVENT_BUS.lock().await = Some(event_bus);
+}
+
+/// Emit an error event to the global event bus
+pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
+    if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
+        event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
+    }
+}
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -152,6 +168,9 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.clone(),
         rag_event_tx,
     ));
+
+    // Set global event bus for error handling
+    set_global_event_bus(event_bus.clone()).await;
 
     // Spawn subsystems with backpressure-aware command sender
     tokio::spawn(llm_manager(
@@ -276,17 +295,49 @@ pub struct ErrorEvent {
     pub severity: ErrorSeverity,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ErrorSeverity {
-    Warning, // simple warning
-    Error,   // recoverable error
-    Fatal,   // indicates invalid state
-}
+pub use ploke_error::ErrorSeverity;
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
     Realtime,
     Background,
+}
+
+// Import the error handling traits
+use ploke_error::{ErrorSeverity, ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
+
+// Implement the ResultExt trait for Results with ploke_error::Error
+impl<T, E: Into<ploke_error::Error> + std::fmt::Display> PlokeResultExt<T, E> for Result<T, E> {
+    fn emit_event(self, severity: ErrorSeverity) -> Result<T, E> {
+        if let Err(e) = &self {
+            let message = e.to_string();
+            tokio::spawn(async move {
+                emit_error_event(message, severity).await;
+            });
+        }
+        self
+    }
+    
+    fn emit_warning(self) -> Result<T, E> {
+        self.emit_event(ErrorSeverity::Warning)
+    }
+    
+    fn emit_error(self) -> Result<T, E> {
+        self.emit_event(ErrorSeverity::Error)
+    }
+    
+    fn emit_fatal(self) -> Result<T, E> {
+        self.emit_event(ErrorSeverity::Fatal)
+    }
+}
+
+impl<E: std::fmt::Display> PlokeErrorExt for E {
+    fn emit_event(&self, severity: ErrorSeverity) {
+        let message = self.to_string();
+        tokio::spawn(async move {
+            emit_error_event(message, severity).await;
+        });
+    }
 }
 
 #[derive(Debug)]
