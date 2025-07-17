@@ -147,7 +147,7 @@ pub async fn process_llm_request(
     client: Client,
     providers: crate::user_config::ProviderRegistry,
     context: Option<llm::Event>,
-) -> Result<(), LlmError> {
+)  {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         llm::Event::Request {
@@ -185,7 +185,7 @@ pub async fn process_llm_request(
     // Prepare and execute the API call, then create the final update command.
     let provider = providers.get_active_provider().ok_or(LlmError::Unknown(
         "No active provider configured".to_string(),
-    ))?; 
+    )).map_err(ploke_error::Error::from).emit_warning(); 
     let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
         .await
         .map(|content| StateCommand::UpdateMessage {
@@ -198,7 +198,6 @@ pub async fn process_llm_request(
         })
         .unwrap_or_else(|e| {
             let err_string = e.to_string();
-            err_string.emit_error();
             StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
@@ -215,7 +214,6 @@ pub async fn process_llm_request(
     if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
-    Ok(())
 }
 
 #[instrument(skip(provider, state, client))]
@@ -506,6 +504,11 @@ pub enum LlmError {
     /// An unexpected or unknown error occurred.
     #[error("An unknown error occurred: {0}")]
     Unknown(String),
+}
+
+impl From<LlmError> for ploke_error::Error {
+    // Implement these conversions AI!
+
 }
 
 /// Parameters for controlling LLM generation behavior
