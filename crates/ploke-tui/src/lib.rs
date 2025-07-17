@@ -48,7 +48,7 @@ use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
 
-pub static TARGET_DIR_FIXTURE: &str = "fixture_nodes";
+pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -99,7 +99,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // TODO:
     // 1 Implement the cancellation token propagation in IndexerTask
     // 2 Add error handling for embedder initialization failures
-    // 3 Complete the UI progress reporting integration
     let indexer_task = IndexerTask::new(
         db_handle.clone(),
         io_handle.clone(),

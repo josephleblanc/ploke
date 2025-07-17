@@ -3,6 +3,10 @@ use std::{path::{Path, PathBuf}, sync::Arc};
 use ploke_db::Database;
 use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
 
+// We are currently using this to define the target of our file processing into the database, but
+// that was while we were using a hardcoded target for testing. Now we'd like to provide support
+// for a user-defined target directory, or use the user's current working directory by default.
+// Any ideas how to adjust this for that purpose AI?
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

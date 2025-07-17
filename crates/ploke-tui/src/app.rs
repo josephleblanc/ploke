@@ -491,7 +491,7 @@ impl App {
         match cmd_str {
             "help" => self.show_command_help(),
             "index start" => self.send_cmd(StateCommand::IndexWorkspace {
-                workspace: "fixture_nodes".to_string(),
+                workspace: "fixture_tracking_hash".to_string(),
             }),
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
