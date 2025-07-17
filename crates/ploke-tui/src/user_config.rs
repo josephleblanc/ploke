@@ -49,7 +49,7 @@ use serde::Deserialize;
 use crate::llm::{self, RequestMessage};
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
-pub const DEFAULT_MODEL: &str = "qwen/qwq-32b:free";
+pub const DEFAULT_MODEL: &str = "kimi-k2:free";
 
 #[derive(Debug, Clone, Deserialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
@@ -179,7 +179,7 @@ impl ProviderRegistry {
 
     /// Returns a provider either by id or by alias.
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
-        if let Some( provider_id ) = self.aliases.get(alias) {
+        if let Some(provider_id) = self.aliases.get(alias) {
             self.providers.iter().find(|p| p.id == *provider_id)
         } else {
             self.providers.iter().find(|p| p.id == *alias)
@@ -273,30 +273,6 @@ impl ProviderRegistry {
     }
 }
 
-impl ProviderConfig {
-    pub fn form_request(
-        &self,
-        messages: Vec<crate::llm::RequestMessage>,
-    ) -> Result<reqwest::Request, Box<dyn std::error::Error>> {
-        let client = reqwest::Client::new();
-        let url = format!("{}/chat/completions", self.base_url);
-
-        let request = match self.provider_type {
-            ProviderType::OpenRouter | ProviderType::OpenAI => {
-                let payload = llm::OpenAiRequest::new(&self.model, messages);
-                client.post(&url).bearer_auth(&self.api_key).json(&payload)
-            }
-            ProviderType::Anthropic => {
-                // Anthropic-specific formatting
-                client.post(&url).bearer_auth(&self.api_key)
-            }
-            ProviderType::Custom => client.post(&url).bearer_auth(&self.api_key),
-        };
-
-        request.build().map_err(|e| e.into())
-    }
-}
-
 fn default_active_provider() -> String {
     "default".to_string()
 }
@@ -324,6 +300,9 @@ impl Default for ProviderRegistry {
                 model: default_model(),
                 display_name: Some("Default".to_string()),
                 provider_type: ProviderType::OpenRouter,
+                llm_params: Some(crate::llm::LLMParameters {
+                    ..Default::default()
+                }),
             }],
             active_provider: "default".to_string(),
             aliases: std::collections::HashMap::new(),

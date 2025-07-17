@@ -59,7 +59,6 @@ Flume example: [`flume` across boundaries]
    - Use `tokio::sync::mpsc` or `crossbeam::channel` to communicate between domains
    - This allows clean separation between the async and parallel components
 
-// AI:
 ui -> parser
 watcher -> parser
 

@@ -108,6 +108,41 @@ These changes introduce:
  4 Aliases for quick model switching
  5 Backward compatibility with the default provider setup
 
+NOTE: Note yet tested, pending adding a model registry with more options.
+- [ ] test
+
+### Commit d6cd06b 
+aider: feat: add StateCommand::SwitchModel handler
+
+Run cargo test -p ploke-tui again; all doc-tests and unit tests should still pass, and you now
+have:
+
+ • /model <alias> in command mode
+ • m in normal mode to pre-fill the same command
+ • live switching handled by the state manager
+
+NOTE: Note yet tested, pending adding a model registry with more options.
+- [ ] test
+
+### Commit 9b4c8ea 
+aider: feat: add model switch indicator with 3s flash animation
+
+These changes add:
+
+ 1 Active model indicator field: Added active_model_indicator to the App struct to track when a
+   model switch occurs.
+ 2 Model switch handling: Updated the event loop to handle SystemEvent::ModelSwitched events by
+   setting the indicator with the new model name and current timestamp.
+ 3 Flash animation: The indicator appears for 3 seconds after a model switch, creating a
+   flash-and-fade effect.
+ 4 Visual display: Added a centered yellow banner at the bottom of the screen showing "Model:
+   {model_name}" when active.
+ 5 Layout adjustment: The layout dynamically adjusts to include space for the indicator when it's
+   visible.
+
+NOTE: Note yet tested, pending adding a model registry with more options.
+- [ ] test
+
 ---
 
 ## Additional comments from Deepseek R1T2 Chimera

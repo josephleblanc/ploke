@@ -1,4 +1,4 @@
-use crate::{chat_history::{Message, MessageKind}, parser::resolve_target_dir};
+use crate::{chat_history::{Message, MessageKind}, parser::resolve_target_dir, user_config::ProviderRegistry};
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
@@ -81,6 +81,13 @@ impl IndexingState {
     }
 }
 
+// impl std::ops::DerefMut for ConfigState {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.0
+//     }
+//
+// }
+
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
     fn deref(&self) -> &Self::Target {
@@ -105,6 +112,7 @@ impl std::ops::Deref for IndexingState {
 #[derive(Debug, Default)]
 pub struct Config {
     pub llm_params: LLMParameters,
+    pub provider_registry: ProviderRegistry,
     // ... other config fields
 }
 
@@ -327,6 +335,7 @@ impl StateCommand {
             StateCommand::UpdateDatabase => "UpdateDatabase",
             StateCommand::EmbedMessage { .. } => "EmbedMessage",
             StateCommand::ForwardContext { .. } => "ForwardContext",
+            StateCommand::SwitchModel { .. } => "SwitchModel",
             // ... other variants
         }
     }
@@ -710,7 +719,7 @@ pub async fn state_manager(
 
             StateCommand::SwitchModel { alias_or_id } => {
                 let mut cfg = state.config.write().await;
-                if cfg.providers.set_active(&alias_or_id) {
+                if cfg.provider_registry.set_active(&alias_or_id) {
                     event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
                         alias_or_id.clone(),
                     )));

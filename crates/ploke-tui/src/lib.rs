@@ -98,6 +98,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
                 model: DEFAULT_MODEL.to_string(),
                 display_name: Some("Default".to_string()),
                 provider_type: ProviderType::OpenRouter,
+                llm_params: Default::default(),
             });
         }
     }
@@ -186,7 +187,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
     let terminal = ratatui::init();
-    let app = App::new(config.command_style, state, cmd_tx, &event_bus);
+    let app = App::new(config.command_style, state, cmd_tx, &event_bus, DEFAULT_MODEL.to_string());
     let result = app.run(terminal).await;
     ratatui::restore();
     result

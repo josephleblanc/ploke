@@ -9,6 +9,14 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 
+static HELP_COMMANDS: &str = r#"Available commands:
+    index start [directory] - Run workspace indexing on specified directory 
+        (defaults to current dir)
+    index pause - Pause indexing
+    index resume - Resume indexing
+    index cancel - Cancel indexing
+    help - Show this help"#;
+
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
     #[default]
@@ -52,6 +60,7 @@ pub struct App {
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
     active_model_indicator: Option<(String, Instant)>,
+    active_model: String,
 }
 
 impl App {
@@ -61,6 +70,7 @@ impl App {
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
+        active_model: String,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -78,6 +88,7 @@ impl App {
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
             active_model_indicator: None,
+            active_model,
         }
     }
 
@@ -174,7 +185,6 @@ impl App {
                             // };
                             // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
                         }
-                        AppEvent::System(system_event) => {},
                         AppEvent::Error(error_event) => {},
                         AppEvent::IndexingStarted => {
                         },
@@ -197,13 +207,15 @@ impl App {
                                 new_msg_id: Uuid::new_v4(),
                             })
                         },
+                        // AppEvent::System(system_event) => {},
                         AppEvent::System(system_event) => {
                             match system_event {
-                                SystemEvent::ModelSwitched(new_model) => {
-                                    self.active_model_indicator = Some((new_model, Instant::now()));
-                                }
-                                _ => {}
-                            }
+                                system::SystemEvent::ModelSwitched(new_model)=>{
+                                    self.active_model_indicator = Some((new_model.clone(), Instant::now()));
+                                    self.active_model = new_model;
+                                },
+                                other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
+                        }
                         }
                         AppEvent::GenerateContext(id) => {
                             // self.send_cmd( StateCommand::)
@@ -279,7 +291,7 @@ impl App {
 
         let list_len = messages.len();
         let list = List::new(messages)
-            .block(Block::bordered().title("Conversation"))
+            .block(Block::bordered().title(format!( "Conversation: {}", self.active_model)))
             .highlight_symbol(">>");
         // .repeat_highlight_symbol(true);
 
@@ -367,7 +379,7 @@ impl App {
                 let indicator = Paragraph::new(format!(" Model: {} ", model_name))
                     .style(Style::new().fg(Color::Black).bg(Color::Yellow))
                     .alignment(ratatui::layout::Alignment::Center);
-                
+
                 let indicator_area = main_layout.last().unwrap();
                 frame.render_widget(indicator, *indicator_area);
             }
@@ -571,15 +583,13 @@ impl App {
         }
     }
 
-     fn show_command_help(&self) {
-         self.send_cmd(StateCommand::AddMessageImmediate {
-             msg: "Available commands:\n  index start [directory] - Run workspace indexing on
- specified directory (defaults to current dir)\n  index pause - Pause indexing\n  index resume -
- Resume indexing\n  index cancel - Cancel indexing\n  help - Show this help".to_string(),
-             kind: MessageKind::SysInfo,
-             new_msg_id: Uuid::new_v4(),
-         });
-     }
+    fn show_command_help(&self) {
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: HELP_COMMANDS.to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+    }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
         use chat_history::NavigationDirection::{Next, Previous};
