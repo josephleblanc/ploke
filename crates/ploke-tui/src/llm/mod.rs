@@ -59,7 +59,7 @@ pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
-    provider: ProviderConfig,
+    providers: crate::user_config::ProviderRegistry,
 ) {
     let client = Client::new();
     let mut pending_requests = Vec::new();
@@ -99,7 +99,7 @@ pub async fn llm_manager(
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
-                                provider.clone(),
+                                providers.clone(),
                                 Some(context),
                             ));
                             tracing::info!("removing id from pending_requests");
@@ -164,7 +164,8 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider, context).await {
+    let provider = providers.get_active_provider().ok_or(LlmError::Unknown("No active provider configured".to_string()))?;
+    let update_cmd = match prepare_and_run_llm_call(&state, &client, provider, context).await {
         Ok(content) => StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {

@@ -68,11 +68,18 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .try_deserialize::<crate::user_config::Config>()?;
 
     if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
-        config.provider = ProviderConfig {
-            api_key: openrouter_api_key,
-            base_url: OPENROUTER_URL.to_string(),
-            model: DEFAULT_MODEL.to_string(),
-        };
+        if let Some(default_provider) = config.providers.providers.iter_mut().find(|p| p.id == "default") {
+            default_provider.api_key = openrouter_api_key;
+        } else {
+            config.providers.providers.push(ProviderConfig {
+                id: "default".to_string(),
+                api_key: openrouter_api_key,
+                base_url: OPENROUTER_URL.to_string(),
+                model: DEFAULT_MODEL.to_string(),
+                display_name: Some("Default".to_string()),
+                provider_type: ProviderType::OpenRouter,
+            });
+        }
     }
 
     let new_db = ploke_db::Database::init_with_schema()?;
@@ -151,7 +158,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
-        config.provider.clone(),
+        config.providers.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
