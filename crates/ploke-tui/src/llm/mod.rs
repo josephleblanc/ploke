@@ -147,7 +147,7 @@ pub async fn process_llm_request(
     client: Client,
     providers: crate::user_config::ProviderRegistry,
     context: Option<llm::Event>,
-) {
+) -> Result<(), LlmError> {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         llm::Event::Request {
@@ -197,13 +197,14 @@ pub async fn process_llm_request(
             },
         })
         .unwrap_or_else(|e| {
-            e.emit_error();
+            let err_string = e.to_string();
+            err_string.emit_error();
             StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(format!("Error: {}", e)),
+                    content: Some(format!("Error: {}", err_string)),
                     status: Some(MessageStatus::Error {
-                        description: e.to_string(),
+                        description: err_string,
                     }),
                     ..Default::default()
                 },
@@ -214,6 +215,7 @@ pub async fn process_llm_request(
     if cmd_tx.send(update_cmd).await.is_err() {
         log::error!("Failed to send final UpdateMessage: channel closed.");
     }
+    Ok(())
 }
 
 #[instrument(skip(provider, state, client))]

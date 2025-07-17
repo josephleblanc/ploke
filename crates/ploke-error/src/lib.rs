@@ -44,18 +44,18 @@ pub enum ErrorSeverity {
 }
 
 /// Extension trait for ergonomic error emission
-pub trait ResultExt<T, E> {
+pub trait ResultExt<T> {
     /// Emit an error event through the global event bus
-    fn emit_event(self, severity: ErrorSeverity) -> Result<T, E>;
+    fn emit_event(self, severity: ErrorSeverity) -> Self;
     
     /// Emit a warning event
-    fn emit_warning(self) -> Result<T, E>;
+    fn emit_warning(self) -> Self;
     
     /// Emit an error event
-    fn emit_error(self) -> Result<T, E>;
+    fn emit_error(self) -> Self;
     
     /// Emit a fatal event
-    fn emit_fatal(self) -> Result<T, E>;
+    fn emit_fatal(self) -> Self;
 }
 
 /// Extension trait for direct error emission
