@@ -1,66 +1,98 @@
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use ploke_db::Database;
-use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
+use syn_parser::{
+    ParsedCodeGraph, discovery::run_discovery_phase, error::SynParserError,
+    parser::analyze_files_parallel,
+};
 
-pub fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("Error parsing workspace directory from crate `common`") // crates/
-        .parent() // workspace root
-        .expect("Failed to get workspace root")
-        .to_path_buf()
+/// Returns the directory to process.
+/// Priority:
+/// 1. Path supplied by the caller
+/// 2. `$PWD` (current working directory)
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use std::env;
+///
+/// // When user provides a path, it should be returned
+/// let user_path = PathBuf::from("/some/path");
+/// let result = crate::parser::resolve_target_dir(Some(user_path.clone()));
+/// assert_eq!(result.unwrap(), user_path);
+///
+/// // When no path is provided, it should return current directory
+/// let current_dir = env::current_dir().unwrap();
+/// let result = crate::parser::resolve_target_dir(None);
+/// assert_eq!(result.unwrap(), current_dir);
+/// ```
+pub fn resolve_target_dir(user_dir: Option<PathBuf>) -> Result<PathBuf, ploke_error::Error> {
+    let target_dir = match user_dir {
+        Some(p) => p,
+        None => env::current_dir().map_err(SynParserError::from)?,
+    };
+    Ok(target_dir)
 }
-pub fn fixtures_crates_dir() -> PathBuf {
-    workspace_root().join("tests/fixture_crates")
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_resolve_target_dir_with_user_path() {
+        let expected_path = PathBuf::from("/tmp/test/path");
+        let result = resolve_target_dir(Some(expected_path.clone()));
+        assert_eq!(result.unwrap(), expected_path);
+    }
+
+    #[test]
+    fn test_resolve_target_dir_without_user_path() {
+        let expected_path = env::current_dir().unwrap();
+        let result = resolve_target_dir(None);
+        assert_eq!(result.unwrap(), expected_path);
+    }
+
+    #[test]
+    fn test_resolve_target_dir_with_empty_path() {
+        let empty_path = PathBuf::new();
+        let result = resolve_target_dir(Some(empty_path.clone()));
+        assert_eq!(result.unwrap(), empty_path);
+    }
 }
 
-
-pub fn run_parse(db: Arc< Database >,  fixture: &'static str) -> Result<(), ploke_error::Error> {
+pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
-    // run the parse
-    tracing::info!("{}: run the parser", "Parse".log_step());
-    let successful_graphs = test_run_phases_and_collect(fixture);
-    // merge results from all files
-    tracing::info!("{}: merge the graphs", "Parse".log_step());
-    let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+    let target = resolve_target_dir(target_dir)?;
+    tracing::info!(
+        "{}: run the parser on {}",
+        "Parse".log_step(),
+        target.display()
+    );
 
-    // build module tree
-    tracing::info!("{}: build module tree", "Parse".log_step());
-    let tree = merged.build_module_tree().unwrap_or_else(|e| {
-        log::error!(target: "transform_function",
-            "Error building tree: {}",
-            e
-        );
-        panic!()
-    });
+    let discovery_output =
+        run_discovery_phase(&target, &[target.clone()]).map_err(ploke_error::Error::from)?;
 
-    tracing::info!("{}: transform graph into db", "Transform".log_step());
-    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
-    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
-    Ok(())
-}
+    let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
+        analyze_files_parallel(&discovery_output, 0);
 
-pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
-    let crate_path = fixtures_crates_dir().join(fixture_name);
-    let project_root = workspace_root(); // Use workspace root for context
-    let discovery_output = run_discovery_phase(&project_root, &[crate_path.clone()])
-        .unwrap_or_else(|e| panic!("Phase 1 Discovery failed for {}: {:?}", fixture_name, e));
-
-    let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
-        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
-
-    // Collect successful results, panicking if any file failed to parse in Phase 2
-    results_with_errors
+    let graphs: Vec<_> = results
         .into_iter()
-        .map(|res| {
-            res.unwrap_or_else(|e| {
-                panic!(
-                    "Phase 2 parsing failed for a file in fixture {}: {:?}",
-                    fixture_name, e
-                )
-            })
-        })
-        .collect()
+        .collect::<Result<_, _>>()
+        .map_err(ploke_error::Error::from)?;
+
+    let merged = ParsedCodeGraph::merge_new(graphs)?;
+    let tree = merged.build_module_tree()?;
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
+    tracing::info!(
+        "{}: Parsing and Database Transform Complete",
+        "Setup".log_step()
+    );
+    Ok(())
 }

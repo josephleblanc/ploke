@@ -730,6 +730,83 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
     Uuid::new_v5(&PROJECT_NAMESPACE_UUID, name_version.as_bytes())
 }
 
+/// Conversion from DiscoveryError to ploke_error::Error
+///
+/// This conversion maps discovery-phase errors to appropriate ploke_error variants
+/// based on their severity and impact on the overall parsing process:
+///
+/// - **FatalError::FileOperation**: Used for I/O errors and walkdir errors during 
+///   file discovery, as these indicate filesystem access issues.
+/// - **FatalError::PathResolution**: Used for TOML parse errors and missing
+///   critical files (Cargo.toml, src directory). These prevent any meaningful parsing.
+/// - **WarningError**: Used for non-fatal discovery issues that don't prevent
+///   parsing but may affect completeness.
+///
+/// This mapping maintains the dependency direction (syn_parser depends on ploke_error)
+/// while providing clear error categorization for upstream error handling.
+impl From<DiscoveryError> for ploke_error::Error {
+    fn from(err: DiscoveryError) -> Self {
+        match err {
+            DiscoveryError::Io { path, source } => {
+                ploke_error::FatalError::FileOperation {
+                    operation: "read",
+                    path,
+                    source,
+                }.into()
+            }
+            DiscoveryError::TomlParse { path, source } => {
+                ploke_error::FatalError::PathResolution {
+                    path: format!("Failed to parse Cargo.toml at {}", path.display()),
+                    source: Some(source),
+                }.into()
+            }
+            DiscoveryError::MissingPackageName { path } => {
+                ploke_error::FatalError::PathResolution {
+                    path: format!("Missing package.name in Cargo.toml at {}", path.display()),
+                    source: None,
+                }.into()
+            }
+            DiscoveryError::MissingPackageVersion { path } => {
+                ploke_error::FatalError::PathResolution {
+                    path: format!("Missing package.version in Cargo.toml at {}", path.display()),
+                    source: None,
+                }.into()
+            }
+            DiscoveryError::CratePathNotFound { path } => {
+                ploke_error::FatalError::PathResolution {
+                    path: format!("Crate path not found: {}", path.display()),
+                    source: None,
+                }.into()
+            }
+            DiscoveryError::Walkdir { path, source } => {
+                // Convert walkdir::Error to std::io::Error using string representation
+                let io_error = std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    source.to_string()
+                );
+                ploke_error::FatalError::FileOperation {
+                    operation: "walk",
+                    path,
+                    source: Arc::new(io_error),
+                }.into()
+            }
+            DiscoveryError::SrcNotFound { path } => {
+                ploke_error::FatalError::PathResolution {
+                    path: format!("Source directory not found for crate at: {}", path.display()),
+                    source: None,
+                }.into()
+            }
+            DiscoveryError::NonFatalErrors(errors) => {
+                // Convert the boxed vector to a warning about multiple issues
+                ploke_error::WarningError::UnresolvedRef {
+                    name: "Discovery phase".to_string(),
+                    location: Some(format!("{} non-fatal errors occurred", errors.len())),
+                }.into()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,5 +834,18 @@ mod tests {
             ns1, ns3,
             "Different crate names should produce different namespaces"
         );
+    }
+
+    #[test]
+    fn test_discovery_error_conversion() {
+        use std::io;
+        let io_error = io::Error::new(io::ErrorKind::NotFound, "file not found");
+        let discovery_err = DiscoveryError::Io {
+            path: PathBuf::from("/test/path"),
+            source: Arc::new(io_error),
+        };
+        
+        let ploke_err: ploke_error::Error = discovery_err.into();
+        assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
     }
 }

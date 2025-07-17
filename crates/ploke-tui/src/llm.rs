@@ -232,7 +232,7 @@ async fn prepare_and_run_llm_call(
         };
 
     log::info!(
-        "Sending conversation histor message with content: {:#?}",
+        "Sending conversation history message with content: {:#?}",
         messages
     );
     // Release the lock before the network call

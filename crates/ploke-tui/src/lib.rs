@@ -48,7 +48,7 @@ use ratatui::prelude::*;
 use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
 
-pub static TARGET_DIR_FIXTURE: &str = "fixture_nodes";
+pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -78,7 +78,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
-    run_parse(Arc::clone(&db_handle), TARGET_DIR_FIXTURE)?;
+    // Initial parse is now optional - user can run indexing on demand
+    // run_parse(Arc::clone(&db_handle), Some(TARGET_DIR_FIXTURE.into()))?;
 
     // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
     // spawning state meager below.
@@ -99,7 +100,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // TODO:
     // 1 Implement the cancellation token propagation in IndexerTask
     // 2 Add error handling for embedder initialization failures
-    // 3 Complete the UI progress reporting integration
     let indexer_task = IndexerTask::new(
         db_handle.clone(),
         io_handle.clone(),
@@ -315,6 +315,7 @@ impl Default for EventBusCaps {
 async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     use broadcast::error::RecvError;
     let mut index_rx = event_bus.index_subscriber();
+    #[allow(unused_mut)]
     let mut bg_rx = event_bus.background_tx.subscribe();
     // more here?
     loop {
@@ -402,7 +403,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
             // };
         };
     }
-    Ok(())
+    // Ok(())
 }
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {

@@ -208,8 +208,6 @@ impl IndexerTask {
         tracing::info!("Starting index_workspace: {}", &workspace_dir);
         let db_clone = Arc::clone(&task.db);
         let total_count_not_indexed = db_clone.count_unembedded_nonfiles()?;
-        // let (callback_manager, db_callbacks, _, shutdown) =
-        //     CallbackManager::new_bounded(Arc::clone(&task.db), 1000)?;
 
         let mut idx_handle = tokio::spawn(async move { task.run(progress_tx, control_rx).await });
 
