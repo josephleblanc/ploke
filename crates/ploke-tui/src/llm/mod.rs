@@ -124,13 +124,13 @@ pub async fn llm_manager(
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
-#[instrument(skip(state, client, provider))]
+#[instrument(skip(state, client, providers))]
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
-    provider: ProviderConfig,
+    providers: crate::user_config::ProviderRegistry,
     context: Option<llm::Event>,
 ) {
     tracing::info!("Inside process_llm_request");
