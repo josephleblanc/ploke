@@ -124,8 +124,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
 
     let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
-    let (llm_event_tx, llm_event_rx) = mpsc::channel(10);
-    let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus), llm_event_tx);
+    let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
     tokio::spawn(context_manager.run());
 
     let (cancellation_token, cancel_handle) = CancellationToken::new();
@@ -153,7 +152,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
         config.provider.clone(),
-        llm_event_rx,
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
@@ -213,8 +211,8 @@ pub mod ploke_rag {
     use super::*;
     #[derive(Clone, Debug)]
     pub enum RagEvent {
-        ContextSnippets(Vec<String>),
-        UserMessages(Vec<Message>),
+        ContextSnippets(Uuid, Vec<String>),
+        UserMessages(Uuid, Vec<Message>),
         ConstructContext(Uuid),
     }
 }
@@ -321,34 +319,34 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     // more here?
     loop {
         tokio::select! {
-            bg_event = bg_rx.recv() => {
-            tracing::trace!("event bus received a background event: {:?}", bg_event);
-                match bg_event {
-                    Ok(AppEvent::System(sys_event)) => match sys_event {
-                        system::SystemEvent::CompleteReadSnip(items) => {
-                            tracing::info!("event bus Sent RAG event with snippets: {:#?}", items);
-                            event_bus.send(AppEvent::Rag(RagEvent::ContextSnippets(items)));
-                        }
-                        _ => {}
-                    },
-                    Ok(_) => {}
-                    Err(e) => {
-                        match e {
-                            RecvError::Closed => {
-                                tracing::trace!("System Event event channel closed {}", e.to_string());
-                                break;
-                            }
-                            RecvError::Lagged(lag) => {
-                                tracing::trace!(
-                                    "System Event event channel lagging {} with {} messages",
-                                    e.to_string(),
-                                    lag
-                                )
-                            }
-                        };
-                    }
-                }
-            }
+            // bg_event = bg_rx.recv() => {
+            // tracing::trace!("event bus received a background event: {:?}", bg_event);
+            //     match bg_event {
+            //         Ok(AppEvent::System(sys_event)) => match sys_event {
+            //             system::SystemEvent::CompleteReadSnip(items) => {
+            //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", items);
+            //                 event_bus.send(AppEvent::Rag(RagEvent::ContextSnippets(items)));
+            //             }
+            //             _ => {}
+            //         },
+            //         Ok(_) => {}
+            //         Err(e) => {
+            //             match e {
+            //                 RecvError::Closed => {
+            //                     tracing::trace!("System Event event channel closed {}", e.to_string());
+            //                     break;
+            //                 }
+            //                 RecvError::Lagged(lag) => {
+            //                     tracing::trace!(
+            //                         "System Event event channel lagging {} with {} messages",
+            //                         e.to_string(),
+            //                         lag
+            //                     )
+            //                 }
+            //             };
+            //         }
+            //     }
+            // }
             index_event = index_rx.recv() => {
             // let index_event = index_rx.recv().await;
             tracing::trace!("event bus received IndexStatus");

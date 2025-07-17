@@ -38,7 +38,7 @@ pub struct AppState {
 
     pub db: Arc<Database>,
     pub embedder: Arc<EmbeddingProcessor>,
-    pub io_handle: IoManagerHandle
+    pub io_handle: IoManagerHandle,
 }
 
 // TODO: Implement Deref for all three *State items below
@@ -110,7 +110,11 @@ pub struct Config {
 
 // State access API (read-only)
 impl AppState {
-    pub fn new(db: Arc<Database>, embedder: Arc<EmbeddingProcessor>, io_handle: IoManagerHandle) -> Self {
+    pub fn new(
+        db: Arc<Database>,
+        embedder: Arc<EmbeddingProcessor>,
+        io_handle: IoManagerHandle,
+    ) -> Self {
         Self {
             chat: ChatState(RwLock::new(ChatHistory::new())),
             config: ConfigState(RwLock::new(Config::default())),
@@ -511,14 +515,6 @@ pub async fn state_manager(
                                 );
                             }
                         }
-                        // match callback_handler.join() {
-                        //     Ok(r) => {
-                        //         tracing::info!("Callback Handler Completed: {:?}", r);
-                        //     },
-                        //     Err(e) => {
-                        //         tracing::warn!("Callback Handler Failed with error message: {:?}", e);
-                        //     },
-                        // }
                         tracing::info!("Indexer task returned");
                     }
                 }
@@ -562,12 +558,18 @@ pub async fn state_manager(
                 for ty in NodeType::primary_nodes() {
                     match create_index_warn(&state.db, ty) {
                         Ok(_) => {
-                            tracing::info!("Database index updated by create_index_warn for rel: {}", ty.relation_str());
+                            tracing::info!(
+                                "Database index updated by create_index_warn for rel: {}",
+                                ty.relation_str()
+                            );
                         }
                         Err(e) => {
                             match replace_index_warn(&state.db, ty) {
                                 Ok(_) => {
-                                    tracing::info!("Database index updated by replace_index_warn for rel: {}", ty.relation_str());
+                                    tracing::info!(
+                                        "Database index updated by replace_index_warn for rel: {}",
+                                        ty.relation_str()
+                                    );
                                 }
                                 Err(e) => tracing::error!(
                                     "The attempt to replace the index at the database failed"
@@ -592,7 +594,7 @@ pub async fn state_manager(
                 )
                 .await;
                 let chat_guard = state.chat.0.read().await;
-                if let Ok(Some(last_user_msg)) = chat_guard.last_user_msg() {
+                if let Ok(Some(( parent_id, last_user_msg ))) = chat_guard.last_user_msg() {
                     tracing::info!("Start embedding user message: {}", last_user_msg);
                     let temp_embed = state
                         .embedder
@@ -604,69 +606,49 @@ pub async fn state_manager(
                     drop(chat_guard);
                     let embeddings = temp_embed.first().expect("No results from vector search");
                     tracing::info!("Finish embedding user message");
-                    match search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function) {
-             Ok(ty_emb_data) => {
-                 tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
+                    match search_similar(
+                        &state.db,
+                        embeddings.clone(),
+                        100,
+                        200,
+                        NodeType::Function,
+                    ) {
+                        Ok(ty_emb_data) => {
+                            tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
 
-                 // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
-                 let snippets = state.io_handle.get_snippets_batch(ty_emb_data.v).await
-                     .unwrap_or_default()
-                     .into_iter()
-                     .filter_map(|r| r.ok())
-                     .collect::<Vec<String>>();
+                            // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
+                            let snippets = state
+                                .io_handle
+                                .get_snippets_batch(ty_emb_data.v)
+                                .await
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter_map(|r| r.ok())
+                                .collect::<Vec<String>>();
 
-                 // Send snippets directly to context manager
-                 let _ = context_tx.send(RagEvent::ContextSnippets(snippets)).await;
+                            // Send snippets directly to context manager
+                            let _ = context_tx.send(RagEvent::ContextSnippets(parent_id, snippets)).await;
 
-                 // Then trigger context construction with the correct parent ID
-                 let chat_guard = state.chat.0.read().await;
-                 let parent_id = chat_guard.tail;
-                 drop(chat_guard);
+                            // Then trigger context construction with the correct parent ID
+                            let messages: Vec<Message> = state
+                                .chat
+                                .0
+                                .read()
+                                .await
+                                .messages
+                                .iter()
+                                .map(|m| m.1.clone())
+                                .collect();
 
-                 let messages: Vec<Message> = state.chat.0.read().await.messages.iter()
-                     .map(|m| m.1.clone()).collect();
-
-                 let _ = context_tx.send(RagEvent::UserMessages(messages)).await;
-                 let _ = context_tx.send(RagEvent::ConstructContext(parent_id)).await;
-             },
-             Err(_) => {
-                 tracing::error!("The attempt to create the index at the database failed");
-             }
-         };
-                    // TODO: Hardcoded to only search functions right now, need to update it to
-                    // search for all node types in teh query in search_similar.
-                    //
-                    // NOTE: Commented out while trying alternate solution
-                    // match search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function) {
-                    //     Ok(ty_emb_data) => { 
-                    //         tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
-                    //         event_bus.send(AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)))
-                    //     },
-                    //     Err(_) => {
-                    //         tracing::error!(
-                    //             "The attempt to create the index at the database failed"
-                    //         )
-                    //     }
-                    // };
-                    // tracing::trace!("adding message on finishing embedding user messaage");
-                }
-            }
-            StateCommand::ForwardContext => {
-                tracing::info!("inside forward context");
-                let guard = state.chat.0.read().await;
-                let messages: Vec<Message> = guard.messages.iter().map(|m| m.1.clone()).collect();
-                let id = guard.tail;
-                drop(guard);
-
-                match context_tx.send(RagEvent::UserMessages( messages )).await {
-                    Ok(_) => {
-                        tracing::info!("Sending user messages to context builder");
-                        match context_tx.send(RagEvent::ConstructContext(id)).await {
-                            Ok(_) => {tracing::info!("Sending Construct Context to context builder")},
-                            Err(e) => {tracing::info!("Error sending rag event: {:?}", e.to_string())}
+                            let _ = context_tx.send(RagEvent::UserMessages(parent_id, messages)).await;
+                            let _ = context_tx.send(RagEvent::ConstructContext(parent_id)).await;
                         }
-                    },
-                    Err(e) => {tracing::info!("Error sending rag event: {:?}", e.to_string())}
+                        Err(_) => {
+                            tracing::error!(
+                                "The attempt to create the index at the database failed"
+                            );
+                        }
+                    };
                 }
             }
 
@@ -687,28 +669,22 @@ async fn add_msg_immediate(
     tracing::trace!("Starting add_msg_immediate");
     let mut chat_guard = state.chat.0.write().await;
     let parent_id = chat_guard.current;
-    let child_id = Uuid::new_v4();
+    let new_msg_id = Uuid::new_v4();
 
     let message_wrapper = match kind {
-        MessageKind::User => chat_guard.add_message_user(parent_id, child_id, content.clone()),
+        MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
         MessageKind::System => todo!(),
         MessageKind::Assistant => {
-            chat_guard.add_message_llm(parent_id, child_id, kind, content.clone())
+            chat_guard.add_message_llm(parent_id, new_msg_id, kind, content.clone())
         }
         MessageKind::Tool => todo!(),
         MessageKind::SysInfo => {
-            chat_guard.add_message_system(parent_id, child_id, kind, content.clone())
+            chat_guard.add_message_system(parent_id, new_msg_id, kind, content.clone())
         }
     };
     drop(chat_guard);
     // Add the user's message to the history
     if let Ok(message_id) = message_wrapper {
-        // tracing::Span::current().record("msg_id", format!("{}", message_id));
-        // tracing::info!(
-        //     content = %truncate_string(&content, 20),
-        //     parent_id = %parent_id,
-        //     "Adding message"
-        // );
 
         let mut chat_guard = state.chat.0.write().await;
         // Update the current message to the one we just added
@@ -726,10 +702,13 @@ async fn add_msg_immediate(
                 prompt: content,
                 parameters: Default::default(), // Using mock/default param
             });
+            tracing::info!("sending llm_request wrapped in an AppEvent::Llm of kind {} with id {}", 
+                kind,
+                message_id);
             event_bus.send(llm_request);
         }
     } else {
-        tracing::error!("Failed to add user message");
+        tracing::error!("Failed to add message of kind: {}", kind);
     }
 }
 

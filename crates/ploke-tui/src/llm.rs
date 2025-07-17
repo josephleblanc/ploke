@@ -1,11 +1,11 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tracing::instrument;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
     oneshot,
 };
+use tracing::instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -54,79 +54,73 @@ struct ResponseMessage {
     content: String,
 }
 
-pub async fn llm_manager_old(
+pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     provider: ProviderConfig,
-    mut llm_rx: mpsc::Receiver<llm::Event>,
 ) {
     let client = Client::new();
+    let mut pending_requests = Vec::new();
+    let mut ready_contexts = std::collections::HashMap::new();
 
     while let Ok(event) = event_rx.recv().await {
-        if let AppEvent::Llm(request @ llm::Event::Request { .. }) = event {
-            tracing::info!("Calling llm_rx.recv().await...");
-            let context = llm_rx.recv().await;
-            tracing::error!("llm_rx.recv().await returned with context: {:?}", context);
-            tokio::spawn(process_llm_request(
-                request,
-                Arc::clone(&state),
-                cmd_tx.clone(),
-                client.clone(),
-                provider.clone(), // Clone the provider config
-                context,
-            ));
+        match event {
+            AppEvent::Llm(request @ llm::Event::Request { parent_id, .. }) => {
+                tracing::info!("Received LLM request for parent_id: {}", parent_id);
+                pending_requests.push(request);
+            }
+            AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
+                tracing::info!("Received context for parent_id: {}", parent_id);
+                ready_contexts.insert(parent_id, context);
+
+                // Process any pending requests that now have context
+                pending_requests.retain(|req| {
+                    if let llm::Event::Request {
+                        parent_id: req_parent,
+                        ..
+                    } = req
+                    {
+                        tracing::info!(
+                            "pending_requests found match for req_qarent: {}",
+                            req_parent
+                        );
+                        if let Some(context) = ready_contexts.remove(req_parent) {
+                            tracing::info!(
+                                "ready_contexts found match for req_qarent: {}",
+                                req_parent
+                            );
+                            tokio::spawn(process_llm_request(
+                                req.clone(),
+                                Arc::clone(&state),
+                                cmd_tx.clone(),
+                                client.clone(),
+                                provider.clone(),
+                                Some(context),
+                            ));
+                            tracing::info!("removing id from pending_requests");
+                            false // Remove from pending
+                        } else {
+                            tracing::info!("keep id from pending_requests
+                                found pending_request but not ready_context
+                                checking if ready_contexts removed req_parent during conditional: {}", 
+                                ready_contexts.contains_key(req_parent));
+                            true // Keep waiting
+                        }
+                    } else {
+                        tracing::info!("keep id from pending_requests\nno matched pending_requests");
+                        true
+                    }
+                });
+            }
+            _ => {}
         }
     }
 }
- pub async fn llm_manager(
-     mut event_rx: broadcast::Receiver<AppEvent>,
-     state: Arc<AppState>,
-     cmd_tx: mpsc::Sender<StateCommand>,
-     provider: ProviderConfig,
- ) {
-     let client = Client::new();
-     let mut pending_requests = Vec::new();
-     let mut ready_contexts = std::collections::HashMap::new();
-
-     while let Ok(event) = event_rx.recv().await {
-         match event {
-             AppEvent::Llm(request @ llm::Event::Request { parent_id, .. }) => {
-                 tracing::info!("Received LLM request for parent_id: {}", parent_id);
-                 pending_requests.push(request);
-             }
-             AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
-                 tracing::info!("Received context for parent_id: {}", parent_id);
-                 ready_contexts.insert(parent_id, context);
-
-                 // Process any pending requests that now have context
-                 pending_requests.retain(|req| {
-                     if let llm::Event::Request { parent_id: req_parent, .. } = req {
-                         if let Some(context) = ready_contexts.remove(req_parent) {
-                             tokio::spawn(process_llm_request(
-                                 req.clone(),
-                                 Arc::clone(&state),
-                                 cmd_tx.clone(),
-                                 client.clone(),
-                                 provider.clone(),
-                                 Some(context),
-                             ));
-                             false // Remove from pending
-                         } else {
-                             true // Keep waiting
-                         }
-                     } else {
-                         true
-                     }
-                 });
-             }
-             _ => {}
-         }
-     }
- }
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
+#[instrument(skip(state, client, provider))]
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
@@ -135,12 +129,15 @@ pub async fn process_llm_request(
     provider: ProviderConfig,
     context: Option<llm::Event>,
 ) {
-
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
         llm::Event::Request { parent_id, .. } => parent_id,
-        _ => return, // Not a request, do nothing
+        _ => {
+            tracing::info!("Not a Request, do nothing");
+            return;
+        } // Not a request, do nothing
     };
+    tracing::info!("Inside process_llm_request");
 
     // This part remains the same: create a placeholder message first.
     let (responder_tx, responder_rx) = oneshot::channel();
@@ -193,7 +190,7 @@ pub async fn process_llm_request(
     }
 }
 
-#[instrument(skip(provider,state,client))]
+#[instrument(skip(provider, state, client))]
 async fn prepare_and_run_llm_call(
     state: &Arc<AppState>,
     client: &Client,
@@ -213,10 +210,13 @@ async fn prepare_and_run_llm_call(
 
     let messages: Vec<RequestMessage> =
         if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
-            prompt.into_iter().map(|(k, c)| RequestMessage {
-                kind: k.into(),
-                content: c.clone(), // can this clone be remove somehow?
-            }).collect()
+            prompt
+                .into_iter()
+                .map(|(k, c)| RequestMessage {
+                    kind: k.into(),
+                    content: c.clone(), // can this clone be remove somehow?
+                })
+                .collect()
         } else {
             context_path
                 .iter()

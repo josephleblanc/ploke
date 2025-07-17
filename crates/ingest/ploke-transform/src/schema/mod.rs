@@ -187,7 +187,7 @@ macro_rules! define_schema {
             }
 
             pub fn log_create_script(&self) {
-                tracing::info!(target: "db",
+                tracing::trace!(target: "db",
                     "{} {}: {:?}",
                     "Printing schema".log_header(),
                     $relation.log_name(),
@@ -235,7 +235,7 @@ pub(crate) fn create_and_insert_generic_schema(db: &Db<MemStorage>) -> Result<()
 }
 
 pub(crate) fn log_db_result(db_result: cozo::NamedRows) {
-    tracing::info!(target: "db",
+    tracing::trace!(target: "db",
         "{} {:?}",
         "  Db return: ".log_step(),
         db_result,

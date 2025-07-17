@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use tracing::instrument;
 
@@ -50,19 +50,22 @@ static PROMPT_USER: &str = r#"
 pub struct ContextManager {
     pub rag_event_rx: mpsc::Receiver<RagEvent>,
     pub event_bus: Arc<EventBus>,
-    pub code_context: Option<CodeContext>,
-    pub messages: Option<Vec<Message>>,
-    pending_parent_id: Option< Uuid >,
+    pub code_map: HashMap<Uuid, CodeContext>,
+    pub msg_map: HashMap<Uuid, Vec<Message>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct CodeContext {
     snippets: Vec<String>,
+    id: Uuid,
 }
 
-impl From<Vec<String>> for CodeContext {
-    fn from(value: Vec<String>) -> Self {
-        Self { snippets: value }
+impl From<(Uuid, Vec<String>)> for CodeContext {
+    fn from(value: (Uuid, Vec<String>)) -> Self {
+        Self {
+            id: value.0,
+            snippets: value.1,
+        }
     }
 }
 
@@ -83,67 +86,79 @@ impl ContextManager {
         use RagEvent::*;
 
         match rag_event {
-            ContextSnippets(items) => {
-                self.code_context = Some(items.clone().into());
+            ContextSnippets(id, items) => {
+                let items_len = items.len();
+                let code_context = CodeContext::from((id, items));
+                self.code_map.insert(id, code_context);
 
                 tracing::info!(
-                    "within ContextSnippets with items.len(): {}
-                    code_context.is_some() {} --- messages.is_some() {}
-                    self.pending_parent_id: {:?}", 
-                    items.len(), 
-                    self.code_context.is_some(), 
-                    self.messages.is_some(), 
-                    self.pending_parent_id
+                    "processing id {}
+                    within ContextSnippets with items.len(): {}
+                    self.code_map.contains_key() {} --- self.msg_map.contains_key() {}",
+                    id,
+                    items_len,
+                    self.code_map.contains_key(&id),
+                    self.msg_map.contains_key(&id),
                 );
-                
+
                 // Check if we have everything needed to proceed
-                self.try_construct_and_send_context().await;
+                self.try_construct_and_send_context(id).await;
             }
-            UserMessages(msgs) => {
-                self.messages = Some(msgs.clone());
+            UserMessages(id, msgs) => {
+                let msgs_len = msgs.len();
+                self.msg_map.insert(id, msgs);
 
                 tracing::info!(
-                    "within UserMessages with msgs.len(): {}
-                    code_context.is_some() {} --- messages.is_some() {}
-                    self.pending_parent_id: {:?}", 
-                    msgs.len(), 
-                    self.code_context.is_some(), 
-                    self.messages.is_some(), 
-                    self.pending_parent_id
+                    "processing id {}
+                    within UserMessages with msgs.len(): {}
+                    self.code_map.contains_key {} --- self.msg_map.contains_key {}",
+                    id,
+                    msgs_len,
+                    self.code_map.contains_key(&id),
+                    self.msg_map.contains_key(&id),
                 );
-                
+
                 // Check if we have everything needed to proceed
-                self.try_construct_and_send_context().await;
+                self.try_construct_and_send_context(id).await;
             }
             ConstructContext(id) => {
                 tracing::info!(
-                    "within ConstructContext with id: {}
-                    code_context.is_some() {} --- messages.is_some() {}", 
-                    id, 
-                    self.code_context.is_some(), 
-                    self.messages.is_some()
+                    "processing id {}
+                    within ConstructContext
+                    self.code_map.contains_key {} --- self.msg_map.contains_key {}",
+                    id,
+                    self.code_map.contains_key(&id),
+                    self.msg_map.contains_key(&id),
                 );
 
-                self.pending_parent_id = Some(id);
-                self.try_construct_and_send_context().await;
+                self.try_construct_and_send_context(id).await;
             }
         }
     }
 
-    async fn try_construct_and_send_context(&mut self) {
-        if let (Some(context), Some(messages), Some(parent_id)) = (
-            self.code_context.take(),
-            self.messages.take(),
-            self.pending_parent_id.take(),
-        ) {
-            self.send_prompt_to_llm(context, messages, parent_id).await;
+    async fn try_construct_and_send_context(&mut self, id: Uuid) {
+        if 
+            self.code_map.contains_key(&id) &&
+            self.msg_map.contains_key(&id)
+         {
+            let context = self.code_map.remove_entry(&id);
+            let messages = self.msg_map.remove_entry(&id);
+            tracing::debug!(
+                "trying to send context. after removing entries, currents status is
+                code_map contains_key: {}, msg_map contains_key: {}, 
+                parent_id: {}",
+                self.code_map.contains_key(&id),
+                self.msg_map.contains_key(&id),
+                id
+            );
+            self.send_prompt_to_llm(context.unwrap().1, messages.unwrap().1, id).await;
         } else {
             // Not all components ready yet, keep them stored
             tracing::debug!(
                 "Waiting for more components - context: {}, messages: {}, parent_id: {}",
-                self.code_context.is_some(),
-                self.messages.is_some(),
-                self.pending_parent_id.is_some()
+                self.code_map.contains_key(&id),
+                self.msg_map.contains_key(&id),
+                id
             );
         }
     }
@@ -157,7 +172,6 @@ impl ContextManager {
         let prompt = self.construct_context(context, messages, parent_id);
         self.event_bus.send(AppEvent::Llm(prompt));
         tracing::info!("LLM context sent successfully via event bus");
-        self.pending_parent_id = None;
     }
 
     fn construct_context(
@@ -201,16 +215,12 @@ impl ContextManager {
 
 // Update ContextManager::new() to include state initialization
 impl ContextManager {
-    pub fn new(
-        rag_event_rx: mpsc::Receiver<RagEvent>,
-        event_bus: Arc<EventBus>,
-    ) -> Self {
+    pub fn new(rag_event_rx: mpsc::Receiver<RagEvent>, event_bus: Arc<EventBus>) -> Self {
         Self {
             rag_event_rx,
             event_bus,
-            code_context: None,
-            messages: None,
-            pending_parent_id: None,
+            code_map: Default::default(),
+            msg_map: Default::default(),
         }
     }
 }

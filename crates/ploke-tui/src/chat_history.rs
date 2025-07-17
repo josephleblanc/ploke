@@ -238,7 +238,7 @@ impl Into<&'static str> for MessageKind {
             MessageKind::Assistant => "Assistant",
             MessageKind::System => "System",
             MessageKind::Tool => "Tool",
-            MessageKind::SysInfo => "SysInfo"
+            MessageKind::SysInfo => "SysInfo",
         }
     }
 }
@@ -386,6 +386,8 @@ impl ChatHistory {
     }
 
     /// Adds a new child message to the conversation tree.
+    /// Takes some data from the state of the chat history, modifies chat history state to include
+    /// the new child and message, and returns the new child id.
     ///
     /// # Panics
     /// No explicit panics, but invalid parent_ids will result in orphaned messages
@@ -665,9 +667,9 @@ impl ChatHistory {
         Ok(self.current)
     }
 
-    pub fn last_user_msg(&self) -> Result<Option< String >> {
+    pub fn last_user_msg(&self) -> Result<Option<(Uuid, String)>> {
         let mut current = self.current;
-        let msg = std::iter::from_fn(move || {
+        let msg_with_id = std::iter::from_fn(move || {
             let id = current;
             current = self.messages.get(&id).and_then(|m| m.parent)?;
             Some(id)
@@ -675,8 +677,13 @@ impl ChatHistory {
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
-        .find_map(|id| self.messages.get(&id).filter(|m| m.kind == MessageKind::User).map(|m| m.content.clone()));
-        Ok(msg)
+        .find_map(|id| {
+            self.messages
+                .get(&id)
+                .filter(|m| m.kind == MessageKind::User)
+                .map(|m| (m.id, m.content.clone()))
+        });
+        Ok(msg_with_id)
     }
 }
 
