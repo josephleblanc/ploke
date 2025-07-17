@@ -295,6 +295,9 @@ pub enum StateCommand {
     ForwardContext {
         new_msg_id: Uuid,
     },
+    SwitchModel {
+        alias_or_id: String,
+    },
 }
 
 impl StateCommand {

@@ -523,6 +523,14 @@ impl App {
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
+            cmd if cmd.starts_with("model ") => {
+                let alias = cmd.trim_start_matches("model ").trim();
+                if !alias.is_empty() {
+                    self.send_cmd(StateCommand::SwitchModel {
+                        alias_or_id: alias.to_string(),
+                    });
+                }
+            }
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
@@ -583,6 +591,10 @@ impl App {
             KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
+            }
+            KeyCode::Char('m') => {
+                self.mode = Mode::Command;
+                self.input_buffer = "/model ".to_string();
             }
             _ => {}
         }
