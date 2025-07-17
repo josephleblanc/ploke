@@ -779,15 +779,11 @@ impl From<DiscoveryError> for ploke_error::Error {
                 }.into()
             }
             DiscoveryError::Walkdir { path, source } => {
-                // Convert walkdir::Error to std::io::Error
-                let io_error = match Arc::try_unwrap(source) {
-                    Ok(walk_err) => walk_err.into_io_error()
-                        .unwrap_or_else(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
-                    Err(arc_walk_err) => std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        arc_walk_err.to_string()
-                    ),
-                };
+                // Convert walkdir::Error to std::io::Error using string representation
+                let io_error = std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    source.to_string()
+                );
                 ploke_error::FatalError::FileOperation {
                     operation: "walk",
                     path,
