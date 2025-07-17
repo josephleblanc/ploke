@@ -1,3 +1,5 @@
+pub mod registry;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
@@ -268,7 +270,7 @@ async fn prepare_and_run_llm_call(
     drop(history_guard);
 
     let request_payload = OpenAiRequest {
-        model: "mistralai/mistral-7b-instruct", // TODO: Make this configurable
+        model: provider.model.as_str(),
         messages,
     };
 
@@ -344,8 +346,6 @@ impl CommandSender {
         }
     }
 }
-
-pub mod registry;
 
 // --- Supporting Types ---
 

@@ -188,6 +188,7 @@ impl ProviderRegistry {
     /// Any user-defined provider with the same `id` *replaces* the corresponding default;
     /// any missing fields in the user config (e.g. `api_key`) are **not** filled from the
     /// default to avoid accidental credential leakage.
+    // AI Generated, reviewed by - JL 25-07-17
     pub fn with_defaults(mut self) -> Self {
         for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
             if !self.providers.iter().any(|p| &p.id == id) {
@@ -241,6 +242,7 @@ impl ProviderRegistry {
     /// // Unknown id fails
     /// assert!(!registry.set_active("unknown"));
     /// ```
+    // AI Generated, reviewed by - JL 25-07-17
     pub fn set_active(&mut self, id_or_alias: &str) -> bool {
         let provider_id = self
             .aliases
@@ -256,6 +258,7 @@ impl ProviderRegistry {
     }
 
     /// Returns a list of all available providers as `(id, display_name)` tuples.
+    // AI Generated, reviewed by - JL 25-07-17
     pub fn list_available(&self) -> Vec<(String, String)> {
         self.providers
             .iter()
