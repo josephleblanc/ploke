@@ -169,17 +169,76 @@ pub enum ProviderType {
 }
 
 impl ProviderRegistry {
+    /// Returns the currently active provider configuration.
     pub fn get_active_provider(&self) -> Option<&ProviderConfig> {
         self.providers.iter().find(|p| p.id == self.active_provider)
     }
 
+    /// Returns a provider either by id or by alias.
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
-        // TODO: Improve this
-        let alias_string = alias.to_string();
-        let provider_id = self.aliases.get(alias).unwrap_or(&alias_string);
+        let provider_id = self.aliases.get(alias).unwrap_or(&alias.to_string());
         self.providers.iter().find(|p| p.id == *provider_id)
     }
 
+    /// Attempts to switch the active provider.
+    ///
+    /// # Returns
+    /// `true` if the provider id or alias was found and the switch succeeded,
+    /// `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use ploke_tui::user_config::{ProviderRegistry, ProviderConfig, ProviderType};
+    /// # use std::collections::HashMap;
+    /// let mut registry = ProviderRegistry {
+    ///     providers: vec![
+    ///         ProviderConfig {
+    ///             id: "gpt4".into(),
+    ///             api_key: "key".into(),
+    ///             base_url: "https://openrouter.ai/api/v1".into(),
+    ///             model: "openai/gpt-4".into(),
+    ///             display_name: Some("GPT-4".into()),
+    ///             provider_type: ProviderType::OpenRouter,
+    ///         },
+    ///         ProviderConfig {
+    ///             id: "claude".into(),
+    ///             api_key: "key".into(),
+    ///             base_url: "https://openrouter.ai/api/v1".into(),
+    ///             model: "anthropic/claude-3".into(),
+    ///             display_name: Some("Claude 3".into()),
+    ///             provider_type: ProviderType::OpenRouter,
+    ///         },
+    ///     ],
+    ///     active_provider: "gpt4".into(),
+    ///     aliases: HashMap::from([("gpt".into(), "gpt4".into())]),
+    /// };
+    ///
+    /// assert!(registry.set_active("claude"));
+    /// assert_eq!(registry.active_provider, "claude");
+    ///
+    /// // Switch via alias
+    /// assert!(registry.set_active("gpt"));
+    /// assert_eq!(registry.active_provider, "gpt4");
+    ///
+    /// // Unknown id fails
+    /// assert!(!registry.set_active("unknown"));
+    /// ```
+    pub fn set_active(&mut self, id_or_alias: &str) -> bool {
+        let provider_id = self
+            .aliases
+            .get(id_or_alias)
+            .map(|s| s.as_str())
+            .unwrap_or(id_or_alias);
+        if self.providers.iter().any(|p| p.id == *provider_id) {
+            self.active_provider = provider_id.to_string();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns a list of all available providers as `(id, display_name)` tuples.
     pub fn list_available(&self) -> Vec<(String, String)> {
         self.providers
             .iter()
