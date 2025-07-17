@@ -51,6 +51,7 @@ pub struct App {
     input_scrollstate: ScrollbarState,
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
+    active_model_indicator: Option<(String, Instant)>,
 }
 
 impl App {
@@ -76,6 +77,7 @@ impl App {
             input_scrollstate: ScrollbarState::default(),
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
+            active_model_indicator: None,
         }
     }
 
@@ -195,6 +197,14 @@ impl App {
                                 new_msg_id: Uuid::new_v4(),
                             })
                         },
+                        AppEvent::System(system_event) => {
+                            match system_event {
+                                SystemEvent::ModelSwitched(new_model) => {
+                                    self.active_model_indicator = Some((new_model, Instant::now()));
+                                }
+                                _ => {}
+                            }
+                        }
                         AppEvent::GenerateContext(id) => {
                             // self.send_cmd( StateCommand::)
                         }
@@ -208,23 +218,33 @@ impl App {
 
     /// Renders the user interface.
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
+        // Handle model indicator animation
+        let show_indicator = if let Some((_, start_time)) = &self.active_model_indicator {
+            start_time.elapsed().as_secs() < 3
+        } else {
+            false
+        };
+
         // ---------- Define Layout ----------
-        let proto_layout = if self.indexing_state.is_some() {
+        let mut proto_layout = if self.indexing_state.is_some() {
             vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
                 Constraint::Length(3),
-                Constraint::Length(1),
             ]
         } else {
             vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
-                Constraint::Length(1),
             ]
         };
+
+        if show_indicator {
+            proto_layout.push(Constraint::Length(1));
+        }
+
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(proto_layout)
@@ -340,6 +360,18 @@ impl App {
         frame.render_widget(node_status, status_layout[1]);
         frame.render_widget(list_len, status_layout[2]);
         frame.render_widget(list_selected, status_layout[3]);
+
+        // -- model indicator
+        if show_indicator {
+            if let Some((model_name, _)) = &self.active_model_indicator {
+                let indicator = Paragraph::new(format!(" Model: {} ", model_name))
+                    .style(Style::new().fg(Color::Black).bg(Color::Yellow))
+                    .alignment(ratatui::layout::Alignment::Center);
+                
+                let indicator_area = main_layout.last().unwrap();
+                frame.render_widget(indicator, *indicator_area);
+            }
+        }
     }
 
     fn create_branch(&mut self) {
