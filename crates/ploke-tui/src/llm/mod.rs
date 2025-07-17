@@ -506,7 +506,6 @@ pub enum LlmError {
     Unknown(String),
 }
 
-// Try to use thiserror to make these more succinct AI!
 impl From<LlmError> for ploke_error::Error {
     fn from(error: LlmError) -> Self {
         match error {
