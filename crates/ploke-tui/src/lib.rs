@@ -30,7 +30,7 @@ use ploke_embed::{
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
-use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
+use user_config::{ProviderConfig, ProviderType, DEFAULT_MODEL, OPENROUTER_URL};
 use utils::layout::layout_statusline;
 
 use std::sync::Arc;

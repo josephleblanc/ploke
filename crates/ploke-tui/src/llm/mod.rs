@@ -1,4 +1,3 @@
-
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
@@ -20,9 +19,15 @@ use crate::{
 use super::*;
 
 #[derive(Serialize, Debug)]
-struct OpenAiRequest<'a> {
+pub struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
+}
+
+impl<'a> OpenAiRequest<'a> {
+    pub fn new(model: &'a str, messages: Vec<RequestMessage<'a>>) -> Self {
+        Self { model, messages }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -67,10 +72,20 @@ pub async fn llm_manager(
 
     while let Ok(event) = event_rx.recv().await {
         match event {
-            AppEvent::Llm(request @ llm::Event::Request { parent_id, new_msg_id, .. }) => {
-                tracing::info!("Received LLM request for parent_id: {}
+            AppEvent::Llm(
+                request @ llm::Event::Request {
+                    parent_id,
+                    new_msg_id,
+                    ..
+                },
+            ) => {
+                tracing::info!(
+                    "Received LLM request for parent_id: {}
                 new_msg_id: {}
-                ", parent_id, new_msg_id);
+                ",
+                    parent_id,
+                    new_msg_id
+                );
                 pending_requests.push(request);
             }
             AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
@@ -135,7 +150,11 @@ pub async fn process_llm_request(
 ) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request { parent_id, new_msg_id, .. } => new_msg_id,
+        llm::Event::Request {
+            parent_id,
+            new_msg_id,
+            ..
+        } => new_msg_id,
         _ => {
             tracing::info!("Not a Request, do nothing");
             return;
@@ -164,7 +183,16 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let provider = providers.get_active_provider().ok_or(LlmError::Unknown("No active provider configured".to_string()))?;
+    let provider = providers.get_active_provider().ok_or(LlmError::Unknown(
+        "No active provider configured".to_string(),
+    ))?; // We've got an issue here - can't call this within something that itself doesn't return
+    // and this is a problem in a few places in the code base. The problem is that we want to have
+    // a good way to log and handle errors within our runtime, so we probably want to use an event
+    // to manage this. What kind of approach could we use that would be general to all the
+    // `ploke_error` types we are handling so we can choose to, e.g. log them, send another event
+    // to present them to the user, send an event to present a toast message, etc.
+    // Would an event system for errors work here? And would we want to just put that into the
+    // `event_bus` or use another system AI?
     let update_cmd = match prepare_and_run_llm_call(&state, &client, provider, context).await {
         Ok(content) => StateCommand::UpdateMessage {
             id: assistant_message_id,
@@ -374,12 +402,11 @@ pub struct Parameters {
 pub enum Event {
     /// Request to generate content from an LLM
     Request {
-        request_id: Uuid, // Unique tracking ID
-        parent_id: Uuid,  // Message this responds to
-        prompt: String,   // Input to LLM
+        request_id: Uuid,       // Unique tracking ID
+        parent_id: Uuid,        // Message this responds to
+        prompt: String,         // Input to LLM
         parameters: Parameters, // Generation settings
-        new_msg_id: Uuid
-                          // callback: Option<Sender<Event>>, // Optional direct response channel
+        new_msg_id: Uuid, // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
     /// Successful LLM response

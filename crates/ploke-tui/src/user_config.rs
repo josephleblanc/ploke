@@ -25,8 +25,8 @@
 //   - Answer: We want a single config.toml that has the specs for all the models.
 // 3 Switching: Should users be able to switch models per-conversation, or only at startup?
 //   - Answer: They should be able to switch per-message using a chat command.
-//   - 3.1 (Switching) For per-message switching: Should we support model "aliases" (e.g., `!gpt` = `openrouter/gpt-4-turbo`)?  
-//      - Answer Yes, with user-definable aliases in config  
+//   - 3.1 (Switching) For per-message switching: Should we support model "aliases" (e.g., `!gpt` = `openrouter/gpt-4-turbo`)?
+//      - Answer Yes, with user-definable aliases in config
 // 4 Defaults: Should we maintain a curated list of "recommended" models with sensible defaults?
 //   - Answer: Yes, this is important.
 // 5 Environment: Should API keys be per-model or shared across providers?
@@ -46,7 +46,7 @@ use ploke_embed::{
 use reqwest::Request;
 use serde::Deserialize;
 
-use crate::llm::RequestMessage;
+use crate::llm::{self, RequestMessage};
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
 pub const DEFAULT_MODEL: &str = "qwen/qwq-32b:free";
@@ -174,6 +174,7 @@ impl ProviderRegistry {
     }
 
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
+        // TODO: Improve this
         let alias_string = alias.to_string();
         let provider_id = self.aliases.get(alias).unwrap_or(&alias_string);
         self.providers.iter().find(|p| p.id == *provider_id)
@@ -197,24 +198,19 @@ impl ProviderConfig {
     ) -> Result<reqwest::Request, Box<dyn std::error::Error>> {
         let client = reqwest::Client::new();
         let url = format!("{}/chat/completions", self.base_url);
-        
+
         let request = match self.provider_type {
             ProviderType::OpenRouter | ProviderType::OpenAI => {
-                let payload = crate::llm::OpenAiRequest {
-                    model: &self.model,
-                    messages,
-                };
+                let payload = llm::OpenAiRequest::new(&self.model, messages);
                 client.post(&url).bearer_auth(&self.api_key).json(&payload)
             }
             ProviderType::Anthropic => {
                 // Anthropic-specific formatting
                 client.post(&url).bearer_auth(&self.api_key)
             }
-            ProviderType::Custom => {
-                client.post(&url).bearer_auth(&self.api_key)
-            }
+            ProviderType::Custom => client.post(&url).bearer_auth(&self.api_key),
         };
-        
+
         request.build().map_err(|e| e.into())
     }
 }

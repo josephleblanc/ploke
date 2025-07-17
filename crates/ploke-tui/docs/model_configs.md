@@ -95,6 +95,19 @@ evolve this into a `Vec<ProviderConfig>` with a way to select the active one?
 
 More information on future development is in `ploke-tui/docs/model_configs.md`
 
+## Tracking changes
+
+### Commit 05ca190 
+aider: feat: add ProviderRegistry for multi-model API support
+
+These changes introduce:
+
+ 1 ProviderRegistry to manage multiple providers
+ 2 Each provider has a unique ID and optional display name
+ 3 Support for provider-specific request formatting via ProviderType
+ 4 Aliases for quick model switching
+ 5 Backward compatibility with the default provider setup
+
 ---
 
 ## Additional comments from Deepseek R1T2 Chimera
