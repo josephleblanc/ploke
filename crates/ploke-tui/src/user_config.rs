@@ -292,7 +292,7 @@ fn default_model() -> String {
 // Add a default implementation for when the config file is missing
 impl Default for ProviderRegistry {
     fn default() -> Self {
-        Self {
+        let mut registry = Self {
             providers: vec![ProviderConfig {
                 id: "default".to_string(),
                 api_key: String::new(),
@@ -306,6 +306,15 @@ impl Default for ProviderRegistry {
             }],
             active_provider: "default".to_string(),
             aliases: std::collections::HashMap::new(),
+        };
+        
+        // Always include the curated defaults
+        for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
+            if !registry.providers.iter().any(|p| &p.id == id) {
+                registry.providers.push(default.clone());
+            }
         }
+        
+        registry
     }
 }
