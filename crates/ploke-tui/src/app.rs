@@ -165,7 +165,12 @@ impl App {
                         AppEvent::Ui(ui_event) => {},
                         AppEvent::Llm(event) => {},
                         AppEvent::Rag(rag_event) => {
-                            self.send_cmd(StateCommand::ForwardContext);
+                            // let new_msg_id = match rag_event {
+                            //     RagEvent::ContextSnippets(uuid, items) => uuid,
+                            //     RagEvent::UserMessages(uuid, messages) => uuid,
+                            //     RagEvent::ConstructContext(uuid) => uuid,
+                            // };
+                            // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
                         }
                         AppEvent::System(system_event) => {},
                         AppEvent::Error(error_event) => {},
@@ -177,6 +182,7 @@ impl App {
                             self.send_cmd(StateCommand::AddMessageImmediate {
                                 msg: String::from("Indexing Succeeded"),
                                 kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
                             });
                             self.send_cmd(StateCommand::UpdateDatabase)
                         },
@@ -186,6 +192,7 @@ impl App {
                             self.send_cmd(StateCommand::AddMessageImmediate {
                                 msg: String::from("Indexing Failed"),
                                 kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
                             })
                         },
                         AppEvent::GenerateContext(id) => {
@@ -195,14 +202,6 @@ impl App {
                 }
 
             }
-            // let frame_duration = frame_start.elapsed();
-            // if frame_duration > Duration::from_millis(16) {
-            //     tracing::warn!(
-            //         frame_duration_ms = frame_duration.as_millis(),
-            //         "Frame budget exceeded"
-            //     );
-            // }
-            // frame_counter += 1;
         }
         Ok(())
     }
@@ -408,14 +407,23 @@ impl App {
             // 2. Shared State Change: Send a command
             KeyCode::Enter => {
                 if !self.input_buffer.is_empty() {
+                    let new_msg_id = Uuid::new_v4();
                     self.send_cmd(StateCommand::AddUserMessage {
                         // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
                         // instead.
                         content: self.input_buffer.clone(),
+                        new_msg_id,
                     });
                     // TODO: Expand EmbedMessage to include other types of message
-                    self.send_cmd(StateCommand::EmbedMessage);
-                    self.send_cmd(StateCommand::ForwardContext);
+                    self.send_cmd(StateCommand::EmbedMessage { new_msg_id });
+                    self.send_cmd(StateCommand::AddMessage {
+                        kind: MessageKind::SysInfo,
+                        content: "Embedding User Message".to_string(),
+                        target: llm::ChatHistoryTarget::Main,
+                        parent_id: new_msg_id,
+                        child_id: Uuid::new_v4(),
+                    });
+                    // self.send_cmd(StateCommand::ForwardContext { new_msg_id });
                     // Clear the UI-local buffer after sending the command
                     self.input_buffer.clear();
                 }
@@ -566,4 +574,3 @@ struct RenderableMessage {
 fn truncate_uuid(id: Uuid) -> String {
     id.to_string().chars().take(8).collect()
 }
-

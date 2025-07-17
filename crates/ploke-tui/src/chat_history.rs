@@ -561,6 +561,21 @@ impl ChatHistory {
             .collect()
     }
 
+    /// Gets the full conversation path from root to tail message for user and LLM messages only.
+    ///
+    /// Traverses the message hierarchy from the currently active message
+    /// back to the root, then reverses the order for display purposes.
+    ///
+    /// # Example
+    /// For a conversation path A -> B -> C (where C is tail):
+    /// Returns [A, B, C]
+    pub fn clone_current_path_conv(&self) -> Vec<Message> {
+        self.current_path_ids_conv()
+            .filter_map(|id| self.messages.get(&id))
+            .cloned()
+            .collect()
+    }
+
     /// Gets the parent UUID of a specified message if it exists.
     ///
     /// # Arguments

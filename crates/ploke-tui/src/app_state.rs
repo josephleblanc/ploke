@@ -194,6 +194,7 @@ pub enum StateCommand {
     AddMessageImmediate {
         msg: String,
         kind: MessageKind,
+        new_msg_id: Uuid,
     },
 
     /// Adds a new user message and sets it as the current message.
@@ -201,6 +202,7 @@ pub enum StateCommand {
     // `AddMessage` above
     AddUserMessage {
         content: String,
+        new_msg_id: Uuid,
     },
 
     /// Applies a set of partial updates to an existing message.
@@ -287,8 +289,12 @@ pub enum StateCommand {
     ResumeIndexing,
     CancelIndexing,
     UpdateDatabase,
-    EmbedMessage,
-    ForwardContext,
+    EmbedMessage {
+        new_msg_id: Uuid,
+    },
+    ForwardContext {
+        new_msg_id: Uuid,
+    },
 }
 
 impl StateCommand {
@@ -316,8 +322,8 @@ impl StateCommand {
             StateCommand::CancelIndexing => "CancelIndexing",
             StateCommand::AddMessageImmediate { .. } => "AddMessageImmediate",
             StateCommand::UpdateDatabase => "UpdateDatabase",
-            StateCommand::EmbedMessage => "EmbedMessage",
-            StateCommand::ForwardContext => "ForwardContext",
+            StateCommand::EmbedMessage { .. } => "EmbedMessage",
+            StateCommand::ForwardContext { .. } => "ForwardContext",
             // ... other variants
         }
     }
@@ -389,8 +395,11 @@ pub async fn state_manager(
                     }
                 }
             }
-            StateCommand::AddUserMessage { content } => {
-                add_msg_immediate(&state, &event_bus, content, MessageKind::User).await;
+            StateCommand::AddUserMessage {
+                content,
+                new_msg_id,
+            } => {
+                add_msg_immediate(&state, &event_bus, new_msg_id, content, MessageKind::User).await;
             }
             StateCommand::AddMessage {
                 parent_id,
@@ -415,8 +424,12 @@ pub async fn state_manager(
                     event_bus.send(MessageUpdatedEvent::new(new_message_id).into())
                 }
             }
-            StateCommand::AddMessageImmediate { msg, kind } => {
-                add_msg_immediate(&state, &event_bus, msg, kind).await;
+            StateCommand::AddMessageImmediate {
+                msg,
+                kind,
+                new_msg_id,
+            } => {
+                add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
             StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
 
@@ -459,6 +472,7 @@ pub async fn state_manager(
                 add_msg_immediate(
                     &state,
                     &event_bus,
+                    Uuid::new_v4(), // double check this is OK
                     "Indexing...".to_string(),
                     MessageKind::SysInfo,
                 )
@@ -547,9 +561,11 @@ pub async fn state_manager(
             }
             StateCommand::UpdateDatabase => {
                 let start = time::Instant::now();
+                let new_msg_id = Uuid::new_v4();
                 add_msg_immediate(
                     &state,
                     &event_bus,
+                    new_msg_id,
                     "Indexing HNSW...".to_string(),
                     MessageKind::SysInfo,
                 )
@@ -583,72 +599,103 @@ pub async fn state_manager(
                 }
                 let after = time::Instant::now();
                 let msg = format!("..finished in {}", after.duration_since(start).as_millis());
-                add_msg_immediate(&state, &event_bus, msg, MessageKind::SysInfo).await;
-            }
-            StateCommand::EmbedMessage => {
+                let second_new_message_id = Uuid::new_v4();
                 add_msg_immediate(
                     &state,
                     &event_bus,
-                    "Embedding User Message".to_string(),
+                    second_new_message_id,
+                    msg,
                     MessageKind::SysInfo,
                 )
                 .await;
+            }
+            StateCommand::EmbedMessage { new_msg_id } => {
+                // while new_msg_id != state.chat.0.read().await.current {
+                //     time::sleep(time::Duration::from_millis(20)).await;
+                // }
+                // let new_sys_msg = Uuid::new_v4();
+                // add_msg_immediate(
+                //     &state,
+                //     &event_bus,
+                //     new_sys_msg,
+                //     "Embedding User Message".to_string(),
+                //     MessageKind::SysInfo,
+                // )
+                // .await;
                 let chat_guard = state.chat.0.read().await;
-                if let Ok(Some(( parent_id, last_user_msg ))) = chat_guard.last_user_msg() {
-                    tracing::info!("Start embedding user message: {}", last_user_msg);
-                    let temp_embed = state
-                        .embedder
-                        .generate_embeddings(vec![last_user_msg])
-                        .await
-                        .expect("Error while generating embeddings");
-                    // drop guard after we are done with last_usr_message, which is consumed by
-                    // generate_embeddings
-                    drop(chat_guard);
-                    let embeddings = temp_embed.first().expect("No results from vector search");
-                    tracing::info!("Finish embedding user message");
-                    match search_similar(
-                        &state.db,
-                        embeddings.clone(),
-                        100,
-                        200,
-                        NodeType::Function,
-                    ) {
-                        Ok(ty_emb_data) => {
-                            tracing::info!("search_similar Success! with result {:?}", ty_emb_data);
+                match chat_guard.last_user_msg() {
+                    Ok(Some((last_usr_msg_id, last_user_msg))) => {
+                        tracing::info!("Start embedding user message: {}", last_user_msg);
+                        let temp_embed = state
+                            .embedder
+                            .generate_embeddings(vec![last_user_msg])
+                            .await
+                            .expect("Error while generating embeddings");
+                        // drop guard after we are done with last_usr_message, which is consumed by
+                        // generate_embeddings
+                        drop(chat_guard);
+                        let embeddings = temp_embed.first().expect("No results from vector search");
+                        tracing::info!("Finish embedding user message");
+                        match search_similar(
+                            &state.db,
+                            embeddings.clone(),
+                            100,
+                            200,
+                            NodeType::Function,
+                        ) {
+                            Ok(ty_emb_data) => {
+                                tracing::info!(
+                                    "search_similar Success! with result {:?}",
+                                    ty_emb_data
+                                );
 
-                            // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
-                            let snippets = state
-                                .io_handle
-                                .get_snippets_batch(ty_emb_data.v)
-                                .await
-                                .unwrap_or_default()
-                                .into_iter()
-                                .filter_map(|r| r.ok())
-                                .collect::<Vec<String>>();
+                                // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
+                                let snippets = state
+                                    .io_handle
+                                    .get_snippets_batch(ty_emb_data.v)
+                                    .await
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .filter_map(|r| r.ok())
+                                    .collect::<Vec<String>>();
 
-                            // Send snippets directly to context manager
-                            let _ = context_tx.send(RagEvent::ContextSnippets(parent_id, snippets)).await;
+                                // Send snippets directly to context manager
+                                let _ = context_tx
+                                    .send(RagEvent::ContextSnippets(new_msg_id, snippets))
+                                    .await;
 
-                            // Then trigger context construction with the correct parent ID
-                            let messages: Vec<Message> = state
-                                .chat
-                                .0
-                                .read()
-                                .await
-                                .messages
-                                .iter()
-                                .map(|m| m.1.clone())
-                                .collect();
+                                // Then trigger context construction with the correct parent ID
+                                let messages: Vec<Message> =
+                                    state.chat.0.read().await.clone_current_path_conv();
+                                // .messages
+                                // .iter()
+                                // .map(|m| m.1.clone())
+                                // .collect();
 
-                            let _ = context_tx.send(RagEvent::UserMessages(parent_id, messages)).await;
-                            let _ = context_tx.send(RagEvent::ConstructContext(parent_id)).await;
-                        }
-                        Err(_) => {
-                            tracing::error!(
-                                "The attempt to create the index at the database failed"
-                            );
-                        }
-                    };
+                                let _ = context_tx
+                                    .send(RagEvent::UserMessages(new_msg_id, messages))
+                                    .await;
+                                let _ = context_tx
+                                    .send(RagEvent::ConstructContext(new_msg_id))
+                                    .await;
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "The attempt to create the index at the database failed
+                                    error message: {:?}",
+                                    e
+                                );
+                            }
+                        };
+                    }
+                    Ok(None) => {
+                        tracing::warn!(
+                            "Could not retreive last user message from the conversation history"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::error!("{:#}", e);
+                    }
                 }
             }
 
@@ -663,13 +710,13 @@ pub async fn state_manager(
 async fn add_msg_immediate(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
+    new_msg_id: Uuid,
     content: String,
     kind: MessageKind,
 ) {
     tracing::trace!("Starting add_msg_immediate");
     let mut chat_guard = state.chat.0.write().await;
     let parent_id = chat_guard.current;
-    let new_msg_id = Uuid::new_v4();
 
     let message_wrapper = match kind {
         MessageKind::User => chat_guard.add_message_user(parent_id, new_msg_id, content.clone()),
@@ -685,7 +732,6 @@ async fn add_msg_immediate(
     drop(chat_guard);
     // Add the user's message to the history
     if let Ok(message_id) = message_wrapper {
-
         let mut chat_guard = state.chat.0.write().await;
         // Update the current message to the one we just added
         chat_guard.current = message_id;
@@ -699,12 +745,16 @@ async fn add_msg_immediate(
             let llm_request = AppEvent::Llm(llm::Event::Request {
                 request_id: Uuid::new_v4(),
                 parent_id: message_id,
+                new_msg_id,
                 prompt: content,
                 parameters: Default::default(), // Using mock/default param
             });
-            tracing::info!("sending llm_request wrapped in an AppEvent::Llm of kind {} with id {}", 
-                kind,
-                message_id);
+            tracing::info!(
+                "sending llm_request wrapped in an AppEvent::Llm of kind {kind} with ids 
+                new_msg_id (not sent): {new_msg_id},
+                parent_id: {parent_id}
+                message_id: {message_id},",
+            );
             event_bus.send(llm_request);
         }
     } else {

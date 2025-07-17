@@ -66,8 +66,10 @@ pub async fn llm_manager(
 
     while let Ok(event) = event_rx.recv().await {
         match event {
-            AppEvent::Llm(request @ llm::Event::Request { parent_id, .. }) => {
-                tracing::info!("Received LLM request for parent_id: {}", parent_id);
+            AppEvent::Llm(request @ llm::Event::Request { parent_id, new_msg_id, .. }) => {
+                tracing::info!("Received LLM request for parent_id: {}
+                new_msg_id: {}
+                ", parent_id, new_msg_id);
                 pending_requests.push(request);
             }
             AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
@@ -77,17 +79,18 @@ pub async fn llm_manager(
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
                     if let llm::Event::Request {
-                        parent_id: req_parent,
+                        new_msg_id: req_parent,
+                        // parent_id: req_parent,
                         ..
                     } = req
                     {
                         tracing::info!(
-                            "pending_requests found match for req_qarent: {}",
+                            "pending_requests found match for req_parent: {}",
                             req_parent
                         );
                         if let Some(context) = ready_contexts.remove(req_parent) {
                             tracing::info!(
-                                "ready_contexts found match for req_qarent: {}",
+                                "ready_contexts found match for req_parent: {}",
                                 req_parent
                             );
                             tokio::spawn(process_llm_request(
@@ -131,7 +134,7 @@ pub async fn process_llm_request(
 ) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request { parent_id, .. } => parent_id,
+        llm::Event::Request { parent_id, new_msg_id, .. } => new_msg_id,
         _ => {
             tracing::info!("Not a Request, do nothing");
             return;
@@ -348,20 +351,12 @@ async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppS
                 })
                 .await;
         }
-        Event::Request {
-            request_id,
-            parent_id,
-            prompt,
-            parameters,
-        } => todo!("Implement Me!"),
-        Event::PartialResponse { request_id, delta } => todo!("Implement Me!"),
-        Event::Error { request_id, error } => todo!("Implement Me!"),
-        Event::Status {
-            active_requests,
-            queue_depth,
-        } => todo!("Implement Me!"),
-        Event::ModelChanged { new_model } => todo!("Implement Me!"),
-        Event::PromptConstructed { prompt, parent_id } => todo!(),
+        Event::Request { .. } => todo!("Implement Me!"),
+        Event::PartialResponse { .. } => todo!("Implement Me!"),
+        Event::Error { .. } => todo!("Implement Me!"),
+        Event::Status { .. } => todo!("Implement Me!"),
+        Event::ModelChanged { .. } => todo!("Implement Me!"),
+        Event::PromptConstructed { .. } => todo!("Imlement me!"),
     }
 }
 
@@ -381,6 +376,7 @@ pub enum Event {
         parent_id: Uuid,  // Message this responds to
         prompt: String,   // Input to LLM
         parameters: Parameters, // Generation settings
+        new_msg_id: Uuid
                           // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
