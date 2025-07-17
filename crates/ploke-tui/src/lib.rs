@@ -227,6 +227,7 @@ pub mod system {
         CommandDropped(&'static str),
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
+        ModelSwitched(String)
     }
 }
 
