@@ -303,12 +303,13 @@ pub enum EventPriority {
 }
 
 // Import the error handling traits
-use ploke_error::{ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
+use ploke_error::{ErrorSeverity, ResultExt as PlokeResultExt, ErrorExt as PlokeErrorExt};
 
 // Implement the ResultExt trait for Results with ploke_error::Error
-impl<T, E: Into<ploke_error::Error> + std::fmt::Display> PlokeResultExt<T, E> for Result<T, E> {
-    fn emit_event(self, severity: ErrorSeverity) -> Result<T, E> {
-        if let Err(e) = &self {
+// This implementation is only for Result<T, ploke_error::Error> to comply with orphan rule
+impl<T> PlokeResultExt<T, ploke_error::Error> for Result<T, ploke_error::Error> {
+    fn emit_event(self, severity: ErrorSeverity) -> Result<T, ploke_error::Error> {
+        if let Err(ref e) = self {
             let message = e.to_string();
             tokio::spawn(async move {
                 emit_error_event(message, severity).await;
@@ -317,20 +318,20 @@ impl<T, E: Into<ploke_error::Error> + std::fmt::Display> PlokeResultExt<T, E> fo
         self
     }
     
-    fn emit_warning(self) -> Result<T, E> {
+    fn emit_warning(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Warning)
     }
     
-    fn emit_error(self) -> Result<T, E> {
+    fn emit_error(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Error)
     }
     
-    fn emit_fatal(self) -> Result<T, E> {
+    fn emit_fatal(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Fatal)
     }
 }
 
-impl<E: std::fmt::Display> PlokeErrorExt for E {
+impl PlokeErrorExt for ploke_error::Error {
     fn emit_event(&self, severity: ErrorSeverity) {
         let message = self.to_string();
         tokio::spawn(async move {
