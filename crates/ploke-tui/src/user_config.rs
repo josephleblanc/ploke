@@ -1,6 +1,5 @@
 // NOTE: This todo list applies to both this file and to the `ploke-tui/llm/mod.rs` file
 //
-// AI:
 //                        Additional steps needed for multi-model support:
 //
 //  1 - [ ] Model Configuration Schema - Add a way to define multiple model endpoints in config
@@ -37,10 +36,6 @@
 // evolve this into a `Vec<ProviderConfig>` with a way to select the active one?
 //
 // More information on future development is in `ploke-tui/docs/model_configs.md`
-// 
-// Does this seems like a good plan to start with? Are there existing schema or registries we
-// should be aware of or are we best off implementing our own here? How much will we need to modify
-// what we've already built to implement these features, and how much has already been done? AI?
 
 use ploke_embed::{
     config::{CozoConfig, HuggingFaceConfig, LocalModelConfig, OpenAIConfig},
@@ -135,7 +130,7 @@ pub struct EmbeddingConfig {
     pub cozo: Option<CozoConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProviderRegistry {
     pub providers: Vec<ProviderConfig>,
     #[serde(default = "default_active_provider")]
@@ -179,6 +174,7 @@ impl ProviderRegistry {
     }
 
     pub fn get_provider_by_alias(&self, alias: &str) -> Option<&ProviderConfig> {
+        // We need to fix the `alias.to_string()`, it currently is dropped AI!
         let provider_id = self.aliases.get(alias).unwrap_or(&alias.to_string());
         self.providers.iter().find(|p| p.id == *provider_id)
     }
