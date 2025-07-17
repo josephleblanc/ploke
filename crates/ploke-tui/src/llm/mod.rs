@@ -507,7 +507,49 @@ pub enum LlmError {
 }
 
 impl From<LlmError> for ploke_error::Error {
-    // Implement these conversions using thiserror AI!
+    fn from(error: LlmError) -> Self {
+        match error {
+            LlmError::Request(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, msg),
+                )),
+            ),
+            LlmError::Api { status, message } => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("API error {}: {}", status, message),
+                    ),
+                )),
+            ),
+            LlmError::RateLimited => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeDb("Rate limit exceeded".to_string()),
+            ),
+            LlmError::Authentication => ploke_error::Error::Fatal(
+                ploke_error::FatalError::PathResolution {
+                    path: "Authentication failed - check API key".to_string(),
+                    source: None,
+                },
+            ),
+            LlmError::Timeout => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "Request timed out"),
+                )),
+            ),
+            LlmError::ContentFilter => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeDb("Content blocked by safety filter".to_string()),
+            ),
+            LlmError::Serialization(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(format!("Serialization error: {}", msg)),
+            ),
+            LlmError::Deserialization(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(format!("Deserialization error: {}", msg)),
+            ),
+            LlmError::Unknown(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            ),
+        }
+    }
 }
 
 /// Parameters for controlling LLM generation behavior
