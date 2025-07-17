@@ -24,11 +24,26 @@ use super::*;
 pub struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
+    temperature: f32,
+    max_tokens: Option<u32>,
+    top_p: f32,
 }
 
 impl<'a> OpenAiRequest<'a> {
-    pub fn new(model: &'a str, messages: Vec<RequestMessage<'a>>) -> Self {
-        Self { model, messages }
+    pub fn new(
+        model: &'a str,
+        messages: Vec<RequestMessage<'a>>,
+        temperature: f32,
+        max_tokens: Option<u32>,
+        top_p: f32,
+    ) -> Self {
+        Self {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            top_p,
+        }
     }
 }
 
@@ -269,9 +284,17 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
+    let params = provider
+        .llm_params
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
         messages,
+        temperature: params.temperature,
+        max_tokens: params.max_tokens,
+        top_p: params.top_p,
     };
 
     let response = client

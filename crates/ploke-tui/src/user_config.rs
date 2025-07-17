@@ -157,6 +157,9 @@ pub struct ProviderConfig {
     /// Provider type for request formatting
     #[serde(default)]
     pub provider_type: ProviderType,
+    /// Optional per-provider LLM parameters (temperature, top-p, etc.)
+    #[serde(default)]
+    pub llm_params: Option<crate::llm::LLMParameters>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
