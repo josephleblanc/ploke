@@ -82,7 +82,8 @@ pub async fn try_main() -> color_eyre::Result<()> {
         )
         .add_source(config::Environment::default().separator("_"))
         .build()?
-        .try_deserialize::<crate::user_config::Config>()?;
+        .try_deserialize::<crate::user_config::Config>()
+        .unwrap_or_else(|_| crate::user_config::Config::default());
 
     // Merge curated defaults with user overrides
     config.providers = config.providers.with_defaults();
