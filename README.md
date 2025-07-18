@@ -2,7 +2,7 @@
 
 `ploke` aims to be a powerful LLM interface in the terminal for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system with a code graph built by parsing from your Rust crate.
 
-[It works!](./assets/ploke_rust_vector_embeddings.png)
+![It works!](./assets/ploke_rust_vector_embeddings.png)
 
 <details>
   <summary>

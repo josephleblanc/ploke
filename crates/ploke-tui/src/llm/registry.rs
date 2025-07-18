@@ -19,7 +19,8 @@
      insert_openrouter(&mut m, "deepseek-chat", "deepseek/deepseek-chat", 0.7);
      insert_openrouter(&mut m, "deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324:free", 0.7);
      insert_openrouter(&mut m, "deepseek-r1-0528:free", "deepseek/deepseek-r1-0528:free", 0.7);
-     insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", 0.7);
+     insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", 0.6);
+     insert_openrouter(&mut m, "kimi-k2", "moonshotai/kimi-k2", 0.6);
      insert_openrouter(&mut m, "gemini-flash", "google/gemini-flash-1.5", 0.7);
      insert_openrouter(&mut m, "kimi-dev-72b:free", "moonshotai/kimi-dev-72b:free", 0.7);
 

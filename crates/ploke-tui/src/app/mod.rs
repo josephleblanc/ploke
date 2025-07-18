@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use message_item::render_messages;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 use tracing::instrument;
@@ -291,7 +292,12 @@ impl App {
         let conversation_width = main_layout[0].width.saturating_sub(6);
 
         #[cfg(feature = "custom_list")]
-        #[cfg(not( feature = "custom_list" ))]
+        {
+            // AI: We are using the new method here, and are using the cfg flag `custom_list` in
+            // our default cfg flags in the `ploke-tui/Cargo.toml`
+            render_messages(self, frame, path, conversation_width, main_layout[0]);
+        }
+        #[cfg(not(feature = "custom_list"))]
         {
             // Wrap text and create ListItems
             let messages: Vec<ListItem> = path
@@ -364,22 +370,27 @@ impl App {
         let node_status = Paragraph::new(format!("Node: {}", truncate_uuid(current_id)))
             .block(Block::default().borders(Borders::NONE))
             .style(Style::new().fg(Color::Blue));
-        let list_len = Paragraph::new(format!("List Len: {}", list_len));
-        let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
-
+        #[cfg(not(feature = "custom_list"))]
+        {
+            let list_len = Paragraph::new(format!("List Len: {}", list_len));
+            let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
+        }
         // -- Handle Scrollbars --
         // TODO: how to make this work?
 
         // ---------- Render widgets in layout ----------
         // -- top level
-        frame.render_stateful_widget(list, main_layout[0], &mut self.list);
-        frame.render_stateful_widget(
-            Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓")),
-            main_layout[0],
-            &mut self.convo_scrollstate,
-        );
+        #[cfg(not(feature = "custom_list"))]
+        {
+            frame.render_stateful_widget(list, main_layout[0], &mut self.list);
+            frame.render_stateful_widget(
+                Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .begin_symbol(Some("↑"))
+                    .end_symbol(Some("↓")),
+                main_layout[0],
+                &mut self.convo_scrollstate,
+            );
+        }
         frame.render_widget(input, main_layout[1]);
         // frame.render_stateful_widget(
         //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -392,8 +403,9 @@ impl App {
         // -- first nested
         frame.render_widget(status_bar, status_layout[0]);
         frame.render_widget(node_status, status_layout[1]);
-        frame.render_widget(list_len, status_layout[2]);
-        frame.render_widget(list_selected, status_layout[3]);
+        #[cfg(not(feature = "custom_list"))]
+        { frame.render_widget(list_len, status_layout[2]);
+        frame.render_widget(list_selected, status_layout[3]); }
 
         // -- model indicator
         if show_indicator {
