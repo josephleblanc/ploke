@@ -312,6 +312,13 @@ impl ProviderRegistry {
         }
     }
 
+    /// Ensure all providers have their API keys loaded from environment variables
+    pub fn load_api_keys(&mut self) {
+        for provider in &mut self.providers {
+            provider.api_key = provider.resolve_api_key();
+        }
+    }
+
     /// Returns a list of all available providers as `(id, display_name)` tuples.
     // - LLM Generated, reviewed by - JL 25-07-17
     pub fn list_available(&self) -> Vec<(String, String)> {
