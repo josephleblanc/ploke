@@ -261,6 +261,7 @@ async fn prepare_and_run_llm_call(
     let mut messages: Vec<RequestMessage> = Vec::new();
 
     // Get parameters from provider
+    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
 
     // Prepend system prompt if provided
@@ -298,6 +299,7 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
+    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
@@ -307,22 +309,34 @@ async fn prepare_and_run_llm_call(
         top_p: params.top_p,
     };
 
+    tracing::info!("Inside prepare_and_run_llm_call num3 {:#?}", params);
     let response = client
         .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(&provider.api_key)
+        .bearer_auth(provider.resolve_api_key())
         .json(&request_payload)
         .send()
         .await
         .map_err(|e| LlmError::Request(e.to_string()))?;
 
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let message = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
-        return Err(LlmError::Api { status, message });
-    }
+     if !response.status().is_success() {
+         let status = response.status().as_u16();
+         let error_text = response
+             .text()
+             .await
+             .unwrap_or_else(|_| "Could not retrieve error body".to_string());
+
+         let user_friendly_msg = if status == 401 {
+             format!("Authentication failed. Please check your API key configuration.\n\nDetails {}", error_text)
+         } else if status == 429 {
+             format!("Rate limit exceeded. Please wait and try again.\n\nDetails: {}", error_text)
+         } else if status >= 500 {
+             format!("Server error. The API provider may be experiencing issues.\n\nDetails: {}", error_text)
+         } else {
+             format!("API error (status {}): {}", status, error_text)
+         };
+
+         return Err(LlmError::Api { status, message: user_friendly_msg });
+     }
 
     let response_body = response
         .json::<OpenAiResponse>()
@@ -391,37 +405,6 @@ pub enum ChatHistoryTarget {
     Main,
     /// A secondary history for notes or drafts.
     Scratchpad,
-}
-
-// Usage in subsystems
-async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppState) {
-    match event {
-        Event::Response {
-            content: c,
-            parent_id: pid,
-            request_id,
-            model,
-            usage,
-            metadata,
-        } => {
-            // TODO: Consider whether `child_id` should be created here or elsewhere.
-            cmd_sender
-                .send(StateCommand::AddMessage {
-                    parent_id: pid,
-                    child_id: Uuid::new_v4(),
-                    content: c,
-                    kind: MessageKind::Assistant,
-                    target: ChatHistoryTarget::Main,
-                })
-                .await;
-        }
-        Event::Request { .. } => todo!("Implement Me!"),
-        Event::PartialResponse { .. } => todo!("Implement Me!"),
-        Event::Error { .. } => todo!("Implement Me!"),
-        Event::Status { .. } => todo!("Implement Me!"),
-        Event::ModelChanged { .. } => todo!("Implement Me!"),
-        Event::PromptConstructed { .. } => todo!("Imlement me!"),
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

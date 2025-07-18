@@ -21,11 +21,11 @@
      insert_openrouter(&mut m, "deepseek-r1-0528:free", "deepseek/deepseek-r1-0528:free", 0.7);
      insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", 0.7);
      insert_openrouter(&mut m, "gemini-flash", "google/gemini-flash-1.5", 0.7);
+     insert_openrouter(&mut m, "kimi-dev-72b:free", "moonshotai/kimi-dev-72b:free", 0.7);
 
      m
  });
 
- // AI: Setting up boilderplate here
  /// Helper to reduce boilerplate when adding new OpenRouter defaults.
  fn insert_openrouter(
      map: &mut HashMap<String, ProviderConfig>,

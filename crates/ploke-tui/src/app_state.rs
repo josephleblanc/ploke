@@ -723,13 +723,10 @@ pub async fn state_manager(
                 let mut cfg = state.config.write().await;
                 if cfg.provider_registry.set_active(&alias_or_id) {
                     tracing::debug!("sending AppEvent::System(SystemEvent::ModelSwitched {}", alias_or_id);
-                    // AI: Another case where we are handling model being switched
                     event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
                         alias_or_id.clone(),
                     )));
                 } else {
-                    // AI: We are hitting this error, how can we understand the flow here? Can you
-                    // make a diagram? Let's walk through it step by step
                     tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
                     event_bus.send(AppEvent::Error(ErrorEvent {
                         message: format!("Unknown model '{}'", alias_or_id),

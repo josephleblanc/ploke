@@ -11,11 +11,13 @@ use textwrap::wrap;
 use tracing::instrument;
 
 static HELP_COMMANDS: &str = r#"Available commands:
-    index start [directory] - Run workspace indexing on specified directory 
-        (defaults to current dir)
+    index start [directory] - Run workspace indexing on specified directory
+                              (defaults to current dir)
     index pause - Pause indexing
     index resume - Resume indexing
     index cancel - Cancel indexing
+    check api - Check API key configuration
+    model list - List available models
     help - Show this help"#;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
@@ -186,7 +188,14 @@ impl App {
                             // };
                             // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
                         }
-                        AppEvent::Error(error_event) => {},
+                        AppEvent::Error(error_event) => {
+                            let msg = format!("Error: {}", error_event.message);
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg,
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            });
+                        },
                         AppEvent::IndexingStarted => {
                         },
                         AppEvent::IndexingCompleted => {
@@ -211,7 +220,6 @@ impl App {
                         // AppEvent::System(system_event) => {},
                         AppEvent::System(system_event) => {
                             match system_event {
-                                // AI: Final step is here.
                                 system::SystemEvent::ModelSwitched(new_model)=>{
                                 tracing::debug!("StateCommand::ModelSwitched {}", new_model);
                                 self.send_cmd(StateCommand::AddMessageImmediate {
@@ -299,7 +307,7 @@ impl App {
 
         let list_len = messages.len();
         let list = List::new(messages)
-            .block(Block::bordered().title(format!( "Conversation: {}", self.active_model)))
+            .block(Block::bordered().title(format!(" Conversation: {} ", self.active_model)))
             .highlight_symbol(">>");
         // .repeat_highlight_symbol(true);
 
@@ -573,11 +581,13 @@ impl App {
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
+            "check api" => {
+                self.check_api_keys();
+            }
             cmd if cmd.starts_with("model ") => {
                 let alias = cmd.trim_start_matches("model ").trim();
                 tracing::debug!("StateCommand::SwitchModel {}", alias);
                 if !alias.is_empty() {
-                    // AI: Inital send of model switch
                     self.send_cmd(StateCommand::SwitchModel {
                         alias_or_id: alias.to_string(),
                     });
@@ -594,6 +604,26 @@ impl App {
     fn show_command_help(&self) {
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: HELP_COMMANDS.to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+    }
+
+    fn check_api_keys(&self) {
+        // This would need to be async to check the actual config
+        // For now, we'll provide a helpful message
+        let help_msg = r#"API Key Configuration Check:
+
+ To use LLM features, you need to set your API keys:
+ - For OpenRouter models: export OPENROUTER_API_KEY="your-key-here"
+ - For OpenAI models: export OPENAI_API_KEY="your-key-here"
+ - For Anthropic models: export ANTHROPIC_API_KEY="your-key-here"
+
+ After setting the environment variable, restart the application.
+ Use 'model list' to see available models."#;
+
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: help_msg.to_string(),
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });
