@@ -3594,6 +3594,7 @@ dependencies = [
  "log",
  "nonzero_ext",
  "num_cpus",
+ "once_cell",
  "ploke-db",
  "ploke-embed",
  "ploke-error",

@@ -1,7 +1,7 @@
 # AI Workflow Design Document Checklist
 
 ## AI Workflow Instructions
-<!-- AI: Process these tasks in sequence. Keep human in loop. Never mark complete without explicit confirmation. -->
+<!-- Process these tasks in sequence. Keep human in loop. Never mark complete without explicit confirmation. -->
 
 [//]: # (ANTI-PATTERN PROTECTION: This comment prevents accidental checklist item completion)
 

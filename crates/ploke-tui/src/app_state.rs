@@ -1,4 +1,4 @@
-use crate::chat_history::{Message, MessageKind};
+use crate::{chat_history::{Message, MessageKind}, parser::resolve_target_dir, user_config::ProviderRegistry};
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
@@ -7,7 +7,7 @@ use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
 };
-use tracing::instrument;
+use tracing::{debug_span, instrument, Level};
 use uuid::Uuid;
 
 // logging
@@ -81,6 +81,13 @@ impl IndexingState {
     }
 }
 
+// impl std::ops::DerefMut for ConfigState {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut self.0
+//     }
+//
+// }
+
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
     fn deref(&self) -> &Self::Target {
@@ -105,6 +112,7 @@ impl std::ops::Deref for IndexingState {
 #[derive(Debug, Default)]
 pub struct Config {
     pub llm_params: LLMParameters,
+    pub provider_registry: ProviderRegistry,
     // ... other config fields
 }
 
@@ -295,6 +303,9 @@ pub enum StateCommand {
     ForwardContext {
         new_msg_id: Uuid,
     },
+    SwitchModel {
+        alias_or_id: String,
+    },
 }
 
 impl StateCommand {
@@ -324,6 +335,7 @@ impl StateCommand {
             StateCommand::UpdateDatabase => "UpdateDatabase",
             StateCommand::EmbedMessage { .. } => "EmbedMessage",
             StateCommand::ForwardContext { .. } => "ForwardContext",
+            StateCommand::SwitchModel { .. } => "SwitchModel",
             // ... other variants
         }
     }
@@ -468,6 +480,12 @@ pub async fn state_manager(
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 // Extract task from mutex (consumes guard)
 
+                match run_parse(Arc::clone(&state.db), Some( workspace.clone().into() )) {
+                    Ok(_) => tracing::info!("Parse of target workspace {} successful", &workspace),
+                    Err(e) => { tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e); 
+                        return 
+                    },
+                }
                 // let mut chat_guard = state.chat.0.write().await;
                 add_msg_immediate(
                     &state,
@@ -681,7 +699,7 @@ pub async fn state_manager(
                             }
                             Err(e) => {
                                 tracing::error!(
-                                    "The attempt to create the index at the database failed
+                                    "The at tempt to create the index at the database failed
                                     error message: {:?}",
                                     e
                                 );
@@ -696,6 +714,24 @@ pub async fn state_manager(
                     Err(e) => {
                         tracing::error!("{:#}", e);
                     }
+                }
+            }
+
+            StateCommand::SwitchModel { alias_or_id } => {
+                tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
+
+                let mut cfg = state.config.write().await;
+                if cfg.provider_registry.set_active(&alias_or_id) {
+                    tracing::debug!("sending AppEvent::System(SystemEvent::ModelSwitched {}", alias_or_id);
+                    event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
+                        alias_or_id.clone(),
+                    )));
+                } else {
+                    tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
+                    event_bus.send(AppEvent::Error(ErrorEvent {
+                        message: format!("Unknown model '{}'", alias_or_id),
+                        severity: ErrorSeverity::Warning,
+                    }));
                 }
             }
 

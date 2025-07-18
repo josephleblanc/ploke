@@ -130,9 +130,6 @@ pub fn transform_code_graph(
 }
 
 /// Transforms a CodeGraph into CozoDB relations, inserts into the cozo database
-// I'd like to log to terminal output for a test, probably using `tracing` after each one of there
-// transforms runs. Any ideas on how to do that? Should I use `instrument`? What would that look
-// like? Show me a complete example. AI?
 pub fn transform_parsed_graph(
     db: &Db<MemStorage>,
     parsed_graph: ParsedCodeGraph,

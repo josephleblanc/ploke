@@ -231,9 +231,9 @@ impl std::fmt::Display for MessageKind {
     }
 }
 
-impl Into<&'static str> for MessageKind {
-    fn into(self) -> &'static str {
-        match self {
+impl From<MessageKind> for &'static str {
+    fn from(val: MessageKind) -> Self {
+        match val {
             MessageKind::User => "User",
             MessageKind::Assistant => "Assistant",
             MessageKind::System => "System",

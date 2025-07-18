@@ -5,6 +5,7 @@ pub mod app_state;
 pub mod chat_history;
 pub mod context;
 pub mod database;
+pub mod error;
 pub mod file_man;
 pub mod llm;
 pub mod parser;
@@ -20,6 +21,7 @@ use app_state::{
     AppState, ChatState, ConfigState, MessageUpdatedEvent, StateCommand, SystemState, state_manager,
 };
 use context::ContextManager;
+use error::{ErrorExt, ErrorSeverity, ResultExt};
 use file_man::FileManager;
 use llm::llm_manager;
 use parser::run_parse;
@@ -27,10 +29,11 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
+use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
-use user_config::{DEFAULT_MODEL, OPENROUTER_URL, ProviderConfig};
+use user_config::{ProviderConfig, ProviderType, DEFAULT_MODEL, OPENROUTER_URL};
 use utils::layout::layout_statusline;
 
 use std::sync::Arc;
@@ -38,6 +41,7 @@ use std::sync::Arc;
 use chat_history::{ChatHistory, UpdateFailedEvent};
 use color_eyre::Result;
 use futures::{FutureExt, StreamExt};
+use once_cell::sync::Lazy;
 use ratatui::{
     DefaultTerminal, Frame,
     style::Stylize,
@@ -49,6 +53,20 @@ use ratatui::{style::Style, widgets::List};
 use uuid::Uuid;
 
 pub static TARGET_DIR_FIXTURE: &str = "fixture_tracking_hash";
+
+static GLOBAL_EVENT_BUS: Lazy<Mutex<Option<Arc<EventBus>>>> = Lazy::new(|| Mutex::new(None));
+
+/// Set the global event bus for error handling
+pub async fn set_global_event_bus(event_bus: Arc<EventBus>) {
+    *GLOBAL_EVENT_BUS.lock().await = Some(event_bus);
+}
+
+/// Emit an error event to the global event bus
+pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
+    if let Some(event_bus) = GLOBAL_EVENT_BUS.lock().await.as_ref() {
+        event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
+    }
+}
 
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
@@ -65,16 +83,15 @@ pub async fn try_main() -> color_eyre::Result<()> {
         )
         .add_source(config::Environment::default().separator("_"))
         .build()?
-        .try_deserialize::<crate::user_config::Config>()?;
+        .try_deserialize::<crate::user_config::Config>()
+        .unwrap_or_else(|_| crate::user_config::Config::default());
 
-    if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
-        config.provider = ProviderConfig {
-            api_key: openrouter_api_key,
-            base_url: OPENROUTER_URL.to_string(),
-            model: DEFAULT_MODEL.to_string(),
-        };
-    }
+    // Merge curated defaults with user overrides
+    config.registry = config.registry.with_defaults();
 
+    // Apply API keys from environment variables to all providers
+    config.registry.load_api_keys();
+    tracing::debug!("Registry after merge: {:#?}", config.registry);
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
@@ -146,17 +163,20 @@ pub async fn try_main() -> color_eyre::Result<()> {
         rag_event_tx,
     ));
 
+    // Set global event bus for error handling
+    set_global_event_bus(event_bus.clone()).await;
+
     // Spawn subsystems with backpressure-aware command sender
+    let command_style = config.command_style;
     tokio::spawn(llm_manager(
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
-        config.provider.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
     let terminal = ratatui::init();
-    let app = App::new(config.command_style, state, cmd_tx, &event_bus);
+    let app = App::new(command_style, state, cmd_tx, &event_bus, DEFAULT_MODEL.to_string());
     let result = app.run(terminal).await;
     ratatui::restore();
     result
@@ -200,6 +220,7 @@ pub mod system {
         CommandDropped(&'static str),
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
+        ModelSwitched(String)
     }
 }
 
@@ -269,17 +290,48 @@ pub struct ErrorEvent {
     pub severity: ErrorSeverity,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ErrorSeverity {
-    Warning, // simple warning
-    Error,   // recoverable error
-    Fatal,   // indicates invalid state
-}
 
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
     Realtime,
     Background,
+}
+
+// Import the error handling traits
+
+// Implement the ResultExt trait for Results with ploke_error::Error
+// This implementation is only for Result<T, ploke_error::Error> to comply with orphan rule
+impl<T> ResultExt<ploke_error::Error> for Result<T, ploke_error::Error> {
+    fn emit_event(self, severity: ErrorSeverity) -> Result<T, ploke_error::Error> {
+        if let Err(ref e) = self {
+            let message = e.to_string();
+            tokio::spawn(async move {
+                emit_error_event(message, severity).await;
+            });
+        }
+        self
+    }
+    
+    fn emit_warning(self) -> Result<T, ploke_error::Error> {
+        self.emit_event(ErrorSeverity::Warning)
+    }
+    
+    fn emit_error(self) -> Result<T, ploke_error::Error> {
+        self.emit_event(ErrorSeverity::Error)
+    }
+    
+    fn emit_fatal(self) -> Result<T, ploke_error::Error> {
+        self.emit_event(ErrorSeverity::Fatal)
+    }
+}
+
+impl ErrorExt for ploke_error::Error {
+    fn emit_event(&self, severity: ErrorSeverity) {
+        let message = self.to_string();
+        tokio::spawn(async move {
+            emit_error_event(message, severity).await;
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -320,34 +372,38 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     // more here?
     loop {
         tokio::select! {
-            // bg_event = bg_rx.recv() => {
-            // tracing::trace!("event bus received a background event: {:?}", bg_event);
-            //     match bg_event {
-            //         Ok(AppEvent::System(sys_event)) => match sys_event {
-            //             system::SystemEvent::CompleteReadSnip(items) => {
-            //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", items);
-            //                 event_bus.send(AppEvent::Rag(RagEvent::ContextSnippets(items)));
-            //             }
-            //             _ => {}
-            //         },
-            //         Ok(_) => {}
-            //         Err(e) => {
-            //             match e {
-            //                 RecvError::Closed => {
-            //                     tracing::trace!("System Event event channel closed {}", e.to_string());
-            //                     break;
-            //                 }
-            //                 RecvError::Lagged(lag) => {
-            //                     tracing::trace!(
-            //                         "System Event event channel lagging {} with {} messages",
-            //                         e.to_string(),
-            //                         lag
-            //                     )
-            //                 }
-            //             };
-            //         }
-            //     }
-            // }
+        // bg_event = bg_rx.recv() => {
+        // tracing::trace!("event bus received a background event: {:?}", bg_event);
+        //     match bg_event {
+        //         Ok(AppEvent::System(sys_event)) => match sys_event {
+        //             SystemEvent::ModelSwitched(alias_or_id) => {
+        //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", alias_or_id);
+        //                 event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(alias_or_id)));
+        //             }
+        //             SystemEvent::SaveRequested(vec_bytes) => {
+        //                 tracing::info!("event bus Sent save event of Vec<u8> len = {}", vec_bytes.len());
+        //                 event_bus.send(AppEvent::System(SystemEvent::SaveRequested(vec_bytes)));
+        //         }
+        //             _ => {}
+        //         },
+        //         Ok(_) => {}
+        //         Err(e) => {
+        //             match e {
+        //                 RecvError::Closed => {
+        //                     tracing::trace!("System Event event channel closed {}", e.to_string());
+        //                     break;
+        //                 }
+        //                 RecvError::Lagged(lag) => {
+        //                     tracing::trace!(
+        //                         "System Event event channel lagging {} with {} messages",
+        //                         e.to_string(),
+        //                         lag,
+        //                     )
+        //                 }
+        //             };
+        //         }
+        //     }
+        // }
             index_event = index_rx.recv() => {
             // let index_event = index_rx.recv().await;
             tracing::trace!("event bus received IndexStatus");
@@ -403,7 +459,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
             // };
         };
     }
-    // Ok(())
+    Ok(())
 }
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {

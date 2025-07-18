@@ -1,0 +1,53 @@
+ use once_cell::sync::Lazy;
+ use std::collections::HashMap;
+
+ use crate::user_config::{ProviderConfig, ProviderType};
+
+ /// Curated “starter pack” of popular OpenRouter models.
+ ///
+ /// These defaults are loaded **once** and then merged with whatever the user
+ /// supplies in `config.toml`.  Any entry the user defines with the same `id`
+ /// will *overwrite* the corresponding default, so power-users can tweak or
+ /// disable individual models without touching code.
+ pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| {
+     let mut m = HashMap::new();
+
+     insert_openrouter(&mut m, "gpt-4o", "openai/gpt-4o", 0.7);
+     insert_openrouter(&mut m, "claude-3-5-sonnet", "anthropic/claude-3.5-sonnet", 0.7);
+     insert_openrouter(&mut m, "mistral-7b-instruct", "mistralai/mistral-7b-instruct", 0.8);
+     insert_openrouter(&mut m, "qwq-32b-free", "qwen/qwq-32b:free", 0.7);
+     insert_openrouter(&mut m, "deepseek-chat", "deepseek/deepseek-chat", 0.7);
+     insert_openrouter(&mut m, "deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324:free", 0.7);
+     insert_openrouter(&mut m, "deepseek-r1-0528:free", "deepseek/deepseek-r1-0528:free", 0.7);
+     insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", 0.7);
+     insert_openrouter(&mut m, "gemini-flash", "google/gemini-flash-1.5", 0.7);
+     insert_openrouter(&mut m, "kimi-dev-72b:free", "moonshotai/kimi-dev-72b:free", 0.7);
+
+     m
+ });
+
+ /// Helper to reduce boilerplate when adding new OpenRouter defaults.
+ fn insert_openrouter(
+     map: &mut HashMap<String, ProviderConfig>,
+     id: &str,
+     model: &str,
+     temperature: f32,
+ ) {
+     map.insert(
+         id.to_string(),
+         ProviderConfig {
+             id: id.to_string(),
+             api_key: String::new(), // will be filled from env or user config
+             api_key_env: Some("OPENROUTER_API_KEY".to_string()),
+             base_url: "https://openrouter.ai/api/v1".to_string(),
+             model: model.to_string(),
+             display_name: Some(model.to_string()),
+             provider_type: ProviderType::OpenRouter,
+             llm_params: Some(crate::llm::LLMParameters {
+                 temperature,
+                 model: model.to_string(),
+                 ..Default::default()
+             })
+         },
+     );
+ }

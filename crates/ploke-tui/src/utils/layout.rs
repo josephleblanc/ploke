@@ -11,7 +11,10 @@ use super::super::*;
 ///
 /// # Example
 /// ```
+/// use ratatui::layout::Rect;
+/// use ploke_tui::utils::layout::layout_statusline;
 /// // Split a 100px wide area into 3 sections (33%, 66%, 100% of remaining space)
+/// let area = Rect::new(0, 0, 10, 10);
 /// let layout = layout_statusline(3, area);
 /// ```
 pub fn layout_statusline(divs: u32, area: Rect) -> std::rc::Rc<[ratatui::layout::Rect]> {

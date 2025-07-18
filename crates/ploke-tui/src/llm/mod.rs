@@ -1,3 +1,5 @@
+pub mod registry;
+
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
@@ -19,9 +21,30 @@ use crate::{
 use super::*;
 
 #[derive(Serialize, Debug)]
-struct OpenAiRequest<'a> {
+pub struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
+    temperature: f32,
+    max_tokens: Option<u32>,
+    top_p: f32,
+}
+
+impl<'a> OpenAiRequest<'a> {
+    pub fn new(
+        model: &'a str,
+        messages: Vec<RequestMessage<'a>>,
+        temperature: f32,
+        max_tokens: Option<u32>,
+        top_p: f32,
+    ) -> Self {
+        Self {
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            top_p,
+        }
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -58,7 +81,7 @@ pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
-    provider: ProviderConfig,
+    // providers: crate::user_config::ProviderRegistry,
 ) {
     let client = Client::new();
     let mut pending_requests = Vec::new();
@@ -66,16 +89,36 @@ pub async fn llm_manager(
 
     while let Ok(event) = event_rx.recv().await {
         match event {
-            AppEvent::Llm(request @ llm::Event::Request { parent_id, new_msg_id, .. }) => {
-                tracing::info!("Received LLM request for parent_id: {}
+            AppEvent::Llm(
+                request @ llm::Event::Request {
+                    parent_id,
+                    new_msg_id,
+                    ..
+                },
+            ) => {
+                tracing::info!(
+                    "Received LLM request for parent_id: {}
                 new_msg_id: {}
-                ", parent_id, new_msg_id);
+                ",
+                    parent_id,
+                    new_msg_id
+                );
                 pending_requests.push(request);
             }
             AppEvent::Llm(context @ llm::Event::PromptConstructed { parent_id, .. }) => {
                 tracing::info!("Received context for parent_id: {}", parent_id);
                 ready_contexts.insert(parent_id, context);
 
+                let guard = state.config.read().await;
+                let maybe_provider = guard.provider_registry.get_active_provider();
+                if maybe_provider.is_none() {
+                    tracing::warn!("Could not find active provider in registry, returning early");
+                    return;
+                }
+                let provider_config = maybe_provider
+                    .expect("Error in unwrapping a value guarenteed to be Some")
+                    .clone();
+                drop(guard);
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
                     if let llm::Event::Request {
@@ -98,7 +141,7 @@ pub async fn llm_manager(
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
-                                provider.clone(),
+                                provider_config.to_owned(),
                                 Some(context),
                             ));
                             tracing::info!("removing id from pending_requests");
@@ -123,18 +166,22 @@ pub async fn llm_manager(
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
-#[instrument(skip(state, client, provider))]
+#[instrument(skip(state, client, provider_config))]
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
-    provider: ProviderConfig,
+    provider_config: crate::user_config::ProviderConfig,
     context: Option<llm::Event>,
 ) {
     tracing::info!("Inside process_llm_request");
     let parent_id = match request {
-        llm::Event::Request { parent_id, new_msg_id, .. } => new_msg_id,
+        llm::Event::Request {
+            parent_id,
+            new_msg_id,
+            ..
+        } => new_msg_id,
         _ => {
             tracing::info!("Not a Request, do nothing");
             return;
@@ -163,29 +210,29 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    let update_cmd = match prepare_and_run_llm_call(&state, &client, &provider, context).await {
-        Ok(content) => StateCommand::UpdateMessage {
+    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context)
+        .await
+        .map(|content| StateCommand::UpdateMessage {
             id: assistant_message_id,
             update: MessageUpdate {
                 content: Some(content),
                 status: Some(MessageStatus::Completed),
                 ..Default::default()
             },
-        },
-        Err(e) => {
-            log::error!("LLM API call failed: {}", e);
+        })
+        .unwrap_or_else(|e| {
+            let err_string = e.to_string();
             StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(format!("Error: {}", e)),
+                    content: Some(format!("Error: {}", err_string)),
                     status: Some(MessageStatus::Error {
-                        description: e.to_string(),
+                        description: err_string,
                     }),
                     ..Default::default()
                 },
             }
-        }
-    };
+        });
 
     // Send the final update command to the state manager.
     if cmd_tx.send(update_cmd).await.is_err() {
@@ -211,54 +258,85 @@ async fn prepare_and_run_llm_call(
     };
     tracing::info!("Inside prepare_and_run_llm_call");
 
-    let messages: Vec<RequestMessage> =
-        if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
-            prompt
-                .into_iter()
-                .map(|(k, c)| RequestMessage {
-                    kind: k.into(),
-                    content: c.clone(), // can this clone be remove somehow?
-                })
-                .collect()
-        } else {
-            context_path
-                .iter()
-                .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
-                .map(|msg| RequestMessage {
-                    kind: msg.kind.into(),
-                    content: msg.content.clone(), // can this clone be remove somehow?
-                })
-                .collect()
-        };
+    let mut messages: Vec<RequestMessage> = Vec::new();
+
+    // Get parameters from provider
+    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
+    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
+
+    // Prepend system prompt if provided
+    if let Some(sys) = params.system_prompt.as_ref() {
+        messages.push(RequestMessage::new_system(sys.clone()));
+    }
+
+    // Append the rest of the conversation
+    let conversation_messages = if let Some(Event::PromptConstructed { prompt, .. }) = context {
+        prompt
+            .into_iter()
+            .map(|(k, c)| RequestMessage {
+                kind: k.into(),
+                content: c,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        context_path
+            .iter()
+            .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
+            .map(|msg| RequestMessage {
+                kind: msg.kind.into(),
+                content: msg.content.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    messages.extend(conversation_messages);
 
     log::info!(
         "Sending conversation history message with content: {:#?}",
         messages
     );
+    log::info!("Sending request using model config: {:#?}", provider);
     // Release the lock before the network call
     drop(history_guard);
 
+    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
+    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
     let request_payload = OpenAiRequest {
-        model: "mistralai/mistral-7b-instruct", // TODO: Make this configurable
+        model: provider.model.as_str(),
         messages,
+        temperature: params.temperature,
+        max_tokens: params.max_tokens,
+        top_p: params.top_p,
     };
 
+    tracing::info!("Inside prepare_and_run_llm_call num3 {:#?}", params);
     let response = client
         .post(format!("{}/chat/completions", provider.base_url))
-        .bearer_auth(&provider.api_key)
+        .bearer_auth(provider.resolve_api_key())
         .json(&request_payload)
         .send()
         .await
         .map_err(|e| LlmError::Request(e.to_string()))?;
 
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let message = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
-        return Err(LlmError::Api { status, message });
-    }
+     if !response.status().is_success() {
+         let status = response.status().as_u16();
+         let error_text = response
+             .text()
+             .await
+             .unwrap_or_else(|_| "Could not retrieve error body".to_string());
+
+         let user_friendly_msg = if status == 401 {
+             format!("Authentication failed. Please check your API key configuration.\n\nDetails {}", error_text)
+         } else if status == 429 {
+             format!("Rate limit exceeded. Please wait and try again.\n\nDetails: {}", error_text)
+         } else if status >= 500 {
+             format!("Server error. The API provider may be experiencing issues.\n\nDetails: {}", error_text)
+         } else {
+             format!("API error (status {}): {}", status, error_text)
+         };
+
+         return Err(LlmError::Api { status, message: user_friendly_msg });
+     }
 
     let response_body = response
         .json::<OpenAiResponse>()
@@ -329,37 +407,6 @@ pub enum ChatHistoryTarget {
     Scratchpad,
 }
 
-// Usage in subsystems
-async fn llm_handler(event: llm::Event, cmd_sender: &CommandSender, state: &AppState) {
-    match event {
-        Event::Response {
-            content: c,
-            parent_id: pid,
-            request_id,
-            model,
-            usage,
-            metadata,
-        } => {
-            // TODO: Consider whether `child_id` should be created here or elsewhere.
-            cmd_sender
-                .send(StateCommand::AddMessage {
-                    parent_id: pid,
-                    child_id: Uuid::new_v4(),
-                    content: c,
-                    kind: MessageKind::Assistant,
-                    target: ChatHistoryTarget::Main,
-                })
-                .await;
-        }
-        Event::Request { .. } => todo!("Implement Me!"),
-        Event::PartialResponse { .. } => todo!("Implement Me!"),
-        Event::Error { .. } => todo!("Implement Me!"),
-        Event::Status { .. } => todo!("Implement Me!"),
-        Event::ModelChanged { .. } => todo!("Implement Me!"),
-        Event::PromptConstructed { .. } => todo!("Imlement me!"),
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Parameters {
     pub temperature: f32,
@@ -372,12 +419,11 @@ pub struct Parameters {
 pub enum Event {
     /// Request to generate content from an LLM
     Request {
-        request_id: Uuid, // Unique tracking ID
-        parent_id: Uuid,  // Message this responds to
-        prompt: String,   // Input to LLM
+        request_id: Uuid,       // Unique tracking ID
+        parent_id: Uuid,        // Message this responds to
+        prompt: String,         // Input to LLM
         parameters: Parameters, // Generation settings
-        new_msg_id: Uuid
-                          // callback: Option<Sender<Event>>, // Optional direct response channel
+        new_msg_id: Uuid, // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
     /// Successful LLM response
@@ -484,6 +530,55 @@ pub enum LlmError {
     Unknown(String),
 }
 
+impl From<LlmError> for ploke_error::Error {
+    fn from(error: LlmError) -> Self {
+        match error {
+            LlmError::Request(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::new(std::io::ErrorKind::ConnectionAborted, msg),
+                )),
+            ),
+            LlmError::Api { status, message } => {
+                ploke_error::Error::Internal(ploke_error::InternalError::EmbedderError(
+                    std::sync::Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("API error {}: {}", status, message),
+                    )),
+                ))
+            }
+            LlmError::RateLimited => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeDb("Rate limit exceeded".to_string()),
+            ),
+            LlmError::Authentication => {
+                ploke_error::Error::Fatal(ploke_error::FatalError::PathResolution {
+                    path: "Authentication failed - check API key".to_string(),
+                    source: None,
+                })
+            }
+            LlmError::Timeout => ploke_error::Error::Internal(
+                ploke_error::InternalError::EmbedderError(std::sync::Arc::new(
+                    std::io::Error::new(std::io::ErrorKind::TimedOut, "Request timed out"),
+                )),
+            ),
+            LlmError::ContentFilter => ploke_error::Error::Warning(
+                ploke_error::WarningError::PlokeDb("Content blocked by safety filter".to_string()),
+            ),
+            LlmError::Serialization(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::CompilerError(format!("Serialization error: {}", msg)),
+            ),
+            LlmError::Deserialization(msg) => {
+                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+                    "Deserialization error: {}",
+                    msg
+                )))
+            }
+            LlmError::Unknown(msg) => ploke_error::Error::Internal(
+                ploke_error::InternalError::NotImplemented(format!("Unknown error: {}", msg)),
+            ),
+        }
+    }
+}
+
 /// Parameters for controlling LLM generation behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMParameters {
@@ -524,6 +619,10 @@ pub struct LLMParameters {
     /// Safety/system controls
     #[serde(default)]
     pub safety_settings: SafetySettings,
+
+    /// Optional system prompt to steer the model
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 /// Metadata about LLM execution
@@ -612,16 +711,17 @@ pub struct PerformanceMetrics {
 impl Default for LLMParameters {
     fn default() -> Self {
         Self {
-            model: "gpt-4-turbo".to_string(),
+            model: String::new(),
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: None,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
-            stop_sequences: vec!["\n".to_string()],
+            stop_sequences: vec![],
             parallel_tool_calls: true,
             response_format: Default::default(),
             safety_settings: Default::default(),
+            system_prompt: None,
         }
     }
 }

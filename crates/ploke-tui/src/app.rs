@@ -8,6 +8,17 @@ use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
+use tracing::instrument;
+
+static HELP_COMMANDS: &str = r#"Available commands:
+    index start [directory] - Run workspace indexing on specified directory
+                              (defaults to current dir)
+    index pause - Pause indexing
+    index resume - Resume indexing
+    index cancel - Cancel indexing
+    check api - Check API key configuration
+    model list - List available models
+    help - Show this help"#;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -51,6 +62,8 @@ pub struct App {
     input_scrollstate: ScrollbarState,
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
+    active_model_indicator: Option<(String, Instant)>,
+    active_model: String,
 }
 
 impl App {
@@ -60,6 +73,7 @@ impl App {
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
+        active_model: String,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -76,6 +90,8 @@ impl App {
             input_scrollstate: ScrollbarState::default(),
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
+            active_model_indicator: None,
+            active_model,
         }
     }
 
@@ -95,10 +111,10 @@ impl App {
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
 
-        let mut frame_counter = 0;
+        // let mut frame_counter = 0;
         while self.running {
-            let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
-            let frame_start = Instant::now();
+            // let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
+            // let frame_start = Instant::now();
 
             // FIX: This doesn't work because it locates the cursor relative to the top left of the
             // screen, but there must be a better way to handle the offset correctly.
@@ -172,8 +188,14 @@ impl App {
                             // };
                             // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
                         }
-                        AppEvent::System(system_event) => {},
-                        AppEvent::Error(error_event) => {},
+                        AppEvent::Error(error_event) => {
+                            let msg = format!("Error: {}", error_event.message);
+                            self.send_cmd(StateCommand::AddMessageImmediate {
+                                msg,
+                                kind: MessageKind::SysInfo,
+                                new_msg_id: Uuid::new_v4(),
+                            });
+                        },
                         AppEvent::IndexingStarted => {
                         },
                         AppEvent::IndexingCompleted => {
@@ -195,6 +217,22 @@ impl App {
                                 new_msg_id: Uuid::new_v4(),
                             })
                         },
+                        // AppEvent::System(system_event) => {},
+                        AppEvent::System(system_event) => {
+                            match system_event {
+                                system::SystemEvent::ModelSwitched(new_model)=>{
+                                tracing::debug!("StateCommand::ModelSwitched {}", new_model);
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("model changed from {} to {}",self.active_model, new_model),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
+                                    self.active_model_indicator = Some((new_model.clone(), Instant::now()));
+                                    self.active_model = new_model;
+                                },
+                                other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
+                        }
+                        }
                         AppEvent::GenerateContext(id) => {
                             // self.send_cmd( StateCommand::)
                         }
@@ -208,23 +246,33 @@ impl App {
 
     /// Renders the user interface.
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
+        // Handle model indicator animation
+        let show_indicator = if let Some((_, start_time)) = &self.active_model_indicator {
+            start_time.elapsed().as_secs() < 3
+        } else {
+            false
+        };
+
         // ---------- Define Layout ----------
-        let proto_layout = if self.indexing_state.is_some() {
+        let mut proto_layout = if self.indexing_state.is_some() {
             vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
                 Constraint::Length(3),
-                Constraint::Length(1),
             ]
         } else {
             vec![
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
-                Constraint::Length(1),
             ]
         };
+
+        if show_indicator {
+            proto_layout.push(Constraint::Length(1));
+        }
+
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints(proto_layout)
@@ -259,7 +307,7 @@ impl App {
 
         let list_len = messages.len();
         let list = List::new(messages)
-            .block(Block::bordered().title("Conversation"))
+            .block(Block::bordered().title(format!(" Conversation: {} ", self.active_model)))
             .highlight_symbol(">>");
         // .repeat_highlight_symbol(true);
 
@@ -340,6 +388,18 @@ impl App {
         frame.render_widget(node_status, status_layout[1]);
         frame.render_widget(list_len, status_layout[2]);
         frame.render_widget(list_selected, status_layout[3]);
+
+        // -- model indicator
+        if show_indicator {
+            if let Some((model_name, _)) = &self.active_model_indicator {
+                let indicator = Paragraph::new(format!(" Model: {} ", model_name))
+                    .style(Style::new().fg(Color::Black).bg(Color::Yellow))
+                    .alignment(ratatui::layout::Alignment::Center);
+
+                let indicator_area = main_layout.last().unwrap();
+                frame.render_widget(indicator, *indicator_area);
+            }
+        }
     }
 
     fn create_branch(&mut self) {
@@ -457,9 +517,6 @@ impl App {
     }
 
     pub fn handle_command_mode(&mut self, key: KeyEvent) {
-        // if !self.input_buffer.starts_with('/') {
-        //     self.mode = Mode::Normal;
-        // }
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -467,7 +524,7 @@ impl App {
             KeyCode::Enter => {
                 self.execute_command();
                 self.input_buffer.clear();
-                self.mode = Mode::Normal;
+                self.mode = Mode::Insert;
             }
             KeyCode::Char(c) => self.input_buffer.push(c),
             KeyCode::Backspace => {
@@ -480,6 +537,7 @@ impl App {
         }
     }
 
+    #[instrument(skip_all, fields(alias))]
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.clone();
         // Remove command prefix for processing
@@ -490,12 +548,51 @@ impl App {
 
         match cmd_str {
             "help" => self.show_command_help(),
-            "index start" => self.send_cmd(StateCommand::IndexWorkspace {
-                workspace: "fixture_tracking_hash".to_string(),
-            }),
+            cmd if cmd.starts_with("index start") => {
+                let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
+                let workspace = if parts.len() >= 3 {
+                    parts[2].to_string()
+                } else {
+                    // Default to current directory if no path provided
+                    ".".to_string()
+                };
+
+                // Validate the directory exists
+                match std::fs::metadata(&workspace) {
+                    Ok(metadata) if metadata.is_dir() => {
+                        self.send_cmd(StateCommand::IndexWorkspace { workspace });
+                    }
+                    Ok(_) => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Error: '{}' is not a directory", workspace),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                    Err(e) => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Error accessing directory '{}': {}", workspace, e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                }
+            }
             "index pause" => self.send_cmd(StateCommand::PauseIndexing),
             "index resume" => self.send_cmd(StateCommand::ResumeIndexing),
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
+            "check api" => {
+                self.check_api_keys();
+            }
+            cmd if cmd.starts_with("model ") => {
+                let alias = cmd.trim_start_matches("model ").trim();
+                tracing::debug!("StateCommand::SwitchModel {}", alias);
+                if !alias.is_empty() {
+                    self.send_cmd(StateCommand::SwitchModel {
+                        alias_or_id: alias.to_string(),
+                    });
+                }
+            }
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
@@ -505,10 +602,31 @@ impl App {
     }
 
     fn show_command_help(&self) {
-        // TODO: Add these as system messages.
-        eprintln!("Available commands:");
-        eprintln!("  index - Run workspace indexing");
-        eprintln!("  help  - Show this help");
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: HELP_COMMANDS.to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+    }
+
+    fn check_api_keys(&self) {
+        // This would need to be async to check the actual config
+        // For now, we'll provide a helpful message
+        let help_msg = r#"API Key Configuration Check:
+
+ To use LLM features, you need to set your API keys:
+ - For OpenRouter models: export OPENROUTER_API_KEY="your-key-here"
+ - For OpenAI models: export OPENAI_API_KEY="your-key-here"
+ - For Anthropic models: export ANTHROPIC_API_KEY="your-key-here"
+
+ After setting the environment variable, restart the application.
+ Use 'model list' to see available models."#;
+
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: help_msg.to_string(),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
     }
 
     fn handle_normal_mode(&mut self, key: KeyEvent) {
@@ -553,6 +671,10 @@ impl App {
             KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
+            }
+            KeyCode::Char('m') => {
+                self.mode = Mode::Command;
+                self.input_buffer = "/model ".to_string();
             }
             _ => {}
         }

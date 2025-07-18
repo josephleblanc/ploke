@@ -47,46 +47,47 @@ impl FileManager {
                 if let Err(e) = self.save_content(&path, &content).await {
                     error!("Save failed: {}", e);
                 }
+                else {info!("Save Suceeded: {:?}", &path);}
             }
-            // AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
-            //     tracing::info!(
-            //         "Received ReadSnippet for type {}, next calling get_snippets_batch with ty_emb_data {:?}",
-            //         ty_emb_data.ty.relation_str(),
-            //         ty_emb_data.v
-            //     );
-            //     if let Ok(result) = self.io_handle.get_snippets_batch(ty_emb_data.v).await {
-            //         let mut output = Vec::new();
-            //         for snip_res in result {
-            //             match snip_res {
-            //                 Ok(snippet) => {
-            //                     tracing::trace!("Adding snippet to output: {}", snippet);
-            //                     output.push(snippet);
-            //                 }
-            //                 Err(e) => {
-            //                     error!("get_snippets_batch failed with: {}", e);
-            //                 }
-            //             }
-            //         }
-            //         tracing::info!("Finished reading snippets, collected output: {:?}", output);
-            //         match self
-            //             .context_tx
-            //             .send(RagEvent::ContextSnippets(id, output))
-            //             .await
-            //         {
-            //             Ok(_) => {
-            //                 tracing::trace!("Exiting send CodeSnippets with Ok");
-            //                 // self.event_tx
-            //                 //     .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
-            //             }
-            //             Err(e) => {
-            //                 tracing::trace!(
-            //                     "Err whiile trying to send CodeSnippets: {}",
-            //                     e.to_string()
-            //                 );
-            //             }
-            //         };
-            //     }
-            // }
+            AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
+                // tracing::info!(
+                //     "Received ReadSnippet for type {}, next calling get_snippets_batch with ty_emb_data {:?}",
+                //     ty_emb_data.ty.relation_str(),
+                //     ty_emb_data.v
+                // );
+                // if let Ok(result) = self.io_handle.get_snippets_batch(ty_emb_data.v).await {
+                //     let mut output = Vec::new();
+                //     for snip_res in result {
+                //         match snip_res {
+                //             Ok(snippet) => {
+                //                 tracing::trace!("Adding snippet to output: {}", snippet);
+                //                 output.push(snippet);
+                //             }
+                //             Err(e) => {
+                //                 error!("get_snippets_batch failed with: {}", e);
+                //             }
+                //         }
+                //     }
+                    // tracing::info!("Finished reading snippets, collected output: {:?}", output);
+                    // match self
+                    //     .context_tx
+                    //     .send(RagEvent::ContextSnippets(id, output))
+                    //     .await
+                    // {
+                    //     Ok(_) => {
+                    //         tracing::trace!("Exiting send CodeSnippets with Ok");
+                    //         // self.event_tx
+                    //         //     .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
+                    //     }
+                    //     Err(e) => {
+                    //         tracing::trace!(
+                    //             "Err whiile trying to send CodeSnippets: {}",
+                    //             e.to_string()
+                    //         );
+                    //     }
+                    // };
+                // }
+            }
             other => warn!("FileManager received unexpected event: {:?}", other),
         }
     }
