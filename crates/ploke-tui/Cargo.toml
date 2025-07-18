@@ -62,7 +62,7 @@ uuid = { workspace = true }
 
 futures = "0.3" # For .fuse() on streams
 
-# global state                                                                                  
+# global state
 once_cell = "1.19"
 
 [dev-dependencies]
@@ -72,3 +72,7 @@ tokio-test = "0.4"
 test-context = "0.1"
 fake = "4.3.0"
 cozo = { workspace = true }
+
+[features]
+default = ["custom_list"]
+custom_list = []

@@ -1,6 +1,8 @@
 # ploke
 
-`ploke` aims to be a powerful LLM interface in the terminal (think aider) for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system designed specifically for Rust code generation and refactoring.
+`ploke` aims to be a powerful LLM interface in the terminal for Rust code generation and refactoring, backed by a Retrieval-Augmented Generation (RAG) system with a code graph built by parsing from your Rust crate.
+
+[It works!](./assets/ploke_rust_vector_embeddings.png)
 
 <details>
   <summary>
@@ -45,9 +47,13 @@ Currently, you can demo the project by using the `/index start <your absolute pa
 ploke is in rapid development, and can be considered in a prototype or alpha state. The core functionality works right now: 
 - [x] facilitate LLM calls 
 - [x] parse your code into a vector-graph database 
-- [x] automatically query your code base using our RAG (basic prototype queries, naive rag)
-- [x] parse a target rust crate (must have `Cargo.toml` and `src/lib.rs` or `src/main.rs`) into the database/rag pipeline
-- [ ] Select models that can be used as the LLM endpoint
+- [x] 7/17/25 automatically query your code base using our RAG (basic prototype queries, naive rag)
+- [x] 7/17/25 parse a target rust crate (must have `Cargo.toml` and `src/lib.rs` or `src/main.rs`) into the database/rag pipeline
+- [x] 7/18/25 Select models that can be used as the LLM endpoint
+  - [ ] Generic defaults for each model (e.g. temp = 0.7)
+  - [ ] Sane defaults for each model (e.g. temp = 0.6 for kimik2)
+  - [ ] Reasoning Support
+  - [ ] User-defined config file
 - [ ] Support for other API endpoints beyond OpenRouter
 
 However, there are many features we are working on adding

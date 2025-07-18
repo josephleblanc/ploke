@@ -1,5 +1,7 @@
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
 
+pub mod message_item;
+
 use super::*;
 use std::time::{Duration, Instant};
 
@@ -288,33 +290,37 @@ impl App {
         // Render message tree
         let conversation_width = main_layout[0].width.saturating_sub(6);
 
-        // Wrap text and create ListItems
-        let messages: Vec<ListItem> = path
-            .iter()
-            .map(|msg| {
-                let wrapped_text: String =
-                    textwrap::fill(&msg.content, conversation_width as usize);
-                match msg.kind {
-                    MessageKind::User => ListItem::new(wrapped_text).blue(),
-                    MessageKind::Assistant => ListItem::new(wrapped_text).green(),
-                    MessageKind::System => ListItem::new(wrapped_text).gray(),
-                    MessageKind::Tool => todo!(),
-                    MessageKind::SysInfo => ListItem::new(wrapped_text).magenta(),
-                }
-                // ListItem::new(wrapped_text)
-            })
-            .collect();
+        #[cfg(feature = "custom_list")]
+        #[cfg(not( feature = "custom_list" ))]
+        {
+            // Wrap text and create ListItems
+            let messages: Vec<ListItem> = path
+                .iter()
+                .map(|msg| {
+                    let wrapped_text: String =
+                        textwrap::fill(&msg.content, conversation_width as usize);
+                    match msg.kind {
+                        MessageKind::User => ListItem::new(wrapped_text).blue(),
+                        MessageKind::Assistant => ListItem::new(wrapped_text).green(),
+                        MessageKind::System => ListItem::new(wrapped_text).gray(),
+                        MessageKind::Tool => todo!(),
+                        MessageKind::SysInfo => ListItem::new(wrapped_text).magenta(),
+                    }
+                    // ListItem::new(wrapped_text)
+                })
+                .collect();
 
-        let list_len = messages.len();
-        let list = List::new(messages)
-            .block(Block::bordered().title(format!(" Conversation: {} ", self.active_model)))
-            .highlight_symbol(">>");
-        // .repeat_highlight_symbol(true);
+            let list_len = messages.len();
+            let list = List::new(messages)
+                .block(Block::bordered().title(format!(" Conversation: {} ", self.active_model)))
+                .highlight_symbol(">>");
+            // .repeat_highlight_symbol(true);
 
-        let list = match self.mode {
-            Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
-            _ => list,
-        };
+            let list = match self.mode {
+                Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
+                _ => list,
+            };
+        }
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
@@ -687,7 +693,7 @@ impl App {
 }
 
 #[derive(Debug, Clone)]
-struct RenderableMessage {
+pub struct RenderableMessage {
     id: Uuid,
     kind: MessageKind,
     content: String, // Add other fields if needed for drawing, e.g. status
