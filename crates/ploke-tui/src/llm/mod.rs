@@ -81,7 +81,7 @@ pub async fn llm_manager(
     mut event_rx: broadcast::Receiver<AppEvent>,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
-    providers: crate::user_config::ProviderRegistry,
+    // providers: crate::user_config::ProviderRegistry,
 ) {
     let client = Client::new();
     let mut pending_requests = Vec::new();
@@ -109,6 +109,16 @@ pub async fn llm_manager(
                 tracing::info!("Received context for parent_id: {}", parent_id);
                 ready_contexts.insert(parent_id, context);
 
+                let guard = state.config.read().await;
+                let maybe_provider = guard.provider_registry.get_active_provider();
+                if maybe_provider.is_none() {
+                    tracing::warn!("Could not find active provider in registry, returning early");
+                    return;
+                }
+                let provider_config = maybe_provider
+                    .expect("Error in unwrapping a value guarenteed to be Some")
+                    .clone();
+                drop(guard);
                 // Process any pending requests that now have context
                 pending_requests.retain(|req| {
                     if let llm::Event::Request {
@@ -131,7 +141,7 @@ pub async fn llm_manager(
                                 Arc::clone(&state),
                                 cmd_tx.clone(),
                                 client.clone(),
-                                providers.clone(),
+                                provider_config.to_owned(),
                                 Some(context),
                             ));
                             tracing::info!("removing id from pending_requests");
@@ -156,13 +166,13 @@ pub async fn llm_manager(
 
 // The worker function that processes a single LLM request.
 // TODO: Add proper error handling if the `CreateAssistantMessage` fails
-#[instrument(skip(state, client, providers))]
+#[instrument(skip(state, client, provider_config))]
 pub async fn process_llm_request(
     request: llm::Event,
     state: Arc<AppState>,
     cmd_tx: mpsc::Sender<StateCommand>,
     client: Client,
-    providers: crate::user_config::ProviderRegistry,
+    provider_config: crate::user_config::ProviderConfig,
     context: Option<llm::Event>,
 ) {
     tracing::info!("Inside process_llm_request");
@@ -200,42 +210,33 @@ pub async fn process_llm_request(
     };
 
     // Prepare and execute the API call, then create the final update command.
-    if let Ok(provider) = providers
-        .get_active_provider()
-        .ok_or(LlmError::Unknown(
-            "No active provider configured".to_string(),
-        ))
-        .map_err(ploke_error::Error::from)
-        .emit_warning()
-    {
-        let update_cmd = prepare_and_run_llm_call(&state, &client, provider, context)
-            .await
-            .map(|content| StateCommand::UpdateMessage {
+    let update_cmd = prepare_and_run_llm_call(&state, &client, &provider_config, context)
+        .await
+        .map(|content| StateCommand::UpdateMessage {
+            id: assistant_message_id,
+            update: MessageUpdate {
+                content: Some(content),
+                status: Some(MessageStatus::Completed),
+                ..Default::default()
+            },
+        })
+        .unwrap_or_else(|e| {
+            let err_string = e.to_string();
+            StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
-                    content: Some(content),
-                    status: Some(MessageStatus::Completed),
+                    content: Some(format!("Error: {}", err_string)),
+                    status: Some(MessageStatus::Error {
+                        description: err_string,
+                    }),
                     ..Default::default()
                 },
-            })
-            .unwrap_or_else(|e| {
-                let err_string = e.to_string();
-                StateCommand::UpdateMessage {
-                    id: assistant_message_id,
-                    update: MessageUpdate {
-                        content: Some(format!("Error: {}", err_string)),
-                        status: Some(MessageStatus::Error {
-                            description: err_string,
-                        }),
-                        ..Default::default()
-                    },
-                }
-            });
+            }
+        });
 
-        // Send the final update command to the state manager.
-        if cmd_tx.send(update_cmd).await.is_err() {
-            log::error!("Failed to send final UpdateMessage: channel closed.");
-        }
+    // Send the final update command to the state manager.
+    if cmd_tx.send(update_cmd).await.is_err() {
+        log::error!("Failed to send final UpdateMessage: channel closed.");
     }
 }
 
@@ -259,43 +260,45 @@ async fn prepare_and_run_llm_call(
 
     let mut messages: Vec<RequestMessage> = Vec::new();
 
+    // Get parameters from provider
+    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
+
     // Prepend system prompt if provided
     if let Some(sys) = params.system_prompt.as_ref() {
         messages.push(RequestMessage::new_system(sys.clone()));
     }
 
     // Append the rest of the conversation
-    messages.extend(
-        if let Some(Event::PromptConstructed { prompt, parent_id }) = context {
-            prompt
-                .into_iter()
-                .map(|(k, c)| RequestMessage {
-                    kind: k.into(),
-                    content: c.clone(),
-                })
-        } else {
-            context_path
-                .iter()
-                .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
-                .map(|msg| RequestMessage {
-                    kind: msg.kind.into(),
-                    content: msg.content.clone(),
-                })
-        },
-    );
+    let conversation_messages = if let Some(Event::PromptConstructed { prompt, .. }) = context {
+        prompt
+            .into_iter()
+            .map(|(k, c)| RequestMessage {
+                kind: k.into(),
+                content: c,
+            })
+            .collect::<Vec<_>>()
+    } else {
+        context_path
+            .iter()
+            .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
+            .map(|msg| RequestMessage {
+                kind: msg.kind.into(),
+                content: msg.content.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    messages.extend(conversation_messages);
 
     log::info!(
         "Sending conversation history message with content: {:#?}",
         messages
     );
+    log::info!("Sending request using model config: {:#?}", provider);
     // Release the lock before the network call
     drop(history_guard);
 
-    let params = provider
-        .llm_params
-        .as_ref()
-        .cloned()
-        .unwrap_or_default();
+    let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
         messages,
@@ -725,16 +728,17 @@ pub struct PerformanceMetrics {
 impl Default for LLMParameters {
     fn default() -> Self {
         Self {
-            model: "gpt-4-turbo".to_string(),
+            model: String::new(),
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: None,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
-            stop_sequences: vec!["\n".to_string()],
+            stop_sequences: vec![],
             parallel_tool_calls: true,
             response_format: Default::default(),
             safety_settings: Default::default(),
+            system_prompt: None,
         }
     }
 }

@@ -8,6 +8,7 @@ use color_eyre::Result;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
+use tracing::instrument;
 
 static HELP_COMMANDS: &str = r#"Available commands:
     index start [directory] - Run workspace indexing on specified directory 
@@ -210,7 +211,14 @@ impl App {
                         // AppEvent::System(system_event) => {},
                         AppEvent::System(system_event) => {
                             match system_event {
+                                // AI: Final step is here.
                                 system::SystemEvent::ModelSwitched(new_model)=>{
+                                tracing::debug!("StateCommand::ModelSwitched {}", new_model);
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("model changed from {} to {}",self.active_model, new_model),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
                                     self.active_model_indicator = Some((new_model.clone(), Instant::now()));
                                     self.active_model = new_model;
                                 },
@@ -501,9 +509,6 @@ impl App {
     }
 
     pub fn handle_command_mode(&mut self, key: KeyEvent) {
-        // if !self.input_buffer.starts_with('/') {
-        //     self.mode = Mode::Normal;
-        // }
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -511,7 +516,7 @@ impl App {
             KeyCode::Enter => {
                 self.execute_command();
                 self.input_buffer.clear();
-                self.mode = Mode::Normal;
+                self.mode = Mode::Insert;
             }
             KeyCode::Char(c) => self.input_buffer.push(c),
             KeyCode::Backspace => {
@@ -524,6 +529,7 @@ impl App {
         }
     }
 
+    #[instrument(skip_all, fields(alias))]
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.clone();
         // Remove command prefix for processing
@@ -569,7 +575,9 @@ impl App {
             "index cancel" => self.send_cmd(StateCommand::CancelIndexing),
             cmd if cmd.starts_with("model ") => {
                 let alias = cmd.trim_start_matches("model ").trim();
+                tracing::debug!("StateCommand::SwitchModel {}", alias);
                 if !alias.is_empty() {
+                    // AI: Inital send of model switch
                     self.send_cmd(StateCommand::SwitchModel {
                         alias_or_id: alias.to_string(),
                     });

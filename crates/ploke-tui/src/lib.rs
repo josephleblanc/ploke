@@ -29,6 +29,7 @@ use ploke_embed::{
     cancel_token::CancellationToken,
     indexer::{self, IndexStatus, IndexerTask, IndexingStatus},
 };
+use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
@@ -86,13 +87,14 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .unwrap_or_else(|_| crate::user_config::Config::default());
 
     // Merge curated defaults with user overrides
-    config.providers = config.providers.with_defaults();
+    // AI: Defining our registry here
+    config.registry = config.registry.with_defaults();
 
     if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
-        if let Some(default_provider) = config.providers.providers.iter_mut().find(|p| p.id == "default") {
+        if let Some(default_provider) = config.registry.providers.iter_mut().find(|p| p.id == "default") {
             default_provider.api_key = openrouter_api_key;
         } else {
-            config.providers.providers.push(ProviderConfig {
+            config.registry.providers.push(ProviderConfig {
                 id: "default".to_string(),
                 api_key: openrouter_api_key,
                 base_url: OPENROUTER_URL.to_string(),
@@ -103,7 +105,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
             });
         }
     }
-
+    tracing::debug!("Registry after merge: {:#?}", config.registry);
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);
 
@@ -179,16 +181,16 @@ pub async fn try_main() -> color_eyre::Result<()> {
     set_global_event_bus(event_bus.clone()).await;
 
     // Spawn subsystems with backpressure-aware command sender
+    let command_style = config.command_style;
     tokio::spawn(llm_manager(
         event_bus.subscribe(EventPriority::Background),
         state.clone(),
         cmd_tx.clone(), // Clone for each subsystem
-        config.providers.clone(),
     ));
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
     let terminal = ratatui::init();
-    let app = App::new(config.command_style, state, cmd_tx, &event_bus, DEFAULT_MODEL.to_string());
+    let app = App::new(command_style, state, cmd_tx, &event_bus, DEFAULT_MODEL.to_string());
     let result = app.run(terminal).await;
     ratatui::restore();
     result
@@ -384,34 +386,38 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
     // more here?
     loop {
         tokio::select! {
-            // bg_event = bg_rx.recv() => {
-            // tracing::trace!("event bus received a background event: {:?}", bg_event);
-            //     match bg_event {
-            //         Ok(AppEvent::System(sys_event)) => match sys_event {
-            //             system::SystemEvent::CompleteReadSnip(items) => {
-            //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", items);
-            //                 event_bus.send(AppEvent::Rag(RagEvent::ContextSnippets(items)));
-            //             }
-            //             _ => {}
-            //         },
-            //         Ok(_) => {}
-            //         Err(e) => {
-            //             match e {
-            //                 RecvError::Closed => {
-            //                     tracing::trace!("System Event event channel closed {}", e.to_string());
-            //                     break;
-            //                 }
-            //                 RecvError::Lagged(lag) => {
-            //                     tracing::trace!(
-            //                         "System Event event channel lagging {} with {} messages",
-            //                         e.to_string(),
-            //                         lag
-            //                     )
-            //                 }
-            //             };
-            //         }
-            //     }
-            // }
+        // bg_event = bg_rx.recv() => {
+        // tracing::trace!("event bus received a background event: {:?}", bg_event);
+        //     match bg_event {
+        //         Ok(AppEvent::System(sys_event)) => match sys_event {
+        //             SystemEvent::ModelSwitched(alias_or_id) => {
+        //                 tracing::info!("event bus Sent RAG event with snippets: {:#?}", alias_or_id);
+        //                 event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(alias_or_id)));
+        //             }
+        //             SystemEvent::SaveRequested(vec_bytes) => {
+        //                 tracing::info!("event bus Sent save event of Vec<u8> len = {}", vec_bytes.len());
+        //                 event_bus.send(AppEvent::System(SystemEvent::SaveRequested(vec_bytes)));
+        //         }
+        //             _ => {}
+        //         },
+        //         Ok(_) => {}
+        //         Err(e) => {
+        //             match e {
+        //                 RecvError::Closed => {
+        //                     tracing::trace!("System Event event channel closed {}", e.to_string());
+        //                     break;
+        //                 }
+        //                 RecvError::Lagged(lag) => {
+        //                     tracing::trace!(
+        //                         "System Event event channel lagging {} with {} messages",
+        //                         e.to_string(),
+        //                         lag,
+        //                     )
+        //                 }
+        //             };
+        //         }
+        //     }
+        // }
             index_event = index_rx.recv() => {
             // let index_event = index_rx.recv().await;
             tracing::trace!("event bus received IndexStatus");
@@ -467,7 +473,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
             // };
         };
     }
-    // Ok(())
+    Ok(())
 }
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {

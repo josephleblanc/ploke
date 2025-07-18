@@ -61,7 +61,7 @@ pub enum CommandStyle {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
-    pub providers: ProviderRegistry,
+    pub registry: ProviderRegistry,
     #[serde(default)]
     pub command_style: CommandStyle,
     #[serde(default)]
@@ -191,7 +191,7 @@ impl ProviderRegistry {
     /// Any user-defined provider with the same `id` *replaces* the corresponding default;
     /// any missing fields in the user config (e.g. `api_key`) are **not** filled from the
     /// default to avoid accidental credential leakage.
-    // AI Generated, reviewed by - JL 25-07-17
+    // LLM Generated, reviewed by - JL 25-07-17
     pub fn with_defaults(mut self) -> Self {
         for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
             if !self.providers.iter().any(|p| &p.id == id) {
@@ -245,7 +245,8 @@ impl ProviderRegistry {
     /// // Unknown id fails
     /// assert!(!registry.set_active("unknown"));
     /// ```
-    // AI Generated, reviewed by - JL 25-07-17
+    // - LLM Generated, reviewed by - JL 25-07-17
+    // AI: Set active defined here
     pub fn set_active(&mut self, id_or_alias: &str) -> bool {
         let provider_id = self
             .aliases
@@ -253,6 +254,7 @@ impl ProviderRegistry {
             .map(|s| s.as_str())
             .unwrap_or(id_or_alias);
         if self.providers.iter().any(|p| p.id == *provider_id) {
+            tracing::info!("Changing provider from {} to {}", self.active_provider, provider_id);
             self.active_provider = provider_id.to_string();
             true
         } else {
@@ -261,7 +263,7 @@ impl ProviderRegistry {
     }
 
     /// Returns a list of all available providers as `(id, display_name)` tuples.
-    // AI Generated, reviewed by - JL 25-07-17
+    // - LLM Generated, reviewed by - JL 25-07-17
     pub fn list_available(&self) -> Vec<(String, String)> {
         self.providers
             .iter()

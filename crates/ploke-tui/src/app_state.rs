@@ -7,7 +7,7 @@ use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
 };
-use tracing::instrument;
+use tracing::{debug_span, instrument, Level};
 use uuid::Uuid;
 
 // logging
@@ -699,7 +699,7 @@ pub async fn state_manager(
                             }
                             Err(e) => {
                                 tracing::error!(
-                                    "The attempt to create the index at the database failed
+                                    "The at tempt to create the index at the database failed
                                     error message: {:?}",
                                     e
                                 );
@@ -718,12 +718,19 @@ pub async fn state_manager(
             }
 
             StateCommand::SwitchModel { alias_or_id } => {
+                tracing::debug!("inside StateCommand::SwitchModel {}", alias_or_id);
+
                 let mut cfg = state.config.write().await;
                 if cfg.provider_registry.set_active(&alias_or_id) {
+                    tracing::debug!("sending AppEvent::System(SystemEvent::ModelSwitched {}", alias_or_id);
+                    // AI: Another case where we are handling model being switched
                     event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
                         alias_or_id.clone(),
                     )));
                 } else {
+                    // AI: We are hitting this error, how can we understand the flow here? Can you
+                    // make a diagram? Let's walk through it step by step
+                    tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
                     event_bus.send(AppEvent::Error(ErrorEvent {
                         message: format!("Unknown model '{}'", alias_or_id),
                         severity: ErrorSeverity::Warning,
