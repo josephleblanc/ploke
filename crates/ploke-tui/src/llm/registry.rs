@@ -38,6 +38,7 @@
          ProviderConfig {
              id: id.to_string(),
              api_key: String::new(), // will be filled from env or user config
+             api_key_env: Some("OPENROUTER_API_KEY".to_string()),
              base_url: "https://openrouter.ai/api/v1".to_string(),
              model: model.to_string(),
              display_name: Some(model.to_string()),

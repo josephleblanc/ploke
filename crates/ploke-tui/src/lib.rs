@@ -90,19 +90,11 @@ pub async fn try_main() -> color_eyre::Result<()> {
     // AI: Defining our registry here
     config.registry = config.registry.with_defaults();
 
-    if let Ok(openrouter_api_key) = std::env::var("OPENROUTER_API_KEY") {
-        if let Some(default_provider) = config.registry.providers.iter_mut().find(|p| p.id == "default") {
-            default_provider.api_key = openrouter_api_key;
-        } else {
-            config.registry.providers.push(ProviderConfig {
-                id: "default".to_string(),
-                api_key: openrouter_api_key,
-                base_url: OPENROUTER_URL.to_string(),
-                model: DEFAULT_MODEL.to_string(),
-                display_name: Some("Default".to_string()),
-                provider_type: ProviderType::OpenRouter,
-                llm_params: Default::default(),
-            });
+    // Apply API keys from environment variables to all providers
+    for provider in &mut config.registry.providers {
+        let resolved_key = provider.resolve_api_key();
+        if !resolved_key.is_empty() {
+            provider.api_key = resolved_key;
         }
     }
     tracing::debug!("Registry after merge: {:#?}", config.registry);

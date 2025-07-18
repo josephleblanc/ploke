@@ -143,8 +143,11 @@ pub struct ProviderRegistry {
 pub struct ProviderConfig {
     /// Unique identifier for this provider configuration
     pub id: String,
-    /// The API key for the provider.
+    /// The API key for this specific provider
     pub api_key: String,
+    /// Optional: provider-specific environment variable name for API key
+    #[serde(default)]
+    pub api_key_env: Option<String>,
     /// The base URL for the API endpoint.
     /// For OpenRouter, this would be "https://openrouter.ai/api/v1".
     #[serde(default = "default_base_url")]
@@ -169,6 +172,46 @@ pub enum ProviderType {
     OpenAI,
     Anthropic,
     Custom,
+}
+
+impl ProviderConfig {
+    /// Resolve the actual API key to use, considering env vars and defaults
+    pub fn resolve_api_key(&self) -> String {
+        // 1. Check provider-specific env var if specified
+        if let Some(env_var) = &self.api_key_env {
+            if let Ok(key) = std::env::var(env_var) {
+                return key;
+            }
+        }
+        
+        // 2. Check provider-type specific env vars
+        match self.provider_type {
+            ProviderType::OpenRouter => {
+                if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+                    return key;
+                }
+            }
+            ProviderType::OpenAI => {
+                if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+                    return key;
+                }
+            }
+            ProviderType::Anthropic => {
+                if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+                    return key;
+                }
+            }
+            ProviderType::Custom => {
+                // Check generic env vars
+                if let Ok(key) = std::env::var("LLM_API_KEY") {
+                    return key;
+                }
+            }
+        }
+        
+        // 3. Fall back to the explicitly configured key
+        self.api_key.clone()
+    }
 }
 
 impl ProviderRegistry {
