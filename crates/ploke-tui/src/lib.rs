@@ -87,7 +87,6 @@ pub async fn try_main() -> color_eyre::Result<()> {
         .unwrap_or_else(|_| crate::user_config::Config::default());
 
     // Merge curated defaults with user overrides
-    // AI: Defining our registry here
     config.registry = config.registry.with_defaults();
 
     // Apply API keys from environment variables to all providers

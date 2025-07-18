@@ -183,7 +183,7 @@ impl ProviderConfig {
                 return key;
             }
         }
-        
+
         // 2. Check provider-type specific env vars
         match self.provider_type {
             ProviderType::OpenRouter => {
@@ -208,9 +208,13 @@ impl ProviderConfig {
                 }
             }
         }
-        
+
         // 3. Fall back to the explicitly configured key
         self.api_key.clone()
+    }
+    pub fn with_api_key(mut self) -> Self {
+        self.api_key = self.resolve_api_key();
+        self
     }
 }
 
@@ -289,7 +293,6 @@ impl ProviderRegistry {
     /// assert!(!registry.set_active("unknown"));
     /// ```
     // - LLM Generated, reviewed by - JL 25-07-17
-    // AI: Set active defined here
     pub fn set_active(&mut self, id_or_alias: &str) -> bool {
         let provider_id = self
             .aliases
@@ -297,7 +300,11 @@ impl ProviderRegistry {
             .map(|s| s.as_str())
             .unwrap_or(id_or_alias);
         if self.providers.iter().any(|p| p.id == *provider_id) {
-            tracing::info!("Changing provider from {} to {}", self.active_provider, provider_id);
+            tracing::info!(
+                "Changing provider from {} to {}",
+                self.active_provider,
+                provider_id
+            );
             self.active_provider = provider_id.to_string();
             true
         } else {
@@ -348,18 +355,19 @@ impl Default for ProviderRegistry {
                 llm_params: Some(crate::llm::LLMParameters {
                     ..Default::default()
                 }),
+                api_key_env: Some("OPENROUTER_API_KEY".to_string()),
             }],
             active_provider: "default".to_string(),
             aliases: std::collections::HashMap::new(),
         };
-        
+
         // Always include the curated defaults
         for (id, default) in crate::llm::registry::DEFAULT_MODELS.iter() {
             if !registry.providers.iter().any(|p| &p.id == id) {
                 registry.providers.push(default.clone());
             }
         }
-        
+
         registry
     }
 }
