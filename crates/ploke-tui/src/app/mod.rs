@@ -627,9 +627,10 @@ impl App {
         });
 
         let mut lines = vec!["Available models:".to_string()];
+        
         for pc in &cfg.provider_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
-            lines.push(format!("  {:<20}  {}", pc.id, display));
+            lines.push(format!("  {:<28}  {}", pc.id, display));
         }
 
         self.send_cmd(StateCommand::AddMessageImmediate {
