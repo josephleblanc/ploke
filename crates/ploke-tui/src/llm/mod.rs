@@ -24,18 +24,21 @@ use super::*;
 pub struct OpenAiRequest<'a> {
     model: &'a str,
     messages: Vec<RequestMessage<'a>>,
-    temperature: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
-    top_p: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
 }
 
 impl<'a> OpenAiRequest<'a> {
     pub fn new(
         model: &'a str,
         messages: Vec<RequestMessage<'a>>,
-        temperature: f32,
+        temperature: Option<f32>,
         max_tokens: Option<u32>,
-        top_p: f32,
+        top_p: Option<f32>,
     ) -> Self {
         Self {
             model,
@@ -304,9 +307,9 @@ async fn prepare_and_run_llm_call(
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
         messages,
-        temperature: params.temperature,
-        max_tokens: params.max_tokens,
-        top_p: params.top_p,
+        temperature: Some(params.temperature),
+        max_tokens: params.max_tokens.map(|v| v as u32),
+        top_p: Some(params.top_p),
     };
 
     tracing::info!("Inside prepare_and_run_llm_call num3 {:#?}", params);
@@ -714,8 +717,8 @@ impl Default for LLMParameters {
     fn default() -> Self {
         Self {
             model: default_model(),
-            temperature: default_temperature(),
-            top_p: default_top_p(),
+            temperature: None,
+            top_p: None,
             max_tokens: None,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
@@ -728,12 +731,6 @@ impl Default for LLMParameters {
     }
 }
 
-fn default_temperature() -> f32 {
-    0.7
-}
-fn default_top_p() -> f32 {
-    0.9
-}
 fn default_true() -> bool {
     true
 }
