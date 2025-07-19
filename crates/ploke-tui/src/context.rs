@@ -17,7 +17,9 @@ You are a highly skilled software engineer, specializing in the Rust programming
 
 You will be asked to provide some assistance in collaborating with the user.
 
-At all times it is **VERY IMPORTANT** that you **NEVER** lie or make things up. Instead, tell the user you are uncertain and request clarification or more information.
+At all times it is **VERY IMPORTANT** that you **NEVER** lie or make things up.
+Instead, tell the user you are uncertain and request clarification or more
+information.
 
 Here are some more instructions regarding communication:
 
@@ -29,15 +31,23 @@ Here are some more instructions regarding communication:
 "#;
 static PROMPT_CODE: &str = r#"
 
-Next, you will be provided with some of the user's code, that has been retrieved to provide helpful context for you to answer their questions. This context will be provided within code tags like these:
+Next, you will be provided with some of the user's code, that has been retrieved
+to provide helpful context for you to answer their questions. This context will
+be provided within code tags like these:
 
 <code="path/to/file.rs" #132:486>Code goes here</code>
 
-Where the "path/to/file.rs" is the absolute path to the file and the #132:486 are the line numbers, inclusive.
+Where the "path/to/file.rs" is the absolute path to the file and the #132:486
+are the line numbers, inclusive.
 
-What follows is the provided code snippets for you to use as reference, and will be shown in a header (like # Header) and with subheaders (like ## subheader). Follow the code section will be the User's query, delineated by a header.
+What follows is the provided code snippets for you to use as reference, and will
+be shown in a header (like # Header) and with subheaders (like ## subheader).
+Follow the code section will be the User's query, delineated by a header.
 
-After the user query, there may be a response from another collaborator marked with a header (like # Assistant or # Collaborator). These headers may alternate and contain subheaders with the whole text of their messages so far, summaries of the conversation, or other contextual information about the code base.
+After the user query, there may be a response from another collaborator marked
+with a header (like # Assistant or # Collaborator). These headers may alternate
+and contain subheaders with the whole text of their messages so far, summaries
+of the conversation, or other contextual information about the code base.
 
 # Code
 
@@ -142,7 +152,7 @@ impl ContextManager {
             let messages = self.msg_map.remove_entry(&id);
             tracing::debug!(
                 "trying to send context. after removing entries, currents status is
-                code_map contains_key: {}, msg_map contains_key: {}, 
+                code_map contains_key: {}, msg_map contains_key: {},
                 parent_id: {}",
                 self.code_map.contains_key(&id),
                 self.msg_map.contains_key(&id),

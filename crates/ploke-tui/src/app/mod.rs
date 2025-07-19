@@ -1,5 +1,4 @@
 use crate::{app_state::ListNavigation, chat_history::MessageKind, user_config::CommandStyle};
-
 pub mod message_item;
 
 use super::*;
@@ -7,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
+use crossterm::cursor::{Hide, Show};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use message_item::render_messages;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -66,7 +66,10 @@ pub struct App {
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
     active_model_indicator: Option<(String, Instant)>,
-    active_model: String,
+    active_model_id: String,
+    input_cursor_row: u16,
+    input_cursor_col: u16,
+    is_trailing_whitespace: bool,
 }
 
 impl App {
@@ -76,7 +79,7 @@ impl App {
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
-        active_model: String,
+        active_model_id: String,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -94,7 +97,10 @@ impl App {
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
             active_model_indicator: None,
-            active_model,
+            active_model_id,
+            input_cursor_row: 0,
+            input_cursor_col: 0,
+            is_trailing_whitespace: false,
         }
     }
 
@@ -107,7 +113,6 @@ impl App {
 
     /// Run the application's main loop.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        terminal.show_cursor()?;
         self.running = true;
         let mut crossterm_events = crossterm::event::EventStream::new();
 
@@ -152,6 +157,10 @@ impl App {
 
             // 2. Draw the UI with the prepared data.
             terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
+            // match self.mode {
+            //     Mode::Insert | Mode::Command => {crossterm::execute!(std::io::stdout(), Show)?;},
+            //     Mode::Normal => {crossterm::execute!(std::io::stdout(), Hide)?;},
+            // };
 
             // 3. Handle all incoming events (user input, state changes).
             tokio::select! {
@@ -226,12 +235,12 @@ impl App {
                                 system::SystemEvent::ModelSwitched(new_model)=>{
                                 tracing::debug!("StateCommand::ModelSwitched {}", new_model);
                                 self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("model changed from {} to {}",self.active_model, new_model),
+                                    msg: format!("model changed from {} to {}",self.active_model_id, new_model),
                                     kind: MessageKind::SysInfo,
                                     new_msg_id: Uuid::new_v4(),
                                 });
                                     self.active_model_indicator = Some((new_model.clone(), Instant::now()));
-                                    self.active_model = new_model;
+                                    self.active_model_id = new_model;
                                 },
                                 other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
@@ -251,7 +260,7 @@ impl App {
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
         // Handle model indicator animation
         let show_indicator = if let Some((_, start_time)) = &self.active_model_indicator {
-            start_time.elapsed().as_secs() < 3
+            start_time.elapsed().as_millis() < 3000
         } else {
             false
         };
@@ -259,6 +268,7 @@ impl App {
         // ---------- Define Layout ----------
         let mut proto_layout = if self.indexing_state.is_some() {
             vec![
+                Constraint::Length(1),
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
@@ -266,6 +276,7 @@ impl App {
             ]
         } else {
             vec![
+                Constraint::Length(1),
                 Constraint::Percentage(80),
                 Constraint::Percentage(20),
                 Constraint::Length(1),
@@ -281,7 +292,12 @@ impl App {
             .constraints(proto_layout)
             .split(frame.area());
 
-        let status_layout = layout_statusline(5, main_layout[2]);
+        let model_info_area = main_layout[0];
+        let chat_area = main_layout[1];
+        let input_area = main_layout[2];
+        let status_area = main_layout[3];
+
+        let status_line_area = layout_statusline(5, status_area);
 
         // ---------- Scroll State -------------
         // let convo_length = convo.height;
@@ -291,42 +307,7 @@ impl App {
         // Render message tree
         let conversation_width = main_layout[0].width.saturating_sub(6);
 
-        #[cfg(feature = "custom_list")]
-        {
-            // AI: We are using the new method here, and are using the cfg flag `custom_list` in
-            // our default cfg flags in the `ploke-tui/Cargo.toml`
-            render_messages(self, frame, path, conversation_width, main_layout[0]);
-        }
-        #[cfg(not(feature = "custom_list"))]
-        {
-            // Wrap text and create ListItems
-            let messages: Vec<ListItem> = path
-                .iter()
-                .map(|msg| {
-                    let wrapped_text: String =
-                        textwrap::fill(&msg.content, conversation_width as usize);
-                    match msg.kind {
-                        MessageKind::User => ListItem::new(wrapped_text).blue(),
-                        MessageKind::Assistant => ListItem::new(wrapped_text).green(),
-                        MessageKind::System => ListItem::new(wrapped_text).gray(),
-                        MessageKind::Tool => todo!(),
-                        MessageKind::SysInfo => ListItem::new(wrapped_text).magenta(),
-                    }
-                    // ListItem::new(wrapped_text)
-                })
-                .collect();
-
-            let list_len = messages.len();
-            let list = List::new(messages)
-                .block(Block::bordered().title(format!(" Conversation: {} ", self.active_model)))
-                .highlight_symbol(">>");
-            // .repeat_highlight_symbol(true);
-
-            let list = match self.mode {
-                Mode::Normal => list.highlight_style(Style::new().bg(Color::DarkGray)),
-                _ => list,
-            };
-        }
+        render_messages(self, frame, path, conversation_width, chat_area);
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
@@ -337,9 +318,16 @@ impl App {
         // Guess at the amount of scroll needed:
 
         // ---------- Text Wrap ----------------
-        let input_width = main_layout[1].width.saturating_sub(2);
+        let input_width = input_area.width.saturating_sub(2);
         let input_wrapped = textwrap::wrap(self.input_buffer.as_str(), input_width as usize);
         self.input_scrollstate = self.input_scrollstate.content_length(input_wrapped.len());
+
+        // -- Get cursor position
+        if !self.is_trailing_whitespace {
+            self.input_cursor_col = input_wrapped.last().map(|line| line.len()).unwrap_or(0) as u16;
+        }
+        self.input_cursor_row = (input_wrapped.len().saturating_sub(1)) as u16;
+        // --
 
         let input_text = Text::from_iter(input_wrapped);
         let input = Paragraph::new(input_text)
@@ -370,28 +358,13 @@ impl App {
         let node_status = Paragraph::new(format!("Node: {}", truncate_uuid(current_id)))
             .block(Block::default().borders(Borders::NONE))
             .style(Style::new().fg(Color::Blue));
-        #[cfg(not(feature = "custom_list"))]
-        {
-            let list_len = Paragraph::new(format!("List Len: {}", list_len));
-            let list_selected = Paragraph::new(format!("Selected: {:?}", self.list.selected()));
-        }
+
         // -- Handle Scrollbars --
         // TODO: how to make this work?
 
         // ---------- Render widgets in layout ----------
         // -- top level
-        #[cfg(not(feature = "custom_list"))]
-        {
-            frame.render_stateful_widget(list, main_layout[0], &mut self.list);
-            frame.render_stateful_widget(
-                Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .begin_symbol(Some("↑"))
-                    .end_symbol(Some("↓")),
-                main_layout[0],
-                &mut self.convo_scrollstate,
-            );
-        }
-        frame.render_widget(input, main_layout[1]);
+        frame.render_widget(input, input_area);
         // frame.render_stateful_widget(
         //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
         //         .begin_symbol(Some("↑"))
@@ -401,21 +374,32 @@ impl App {
         // );
 
         // -- first nested
-        frame.render_widget(status_bar, status_layout[0]);
-        frame.render_widget(node_status, status_layout[1]);
-        #[cfg(not(feature = "custom_list"))]
-        { frame.render_widget(list_len, status_layout[2]);
-        frame.render_widget(list_selected, status_layout[3]); }
+        frame.render_widget(status_bar, status_line_area[0]);
+        frame.render_widget(node_status, status_line_area[1]);
 
         // -- model indicator
         if show_indicator {
             if let Some((model_name, _)) = &self.active_model_indicator {
                 let indicator = Paragraph::new(format!(" Model: {} ", model_name))
-                    .style(Style::new().fg(Color::Black).bg(Color::Yellow))
+                    .style(Style::new().fg(Color::White).bg(Color::Yellow))
                     .alignment(ratatui::layout::Alignment::Center);
 
-                let indicator_area = main_layout.last().unwrap();
-                frame.render_widget(indicator, *indicator_area);
+                frame.render_widget(indicator, model_info_area);
+            }
+        }
+
+        match self.mode {
+            Mode::Insert | Mode::Command => {
+                // Position cursor at end of input buffer
+                frame.set_cursor_position((
+                    input_area.x + 1 + self.input_cursor_col,
+                    input_area.y + 1 + self.input_cursor_row,
+                ));
+            }
+            Mode::Normal => {
+                // Hide cursor in normal mode
+                // - By not calling `set_cursor_position`, the cursor is automatically hidden
+                // NOTE: Maybe do something with the cursor in normal mode?
             }
         }
     }
@@ -518,10 +502,18 @@ impl App {
                     self.input_buffer = "/".to_string();
                 } else {
                     self.input_buffer.push(c);
+                    self.is_trailing_whitespace =
+                        self.input_buffer.chars().last().is_some_and(|c| c == ' ');
+                    if self.is_trailing_whitespace {
+                        self.input_cursor_col += 1;
+                    }
                 }
             }
             KeyCode::Backspace => {
-                self.input_buffer.pop();
+                let last_char = self.input_buffer.pop();
+                self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
+                self.is_trailing_whitespace =
+                    self.input_buffer.chars().last().is_some_and(|c| c == ' ');
             }
             // FIX: testing
             KeyCode::Up => {
