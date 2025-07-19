@@ -18,12 +18,10 @@ fn calculate_message_height(content: &str, width: u16) -> u16 {
     wrapped.len() as u16
 }
 
-// AI:
 // This function is causing us problems.
 // Currently it seems to work at first, but the conversatino window runs into the user input box
 // and when it reaches the bottom of the screen it crashes the program.
 // The goal is for the application to have something like this:
-// AI:
 // ____________________________
 // |                          |
 // | conversation history     |
@@ -39,7 +37,6 @@ fn calculate_message_height(content: &str, width: u16) -> u16 {
 // |                          |
 // |                          |
 // |__________________________|
-// AI:
 // The conversation history should stay within its own box and not run into the user input below,
 // And when a new message is added to the conversation that would cause the history to run over
 // into the user input, instead it scrolls down to keep the most recent messages in mind.
@@ -53,21 +50,36 @@ fn calculate_message_height(content: &str, width: u16) -> u16 {
 // Let's try to figure out the correct implementation here, and write some tests that will help
 // verify and provide logging so we have observability of the issues here. Try to use the
 // `instrument` macro where possible to make the logging less intrusive to the code flow.
-// AI?
 // ---------- helpers ----------------------------------------------------------
 
-#[instrument(skip(content), level="trace")]
+#[instrument(skip(content), level = "trace")]
 fn calc_height(content: &str, width: u16) -> u16 {
     textwrap::wrap(content, width as usize).len() as u16
 }
 
 /// Returns `(lines_consumed, Vec<RenderedLine>)`
-#[instrument(skip(content), level="trace")]
-fn render_one_message(content: &str, width: u16, style: Style) -> (u16, Vec<String>) {
-    let lines: Vec<String> = textwrap::wrap(content, width as usize)
+#[instrument(skip(content))]
+fn render_one_message(
+    content: &str,
+    width: u16,
+    style: Style,
+    selected: bool,
+) -> (u16, Vec<Line<'_>>) {
+    let wrapped = textwrap::wrap(content, width.saturating_sub(2) as usize);
+    let bar = Span::styled("│", style.fg(Color::DarkGray));
+
+    let lines: Vec<Line> = wrapped
         .into_iter()
-        .map(|s| s.to_string())
+        .map(|s| {
+            let mut spans = Vec::with_capacity(2);
+            if selected {
+                spans.push(bar.clone());
+            }
+            spans.push(Span::styled(s, style));
+            Line::from(spans)
+        })
         .collect();
+
     (lines.len() as u16, lines)
 }
 
@@ -86,7 +98,7 @@ pub fn render_messages(
     #[derive(Debug)]
     struct LineGroup {
         height: u16,
-        lines: Vec<String>,
+        lines: Vec<Line<'static>>,
         style: Style,
     }
 
@@ -107,7 +119,7 @@ pub fn render_messages(
             base_style
         };
 
-        let (h, lines) = render_one_message(&msg.content, conversation_width, style);
+        let (h, lines) = render_one_message(&msg.content, conversation_width, style, is_selected);
         groups.push(LineGroup {
             height: h,
             lines,
