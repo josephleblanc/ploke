@@ -57,25 +57,25 @@ fn calc_height(content: &str, width: u16) -> u16 {
     textwrap::wrap(content, width as usize).len() as u16
 }
 
-/// Returns `(lines_consumed, Vec<RenderedLine>)`
+/// Returns `(lines_consumed, Vec<Line<'a>>)` borrowing the wrapped text
 #[instrument(skip(content))]
-fn render_one_message(
-    content: &str,
+fn render_one_message<'a>(
+    content: &'a str,
     width: u16,
     style: Style,
     selected: bool,
-) -> (u16, Vec<Line<'_>>) {
+) -> (u16, Vec<Line<'a>>) {
     let wrapped = textwrap::wrap(content, width.saturating_sub(2) as usize);
     let bar = Span::styled("│", style.fg(Color::DarkGray));
 
-    let lines: Vec<Line> = wrapped
+    let lines: Vec<Line<'a>> = wrapped
         .into_iter()
         .map(|s| {
             let mut spans = Vec::with_capacity(2);
             if selected {
                 spans.push(bar.clone());
             }
-            spans.push(Span::styled(s, style));
+            spans.push(Span::raw(s));
             Line::from(spans)
         })
         .collect();
