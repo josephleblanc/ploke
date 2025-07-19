@@ -620,6 +620,11 @@ impl App {
         });
     }
 
+    /// Lists all registered provider configurations in the chat window.
+    ///
+    /// Reads the current provider registry from shared state (blocking only the
+    /// calling thread) and emits a nicely-formatted list of available models,
+    /// including both their short alias and the full model name.
     fn list_models(&self) {
         let cfg = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
