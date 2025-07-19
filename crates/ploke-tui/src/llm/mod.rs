@@ -2,7 +2,7 @@ pub mod registry;
 
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, time::Duration};
+use std::{default, sync::Arc, time::Duration};
 use tokio::sync::{
     mpsc::{self, error::TrySendError},
     oneshot,
@@ -579,10 +579,12 @@ impl From<LlmError> for ploke_error::Error {
     }
 }
 
+use crate::user_config::default_model;
 /// Parameters for controlling LLM generation behavior
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMParameters {
     /// LLM model identifier (e.g., "gpt-4-turbo", "claude-3-opus")
+    #[serde(default = "default_model" )]
     pub model: String,
 
     /// Sampling temperature (0.0 = deterministic, 1.0 = creative)
@@ -711,7 +713,7 @@ pub struct PerformanceMetrics {
 impl Default for LLMParameters {
     fn default() -> Self {
         Self {
-            model: String::new(),
+            model: default_model(),
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: None,
