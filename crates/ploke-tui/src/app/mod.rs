@@ -639,6 +639,29 @@ impl App {
         });
     }
 
+    fn list_models(&self) {
+        // Access the merged provider registry from AppState
+        let registry = &self.state.config.registry;
+
+        let mut lines = vec!["Available models:".to_string()];
+
+        for cfg in &registry.providers {
+            let active_marker = if cfg.id == registry.active_provider {
+                " (active)"
+            } else {
+                ""
+            };
+            lines.push(format!("- {}{}", cfg.id, active_marker));
+        }
+
+        let msg = lines.join("\n");
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg,
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+    }
+
     fn handle_normal_mode(&mut self, key: KeyEvent) {
         use chat_history::NavigationDirection::{Next, Previous};
 
