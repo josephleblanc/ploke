@@ -33,7 +33,7 @@ use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
-use user_config::{ProviderConfig, ProviderType, DEFAULT_MODEL, OPENROUTER_URL};
+use user_config::{default_model, ProviderConfig, ProviderType, OPENROUTER_URL};
 use utils::layout::layout_statusline;
 
 use std::sync::Arc;
@@ -176,7 +176,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
     let terminal = ratatui::init();
-    let app = App::new(command_style, state, cmd_tx, &event_bus, DEFAULT_MODEL.to_string());
+    let app = App::new(command_style, state, cmd_tx, &event_bus, default_model());
     let result = app.run(terminal).await;
     ratatui::restore();
     result

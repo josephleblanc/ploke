@@ -12,17 +12,17 @@
  pub static DEFAULT_MODELS: Lazy<HashMap<String, ProviderConfig>> = Lazy::new(|| {
      let mut m = HashMap::new();
 
-     insert_openrouter(&mut m, "gpt-4o", "openai/gpt-4o", 0.7);
-     insert_openrouter(&mut m, "claude-3-5-sonnet", "anthropic/claude-3.5-sonnet", 0.7);
-     insert_openrouter(&mut m, "mistral-7b-instruct", "mistralai/mistral-7b-instruct", 0.8);
-     insert_openrouter(&mut m, "qwq-32b-free", "qwen/qwq-32b:free", 0.7);
-     insert_openrouter(&mut m, "deepseek-chat", "deepseek/deepseek-chat", 0.7);
-     insert_openrouter(&mut m, "deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324:free", 0.7);
-     insert_openrouter(&mut m, "deepseek-r1-0528:free", "deepseek/deepseek-r1-0528:free", 0.7);
-     insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", 0.6);
-     insert_openrouter(&mut m, "kimi-k2", "moonshotai/kimi-k2", 0.6);
-     insert_openrouter(&mut m, "gemini-flash", "google/gemini-flash-1.5", 0.7);
-     insert_openrouter(&mut m, "kimi-dev-72b:free", "moonshotai/kimi-dev-72b:free", 0.7);
+     insert_openrouter(&mut m, "gpt-4o", "openai/gpt-4o", None);
+     insert_openrouter(&mut m, "claude-3-5-sonnet", "anthropic/claude-3.5-sonnet", None);
+     insert_openrouter(&mut m, "mistral-7b-instruct", "mistralai/mistral-7b-instruct", None);
+     insert_openrouter(&mut m, "qwq-32b-free", "qwen/qwq-32b:free", None);
+     insert_openrouter(&mut m, "deepseek-chat", "deepseek/deepseek-chat", None);
+     insert_openrouter(&mut m, "deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3-0324:free", None);
+     insert_openrouter(&mut m, "deepseek-r1-0528:free", "deepseek/deepseek-r1-0528:free", None);
+     insert_openrouter(&mut m, "kimi-k2:free", "moonshotai/kimi-k2:free", None);
+     insert_openrouter(&mut m, "kimi-k2", "moonshotai/kimi-k2", None);
+     insert_openrouter(&mut m, "gemini-flash", "google/gemini-flash-1.5", None);
+     insert_openrouter(&mut m, "kimi-dev-72b:free", "moonshotai/kimi-dev-72b:free", None);
 
      m
  });
@@ -32,7 +32,7 @@
      map: &mut HashMap<String, ProviderConfig>,
      id: &str,
      model: &str,
-     temperature: f32,
+     temperature: Option< f32 >,
  ) {
      map.insert(
          id.to_string(),

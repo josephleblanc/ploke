@@ -307,9 +307,9 @@ async fn prepare_and_run_llm_call(
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
         messages,
-        temperature: Some(params.temperature),
-        max_tokens: params.max_tokens.map(|v| v as u32),
-        top_p: Some(params.top_p),
+        temperature: params.temperature,
+        max_tokens: params.max_tokens,
+        top_p: params.top_p,
     };
 
     tracing::info!("Inside prepare_and_run_llm_call num3 {:#?}", params);
@@ -584,7 +584,7 @@ impl From<LlmError> for ploke_error::Error {
 
 use crate::user_config::default_model;
 /// Parameters for controlling LLM generation behavior
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LLMParameters {
     /// LLM model identifier (e.g., "gpt-4-turbo", "claude-3-opus")
     #[serde(default = "default_model" )]
@@ -604,11 +604,11 @@ pub struct LLMParameters {
 
     /// Presence penalty (-2.0 to 2.0)
     #[serde(default)]
-    pub presence_penalty: f32,
+    pub presence_penalty: Option< f32 >,
 
     /// Frequency penalty (-2.0 to 2.0)
     #[serde(default)]
-    pub frequency_penalty: f32,
+    pub frequency_penalty: Option< f32 >,
 
     /// Stop sequences to halt generation
     #[serde(default)]
@@ -713,24 +713,24 @@ pub struct PerformanceMetrics {
     pub queue_time: Duration,
 }
 
-// --- Default Implementations ---
-impl Default for LLMParameters {
-    fn default() -> Self {
-        Self {
-            model: default_model(),
-            temperature: None,
-            top_p: None,
-            max_tokens: None,
-            presence_penalty: 0.0,
-            frequency_penalty: 0.0,
-            stop_sequences: vec![],
-            parallel_tool_calls: true,
-            response_format: Default::default(),
-            safety_settings: Default::default(),
-            system_prompt: None,
-        }
-    }
-}
+// // --- Default Implementations ---
+// impl Default for LLMParameters {
+//     fn default() -> Self {
+//         Self {
+//             model: default_model(),
+//             temperature: None,
+//             top_p: None,
+//             max_tokens: None,
+//             presence_penalty: None,
+//             frequency_penalty: None,
+//             stop_sequences: vec![],
+//             parallel_tool_calls: true,
+//             response_format: Default::default(),
+//             safety_settings: Default::default(),
+//             system_prompt: None,
+//         }
+//     }
+// }
 
 fn default_true() -> bool {
     true

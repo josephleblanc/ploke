@@ -49,7 +49,6 @@ use serde::Deserialize;
 use crate::llm::{self, RequestMessage};
 
 pub const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1";
-pub const DEFAULT_MODEL: &str = "kimi-k2:free";
 
 #[derive(Debug, Clone, Deserialize, Copy, PartialEq, Eq, Default)]
 pub enum CommandStyle {
@@ -332,8 +331,8 @@ impl ProviderRegistry {
     }
 }
 
-fn default_active_provider() -> String {
-    "default".to_string()
+pub fn default_active_provider() -> String {
+    "kimi-k2".to_string()
 }
 
 fn default_base_url() -> String {
@@ -344,8 +343,12 @@ fn chat_url() -> String {
     "https://openrouter.ai/api/v1/chat/completions".to_string()
 }
 
-fn default_model() -> String {
-    "kimi-k2:free".to_string()
+pub fn default_model_id() -> String {
+    "kimi-k2".to_string()
+}
+
+pub fn default_model() -> String {
+    "moonshotai/kimi-k2".to_string()
 }
 
 // Add a default implementation for when the config file is missing
@@ -353,7 +356,7 @@ impl Default for ProviderRegistry {
     fn default() -> Self {
         let mut registry = Self {
             providers: vec![ProviderConfig {
-                id: "default".to_string(),
+                id: default_model_id(),
                 api_key: String::new(),
                 base_url: default_base_url(),
                 model: default_model(),
@@ -364,7 +367,7 @@ impl Default for ProviderRegistry {
                 }),
                 api_key_env: Some("OPENROUTER_API_KEY".to_string()),
             }],
-            active_provider: "default".to_string(),
+            active_provider: default_active_provider(),
             aliases: std::collections::HashMap::new(),
         };
 

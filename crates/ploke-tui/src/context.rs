@@ -137,10 +137,7 @@ impl ContextManager {
     }
 
     async fn try_construct_and_send_context(&mut self, id: Uuid) {
-        if 
-            self.code_map.contains_key(&id) &&
-            self.msg_map.contains_key(&id)
-         {
+        if self.code_map.contains_key(&id) && self.msg_map.contains_key(&id) {
             let context = self.code_map.remove_entry(&id);
             let messages = self.msg_map.remove_entry(&id);
             tracing::debug!(
@@ -151,7 +148,8 @@ impl ContextManager {
                 self.msg_map.contains_key(&id),
                 id
             );
-            self.send_prompt_to_llm(context.unwrap().1, messages.unwrap().1, id).await;
+            self.send_prompt_to_llm(context.unwrap().1, messages.unwrap().1, id)
+                .await;
         } else {
             // Not all components ready yet, keep them stored
             tracing::debug!(
@@ -203,6 +201,7 @@ impl ContextManager {
         let msgs = messages
             .into_iter()
             .filter(|m| m.kind == MessageKind::User || m.kind == MessageKind::Assistant)
+            .inspect(|m| tracing::error!("m.content.is_empty() = {}", m.content.is_empty()))
             .map(|msg| (msg.kind, msg.content));
         base.extend(msgs);
 

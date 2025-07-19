@@ -44,7 +44,7 @@ export OPENROUTER_API_KEY="your_key_here"
 ```
 
 ##### ❗ WARNING ❗  
-Under development, this may crash if it tries to parse a crate with an error, or in certain known or unknown limitations. 
+Under development, this may crash if it tries to parse a crate with an error, or in certain [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md) or unknown limitations.
 
 Currently, you can demo the project after using `cargo run` using following command within the terminal user interface. Note that we use vim-like bindings by default right now, so you can enter "Insert Mode" by pressing `i`, then type
 

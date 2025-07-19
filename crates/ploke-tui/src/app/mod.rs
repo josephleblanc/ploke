@@ -484,7 +484,7 @@ impl App {
 
             // 2. Shared State Change: Send a command
             KeyCode::Enter => {
-                if !self.input_buffer.is_empty() {
+                if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
                     let new_msg_id = Uuid::new_v4();
                     self.send_cmd(StateCommand::AddUserMessage {
                         // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
