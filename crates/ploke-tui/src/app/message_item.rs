@@ -93,19 +93,42 @@ pub fn render_messages(
     conversation_area: Rect,
 ) {
     // ------------------------------------------------------------------
-    // 1. Build a vector of (height, lines, style) for every message
+    // 1. Compute per-message height and total virtual height
     // ------------------------------------------------------------------
-    #[derive(Debug)]
-    struct LineGroup<'a> {
-        height: u16,
-        lines: Vec<Line<'a>>,
-        style: Style,
-    }
-
-    let mut groups: Vec<LineGroup> = Vec::with_capacity(renderable_msg.len());
-
+    let mut heights: Vec<u16> = Vec::with_capacity(renderable_msg.len());
+    let mut total_height = 0u16;
     for msg in renderable_msg {
-        let is_selected = Some(groups.len()) == app.list.selected();
+        let h = calc_height(&msg.content, conversation_width);
+        heights.push(h);
+        total_height += h;
+    }
+    let viewport_height = conversation_area.height;
+
+    // ------------------------------------------------------------------
+    // 2. Scroll so the selected message is in view
+    // ------------------------------------------------------------------
+    let selected_index = app.list.selected().unwrap_or(0);
+
+    let mut offset_y = 0u16;
+    for (idx, &h) in heights.iter().enumerate() {
+        if idx == selected_index {
+            let half = viewport_height / 2;
+            offset_y = offset_y.saturating_sub(half);
+            break;
+        }
+        offset_y += h;
+    }
+    offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
+
+    // ------------------------------------------------------------------
+    // 3. Render visible slice directly
+    // ------------------------------------------------------------------
+    let mut y_screen = 0u16;
+    let mut y_virtual = 0u16;
+
+    for (idx, msg) in renderable_msg.iter().enumerate() {
+        let height = heights[idx];
+        let is_selected = idx == selected_index;
         let base_style = match msg.kind {
             MessageKind::User => Style::new().blue(),
             MessageKind::Assistant => Style::new().green(),
@@ -113,71 +136,35 @@ pub fn render_messages(
             MessageKind::SysInfo => Style::new().magenta(),
             _ => Style::new().white(),
         };
-        let style = base_style;
 
-        let (h, lines) = render_one_message(&msg.content, conversation_width, style, is_selected);
-        groups.push(LineGroup {
-            height: h,
-            lines,
-            style,
-        });
-    }
-
-    // ------------------------------------------------------------------
-    // 2. Compute virtual height of the entire buffer
-    // ------------------------------------------------------------------
-    let total_height: u16 = groups.iter().map(|g| g.height).sum();
-    let viewport_height = conversation_area.height;
-
-    // ------------------------------------------------------------------
-    // 3. Work out the scroll offset so that the *selected* message
-    //    is roughly in the middle of the viewport (unless we are near top/bottom)
-    // ------------------------------------------------------------------
-    let selected_index = app.list.selected().unwrap_or(0);
-
-    let mut offset_y = 0u16;
-    for (idx, g) in groups.iter().enumerate() {
-        if idx == selected_index {
-            let half = viewport_height / 2;
-            offset_y = offset_y.saturating_sub(half);
-            break;
+        if y_virtual + height <= offset_y {
+            y_virtual += height;
+            continue;
         }
-        offset_y = offset_y.saturating_add(g.height);
-    }
 
-    // clamp between 0 and (total_height - viewport_height) or 0 if smaller
-    let max_offset = total_height.saturating_sub(viewport_height);
-    let offset_y = offset_y.min(max_offset);
+        let wrapped = textwrap::wrap(&msg.content, conversation_width as usize);
+        let bar = Span::styled("│", base_style.fg(Color::White));
 
-    // ------------------------------------------------------------------
-    // 4. Render into the fixed conversation_area (iterator version)
-    // ------------------------------------------------------------------
-    let mut y_screen = 0u16;
+        for (line_idx, line) in wrapped.iter().enumerate() {
+            let mut spans = Vec::with_capacity(2);
+            if is_selected {
+                spans.push(bar.clone());
+            }
+            spans.push(Span::raw(line.as_ref()));
+            let para = Paragraph::new(Line::from(spans)).style(base_style);
 
-    // Build one flattened iterator over the visible lines
-    let all_lines = groups.iter().flat_map(|group| {
-        group
-            .lines
-            .iter()
-            .map(move |line| (line, &group.style))
-    });
-
-    // Skip the invisible lines at the top
-    let visible_lines = all_lines.skip(offset_y as usize);
-
-    // Render only what fits in the viewport
-    for (line, style) in visible_lines.take(viewport_height as usize) {
-        let para = Paragraph::new(line.to_owned()).style(*style);
-        let area = Rect::new(
-            conversation_area.x + 1,
-            conversation_area.y + y_screen,
-            conversation_width,
-            1,
-        );
-        frame.render_widget(para, area);
-        y_screen += 1;
-        if y_screen >= viewport_height {
-            break;
+            let area = Rect::new(
+                conversation_area.x + 1,
+                conversation_area.y + y_screen,
+                conversation_width,
+                1,
+            );
+            frame.render_widget(para, area);
+            y_screen += 1;
+            if y_screen >= viewport_height {
+                return;
+            }
         }
+        y_virtual += height;
     }
 }
