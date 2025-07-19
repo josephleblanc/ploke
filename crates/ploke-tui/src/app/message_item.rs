@@ -18,40 +18,7 @@ fn calculate_message_height(content: &str, width: u16) -> u16 {
     wrapped.len() as u16
 }
 
-// This function is causing us problems.
-// Currently it seems to work at first, but the conversatino window runs into the user input box
-// and when it reaches the bottom of the screen it crashes the program.
-// The goal is for the application to have something like this:
-// ____________________________
-// |                          |
-// | conversation history     |
-// |                          |
-// |                          |
-// |                          |
-// |                          |
-// |                          |
-// |                          |
-// |                          |
-// |--------------------------|
-// | user intput              |
-// |                          |
-// |                          |
-// |__________________________|
-// The conversation history should stay within its own box and not run into the user input below,
-// And when a new message is added to the conversation that would cause the history to run over
-// into the user input, instead it scrolls down to keep the most recent messages in mind.
-// In normal mode the the user should be able to navigate through the conversation history with the
-// arrow keys and the `j` and `k` keys like in vim, where each navigation move should select the
-// next message - not just the next line.
-// Suppose the user has been chatting with the AI for some time and the conversation history is
-// long, maybe 100 times the length of the window for the conversation history, then as the user
-// selects messages by pressing `Up` or `k`, then they should begin scrolling through the earlier
-// messages once they at the top of the conversation history window.
-// Let's try to figure out the correct implementation here, and write some tests that will help
-// verify and provide logging so we have observability of the issues here. Try to use the
-// `instrument` macro where possible to make the logging less intrusive to the code flow.
 // ---------- helpers ----------------------------------------------------------
-
 #[instrument(skip(content), level = "trace")]
 fn calc_height(content: &str, width: u16) -> u16 {
     textwrap::wrap(content, width as usize).len() as u16
@@ -82,7 +49,6 @@ fn render_one_message<'a>(
 
     (lines.len() as u16, lines)
 }
-
 // ---------- main replacement -------------------------------------------------
 #[instrument(skip(app, frame, renderable_msg), level = "trace")]
 pub fn render_messages(
