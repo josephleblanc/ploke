@@ -155,6 +155,9 @@ pub fn render_messages(
     let mut y_virtual = 0u16; // y in the virtual buffer
     let mut y_screen = 0u16; // y in the actual viewport
 
+    // AI:
+    // Could we use iterators and flatten this so we don't need to use the clone?
+    // Perhaps by using Itertools AI?
     for group in &groups {
         if y_virtual + group.height > offset_y {
             // at least part of this group is visible
