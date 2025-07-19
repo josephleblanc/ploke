@@ -594,9 +594,7 @@ impl App {
             "check api" => {
                 self.check_api_keys();
             }
-            // Hey I am thinking about working on adding a `/model list` command.
-            // What I'd like to do is show all of the models which are registered in 
-            // the `registry.rs` file. Can you show me an implementation AI?
+            "model list" => self.list_models(),
             cmd if cmd.starts_with("model ") => {
                 let alias = cmd.trim_start_matches("model ").trim();
                 tracing::debug!("StateCommand::SwitchModel {}", alias);
