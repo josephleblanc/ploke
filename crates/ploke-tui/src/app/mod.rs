@@ -293,8 +293,6 @@ impl App {
 
         #[cfg(feature = "custom_list")]
         {
-            // AI: We are using the new method here, and are using the cfg flag `custom_list` in
-            // our default cfg flags in the `ploke-tui/Cargo.toml`
             render_messages(self, frame, path, conversation_width, main_layout[0]);
         }
         #[cfg(not(feature = "custom_list"))]

@@ -66,7 +66,7 @@ fn render_one_message<'a>(
     selected: bool,
 ) -> (u16, Vec<Line<'a>>) {
     let wrapped = textwrap::wrap(content, width.saturating_sub(2) as usize);
-    let bar = Span::styled("│", style.fg(Color::DarkGray));
+    let bar = Span::styled("│", style.fg(Color::White));
 
     let lines: Vec<Line<'a>> = wrapped
         .into_iter()
@@ -167,7 +167,7 @@ pub fn render_messages(
 
     // Render only what fits in the viewport
     for (line, style) in visible_lines.take(viewport_height as usize) {
-        let para = Paragraph::new(*line).style(*style);
+        let para = Paragraph::new(line.to_owned()).style(*style);
         let area = Rect::new(
             conversation_area.x + 1,
             conversation_area.y + y_screen,
