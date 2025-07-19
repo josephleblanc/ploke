@@ -590,15 +590,16 @@ pub struct LLMParameters {
     #[serde(default = "default_model" )]
     pub model: String,
 
-    /// Sampling temperature (0.0 = deterministic, 1.0 = creative)
-    #[serde(default = "default_temperature")]
-    pub temperature: f32,
+    /// Sampling temperature (None = provider default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
 
-    /// Top-p nucleus sampling threshold (0.0-1.0)
-    #[serde(default = "default_top_p")]
-    pub top_p: f32,
+    /// Top-p nucleus sampling threshold (None = provider default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f32>,
 
-    /// Maximum tokens to generate (None = model maximum)
+    /// Maximum tokens to generate (None = provider default)
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
 
     /// Presence penalty (-2.0 to 2.0)
