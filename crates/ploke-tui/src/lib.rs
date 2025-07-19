@@ -33,7 +33,7 @@ use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 use ui::UiEvent;
-use user_config::{default_model, ProviderConfig, ProviderType, OPENROUTER_URL};
+use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, default_model};
 use utils::layout::layout_statusline;
 
 use std::sync::Arc;
@@ -220,7 +220,7 @@ pub mod system {
         CommandDropped(&'static str),
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
-        ModelSwitched(String)
+        ModelSwitched(String),
     }
 }
 
@@ -290,7 +290,6 @@ pub struct ErrorEvent {
     pub severity: ErrorSeverity,
 }
 
-
 #[derive(Clone, Copy, Debug)]
 pub enum EventPriority {
     Realtime,
@@ -311,15 +310,15 @@ impl<T> ResultExt<ploke_error::Error> for Result<T, ploke_error::Error> {
         }
         self
     }
-    
+
     fn emit_warning(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Warning)
     }
-    
+
     fn emit_error(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Error)
     }
-    
+
     fn emit_fatal(self) -> Result<T, ploke_error::Error> {
         self.emit_event(ErrorSeverity::Fatal)
     }
