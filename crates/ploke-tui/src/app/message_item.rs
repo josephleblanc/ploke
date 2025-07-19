@@ -150,39 +150,32 @@ pub fn render_messages(
     let offset_y = offset_y.min(max_offset);
 
     // ------------------------------------------------------------------
-    // 4. Render into the fixed conversation_area
+    // 4. Render into the fixed conversation_area (iterator version)
     // ------------------------------------------------------------------
-    let mut y_virtual = 0u16; // y in the virtual buffer
-    let mut y_screen = 0u16; // y in the actual viewport
+    let mut y_screen = 0u16;
 
-    // AI:
-    // Could we use iterators and flatten this so we don't need to use the clone?
-    // Perhaps by using Itertools AI?
-    for group in &groups {
-        if y_virtual + group.height > offset_y {
-            // at least part of this group is visible
-            let mut lines_to_skip = offset_y.saturating_sub(y_virtual);
-            let mut lines_to_draw = group.height.saturating_sub(lines_to_skip);
+    // Build one flattened iterator over the visible lines
+    let all_lines = groups.iter().flat_map(|group| {
+        group
+            .lines
+            .iter()
+            .map(move |line| (line, &group.style))
+    });
 
-            // but we may also hit bottom of viewport
-            lines_to_draw = lines_to_draw.min(viewport_height.saturating_sub(y_screen));
+    // Skip the invisible lines at the top
+    let visible_lines = all_lines.skip(offset_y as usize);
 
-            for line in &group.lines[lines_to_skip as usize..][..lines_to_draw as usize] {
-                let para = Paragraph::new(line.clone()).style(group.style);
-                let area = Rect::new(
-                    conversation_area.x + 1,
-                    conversation_area.y + y_screen,
-                    conversation_width,
-                    1,
-                );
-                frame.render_widget(para, area);
-                y_screen += 1;
-                if y_screen >= viewport_height {
-                    break;
-                }
-            }
-        }
-        y_virtual = y_virtual.saturating_add(group.height);
+    // Render only what fits in the viewport
+    for (line, style) in visible_lines.take(viewport_height as usize) {
+        let para = Paragraph::new(*line).style(*style);
+        let area = Rect::new(
+            conversation_area.x + 1,
+            conversation_area.y + y_screen,
+            conversation_width,
+            1,
+        );
+        frame.render_widget(para, area);
+        y_screen += 1;
         if y_screen >= viewport_height {
             break;
         }
