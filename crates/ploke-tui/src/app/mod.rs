@@ -622,6 +622,25 @@ impl App {
         });
     }
 
+    fn list_models(&self) {
+        let cfg = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async { self.state.config.read().await })
+        });
+
+        let mut lines = vec!["Available models:".to_string()];
+        for pc in &cfg.provider_registry.providers {
+            let display = pc.display_name.as_ref().unwrap_or(&pc.model);
+            lines.push(format!("  {:<20}  {}", pc.id, display));
+        }
+
+        self.send_cmd(StateCommand::AddMessageImmediate {
+            msg: lines.join("\n"),
+            kind: MessageKind::SysInfo,
+            new_msg_id: Uuid::new_v4(),
+        });
+    }
+
     fn check_api_keys(&self) {
         // This would need to be async to check the actual config
         // For now, we'll provide a helpful message
