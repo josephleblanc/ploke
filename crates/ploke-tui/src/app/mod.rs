@@ -66,7 +66,7 @@ pub struct App {
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
     active_model_indicator: Option<(String, Instant)>,
-    active_model: String,
+    active_model_id: String,
     input_cursor_row: u16,
     input_cursor_col: u16,
     is_trailing_whitespace: bool,
@@ -79,7 +79,7 @@ impl App {
         state: Arc<AppState>,
         cmd_tx: mpsc::Sender<StateCommand>,
         event_bus: &EventBus, // reference non-Arc OK because only created at startup
-        active_model: String,
+        active_model_id: String,
     ) -> Self {
         Self {
             running: false, // Will be set to true in run()
@@ -97,7 +97,7 @@ impl App {
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
             active_model_indicator: None,
-            active_model,
+            active_model_id,
             input_cursor_row: 0,
             input_cursor_col: 0,
             is_trailing_whitespace: false,
@@ -235,12 +235,12 @@ impl App {
                                 system::SystemEvent::ModelSwitched(new_model)=>{
                                 tracing::debug!("StateCommand::ModelSwitched {}", new_model);
                                 self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("model changed from {} to {}",self.active_model, new_model),
+                                    msg: format!("model changed from {} to {}",self.active_model_id, new_model),
                                     kind: MessageKind::SysInfo,
                                     new_msg_id: Uuid::new_v4(),
                                 });
                                     self.active_model_indicator = Some((new_model.clone(), Instant::now()));
-                                    self.active_model = new_model;
+                                    self.active_model_id = new_model;
                                 },
                                 other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
@@ -260,7 +260,7 @@ impl App {
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
         // Handle model indicator animation
         let show_indicator = if let Some((_, start_time)) = &self.active_model_indicator {
-            start_time.elapsed().as_secs() < 3
+            start_time.elapsed().as_millis() < 3000
         } else {
             false
         };
@@ -381,11 +381,10 @@ impl App {
         if show_indicator {
             if let Some((model_name, _)) = &self.active_model_indicator {
                 let indicator = Paragraph::new(format!(" Model: {} ", model_name))
-                    .style(Style::new().fg(Color::Black).bg(Color::Yellow))
+                    .style(Style::new().fg(Color::White).bg(Color::Yellow))
                     .alignment(ratatui::layout::Alignment::Center);
 
-                let indicator_area = main_layout.last().unwrap();
-                frame.render_widget(indicator, *indicator_area);
+                frame.render_widget(indicator, model_info_area);
             }
         }
 
