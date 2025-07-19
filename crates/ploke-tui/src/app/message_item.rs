@@ -96,9 +96,9 @@ pub fn render_messages(
     // 1. Build a vector of (height, lines, style) for every message
     // ------------------------------------------------------------------
     #[derive(Debug)]
-    struct LineGroup {
+    struct LineGroup<'a> {
         height: u16,
-        lines: Vec<Line<'static>>,
+        lines: Vec<Line<'a>>,
         style: Style,
     }
 
@@ -113,11 +113,7 @@ pub fn render_messages(
             MessageKind::SysInfo => Style::new().magenta(),
             _ => Style::new().white(),
         };
-        let style = if is_selected {
-            base_style.bg(Color::DarkGray)
-        } else {
-            base_style
-        };
+        let style = base_style;
 
         let (h, lines) = render_one_message(&msg.content, conversation_width, style, is_selected);
         groups.push(LineGroup {
