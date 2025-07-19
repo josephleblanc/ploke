@@ -258,12 +258,8 @@ impl App {
 
     /// Renders the user interface.
     fn draw(&mut self, frame: &mut Frame, path: &[RenderableMessage], current_id: Uuid) {
-        // Handle model indicator animation
-        let show_indicator = if let Some((_, start_time)) = &self.active_model_indicator {
-            start_time.elapsed().as_millis() < 3000
-        } else {
-            false
-        };
+        // Always show the currently selected model in the top-right
+        let show_indicator = true;
 
         // ---------- Define Layout ----------
         let mut proto_layout = if self.indexing_state.is_some() {
@@ -381,8 +377,8 @@ impl App {
         if show_indicator {
             if let Some((model_name, _)) = &self.active_model_indicator {
                 let indicator = Paragraph::new(format!(" Model: {} ", model_name))
-                    .style(Style::new().fg(Color::White).bg(Color::Yellow))
-                    .alignment(ratatui::layout::Alignment::Center);
+                    .style(Style::new().fg(Color::White).bg(Color::DarkGray))
+                    .alignment(ratatui::layout::Alignment::Right);
 
                 frame.render_widget(indicator, model_info_area);
             }
