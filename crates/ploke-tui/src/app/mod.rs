@@ -594,6 +594,9 @@ impl App {
             "check api" => {
                 self.check_api_keys();
             }
+            // Hey I am thinking about working on adding a `/model list` command.
+            // What I'd like to do is show all of the models which are registered in 
+            // the `registry.rs` file. Can you show me an implementation AI?
             cmd if cmd.starts_with("model ") => {
                 let alias = cmd.trim_start_matches("model ").trim();
                 tracing::debug!("StateCommand::SwitchModel {}", alias);
@@ -634,29 +637,6 @@ impl App {
 
         self.send_cmd(StateCommand::AddMessageImmediate {
             msg: help_msg.to_string(),
-            kind: MessageKind::SysInfo,
-            new_msg_id: Uuid::new_v4(),
-        });
-    }
-
-    fn list_models(&self) {
-        // Access the merged provider registry from AppState
-        let registry = &self.state.config.registry;
-
-        let mut lines = vec!["Available models:".to_string()];
-
-        for cfg in &registry.providers {
-            let active_marker = if cfg.id == registry.active_provider {
-                " (active)"
-            } else {
-                ""
-            };
-            lines.push(format!("- {}{}", cfg.id, active_marker));
-        }
-
-        let msg = lines.join("\n");
-        self.send_cmd(StateCommand::AddMessageImmediate {
-            msg,
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
         });
