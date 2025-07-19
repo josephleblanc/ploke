@@ -38,9 +38,35 @@ cargo run -p ploke-tui
 
 This will open the terminal user interface. To use it to chat with LLMs, you'll
 just need an Openrouter API key in your environment under OPENROUTER_API_KEY
-(support for other endpoints coming soon).
+(support for other endpoints coming soon), for example before using `cargo run`, enter
+```
+export OPENROUTER_API_KEY="your_key_here"
+```
 
-Currently, you can demo the project by using the `/index start <your absolute path>` command, and `ploke` will process a fixture. Once this is complete, you can ask questions in the LLM chat and our RAG semantic search will work to provide the LLM with context automatically in the background.
+##### ❗ WARNING ❗  
+Under development, this may crash if it tries to parse a crate with an error, or in certain known or unknown limitations. 
+
+Currently, you can demo the project after using `cargo run` using following command within the terminal user interface. Note that we use vim-like bindings by default right now, so you can enter "Insert Mode" by pressing `i`, then type
+
+```
+/index start <absolute path to target crate>
+```
+
+If you would like to try a quick example using our `fixture_tracking_hash`, you can enter:
+
+```
+/index start /path/to/ploke/tests/fixture_crates/fixture_tracking_hash
+```
+
+Then the indexer will run, and you can chat with the LLM, and our RAG will find code to include as context in the background.
+
+```
+/index start /path/to/ploke/tests/fixture_crates/fixture_nodes
+```
+
+For a larger example that takes a little longer (1-2 minutes) to process into vector embeddings, but with more examples of code items to search in the graph, you can use another fixture crate that has examples of all the different types of nodes included within our parsing capabilities:
+
+command, and `ploke` will process a fixture. Once this is complete, you can ask questions in the LLM chat and our RAG semantic search will work to provide the LLM with context automatically in the background.
 
 ## 🚧 Under Construction 🚧
 

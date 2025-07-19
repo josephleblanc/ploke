@@ -345,7 +345,7 @@ fn chat_url() -> String {
 }
 
 fn default_model() -> String {
-    "qwen/qwq-32b:free".to_string()
+    "kimi-k2:free".to_string()
 }
 
 // Add a default implementation for when the config file is missing
