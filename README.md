@@ -141,12 +141,14 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 
 <details>
   <summary>Better model support</summary>
+
   - [ ] Token tracking, including system prompts, user chat history, and code snippets
   - [ ] Cost tracking of $/token
   - [ ] Subtle, toggle-able indicator bar on right of screen with how full context window is.
 </details>
 <details>
   <summary>Better conversation UX</summary>
+
   - [ ] Branching conversations: Select message and click right/left or h/l in Normal mode to switch conversation branches.
     - [ ] Multiple tabs with branched conversations
     - [ ] Add a pop-up window or alternate buffer to display conversation tree
@@ -163,12 +165,14 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 </details>
   <details>
   <summary>Better Query Control</summary>
+
   - [ ] Add subtle `+` symbol in conversation to expand and see query used in database, with option to view results.
     - [ ] open results of query included in augmented prompt in an editor buffer.
   - [ ] #someday_maybe Add vim/editor plugins that highlights lines of code added to model context window.
   </details>
   <details>
   <summary>Better File Selection</summary>
+
   - [ ] Add
   - [ ] Add a way to force inclusion of entire files in context window
     - [ ] Read-only mode
@@ -177,6 +181,7 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   </details>
   <details>
   <summary>Better RAG</summary>
+
   - [ ] Use pre-existing RAG framework to create good queries
     - [ ] Cozo built-ins: find sane defaults for HNSW settings (Centrality, L2, Cosine similarity)
     - [ ] Find sane defaults for traversal of edges in graph to retrieve code snippets
@@ -202,9 +207,20 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 </details>
 <details>
 <summary>Better Parser</summary>
+
 - [ ] Assess and identify all current gaps in parsing capability
     - [ ] Add comprehensive "Known Limitations"
-- [ ] Assess and identify all current gaps in parsing capability
+- [ ] Implement more tests for module tree resolution
+    - [ ] Review the [syn_parser test strategy](crates/ingest/syn_parser/tests/TESTING_STRATEGY.md)
+    - [ ] Review the [tree merging process](crates/ingest/syn_parser/src/resolve/module_tree.rs)
+    - [ ] Develop some initial unit tests
+    - [ ] Develop a test macro
+    - [ ] Write crate-level integration tests
+    - [ ] Find edge cases + where current implementation fails
+      - [ ] Test identical items under mutually exclusive cfgs
+      - [ ] Test items in known limitations in [phase 2](docs/plans/uuid_refactor/02c_phase2_known_limitations.md) and [phase 3](docs/plans/uuid_refactor/03a_phase3_known_limitations.md)
+- [ ] #deep_task Add support for type resolution
+- [ ] #deep_task Add support for `syn::Expr` parsing
 </details>
 
 However, there are many features we are working on adding
