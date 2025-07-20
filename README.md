@@ -94,14 +94,13 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   - [x] Add `SysInfo` message when model changes
 #### 7/20/2025
 - [ ] Better support for API keys
-  - [ ]
+  - [ ] toml file support
 - [ ] TBD
 
 ### Coming Soon
 - **Minimum Expected Features**
 - [ ] (deferred from 7/18) User-defined config file
   - [x] .env support
-  - [ ] toml file support
   - [ ] yaml file support
   - [ ] ron file support
   - [ ] command line support
@@ -219,6 +218,9 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [ ] Find edge cases + where current implementation fails
       - [ ] Test identical items under mutually exclusive cfgs
       - [ ] Test items in known limitations in [phase 2](docs/plans/uuid_refactor/02c_phase2_known_limitations.md) and [phase 3](docs/plans/uuid_refactor/03a_phase3_known_limitations.md)
+- [ ] #shallow_task Add support for cfg-specific parsing
+  - [ ] Based on default cfg settings
+  - [ ] Based on user-specified cfg settings
 - [ ] #deep_task Add support for type resolution
 - [ ] #deep_task Add support for `syn::Expr` parsing
 </details>
