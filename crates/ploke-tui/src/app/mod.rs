@@ -370,14 +370,24 @@ impl App {
         frame.render_widget(status_bar, status_line_area[0]);
         frame.render_widget(node_status, status_line_area[1]);
 
-        // -- model indicator
-        if show_indicator {
-            if let Some((model_name, _)) = &self.active_model_indicator {
-                let indicator = Paragraph::new(format!(" Model: {} ", model_name))
-                    .style(Style::new().fg(Color::White).bg(Color::DarkGray))
-                    .alignment(ratatui::layout::Alignment::Right);
+        // -- model indicator (always visible)
+        let display_model = self.active_model_id
+            .split("/")
+            .last()
+            .unwrap_or(&self.active_model_id);
+        log::debug!("display_model: {}", display_model);
 
-                frame.render_widget(indicator, model_info_area);
+        let model_display = Paragraph::new(format!(" {} ", display_model))
+            .style(Style::new().fg(Color::Green))
+            .alignment(ratatui::layout::Alignment::Right);
+        frame.render_widget(model_display, model_info_area);
+
+        // Flash indicator for model changes
+        if let Some((_, timestamp)) = &self.active_model_indicator {
+            if timestamp.elapsed().as_secs() < 2 {
+                let flash_indicator = Paragraph::new("✓");
+                frame.render_widget(flash_indicator, 
+                    ratatui::layout::Rect::new( model_info_area.x.saturating_sub(2) , model_info_area.y, 2, 1));
             }
         }
 

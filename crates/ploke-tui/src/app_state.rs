@@ -1,4 +1,8 @@
-use crate::{chat_history::{Message, MessageKind}, parser::resolve_target_dir, user_config::ProviderRegistry};
+use crate::{
+    chat_history::{Message, MessageKind},
+    parser::resolve_target_dir,
+    user_config::ProviderRegistry,
+};
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
@@ -7,7 +11,7 @@ use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
 };
-use tracing::{debug_span, instrument, Level};
+use tracing::{Level, debug_span, instrument};
 use uuid::Uuid;
 
 // logging
@@ -481,11 +485,15 @@ pub async fn state_manager(
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 // Extract task from mutex (consumes guard)
 
-                match run_parse(Arc::clone(&state.db), Some( workspace.clone().into() )) {
+                match run_parse(Arc::clone(&state.db), Some(workspace.clone().into())) {
                     Ok(_) => tracing::info!("Parse of target workspace {} successful", &workspace),
-                    Err(e) => { tracing::info!("Failure parsing directory from IndexWorkspace event: {}", e); 
-                        return 
-                    },
+                    Err(e) => {
+                        tracing::info!(
+                            "Failure parsing directory from IndexWorkspace event: {}",
+                            e
+                        );
+                        return;
+                    }
                 }
                 // let mut chat_guard = state.chat.0.write().await;
                 add_msg_immediate(
@@ -610,9 +618,7 @@ pub async fn state_manager(
                                     "The attempt to replace the index at the database failed"
                                 ),
                             }
-                            tracing::warn!(
-                                "The attempt to create the index at the database failed"
-                            )
+                            tracing::warn!("The attempt to create the index at the database failed")
                         }
                     }
                 }
@@ -723,9 +729,19 @@ pub async fn state_manager(
 
                 let mut cfg = state.config.write().await;
                 if cfg.provider_registry.set_active(&alias_or_id) {
-                    tracing::debug!("sending AppEvent::System(SystemEvent::ModelSwitched {}", alias_or_id);
+                    tracing::debug!(
+                        "sending AppEvent::System(SystemEvent::ModelSwitched {}
+                        Trying to find cfg.provider_registry.get_active_provider(): {:#?}",
+                        alias_or_id,
+                        cfg.provider_registry.get_active_provider(),
+                    );
+                    let actual_model = cfg
+                        .provider_registry
+                        .get_active_provider()
+                        .map(|p| p.model.clone())
+                        .unwrap_or_else(|| alias_or_id.clone());
                     event_bus.send(AppEvent::System(SystemEvent::ModelSwitched(
-                        alias_or_id.clone(),
+                        actual_model, // Using actual model ID
                     )));
                 } else {
                     tracing::debug!("Sending AppEvent::Error(ErrorEvent {}", alias_or_id);
