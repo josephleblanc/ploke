@@ -83,6 +83,8 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   - [ ] (deferred) User-defined config file
 #### 7/19/2025
 - [x] Better help messages `/help`
+  - [x] Normal Mode help: typing `?` normal mode should bring up the normal mode commands somehow. Think `whichkey`
+  - currently puts `/help` into the input buffer
 - [x] Show the cursor in input at correct offset
 - [x] Improve item selection UI
 - [x] Support for some hotkeys in vim-like "Normal" mode (see `/help`, or `h` in "Normal" mode)
@@ -94,6 +96,13 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 - [ ] TBD
 
 #### Coming Soon
+- [ ] Better info for user commands (pt. 2)
+  - [ ] feedback to the user while waiting for the LLM response
+    - [ ] ploki going left and right across the screen
+- [ ] add a key command in Normal mode for user to see shortcuts
+  - [ ] e.g. typing `?` normal mode should bring up the normal mode commands somehow. Think `whichkey`
+    - [ ] currently puts `/help` into the input buffer, change to add a popup message instead
+  - [ ] include a separate command for only keybindings as well
 - [ ] Support for other API endpoints beyond OpenRouter
 - [ ] Improved `/index` command behavior to select target directory for embedding
 
