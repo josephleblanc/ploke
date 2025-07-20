@@ -32,6 +32,7 @@ use ploke_embed::{
 use system::SystemEvent;
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
+use tracing::instrument;
 use ui::UiEvent;
 use user_config::{OPENROUTER_URL, ProviderConfig, ProviderType, default_model};
 use utils::layout::layout_statusline;
@@ -263,10 +264,19 @@ pub enum AppEvent {
 }
 
 impl AppEvent {
+    // NOTE: the split into real-time and background is a good idea, insofar as it prioritizes some
+    // things meant for the UI draw function (which should stay lean), but it is pretty darn
+    // confusing sometimes when both types are Sender<AppEvent> and Receiver<AppEvent>, with no
+    // distinguishing characteristics inside the event themselves.
+    // TODO: Change EventPriority to isntead be either a field within the event struct itself or
+    // find another way to makes sure we can be more type-safe here, and avoid foot-guns.
     pub fn priority(&self) -> EventPriority {
         match self {
             AppEvent::Ui(_) => EventPriority::Realtime,
             AppEvent::Llm(_) => EventPriority::Background,
+            // Make sure the ModelSwitched event is in real-time priority, since it is intended to
+            // update the UI.
+            AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
@@ -470,8 +480,10 @@ impl EventBus {
         }
     }
 
+    #[instrument]
     pub fn send(&self, event: AppEvent) {
         let priority = event.priority();
+        tracing::debug!("event_priority: {:?}", priority);
         let tx = match priority {
             EventPriority::Realtime => &self.realtime_tx,
             EventPriority::Background => &self.background_tx,
