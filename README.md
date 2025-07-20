@@ -130,6 +130,7 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   - [ ] remote API support for embedding
 <details>
   <summary>Better integrations</summary>
+
 - [ ] git integration
   - [ ] automatic commit messages
   - [ ] "undo" via git
