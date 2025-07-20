@@ -606,11 +606,11 @@ pub async fn state_manager(
                                         ty.relation_str()
                                     );
                                 }
-                                Err(e) => tracing::error!(
+                                Err(e) => tracing::warn!(
                                     "The attempt to replace the index at the database failed"
                                 ),
                             }
-                            tracing::error!(
+                            tracing::warn!(
                                 "The attempt to create the index at the database failed"
                             )
                         }
