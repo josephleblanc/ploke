@@ -33,7 +33,7 @@ Go ahead and clone the repo, and you can run it with the following commands:
 ```bash
 git clone https://github.com/josephleblanc/ploke
 cd ploke
-cargo run -p ploke-tui
+cargo run
 ```
 
 This will open the terminal user interface. To use it to chat with LLMs, you'll
@@ -93,9 +93,23 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   - [x] Ensure current model updates on model switch (`/model <name>`)
   - [x] Add `SysInfo` message when model changes
 #### 7/20/2025
+- [ ] Better support for API keys
+  - [ ]
 - [ ] TBD
 
-#### Coming Soon
+### Coming Soon
+- **Minimum Expected Features**
+- [ ] (deferred from 7/18) User-defined config file
+  - [x] .env support
+  - [ ] toml file support
+  - [ ] yaml file support
+  - [ ] ron file support
+  - [ ] command line support
+  - [ ] in-application support (for some settings)
+- [ ] In-app options window
+  - [ ] with model settings like temp, etc, with valid choices by model
+- [ ] (deferred from 7/18) Reasoning Support
+- [ ] Add liteLLM support for model settings
 - [ ] Better info for user commands (pt. 2)
   - [ ] feedback to the user while waiting for the LLM response
     - [ ] ploki going left and right across the screen
@@ -104,7 +118,93 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [ ] currently puts `/help` into the input buffer, change to add a popup message instead
   - [ ] include a separate command for only keybindings as well
 - [ ] Support for other API endpoints beyond OpenRouter
+  - [ ] OpenAI
+  - [ ] Anthropic
+  - [ ] Google/Vertex
+  - [ ] xAI
+  - [ ] Groq
+  - [ ] Others
 - [ ] Improved `/index` command behavior to select target directory for embedding
+- [ ] Sane default embedding model (we can do better than sentence-transformers)
+  - [ ] GPU support for embedding processing
+  - [ ] remote API support for embedding
+<details>
+  <summary>Better integrations</summary>
+- [ ] git integration
+  - [ ] automatic commit messages
+  - [ ] "undo" via git
+- [ ] #someday_maybe `rust-analyzer` integration for code snippets in LLM response
+  - analyzed as though they were already in the position the model wants to add them to.
+  - [ ] jump to definition support from conversation message (is this possible?)
+</details>
+
+<details>
+  <summary>Better model support</summary>
+  - [ ] Token tracking, including system prompts, user chat history, and code snippets
+  - [ ] Cost tracking of $/token
+  - [ ] Subtle, toggle-able indicator bar on right of screen with how full context window is.
+</details>
+<details>
+  <summary>Better conversation UX</summary>
+  - [ ] Branching conversations: Select message and click right/left or h/l in Normal mode to switch conversation branches.
+    - [ ] Multiple tabs with branched conversations
+    - [ ] Add a pop-up window or alternate buffer to display conversation tree
+    - [ ] Batch send for generating multiple responses simultaneously, each on its own branch
+      - [ ] Per-receiver configuration for provider, temperature, etc
+  - [ ] Add editor support for switching to vim (other editors as requested for now)
+  - [ ] Add forwarding to command line with `!` or similar, e.g. `!ls -la` or `!tree`
+  - [ ] Custom key commands in normal mode - e.g. `<leader>t` for `!tree<ret>`
+  - [ ] Enter Insert mode in previous messages to edit them
+    - [ ] Enter an editor buffer with previous message content
+    - [ ] Enter an editor buffer with conversation history
+  - [ ] Conversation summarization support
+  - [ ] Save/load conversation
+</details>
+  <details>
+  <summary>Better Query Control</summary>
+  - [ ] Add subtle `+` symbol in conversation to expand and see query used in database, with option to view results.
+    - [ ] open results of query included in augmented prompt in an editor buffer.
+  - [ ] #someday_maybe Add vim/editor plugins that highlights lines of code added to model context window.
+  </details>
+  <details>
+  <summary>Better File Selection</summary>
+  - [ ] Add
+  - [ ] Add a way to force inclusion of entire files in context window
+    - [ ] Read-only mode
+    - [ ] Edit mode
+  - [ ] Add a way to exclude files from being included in the RAG results
+  </details>
+  <details>
+  <summary>Better RAG</summary>
+  - [ ] Use pre-existing RAG framework to create good queries
+    - [ ] Cozo built-ins: find sane defaults for HNSW settings (Centrality, L2, Cosine similarity)
+    - [ ] Find sane defaults for traversal of edges in graph to retrieve code snippets
+    - [ ] Add dynamic + iterative quries to generate more responses for sparse queries
+  - [ ] Add support for other embedding backends
+    - [ ] CodeBERT
+    - [ ] Jina(?)
+    - [ ] Do research to find other SOTA modals
+    - [ ] Add user config options to set up their own embedding model choice.
+  - [ ] Support for Query Expansion
+    - [ ] Add support for a weak model to provide query expansion for intent discovery
+    - [ ] Add UI to show user a `+` or similar to see expanded query, enable/disable expansion
+    - [ ] Review SOTA research on query expansion and write blog post for [ploke website]
+    - [ ] Evaluate and write report on query expansion quality by models + prompts
+  - [ ] Process messages into vector embeddings for RAG
+    - [ ] Connect to edges in graph where database changes near that conversation
+    - [ ] Add sentiment analysis(?) or some way to determine strength of edge to be added to code graph with this message
+    - [ ] Add user option to delete/save/load vector embeddings from previous convsations, with sane defaults.
+  - [ ] Holistic RAG
+    - [ ] Include curated Rust documentation, e.g. The Rust Book (check licensing), in a store of vector-embedded documents for RAG
+    - [ ] Add user options to include specific files/documentation for RAG text processing
+    - [ ] Add user options to have ploke search current directory for text files to include in RAG embedding processing
+</details>
+<details>
+<summary>Better Parser</summary>
+- [ ] Assess and identify all current gaps in parsing capability
+    - [ ] Add comprehensive "Known Limitations"
+- [ ] Assess and identify all current gaps in parsing capability
+</details>
 
 However, there are many features we are working on adding
 
@@ -483,3 +583,4 @@ To inquire about commercial licensing, please contact:
 [adrs]:./docs/design/adrs
 [idiomatic_rust]:./docs/design/reference/IDIOMATIC_RUST.md
 [parser_error_handling]:./crates/ingest/syn_parser/src/error.rs
+[ploke]:https://ploke.dev/
