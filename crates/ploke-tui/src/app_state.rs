@@ -20,6 +20,7 @@ use crate::{
 };
 
 use super::*;
+// AI:
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
