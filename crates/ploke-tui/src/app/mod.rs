@@ -21,12 +21,25 @@ static HELP_COMMANDS: &str = r#"Available commands:
     index cancel - Cancel indexing
     check api - Check API key configuration
     model list - List available models
-    help - Show this help"#;
+    help - Show this help
+
+    Keyboard shortcuts (Normal mode):
+    q - Quit
+    i - Enter insert mode
+    : - Enter command mode (vim-style)
+    m - Quick model selection
+    ? - Show this help
+    j/↓ - Navigate down
+    k/↑ - Navigate up
+    J - Jump to bottom
+    K - Jump to top
+    h/← - Navigate branch previous
+    l/→ - Navigate branch next"#;
 
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
-    #[default]
     Normal,
+    #[default]
     Insert,
     Command,
 }
@@ -47,6 +60,7 @@ pub struct App {
     running: bool,
     /// Ui-specific state for the message list (scroll position, selection)
     // Question: should `ListState` be constructed each frame, or should it persist?
+    // TODO: Decide if we can get rid of this now that we have replaced this list with a custom list implementation.
     list: ListState,
     /// A read-only handle to the shared application state.
     state: Arc<AppState>,
@@ -121,23 +135,6 @@ impl App {
 
         // let mut frame_counter = 0;
         while self.running {
-            // let _frame_span_guard = tracing::debug_span!("frame", number = frame_counter).entered();
-            // let frame_start = Instant::now();
-
-            // FIX: This doesn't work because it locates the cursor relative to the top left of the
-            // screen, but there must be a better way to handle the offset correctly.
-            // if let Ok(cursor_pos) = terminal.get_cursor_position() {
-            //     match self.mode {
-            //         Mode::Normal if cursor_pos.y > self.convo_vscroll => {
-            //             self.convo_vscroll = cursor_pos.y;
-            //         }
-            //         Mode::Insert if cursor_pos.y > self.input_vscroll => {
-            //             self.input_vscroll = cursor_pos.y;
-            //         }
-            //         _ => {}
-            //     }
-            // }
-
             // 1. Prepare data for this frame by reading from AppState.
             let history_guard = self.state.chat.0.read().await;
             let current_path = history_guard.get_full_path();
@@ -623,12 +620,11 @@ impl App {
     /// including both their short alias and the full model name.
     fn list_models(&self) {
         let cfg = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async { self.state.config.read().await })
+            tokio::runtime::Handle::current().block_on(async { self.state.config.read().await })
         });
 
         let mut lines = vec!["Available models:".to_string()];
-        
+
         for pc in &cfg.provider_registry.providers {
             let display = pc.display_name.as_ref().unwrap_or(&pc.model);
             lines.push(format!("  {:<28}  {}", pc.id, display));
@@ -661,6 +657,8 @@ impl App {
         });
     }
 
+    /// This function is responsible for doing something with user input when
+    /// the terminal is in "Normal" Mode.
     fn handle_normal_mode(&mut self, key: KeyEvent) {
         use chat_history::NavigationDirection::{Next, Previous};
 
