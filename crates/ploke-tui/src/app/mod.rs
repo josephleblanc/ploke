@@ -392,7 +392,6 @@ impl App {
             Mode::Normal => {
                 // Hide cursor in normal mode
                 // - By not calling `set_cursor_position`, the cursor is automatically hidden
-                // NOTE: Maybe do something with the cursor in normal mode?
             }
         }
     }
@@ -705,6 +704,10 @@ impl App {
             KeyCode::Char('m') => {
                 self.mode = Mode::Command;
                 self.input_buffer = "/model ".to_string();
+            }
+            KeyCode::Char('?') => {
+                self.mode = Mode::Command;
+                self.input_buffer = "/help".to_string();
             }
             _ => {}
         }
