@@ -161,92 +161,92 @@ impl App {
 
             // 3. Handle all incoming events (user input, state changes).
             tokio::select! {
-                // Prioritize Ui responsiveness
-                biased;
+            // Prioritize Ui responsiveness
+            biased;
 
-                // User input
-                maybe_event = crossterm_events.next().fuse() => {
-                    if let Some(Ok(event)) = maybe_event {
-                        match event {
-                            Event::Key(key_event) =>{ self.on_key_event(key_event); }
-                            Event::FocusGained => {},
-                            Event::FocusLost => {},
-                            Event::Mouse(mouse_event) => {},
-                            Event::Paste(_) => {},
-                            Event::Resize(_, _) => {},
-                        }
+            // User input
+            maybe_event = crossterm_events.next().fuse() => {
+                if let Some(Ok(event)) = maybe_event {
+                    match event {
+                        Event::Key(key_event) =>{ self.on_key_event(key_event); }
+                        Event::FocusGained => {},
+                        Event::FocusLost => {},
+                        Event::Mouse(mouse_event) => {},
+                        Event::Paste(_) => {},
+                        Event::Resize(_, _) => {},
                     }
                 }
+            }
 
-                // Application events
-                Ok(app_event) = self.event_rx.recv() => {
-                    match app_event {
-                        AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
-                            self.sync_list_selection().await;
-                        }
-                        AppEvent::IndexingProgress(state)=>{
-                            self.indexing_state = Some(state);
-                        }
-                        AppEvent::Ui(ui_event) => {},
-                        AppEvent::Llm(event) => {},
-                        AppEvent::Rag(rag_event) => {
-                            // let new_msg_id = match rag_event {
-                            //     RagEvent::ContextSnippets(uuid, items) => uuid,
-                            //     RagEvent::UserMessages(uuid, messages) => uuid,
-                            //     RagEvent::ConstructContext(uuid) => uuid,
-                            // };
-                            // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
-                        }
-                        AppEvent::Error(error_event) => {
-                            let msg = format!("Error: {}", error_event.message);
+            // Application events
+            Ok(app_event) = self.event_rx.recv() => {
+                match app_event {
+                    AppEvent::MessageUpdated(_)|AppEvent::UpdateFailed(_)=>{
+                        self.sync_list_selection().await;
+                    }
+                    AppEvent::IndexingProgress(state)=>{
+                        self.indexing_state = Some(state);
+                    }
+                    AppEvent::Ui(ui_event) => {},
+                    AppEvent::Llm(event) => {},
+                    AppEvent::Rag(rag_event) => {
+                        // let new_msg_id = match rag_event {
+                        //     RagEvent::ContextSnippets(uuid, items) => uuid,
+                        //     RagEvent::UserMessages(uuid, messages) => uuid,
+                        //     RagEvent::ConstructContext(uuid) => uuid,
+                        // };
+                        // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
+                    }
+                    AppEvent::Error(error_event) => {
+                        let msg = format!("Error: {}", error_event.message);
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg,
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                    },
+                    AppEvent::IndexingStarted => {
+                    },
+                    AppEvent::IndexingCompleted => {
+                        tracing::info!("Indexing Succeeded!");
+                        self.indexing_state = None;
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: String::from("Indexing Succeeded"),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                        self.send_cmd(StateCommand::UpdateDatabase)
+                    },
+                    AppEvent::IndexingFailed => {
+                        tracing::error!("Indexing Failed");
+                        self.indexing_state = None;
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: String::from("Indexing Failed"),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                    },
+                    // AppEvent::System(system_event) => {},
+                    AppEvent::System(system_event) => {
+                        match system_event {
+                            system::SystemEvent::ModelSwitched(new_model)=>{
+                            tracing::debug!("StateCommand::ModelSwitched {}", new_model);
                             self.send_cmd(StateCommand::AddMessageImmediate {
-                                msg,
+                                msg: format!("model changed from {} to {}",self.active_model_id, new_model),
                                 kind: MessageKind::SysInfo,
                                 new_msg_id: Uuid::new_v4(),
                             });
-                        },
-                        AppEvent::IndexingStarted => {
-                        },
-                        AppEvent::IndexingCompleted => {
-                            tracing::info!("Indexing Succeeded!");
-                            self.indexing_state = None;
-                            self.send_cmd(StateCommand::AddMessageImmediate {
-                                msg: String::from("Indexing Succeeded"),
-                                kind: MessageKind::SysInfo,
-                                new_msg_id: Uuid::new_v4(),
-                            });
-                            self.send_cmd(StateCommand::UpdateDatabase)
-                        },
-                        AppEvent::IndexingFailed => {
-                            tracing::error!("Indexing Failed");
-                            self.indexing_state = None;
-                            self.send_cmd(StateCommand::AddMessageImmediate {
-                                msg: String::from("Indexing Failed"),
-                                kind: MessageKind::SysInfo,
-                                new_msg_id: Uuid::new_v4(),
-                            })
-                        },
-                        // AppEvent::System(system_event) => {},
-                        AppEvent::System(system_event) => {
-                            match system_event {
-                                system::SystemEvent::ModelSwitched(new_model)=>{
-                                tracing::debug!("StateCommand::ModelSwitched {}", new_model);
-                                self.send_cmd(StateCommand::AddMessageImmediate {
-                                    msg: format!("model changed from {} to {}",self.active_model_id, new_model),
-                                    kind: MessageKind::SysInfo,
-                                    new_msg_id: Uuid::new_v4(),
-                                });
-                                    self.active_model_indicator = Some((new_model.clone(), Instant::now()));
-                                    self.active_model_id = new_model;
-                                },
-                                other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
-                        }
-                        }
-                        AppEvent::GenerateContext(id) => {
-                            // self.send_cmd( StateCommand::)
-                        }
+                                self.active_model_indicator = Some((new_model.clone(), Instant::now()));
+                                self.active_model_id = new_model;
+                            },
+                            other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
+                    }
+                    }
+                    AppEvent::GenerateContext(id) => {
+                        // self.send_cmd( StateCommand::)
                     }
                 }
+            }
 
             }
         }
@@ -340,7 +340,7 @@ impl App {
                 .ratio(state.calc_progress())
                 .gauge_style(Style::new().light_blue());
 
-            frame.render_widget(gauge, main_layout[3]); // Bottom area
+            frame.render_widget(gauge, main_layout[4]); // Bottom area
         }
 
         // Render Mode to text
@@ -371,7 +371,8 @@ impl App {
         frame.render_widget(node_status, status_line_area[1]);
 
         // -- model indicator (always visible)
-        let display_model = self.active_model_id
+        let display_model = self
+            .active_model_id
             .split("/")
             .last()
             .unwrap_or(&self.active_model_id);
@@ -386,8 +387,15 @@ impl App {
         if let Some((_, timestamp)) = &self.active_model_indicator {
             if timestamp.elapsed().as_secs() < 2 {
                 let flash_indicator = Paragraph::new("✓");
-                frame.render_widget(flash_indicator, 
-                    ratatui::layout::Rect::new( model_info_area.x.saturating_sub(2) , model_info_area.y, 2, 1));
+                frame.render_widget(
+                    flash_indicator,
+                    ratatui::layout::Rect::new(
+                        model_info_area.x.saturating_sub(2),
+                        model_info_area.y,
+                        2,
+                        1,
+                    ),
+                );
             }
         }
 
