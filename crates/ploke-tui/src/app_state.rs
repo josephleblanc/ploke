@@ -815,37 +815,166 @@ async fn add_msg_immediate(
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
+    use ploke_embed::indexer::EmbeddingProcessor;
+    use crate::system::EventBusCaps;
+    use tokio::time::{sleep, Duration};
+    use rand::Rng;
 
-    // TODO: Implement a Mock processor to test AppState
-    // #[tokio::test]
-    // async fn indexing_lifecycle() -> color_eyre::Result<()> {
-    //     // Setup
-    //     let db = Database::new_init()?;
-    //     let state = Arc::new(AppState::new(Arc::new(db)));
-    //     let (cmd_tx, cmd_rx) = mpsc::channel(32);
-    //     let state_clone = state.clone();
-    //
-    //     let event_bus = EventBus::new(EventBusCaps::default());
-    //
-    //     // Start state manager
-    //     tokio::spawn(state_manager(state_clone, cmd_rx, Arc::new(event_bus)));
-    //
-    //     // Start indexing
-    //     cmd_tx
-    //         .send(StateCommand::IndexWorkspace {
-    //             workspace: "fixture_nodes".to_string(),
-    //         })
-    //         .await
-    //         .unwrap();
-    //
-    //     // Verify RUNNING state
-    //     let guard = state.indexing_state.read().await;
-    //     assert!(guard.as_ref().unwrap().status == IndexStatus::Running);
-    //
-    //     Ok(())
-    //     // TODO:
-    //     // ... similar checks for pause/resume/cancel
-    // }
+    // Mock implementations for testing
+    impl EmbeddingProcessor {
+        pub fn mock() -> Self {
+            // Simple mock that does nothing
+            Self::new(ploke_embed::EmbedderConfig::default()).unwrap()
+        }
+    }
+
+    impl IoManagerHandle {
+        pub fn mock() -> Self {
+            // Simple mock that does nothing
+            IoManagerHandle::new()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_race_condition_without_oneshot() {
+        let db = Database::new_init().unwrap();
+        let state = Arc::new(AppState::new(
+            Arc::new(db),
+            Arc::new(EmbeddingProcessor::mock()),
+            IoManagerHandle::mock(),
+        ));
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        
+        // Start state manager
+        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+
+        let parent_id = Uuid::new_v4();
+        let user_msg_id = Uuid::new_v4();
+        let embed_msg_id = Uuid::new_v4();
+
+        // Simulate sending both commands concurrently without synchronization
+        let tx1 = cmd_tx.clone();
+        let tx2 = cmd_tx.clone();
+
+        tokio::join!(
+            async {
+                tx1.send(StateCommand::AddUserMessage {
+                    content: "tell me a haiku".to_string(),
+                    new_msg_id: user_msg_id,
+                    completion_tx: oneshot::channel().0, // dummy
+                }).await.unwrap();
+            },
+            async {
+                tx2.send(StateCommand::EmbedMessage {
+                    new_msg_id: embed_msg_id,
+                    completion_rx: oneshot::channel().1, // dummy
+                }).await.unwrap();
+            }
+        );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Check if the embed message read the user message or not
+        let chat = state.chat.0.read().await;
+        let last_user_msg = chat.last_user_msg();
+        assert!(last_user_msg.is_some(), "User message should be present");
+    }
+
+    #[tokio::test]
+    async fn test_fix_with_oneshot() {
+        let db = Database::new_init().unwrap();
+        let state = Arc::new(AppState::new(
+            Arc::new(db),
+            Arc::new(EmbeddingProcessor::mock()),
+            IoManagerHandle::mock(),
+        ));
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        
+        // Start state manager
+        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+
+        let parent_id = Uuid::new_v4();
+        let user_msg_id = Uuid::new_v4();
+        let embed_msg_id = Uuid::new_v4();
+
+        let (tx, rx) = oneshot::channel();
+
+        cmd_tx
+            .send(StateCommand::AddUserMessage {
+                content: "tell me a haiku".to_string(),
+                new_msg_id: user_msg_id,
+                completion_tx: tx,
+            })
+            .await
+            .unwrap();
+
+        cmd_tx
+            .send(StateCommand::EmbedMessage {
+                new_msg_id: embed_msg_id,
+                completion_rx: rx,
+            })
+            .await
+            .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let chat = state.chat.0.read().await;
+        let last_user_msg = chat.last_user_msg();
+        assert!(last_user_msg.is_some(), "User message should always be present");
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_with_fuzzing() {
+        let db = Database::new_init().unwrap();
+        let state = Arc::new(AppState::new(
+            Arc::new(db),
+            Arc::new(EmbeddingProcessor::mock()),
+            IoManagerHandle::mock(),
+        ));
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        
+        // Start state manager
+        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+
+        let mut rng = rand::thread_rng();
+        
+        // Send 50 pairs of commands with random delays
+        for i in 0..50 {
+            let delay_ms = rng.gen_range(5..=20);
+            sleep(Duration::from_millis(delay_ms)).await;
+            
+            let user_msg_id = Uuid::new_v4();
+            let embed_msg_id = Uuid::new_v4();
+            let (tx, rx) = oneshot::channel();
+
+            // Send both commands
+            cmd_tx
+                .send(StateCommand::AddUserMessage {
+                    content: format!("message {}", i),
+                    new_msg_id: user_msg_id,
+                    completion_tx: tx,
+                })
+                .await
+                .unwrap();
+
+            cmd_tx
+                .send(StateCommand::EmbedMessage {
+                    new_msg_id: embed_msg_id,
+                    completion_rx: rx,
+                })
+                .await
+                .unwrap();
+        }
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify all messages were processed
+        let chat = state.chat.0.read().await;
+        let messages = chat.messages.len();
+        assert!(messages >= 50, "Should have processed at least 50 messages");
+    }
 }
