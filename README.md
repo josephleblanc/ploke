@@ -93,9 +93,10 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
   - [x] Ensure current model updates on model switch (`/model <name>`)
   - [x] Add `SysInfo` message when model changes
 #### 7/20/2025
+- [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
+#### 7/21/2025
 - [ ] Better support for API keys
   - [ ] toml file support
-- [ ] TBD
 
 ### Coming Soon
 - **Minimum Expected Features**
