@@ -139,6 +139,17 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 </details>
 
 <details>
+  <summary>MCP Support</summary>
+
+- [ ] Simple MCP integration
+  - [ ] User Config
+  - [ ] Tests
+- [ ] Interface menu with toggle-able MCP server settings
+  - [ ] Automatic installation upon selection for certain Rust-oriented MCP servers.
+  - [ ] Basic file read/writes by MCP server until we get a better solution figured out.
+</details>
+
+<details>
   <summary>Better model support</summary>
 
   - [ ] Token tracking, including system prompts, user chat history, and code snippets
