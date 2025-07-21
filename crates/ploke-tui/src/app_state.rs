@@ -24,7 +24,6 @@ use crate::{
 };
 
 use super::*;
-// AI:
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
@@ -216,6 +215,7 @@ pub enum StateCommand {
     AddUserMessage {
         content: String,
         new_msg_id: Uuid,
+        completion_tx: oneshot::Sender<()>,
     },
 
     /// Applies a set of partial updates to an existing message.
@@ -304,6 +304,7 @@ pub enum StateCommand {
     UpdateDatabase,
     EmbedMessage {
         new_msg_id: Uuid,
+        completion_rx: oneshot::Receiver<()>
     },
     ForwardContext {
         new_msg_id: Uuid,
@@ -415,8 +416,10 @@ pub async fn state_manager(
             StateCommand::AddUserMessage {
                 content,
                 new_msg_id,
+                completion_tx,
             } => {
                 add_msg_immediate(&state, &event_bus, new_msg_id, content, MessageKind::User).await;
+                completion_tx.send(()).expect("AddUserMessage should never fail to send tx");
             }
             StateCommand::AddMessage {
                 parent_id,
@@ -634,19 +637,14 @@ pub async fn state_manager(
                 )
                 .await;
             }
-            StateCommand::EmbedMessage { new_msg_id } => {
-                // while new_msg_id != state.chat.0.read().await.current {
-                //     time::sleep(time::Duration::from_millis(20)).await;
-                // }
-                // let new_sys_msg = Uuid::new_v4();
-                // add_msg_immediate(
-                //     &state,
-                //     &event_bus,
-                //     new_sys_msg,
-                //     "Embedding User Message".to_string(),
-                //     MessageKind::SysInfo,
-                // )
-                // .await;
+            StateCommand::EmbedMessage { new_msg_id, completion_rx } => {
+                match completion_rx.await {
+                    Ok(_) => {tracing::trace!("UserMessage received new_msg_id: {new_msg_id}")},
+                    Err(e) => { 
+                        tracing::warn!("SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {new_msg_id}");
+                        return;
+                    },
+                }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
                     Ok(Some((last_usr_msg_id, last_user_msg))) => {
