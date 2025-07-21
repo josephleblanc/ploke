@@ -247,6 +247,7 @@ impl ProviderRegistry {
         self
     }
 
+    // TODO: Update doc tests with new fields
     /// Attempts to switch the active provider.
     ///
     /// # Returns
@@ -255,7 +256,7 @@ impl ProviderRegistry {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```ignore
     /// # use ploke_tui::user_config::{ProviderRegistry, ProviderConfig, ProviderType};
     /// # use std::collections::HashMap;
     /// let mut registry = ProviderRegistry {

@@ -3600,6 +3600,7 @@ dependencies = [
  "ploke-error",
  "ploke-io",
  "ploke-transform",
+ "rand 0.9.1",
  "ratatui",
  "reqwest",
  "serde",

@@ -11,6 +11,7 @@ use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use message_item::render_messages;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
+use tokio::sync::oneshot;
 use tracing::instrument;
 
 static HELP_COMMANDS: &str = r#"Available commands:
@@ -479,15 +480,17 @@ impl App {
             // 2. Shared State Change: Send a command
             KeyCode::Enter => {
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
+                    let (completion_tx, completion_rx) = oneshot::channel();
                     let new_msg_id = Uuid::new_v4();
                     self.send_cmd(StateCommand::AddUserMessage {
                         // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
                         // instead.
                         content: self.input_buffer.clone(),
                         new_msg_id,
+                        completion_tx,
                     });
                     // TODO: Expand EmbedMessage to include other types of message
-                    self.send_cmd(StateCommand::EmbedMessage { new_msg_id });
+                    self.send_cmd(StateCommand::EmbedMessage { new_msg_id, completion_rx });
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),

@@ -304,7 +304,7 @@ pub enum StateCommand {
     UpdateDatabase,
     EmbedMessage {
         new_msg_id: Uuid,
-        completion_rx: oneshot::Receiver<()>
+        completion_rx: oneshot::Receiver<()>,
     },
     ForwardContext {
         new_msg_id: Uuid,
@@ -419,7 +419,9 @@ pub async fn state_manager(
                 completion_tx,
             } => {
                 add_msg_immediate(&state, &event_bus, new_msg_id, content, MessageKind::User).await;
-                completion_tx.send(()).expect("AddUserMessage should never fail to send tx");
+                completion_tx
+                    .send(())
+                    .expect("AddUserMessage should never fail to send tx");
             }
             StateCommand::AddMessage {
                 parent_id,
@@ -637,13 +639,20 @@ pub async fn state_manager(
                 )
                 .await;
             }
-            StateCommand::EmbedMessage { new_msg_id, completion_rx } => {
+            StateCommand::EmbedMessage {
+                new_msg_id,
+                completion_rx,
+            } => {
                 match completion_rx.await {
-                    Ok(_) => {tracing::trace!("UserMessage received new_msg_id: {new_msg_id}")},
-                    Err(e) => { 
-                        tracing::warn!("SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {new_msg_id}");
+                    Ok(_) => {
+                        tracing::trace!("UserMessage received new_msg_id: {new_msg_id}")
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {new_msg_id}"
+                        );
                         return;
-                    },
+                    }
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
@@ -815,22 +824,33 @@ async fn add_msg_immediate(
 
 #[cfg(test)]
 mod tests {
+    use ploke_embed::local::EmbeddingConfig;
+
     use super::*;
-    use ploke_embed::indexer::EmbeddingProcessor;
-    use crate::system::EventBusCaps;
-    use tokio::time::{sleep, Duration};
+    use ploke_embed::{
+        indexer::{EmbeddingProcessor, EmbeddingSource},
+        local::LocalEmbedder,
+    };
     use rand::Rng;
+    use tokio::time::{Duration, sleep};
+    pub trait MockTrait {
+        fn mock() -> Self;
+    }
 
     // Mock implementations for testing
-    impl EmbeddingProcessor {
-        pub fn mock() -> Self {
+    impl MockTrait for EmbeddingProcessor {
+        fn mock() -> Self {
             // Simple mock that does nothing
-            Self::new(ploke_embed::EmbedderConfig::default()).unwrap()
+            Self::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect(
+                    "LocalEmbedder failed to construct within test - should not happen",
+                ),
+            ))
         }
     }
 
-    impl IoManagerHandle {
-        pub fn mock() -> Self {
+    impl MockTrait for IoManagerHandle {
+        fn mock() -> Self {
             // Simple mock that does nothing
             IoManagerHandle::new()
         }
@@ -846,9 +866,14 @@ mod tests {
         ));
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        
+
         // Start state manager
-        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            mpsc::channel(32).0,
+        ));
 
         let parent_id = Uuid::new_v4();
         let user_msg_id = Uuid::new_v4();
@@ -864,13 +889,17 @@ mod tests {
                     content: "tell me a haiku".to_string(),
                     new_msg_id: user_msg_id,
                     completion_tx: oneshot::channel().0, // dummy
-                }).await.unwrap();
+                })
+                .await
+                .unwrap();
             },
             async {
                 tx2.send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: oneshot::channel().1, // dummy
-                }).await.unwrap();
+                })
+                .await
+                .unwrap();
             }
         );
 
@@ -879,7 +908,7 @@ mod tests {
         // Check if the embed message read the user message or not
         let chat = state.chat.0.read().await;
         let last_user_msg = chat.last_user_msg();
-        assert!(last_user_msg.is_some(), "User message should be present");
+        assert!(last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())), "User message should be present");
     }
 
     #[tokio::test]
@@ -892,9 +921,14 @@ mod tests {
         ));
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        
+
         // Start state manager
-        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            mpsc::channel(32).0,
+        ));
 
         let parent_id = Uuid::new_v4();
         let user_msg_id = Uuid::new_v4();
@@ -923,7 +957,10 @@ mod tests {
 
         let chat = state.chat.0.read().await;
         let last_user_msg = chat.last_user_msg();
-        assert!(last_user_msg.is_some(), "User message should always be present");
+        assert!(
+            last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
+            "User message should always be present"
+        );
     }
 
     #[tokio::test]
@@ -936,17 +973,22 @@ mod tests {
         ));
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-        
+
         // Start state manager
-        tokio::spawn(state_manager(state.clone(), cmd_rx, event_bus.clone(), mpsc::channel(32).0));
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            mpsc::channel(32).0,
+        ));
 
         let mut rng = rand::thread_rng();
-        
+
         // Send 50 pairs of commands with random delays
         for i in 0..50 {
             let delay_ms = rng.gen_range(5..=20);
             sleep(Duration::from_millis(delay_ms)).await;
-            
+
             let user_msg_id = Uuid::new_v4();
             let embed_msg_id = Uuid::new_v4();
             let (tx, rx) = oneshot::channel();

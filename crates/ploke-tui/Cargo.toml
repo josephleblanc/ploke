@@ -72,6 +72,7 @@ tokio-test = "0.4"
 test-context = "0.1"
 fake = "4.3.0"
 cozo = { workspace = true }
+rand = "0.9"
 
 [features]
 default = ["custom_list"]
