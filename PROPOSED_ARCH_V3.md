@@ -549,3 +549,4 @@ fn main() {
  Flume example: [`flume` across boundaries]
 
 x - test
+test_input
