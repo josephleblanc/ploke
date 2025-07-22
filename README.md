@@ -95,16 +95,23 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 #### 7/20/2025
 - [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
 #### 7/21/2025
-- [ ] Better support for API keys
-  - [ ] toml file support
-
-### Coming Soon
-- **Minimum Expected Features**
+- [ ] Fix scrolling issue in chat interface
 - [ ] (deferred from 7/18) User-defined config file
+  - [ ] toml file support
   - [x] .env support
   - [ ] yaml file support
   - [ ] ron file support
   - [ ] command line support
+- [ ] Add easier way to immediately parse example fixture
+  - [ ] add an alias, e.g. `/index start fixture_tracking_hash`, that gets the workspace directory and path to test fixture.
+  - [ ] add other working fixtures
+- [ ] Error messages
+  - [ ] If/when the indexing fails, present a message to the user, ideally with the reason it failed, e.g. "identical items under different cfgs not (yet) supported" or "crates with errors not (yet) supported"
+- [ ] TBD
+
+### Coming Soon
+- **Minimum Expected Features**
+- [ ] Better User-defined config file
   - [ ] in-application support (for some settings)
 - [ ] In-app options window
   - [ ] with model settings like temp, etc, with valid choices by model
