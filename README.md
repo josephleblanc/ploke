@@ -18,7 +18,7 @@
   use LLM-generated descriptions and lists to manage tasks and explore ideas.
   If you are interested in collaborating, or just want to poke around within
   the project, _you might run across these documents_. However, as far as
-  public-facing documentation, we want to have everything be clearly and
+  public-facing documentation, we want to have everything be clear and
   human-written. We believe this is important.
 </details>
 
