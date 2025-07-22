@@ -91,7 +91,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     config.registry = config.registry.with_defaults();
 
     // Apply API keys from environment variables to all providers
-    config.registry.load_api_keys();
+    // config.registry.load_api_keys();
     tracing::debug!("Registry after merge: {:#?}", config.registry);
     let new_db = ploke_db::Database::init_with_schema()?;
     let db_handle = Arc::new(new_db);

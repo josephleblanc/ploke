@@ -30,6 +30,7 @@ pub struct OpenAiRequest<'a> {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
+    stream: bool,
 }
 
 impl<'a> OpenAiRequest<'a> {
@@ -46,20 +47,21 @@ impl<'a> OpenAiRequest<'a> {
             temperature,
             max_tokens,
             top_p,
+            stream: false,
         }
     }
 }
 
 #[derive(Serialize, Debug)]
 pub struct RequestMessage<'a> {
-    pub kind: &'a str,
+    pub role: &'a str,
     pub content: String,
 }
 
 impl RequestMessage<'_> {
     pub fn new_system(content: String) -> Self {
         Self {
-            kind: "system",
+            role: "system",
             content,
         }
     }
@@ -264,7 +266,10 @@ async fn prepare_and_run_llm_call(
     let mut messages: Vec<RequestMessage> = Vec::new();
 
     // Get parameters from provider
-    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
+    tracing::info!(
+        "Inside prepare_and_run_llm_call num2 {:#?}",
+        provider.llm_params
+    );
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
 
     // Prepend system prompt if provided
@@ -277,7 +282,7 @@ async fn prepare_and_run_llm_call(
         prompt
             .into_iter()
             .map(|(k, c)| RequestMessage {
-                kind: k.into(),
+                role: k.into(),
                 content: c,
             })
             .collect::<Vec<_>>()
@@ -286,7 +291,7 @@ async fn prepare_and_run_llm_call(
             .iter()
             .filter(|msg| (msg.kind != MessageKind::SysInfo) && !msg.content.is_empty())
             .map(|msg| RequestMessage {
-                kind: msg.kind.into(),
+                role: msg.kind.into(),
                 content: msg.content.clone(),
             })
             .collect::<Vec<_>>()
@@ -302,7 +307,10 @@ async fn prepare_and_run_llm_call(
     // Release the lock before the network call
     drop(history_guard);
 
-    tracing::info!("Inside prepare_and_run_llm_call num2 {:#?}", provider.llm_params);
+    tracing::info!(
+        "Inside prepare_and_run_llm_call num2 {:#?}",
+        provider.llm_params
+    );
     let params = provider.llm_params.as_ref().cloned().unwrap_or_default();
     let request_payload = OpenAiRequest {
         model: provider.model.as_str(),
@@ -310,9 +318,24 @@ async fn prepare_and_run_llm_call(
         temperature: params.temperature,
         max_tokens: params.max_tokens,
         top_p: params.top_p,
+        stream: false,
     };
 
-    tracing::info!("Inside prepare_and_run_llm_call num3 {:#?}", request_payload);
+    tracing::info!(
+        "Inside prepare_and_run_llm_call num3 {:#?}",
+        request_payload
+    );
+
+    let response_test = client
+        .post(format!("{}/chat/completions", provider.base_url))
+        .bearer_auth(provider.resolve_api_key())
+        .json(&request_payload);
+    
+    tracing::info!(
+        "request_payload is {:#?}",
+        request_payload
+    );
+
     let response = client
         .post(format!("{}/chat/completions", provider.base_url))
         .bearer_auth(provider.resolve_api_key())
@@ -321,30 +344,67 @@ async fn prepare_and_run_llm_call(
         .await
         .map_err(|e| LlmError::Request(e.to_string()))?;
 
-     if !response.status().is_success() {
-         let status = response.status().as_u16();
-         let error_text = response
-             .text()
-             .await
-             .unwrap_or_else(|_| "Could not retrieve error body".to_string());
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let error_text = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Could not retrieve error body".to_string());
 
-         let user_friendly_msg = if status == 401 {
-             format!("Authentication failed. Please check your API key configuration.\n\nDetails {}", error_text)
-         } else if status == 429 {
-             format!("Rate limit exceeded. Please wait and try again.\n\nDetails: {}", error_text)
-         } else if status >= 500 {
-             format!("Server error. The API provider may be experiencing issues.\n\nDetails: {}", error_text)
-         } else {
-             format!("API error (status {}): {}", status, error_text)
-         };
+        let user_friendly_msg = if status == 401 {
+            format!(
+                "Authentication failed. Please check your API key configuration.\n\nDetails {}",
+                error_text
+            )
+        } else if status == 429 {
+            format!(
+                "Rate limit exceeded. Please wait and try again.\n\nDetails: {}",
+                error_text
+            )
+        } else if status >= 500 {
+            format!(
+                "Server error. The API provider may be experiencing issues.\n\nDetails: {}",
+                error_text
+            )
+        } else {
+            format!("API error (status {}): {}", status, error_text)
+        };
 
-         return Err(LlmError::Api { status, message: user_friendly_msg });
-     }
+        return Err(LlmError::Api {
+            status,
+            message: user_friendly_msg,
+        });
+    }
 
-    let response_body = response
-        .json::<OpenAiResponse>()
+    let body = response
+        .text()
         .await
-        .map_err(|e| LlmError::Deserialization(e.to_string()))?;
+        .map_err(|e| LlmError::Request(e.to_string()))?;
+    tracing::debug!("raw body: {}", body);
+
+    // OpenRouter sometimes puts errors inside a 200 body
+    if let Ok(err) = serde_json::from_str::<serde_json::Value>(&body) {
+        if let Some(err_obj) = err.get("error") {
+            let msg = err_obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown OpenRouter error");
+            let code = err_obj.get("code").and_then(|v| v.as_u64()).unwrap_or(0);
+            return Err(LlmError::Api {
+                status: code as u16,
+                message: msg.to_string(),
+            });
+        }
+    }
+
+    // Now safe to deserialize into OpenAiResponse
+    let response_body: OpenAiResponse = serde_json::from_str(&body)
+        .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
+    tracing::trace!("raw body response to request: {:#?}", body);
+    // let response_body = response
+    //     .json::<OpenAiResponse>()
+    //     .await
+    //     .map_err(|e| LlmError::Deserialization(e.to_string()))?;
 
     let content = response_body
         .choices
@@ -410,22 +470,22 @@ pub enum ChatHistoryTarget {
     Scratchpad,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Default)]
-pub struct Parameters {
-    pub temperature: f32,
-    pub max_tokens: usize,
-    pub top_p: f32,
-    // ... other LLM parameters
-}
+// #[derive(Clone, Debug, Serialize, Deserialize, Default)]
+// pub struct Parameters {
+//     pub temperature: f32,
+//     pub max_tokens: usize,
+//     pub top_p: f32,
+//     // ... other LLM parameters
+// }
 
 #[derive(Clone, Debug)]
 pub enum Event {
     /// Request to generate content from an LLM
     Request {
-        request_id: Uuid,       // Unique tracking ID
-        parent_id: Uuid,        // Message this responds to
-        prompt: String,         // Input to LLM
-        parameters: Parameters, // Generation settings
+        request_id: Uuid,          // Unique tracking ID
+        parent_id: Uuid,           // Message this responds to
+        prompt: String,            // Input to LLM
+        parameters: LLMParameters, // Generation settings
         new_msg_id: Uuid, // callback: Option<Sender<Event>>, // Optional direct response channel
     },
 
@@ -587,7 +647,7 @@ use crate::user_config::default_model;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMParameters {
     /// LLM model identifier (e.g., "gpt-4-turbo", "claude-3-opus")
-    #[serde(default = "default_model" )]
+    #[serde(default = "default_model")]
     pub model: String,
 
     /// Sampling temperature (None = provider default)
@@ -604,11 +664,11 @@ pub struct LLMParameters {
 
     /// Presence penalty (-2.0 to 2.0)
     #[serde(default)]
-    pub presence_penalty: Option< f32 >,
+    pub presence_penalty: Option<f32>,
 
     /// Frequency penalty (-2.0 to 2.0)
     #[serde(default)]
-    pub frequency_penalty: Option< f32 >,
+    pub frequency_penalty: Option<f32>,
 
     /// Stop sequences to halt generation
     #[serde(default)]

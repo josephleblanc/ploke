@@ -26,7 +26,6 @@
 
      m
  });
-
  /// Helper to reduce boilerplate when adding new OpenRouter defaults.
  fn insert_openrouter(
      map: &mut HashMap<String, ProviderConfig>,

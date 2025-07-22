@@ -222,11 +222,11 @@ pub enum MessageKind {
 impl std::fmt::Display for MessageKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MessageKind::User => write!(f, "User"),
-            MessageKind::Assistant => write!(f, "Assistant"),
-            MessageKind::System => write!(f, "System"),
+            MessageKind::User => write!(f, "user"),
+            MessageKind::Assistant => write!(f, "assistant"),
+            MessageKind::System => write!(f, "system"),
             MessageKind::Tool => todo!(),
-            MessageKind::SysInfo => write!(f, "SysInfo"),
+            MessageKind::SysInfo => write!(f, "sysInfo"),
         }
     }
 }
@@ -234,11 +234,11 @@ impl std::fmt::Display for MessageKind {
 impl From<MessageKind> for &'static str {
     fn from(val: MessageKind) -> Self {
         match val {
-            MessageKind::User => "User",
-            MessageKind::Assistant => "Assistant",
-            MessageKind::System => "System",
-            MessageKind::Tool => "Tool",
-            MessageKind::SysInfo => "SysInfo",
+            MessageKind::User => "user",
+            MessageKind::Assistant => "assistant",
+            MessageKind::System => "system",
+            MessageKind::Tool => "tool",
+            MessageKind::SysInfo => "sysInfo",
         }
     }
 }

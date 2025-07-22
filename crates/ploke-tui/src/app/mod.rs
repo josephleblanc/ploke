@@ -363,7 +363,7 @@ impl App {
         //     Scrollbar::new(ScrollbarOrientation::VerticalRight)
         //         .begin_symbol(Some("↑"))
         //         .end_symbol(Some("↓")),
-        //     main_layout[1].inner(Margin {vertical: 1, horizontal: 0}),
+        //     input_area.inner(Margin {vertical: 1, horizontal: 0}),
         //     &mut self.input_scrollstate,
         // );
 
@@ -459,6 +459,8 @@ impl App {
     fn handle_insert_mode(&mut self, key: KeyEvent) {
         if key.modifiers == KeyModifiers::CONTROL {
             match key.code {
+                // NOTE: This is here just for testing, remove it when we actually want to release
+                // this.
                 KeyCode::Char('a') => {
                     self.input_buffer
                         .push_str("Agnostic anthromoporcine agrippa");
