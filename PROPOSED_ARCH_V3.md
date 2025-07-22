@@ -547,3 +547,5 @@ fn main() {
 
 [`flume` across boundaries]:ploke/docs/design/concurrency/boundary_flume_example.md
  Flume example: [`flume` across boundaries]
+
+x - test
