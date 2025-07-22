@@ -1,6 +1,32 @@
 ## Squashed Bugs
 
-### most recent user message not included in request to LLM
+ ### OpenRouter 500 caused by incorrect message field name
+
+Date found: Jul 22, 2025
+Date fixed: Jul 22, 2025
+
+**Description**:
+The OpenRouter API expects each chat message to contain a field named `"role"`
+whose value is one of `"system"`, `"user"`, or `"assistant"`.
+Our code was serializing messages with a field named `"kind"` instead of
+`"role"`.
+OpenRouter therefore rejected every request with an opaque 500 Internal Server
+Error.
+
+**The Fix**:
+Change the serialization attribute in `RequestMessage` from `kind` to `role`, a
+update the field name accordingly.
+
+**Files changed**:
+`crates/ploke-tui/src/llm/mod.rs`
+
+**Added Tests**:
+None yet (manual verification with OpenRouter endpoint required).
+
+### most recent user message not included in request to LLM 
+
+Date found: Jul 20, 2025
+Date fixed: Jul 20, 2025
 
 **Description**: The most recent user message was being sent through `AddUserMessage` at the same time as `EmbedMessage`. Because `AddUserMessage` writes a message to state.chat, and the `EmbedMessage` needs to read from state.chat (which is an RwLock), a race condition occurs between the two. 
 
@@ -16,5 +42,3 @@ This results in a non-deterministic bug where sometimes the `EmbedMessage` would
 test app_state::tests::test_race_condition_without_oneshot
 test app_state::tests::test_fix_with_oneshot
 test app_state::tests::test_concurrency_with_fuzzing
-
-
