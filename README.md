@@ -95,6 +95,8 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 #### 7/20/2025
 - [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
 #### 7/21/2025
+- [x] Fix bug in api specifications for openrouter (did it change?), see bug report in squashed.
+#### 7/22/2025
 - [ ] Fix scrolling issue in chat interface
 - [ ] (deferred from 7/18) User-defined config file
   - [ ] toml file support
