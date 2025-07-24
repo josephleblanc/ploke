@@ -36,7 +36,7 @@ members = [
     "crates/ploke-error",
     "crates/ploke-tui",
     "crates/ploke-rag",
-    "crates/ploke-io",
+    "crates/ploke-io", "crates/ploke-ty-mcp",
     # Add more modules as needed
 ]
 

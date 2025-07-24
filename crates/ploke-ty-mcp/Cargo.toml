@@ -1,0 +1,11 @@
+[package]
+name = "ploke-ty-mcp"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rmcp = { version = "0.3", features = ["client", "transport-child-process"] }
+tokio = { workspace = true }
+anyhow = "1.0"
+serde_json = { workspace = true }
+itertools = { workspace = true }
