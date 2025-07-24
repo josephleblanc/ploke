@@ -43,11 +43,22 @@ impl FileManager {
     async fn handle_event(&mut self, event: crate::AppEvent) {
         match event {
             AppEvent::System(SystemEvent::SaveRequested(content)) => {
-                let path = self.default_history_path();
+                let path = match std::env::current_dir() {
+                    Ok(pwd_path) => pwd_path,
+                    Err(e) => {
+                        error!(
+                            "Save faild, working directory invalid
+                            Either cwd does not exist or insufficient permissions, prop error\n{}",
+                            e.to_string()
+                        );
+                        return;
+                    }
+                };
                 if let Err(e) = self.save_content(&path, &content).await {
                     error!("Save failed: {}", e);
+                } else {
+                    info!("Save Suceeded: {:?}", &path);
                 }
-                else {info!("Save Suceeded: {:?}", &path);}
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
                 // tracing::info!(
@@ -68,24 +79,24 @@ impl FileManager {
                 //             }
                 //         }
                 //     }
-                    // tracing::info!("Finished reading snippets, collected output: {:?}", output);
-                    // match self
-                    //     .context_tx
-                    //     .send(RagEvent::ContextSnippets(id, output))
-                    //     .await
-                    // {
-                    //     Ok(_) => {
-                    //         tracing::trace!("Exiting send CodeSnippets with Ok");
-                    //         // self.event_tx
-                    //         //     .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
-                    //     }
-                    //     Err(e) => {
-                    //         tracing::trace!(
-                    //             "Err whiile trying to send CodeSnippets: {}",
-                    //             e.to_string()
-                    //         );
-                    //     }
-                    // };
+                // tracing::info!("Finished reading snippets, collected output: {:?}", output);
+                // match self
+                //     .context_tx
+                //     .send(RagEvent::ContextSnippets(id, output))
+                //     .await
+                // {
+                //     Ok(_) => {
+                //         tracing::trace!("Exiting send CodeSnippets with Ok");
+                //         // self.event_tx
+                //         //     .send(AppEvent::System(SystemEvent::CompleteReadSnip(output))).expect("Terrible things");
+                //     }
+                //     Err(e) => {
+                //         tracing::trace!(
+                //             "Err whiile trying to send CodeSnippets: {}",
+                //             e.to_string()
+                //         );
+                //     }
+                // };
                 // }
             }
             other => warn!("FileManager received unexpected event: {:?}", other),

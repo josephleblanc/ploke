@@ -436,7 +436,11 @@ pub async fn state_manager(
             } => {
                 add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
-            StateCommand::PruneHistory { max_messages } => todo!("Handle PruneHistory"),
+            StateCommand::PruneHistory { max_messages } => { 
+                // TODO: This will provide a way to prune the alternate branches of the
+                // conversation tree, once the conversation tree has been implemented.
+                todo!("Handle PruneHistory") 
+            },
 
             StateCommand::NavigateList { direction } => {
                 let mut chat_guard = state.chat.0.write().await;

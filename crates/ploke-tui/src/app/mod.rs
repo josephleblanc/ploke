@@ -155,10 +155,6 @@ impl App {
 
             // 2. Draw the UI with the prepared data.
             terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
-            // match self.mode {
-            //     Mode::Insert | Mode::Command => {crossterm::execute!(std::io::stdout(), Show)?;},
-            //     Mode::Normal => {crossterm::execute!(std::io::stdout(), Hide)?;},
-            // };
 
             // 3. Handle all incoming events (user input, state changes).
             tokio::select! {
@@ -492,7 +488,10 @@ impl App {
                         completion_tx,
                     });
                     // TODO: Expand EmbedMessage to include other types of message
-                    self.send_cmd(StateCommand::EmbedMessage { new_msg_id, completion_rx });
+                    self.send_cmd(StateCommand::EmbedMessage {
+                        new_msg_id,
+                        completion_rx,
+                    });
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
                         content: "Embedding User Message".to_string(),
@@ -516,20 +515,10 @@ impl App {
                     self.mode = Mode::Command;
                     self.input_buffer = "/".to_string();
                 } else {
-                    self.input_buffer.push(c);
-                    self.is_trailing_whitespace =
-                        self.input_buffer.chars().last().is_some_and(|c| c == ' ');
-                    if self.is_trailing_whitespace {
-                        self.input_cursor_col += 1;
-                    }
+                    self.add_input_char(c);
                 }
             }
-            KeyCode::Backspace => {
-                let last_char = self.input_buffer.pop();
-                self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
-                self.is_trailing_whitespace =
-                    self.input_buffer.chars().last().is_some_and(|c| c == ' ');
-            }
+            KeyCode::Backspace => self.handle_backspace(),
             // FIX: testing
             KeyCode::Up => {
                 self.convo_scrollstate.next();
@@ -539,6 +528,13 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_backspace(&mut self) {
+        let last_char = self.input_buffer.pop();
+        self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
+        self.is_trailing_whitespace =
+            self.input_buffer.chars().last().is_some_and(|c| c == ' ');
     }
 
     pub fn handle_command_mode(&mut self, key: KeyEvent) {
@@ -551,14 +547,23 @@ impl App {
                 self.input_buffer.clear();
                 self.mode = Mode::Insert;
             }
-            KeyCode::Char(c) => self.input_buffer.push(c),
+            KeyCode::Char(c) => self.add_input_char(c),
             KeyCode::Backspace => {
                 if self.input_buffer.len() == 1 && self.input_buffer.starts_with('/') {
                     self.mode = Mode::Insert;
                 }
-                self.input_buffer.pop();
+                self.handle_backspace();
             }
             _ => {}
+        }
+    }
+
+    fn add_input_char(&mut self, c: char) {
+        self.input_buffer.push(c);
+        self.is_trailing_whitespace =
+            self.input_buffer.chars().last().is_some_and(|c| c == ' ');
+        if self.is_trailing_whitespace {
+            self.input_cursor_col += 1;
         }
     }
 
