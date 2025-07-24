@@ -98,8 +98,9 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 - [x] Fix scrolling issue in chat interface
 - [x] (deferred from 7/18) User-defined config file
   - [x] .toml file support
-  - [x] .env support
 #### 7/22/2025
+- [x] Fix bug in api specifications for openrouter (did it change?), see bug report in squashed.
+#### 7/23/2025
 - [x] Test different mcp client crates to determine best fit
   - [x] build test crate with own implementation from scratch
   - [x] build test crate with `rust-mcp-sdk`
@@ -111,7 +112,7 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [x] Extensive docs and example of context7 schema
     - [/] Doc tests
     - [x] Tool call tests 
-#### 7/23/2025
+#### 7/24/2025
 - [ ] Assess design of generalized MCP tool exposure through `rmcp`
 - [ ] Design mcp integration with project architecture
 - [ ] Integrate curated list of MCP servers
