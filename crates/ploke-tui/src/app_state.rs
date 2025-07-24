@@ -14,8 +14,6 @@ use tokio::{
 use tracing::{Level, debug_span, instrument};
 use uuid::Uuid;
 
-// logging
-
 use crate::{
     chat_history::{MessageStatus, MessageUpdate},
     llm::{ChatHistoryTarget, LLMParameters},
@@ -84,13 +82,6 @@ impl IndexingState {
         IndexingState(Arc::new(Mutex::new(status)))
     }
 }
-
-// impl std::ops::DerefMut for ConfigState {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut self.0
-//     }
-//
-// }
 
 impl std::ops::Deref for ConfigState {
     type Target = RwLock<Config>;
@@ -368,14 +359,6 @@ impl From<MessageUpdatedEvent> for AppEvent {
     }
 }
 
-// State manager implementation
-// #[tracing::instrument(
-//     skip_all,
-//     fields(
-//         cmd = %cmd.discriminant(),
-//         msg_id = tracing::field::Empty
-//     )
-// )]
 // TODO: Disentangle the event_bus sender from this most likely.
 // - Needs to be evaluated against new implementation of EventBus
 pub async fn state_manager(

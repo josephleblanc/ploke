@@ -401,10 +401,6 @@ async fn prepare_and_run_llm_call(
     let response_body: OpenAiResponse = serde_json::from_str(&body)
         .map_err(|e| LlmError::Deserialization(format!("{} — body was: {}", e, body)))?;
     tracing::trace!("raw body response to request: {:#?}", body);
-    // let response_body = response
-    //     .json::<OpenAiResponse>()
-    //     .await
-    //     .map_err(|e| LlmError::Deserialization(e.to_string()))?;
 
     let content = response_body
         .choices
@@ -469,14 +465,6 @@ pub enum ChatHistoryTarget {
     /// A secondary history for notes or drafts.
     Scratchpad,
 }
-
-// #[derive(Clone, Debug, Serialize, Deserialize, Default)]
-// pub struct Parameters {
-//     pub temperature: f32,
-//     pub max_tokens: usize,
-//     pub top_p: f32,
-//     // ... other LLM parameters
-// }
 
 #[derive(Clone, Debug)]
 pub enum Event {
