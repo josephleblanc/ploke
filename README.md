@@ -95,22 +95,45 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
 #### 7/20/2025
 - [x] Fix race condition & file bug report in [squashed](./docs/bugs/squashed.md)
 #### 7/21/2025
-- [ ] Fix scrolling issue in chat interface
-- [ ] (deferred from 7/18) User-defined config file
-  - [ ] toml file support
+- [x] Fix scrolling issue in chat interface
+- [x] (deferred from 7/18) User-defined config file
+  - [x] .toml file support
   - [x] .env support
-  - [ ] yaml file support
-  - [ ] ron file support
-  - [ ] command line support
+#### 7/22/2025
+- [x] Test different mcp client crates to determine best fit
+  - [x] build test crate with own implementation from scratch
+  - [x] build test crate with `rust-mcp-sdk`
+  - [x] build test crate with `rmcp`
+- [x] Add MCP client support prototype via `rmcp` in `ploke-ty-mcp`
+  - [x] Add initial `git` integration
+  - [/] Add context7 mcp integration, including:
+    - [x] Custom functions for tool calls
+    - [x] Extensive docs and example of context7 schema
+    - [/] Doc tests
+    - [x] Tool call tests 
+#### 7/23/2025
+- [ ] Assess design of generalized MCP tool exposure through `rmcp`
+- [ ] Design mcp integration with project architecture
+- [ ] Integrate curated list of MCP servers
+  - [ ] Choose 2 servers
+  - [ ] Implement prototype integration, including:
+    - [ ] Custom functions for tool calls
+    - [ ] Extensive docs and example of context7 schema
+    - [ ] Doc tests
+    - [ ] Tool call tests 
+- [ ] Research and assess test framework for initial RAG performance on SWE-bench-like tasks
+- [ ] Begin testing of cozo RAG queries
+  - [ ] Cosine similarity
+  - [ ] L2 similarity
+  - [ ] Traversal of 8 major `PrimaryNode` types
+
+### Coming Soon
+- **Minimum Expected Features**
 - [ ] Add easier way to immediately parse example fixture
   - [ ] add an alias, e.g. `/index start fixture_tracking_hash`, that gets the workspace directory and path to test fixture.
   - [ ] add other working fixtures
 - [ ] Error messages
   - [ ] If/when the indexing fails, present a message to the user, ideally with the reason it failed, e.g. "identical items under different cfgs not (yet) supported" or "crates with errors not (yet) supported"
-- [ ] TBD
-
-### Coming Soon
-- **Minimum Expected Features**
 - [ ] Better User-defined config file
   - [ ] in-application support (for some settings)
 - [ ] In-app options window
