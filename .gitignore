@@ -64,6 +64,9 @@ OpenCode.md
 # logging
 logs/
 
+# query loading (per user)
+query/
+
 # temporary
 docs/active/AGENT_FORUM.md
 docs/dependency_details/cozo/notes/vectors.md
