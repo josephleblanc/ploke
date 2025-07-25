@@ -152,6 +152,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         event_bus.subscribe(EventPriority::Background),
         event_bus.background_tx.clone(),
         rag_event_tx.clone(),
+        event_bus.realtime_tx.clone(),
     );
 
     tokio::spawn(file_manager.run());
@@ -222,6 +223,8 @@ pub mod system {
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
         ModelSwitched(String),
+        ReadQuery{ file_name: String, query_name: String },
+        LoadQuery{ query_name: String, query_content: String },
     }
 }
 
@@ -277,6 +280,8 @@ impl AppEvent {
             // Make sure the ModelSwitched event is in real-time priority, since it is intended to
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
@@ -468,7 +473,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
             // };
         };
     }
-    Ok(())
+    // Ok(())
 }
 impl EventBus {
     pub fn new(b: EventBusCaps) -> Self {

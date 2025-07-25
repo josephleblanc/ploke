@@ -6,7 +6,9 @@ use tokio::sync::broadcast;
 use tokio::{fs, sync::mpsc};
 use tracing::{error, info, warn};
 
+use crate::error::ErrorSeverity;
 use crate::ploke_rag::RagEvent;
+use crate::ErrorEvent;
 use crate::{AppEvent, EventBus, system::SystemEvent};
 
 pub struct FileManager {
@@ -14,6 +16,7 @@ pub struct FileManager {
     event_rx: broadcast::Receiver<crate::AppEvent>,
     event_tx: broadcast::Sender<crate::AppEvent>,
     context_tx: mpsc::Sender<RagEvent>,
+    realtime_event_tx: broadcast::Sender<crate::AppEvent>,
 }
 
 impl FileManager {
@@ -23,12 +26,14 @@ impl FileManager {
         event_rx: broadcast::Receiver<crate::AppEvent>,
         event_tx: broadcast::Sender<crate::AppEvent>,
         context_tx: mpsc::Sender<RagEvent>,
+        realtime_event_tx: broadcast::Sender<crate::AppEvent>,
     ) -> Self {
         Self {
             io_handle,
             event_rx,
             event_tx,
             context_tx,
+            realtime_event_tx,
         }
     }
 
@@ -56,9 +61,23 @@ impl FileManager {
                 };
                 if let Err(e) = self.save_content(&path, &content).await {
                     error!("Save failed: {}", e);
+                    // TODO: Add response that conversation history is indeed saved
                 } else {
                     info!("Save Suceeded: {:?}", &path);
                 }
+            }
+            AppEvent::System(SystemEvent::ReadQuery{ file_name, query_name }) => {
+                let path = match std::env::current_dir() {
+                    Ok(pwd_path) => pwd_path.join("query").join(file_name),
+                    Err(e) => { self.send_path_error(e); return; }
+                };
+                let query_content = match tokio::fs::read_to_string(path).await {
+                    Ok(s) => s,
+                    Err(e) => {self.send_path_error(e); return;}
+                };
+                self.realtime_event_tx.send(AppEvent::System(SystemEvent::LoadQuery{  query_content, query_name }))
+                    .expect("Invariant Violated: AppEvent rx closed before FileManager Dropped");
+
             }
             AppEvent::System(SystemEvent::ReadSnippet(ty_emb_data)) => {
                 // tracing::info!(
@@ -103,17 +122,27 @@ impl FileManager {
         }
     }
 
+    fn send_path_error(&mut self, e: std::io::Error) {
+        let message = e.to_string();
+        warn!("Failed to load query from file {}", message);
+        self.event_tx.send(AppEvent::Error(ErrorEvent {
+            message,
+            severity: ErrorSeverity::Warning
+        })).expect("Invariant violated: ReadQuery event after AppEvent reader closed");
+    }
+
     /// Saves content to disk atomically in a temp location then moves to final path
     async fn save_content(
         &self,
         path: &std::path::Path,
         content: &[u8],
     ) -> Result<(), std::io::Error> {
-        let temp_path = path.with_extension("tmp");
+        info!("Trying to save to file: {}", path.display());
+        let temp_path = path.join(".ploke_history").with_extension("md");
         let mut temp_file = fs::File::create(&temp_path).await?;
         temp_file.write_all(content).await?;
         temp_file.sync_all().await?;
-        fs::rename(&temp_path, path).await?;
+        // fs::rename(&temp_path, path).await?;
         info!("Chat history saved to {}", path.display());
         Ok(())
     }
@@ -122,6 +151,29 @@ impl FileManager {
     fn default_history_path(&self) -> std::path::PathBuf {
         dirs::document_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("ploke_history.md")
+            .join(".ploke.history")
     }
 }
+
+// --- Possible macro for DRY if ReadQuery pattern repeats ---
+// use std::path::{Path, PathBuf};
+//
+// /// Convenience: `Ok(value)` if `op` succeeds, otherwise
+// /// `self.send_path_error(err)` and `return`.
+// macro_rules! try_or_return {
+//     ($self:expr, $op:expr) => {
+//         match $op {
+//             Ok(v) => v,
+//             Err(e) => {
+//                 $self.send_path_error(e);
+//                 return;
+//             }
+//         }
+//     };
+// }
+//
+// // usage --------------------------------------------------------------
+// let path = try_or_return!(self, std::env::current_dir().map(|p|
+// p.join("query").join(file)));
+// let content = try_or_return!(self, tokio::fs::read_to_string(path).await);
+
