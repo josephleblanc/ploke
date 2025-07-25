@@ -29,6 +29,17 @@ This is a list of known fixes that I will want to make but are not terribly urge
   - NOTE: This is in `ploke-db`
  * [ ] `CrateContext` Only added some of the fields, could possibly also add better file processing or a list of the Uuids of the modules/primary node types here.
 
+## TUI
+* [ ] Clean up main app rendering loop (extract into functions)
+* [ ] Untangle Event system
+* [ ] Add proper error Event handling
+* [ ] Revisit `add_msg_immediate`, it is over-used
+* [ ] Separate File operations from `SystemEvent` and into `FileEvent` as initially planned
+* [ ] Consider Refactor of `MessageUpdateEvent` command flow to use `oneshot`
+      after initial message creation to wait on update to the message.
+* [ ] Need to add more feedback
+    * [ ] Refactor `FileManager` or `AppEvent` to handle response with update
+          on file save state completion.
 
 ## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
