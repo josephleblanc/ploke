@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::{
     chat_history::{Message, MessageKind},
     parser::resolve_target_dir,
@@ -303,36 +305,47 @@ pub enum StateCommand {
     SwitchModel {
         alias_or_id: String,
     },
+    LoadQuery {
+        query_name: String,
+        query_content: String,
+    },
+    ReadQuery {
+        query_name: String,
+        file_name: String,
+    }
 }
 
 impl StateCommand {
     pub fn discriminant(&self) -> &'static str {
+        use StateCommand::*;
         match self {
-            StateCommand::AddMessage { .. } => "AddMessage",
-            StateCommand::DeleteMessage { .. } => "DeleteMessage",
-            StateCommand::AddUserMessage { .. } => "AddUserMessage",
-            StateCommand::UpdateMessage { .. } => "UpdateMessage",
-            StateCommand::ClearHistory { .. } => "ClearHistory",
-            StateCommand::NewSession => "NewSession",
-            StateCommand::SwitchSession { .. } => "SwitchSession",
-            StateCommand::SaveState => "SaveState",
-            StateCommand::LoadState => "LoadState",
-            StateCommand::GenerateLlmResponse { .. } => "GenerateLlmResponse",
-            StateCommand::CancelGeneration { .. } => "CancelGeneration",
-            StateCommand::PruneHistory { .. } => "PruneHistory",
-            StateCommand::NavigateList { .. } => "NavigateList",
-            StateCommand::NavigateBranch { .. } => "NavigateBranch",
-            StateCommand::CreateAssistantMessage { .. } => "CreateAssistantMessage",
+            AddMessage { .. } => "AddMessage",
+            DeleteMessage { .. } => "DeleteMessage",
+            AddUserMessage { .. } => "AddUserMessage",
+            UpdateMessage { .. } => "UpdateMessage",
+            ClearHistory { .. } => "ClearHistory",
+            NewSession => "NewSession",
+            SwitchSession { .. } => "SwitchSession",
+            SaveState => "SaveState",
+            LoadState => "LoadState",
+            GenerateLlmResponse { .. } => "GenerateLlmResponse",
+            CancelGeneration { .. } => "CancelGeneration",
+            PruneHistory { .. } => "PruneHistory",
+            NavigateList { .. } => "NavigateList",
+            NavigateBranch { .. } => "NavigateBranch",
+            CreateAssistantMessage { .. } => "CreateAssistantMessage",
             // TODO: fill out the following
-            StateCommand::IndexWorkspace { .. } => "IndexWorkspace",
-            StateCommand::PauseIndexing => "PauseIndexing",
-            StateCommand::ResumeIndexing => "ResumeIndexing",
-            StateCommand::CancelIndexing => "CancelIndexing",
-            StateCommand::AddMessageImmediate { .. } => "AddMessageImmediate",
-            StateCommand::UpdateDatabase => "UpdateDatabase",
-            StateCommand::EmbedMessage { .. } => "EmbedMessage",
-            StateCommand::ForwardContext { .. } => "ForwardContext",
-            StateCommand::SwitchModel { .. } => "SwitchModel",
+            IndexWorkspace { .. } => "IndexWorkspace",
+            PauseIndexing => "PauseIndexing",
+            ResumeIndexing => "ResumeIndexing",
+            CancelIndexing => "CancelIndexing",
+            AddMessageImmediate { .. } => "AddMessageImmediate",
+            UpdateDatabase => "UpdateDatabase",
+            EmbedMessage { .. } => "EmbedMessage",
+            ForwardContext { .. } => "ForwardContext",
+            SwitchModel { .. } => "SwitchModel",
+            LoadQuery { .. } => "LoadQuery",
+            ReadQuery { .. } => "ReadQuery",
             // ... other variants
         }
     }
@@ -746,6 +759,23 @@ pub async fn state_manager(
                 }
             }
 
+            StateCommand::LoadQuery { query_name, query_content } => {
+                let result = state.db.run_script_read_only(&query_content, BTreeMap::new());
+                tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
+                // let db_return = result.unwrap();
+                // tracing::info!(target: "load_query", "db_return:\n{:#?}", db_return);
+            }
+            StateCommand::ReadQuery { query_name, file_name } => {
+                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ReadQuery {
+                    query_name: query_name.clone(), 
+                    file_name: file_name.clone()
+                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+                let _ = event_bus.background_tx.send(AppEvent::System(SystemEvent::ReadQuery {
+                    query_name, 
+                    file_name
+                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+            }
+
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
@@ -969,11 +999,11 @@ mod tests {
             mpsc::channel(32).0,
         ));
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Send 50 pairs of commands with random delays
         for i in 0..50 {
-            let delay_ms = rng.gen_range(5..=20);
+            let delay_ms = rng.random_range(5..=20);
             sleep(Duration::from_millis(delay_ms)).await;
 
             let user_msg_id = Uuid::new_v4();

@@ -12,6 +12,7 @@ use message_item::render_messages;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 use tokio::sync::oneshot;
+use toml::to_string;
 use tracing::instrument;
 
 static HELP_COMMANDS: &str = r#"Available commands:
@@ -186,14 +187,7 @@ impl App {
                     }
                     AppEvent::Ui(ui_event) => {},
                     AppEvent::Llm(event) => {},
-                    AppEvent::Rag(rag_event) => {
-                        // let new_msg_id = match rag_event {
-                        //     RagEvent::ContextSnippets(uuid, items) => uuid,
-                        //     RagEvent::UserMessages(uuid, messages) => uuid,
-                        //     RagEvent::ConstructContext(uuid) => uuid,
-                        // };
-                        // self.send_cmd(StateCommand::ForwardContext { new_msg_id});
-                    }
+                    AppEvent::Rag(rag_event) => {},
                     AppEvent::Error(error_event) => {
                         let msg = format!("Error: {}", error_event.message);
                         self.send_cmd(StateCommand::AddMessageImmediate {
@@ -227,14 +221,36 @@ impl App {
                     AppEvent::System(system_event) => {
                         match system_event {
                             system::SystemEvent::ModelSwitched(new_model)=>{
-                            tracing::debug!("StateCommand::ModelSwitched {}", new_model);
-                            self.send_cmd(StateCommand::AddMessageImmediate {
-                                msg: format!("model changed from {} to {}",self.active_model_id, new_model),
-                                kind: MessageKind::SysInfo,
-                                new_msg_id: Uuid::new_v4(),
-                            });
+                                tracing::debug!("SystemEvent::ModelSwitched {}", new_model);
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("model changed from {} to {}",self.active_model_id, new_model),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
                                 self.active_model_indicator = Some((new_model.clone(), Instant::now()));
                                 self.active_model_id = new_model;
+                            },
+                            SystemEvent::ReadQuery{ file_name, query_name } => {
+                                tracing::debug!("App receives event: {}", file_name);
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("Reading file for query called {query_name}:\n\t{file_name}"),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
+
+                            },
+                            SystemEvent::LoadQuery{ query_name, query_content } => {
+                                tracing::debug!("App receives LoadQuery from FileManager for {query_name}:\n{query_content}");
+                                let shortened_query = query_content.chars().take(20).collect::<String>();
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("Query read from file with query name {query_name}:\n\t{shortened_query}..."),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
+                                self.send_cmd(StateCommand::LoadQuery {
+                                    query_name,
+                                    query_content,
+                                });
                             },
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                     }
@@ -533,8 +549,7 @@ impl App {
     fn handle_backspace(&mut self) {
         let last_char = self.input_buffer.pop();
         self.input_cursor_col = self.input_cursor_col.saturating_sub(1);
-        self.is_trailing_whitespace =
-            self.input_buffer.chars().last().is_some_and(|c| c == ' ');
+        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
     }
 
     pub fn handle_command_mode(&mut self, key: KeyEvent) {
@@ -560,14 +575,12 @@ impl App {
 
     fn add_input_char(&mut self, c: char) {
         self.input_buffer.push(c);
-        self.is_trailing_whitespace =
-            self.input_buffer.chars().last().is_some_and(|c| c == ' ');
+        self.is_trailing_whitespace = self.input_buffer.chars().last().is_some_and(|c| c == ' ');
         if self.is_trailing_whitespace {
             self.input_cursor_col += 1;
         }
     }
 
-    #[instrument(skip_all, fields(alias))]
     fn execute_command(&mut self) {
         let cmd = self.input_buffer.clone();
         // Remove command prefix for processing
@@ -577,6 +590,8 @@ impl App {
         };
 
         match cmd_str {
+            // TODO: Add an indicator that the command is recognized before the user enters the
+            // command. This is one cool benefit of having an immediate mode renderer.
             "help" => self.show_command_help(),
             cmd if cmd.starts_with("index start") => {
                 let parts: Vec<&str> = cmd.splitn(3, ' ').collect();
@@ -623,10 +638,29 @@ impl App {
                         alias_or_id: alias.to_string(),
                     });
                 }
+            },
+            "save history" => {
+                self.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: "Saving conversation history...".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                });
+                self.send_cmd(StateCommand::SaveState);
+            },
+            cmd if cmd.starts_with("query load ") => {
+                if let Some(( query_name, file_name )) = cmd.trim_start_matches("query load ").trim().split_once(' ') {
+                    tracing::debug!("Reading Query {} from file {}", query_name, file_name);
+                    self.send_cmd(StateCommand::ReadQuery {
+                        query_name: query_name.to_string(), 
+                        file_name: file_name.to_string(),
+                    });
+                }
             }
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
+                // Add more helpful message here
+                self.show_command_help();
                 eprintln!("Unknown command: {}", cmd);
             }
         }
