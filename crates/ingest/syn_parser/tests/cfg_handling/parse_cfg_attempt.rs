@@ -34,8 +34,8 @@ fn test_from_docs() -> Result<(), ParseError> {
         target
     );
 
-    /// `Cfg` and `Target` types take an optional generic argument for the string type,
-    /// so you can parse slices without allocating `String`s, or parse into `Cow<str>`.
+    // `Cfg` and `Target` types take an optional generic argument for the string type,
+    // so you can parse slices without allocating `String`s, or parse into `Cow<str>`.
     let target = Target::<&str>::parse_generic("powerpc64le-unknown-linux-gnu")?;
     assert_eq!(
         Target::Triple {
@@ -240,7 +240,7 @@ fn test_cfg_evaluation() {
     );
 
     // Test nested cfg scenarios
-    let mut nested_modules = Vec::new();
+    let mut nested_modules: Vec<()> = Vec::new();
     for (_, cfgs) in &modules {
         // In a real implementation, we'd recurse into the module contents
         // For this test, we'll just verify the cfg evaluation works
