@@ -40,14 +40,10 @@ fn get_system_cfg() -> HashSet<String> {
     }
     
     // Add debug/release configuration
-    if cfg!(debug_assertions) {
-        system.insert("debug_assertions".to_string());
-    }
+    system.insert("debug_assertions".to_string());
     
     // Add test configuration
-    if cfg!(test) {
-        system.insert("test".to_string());
-    }
+    system.insert("test".to_string());
     
     system
 }
