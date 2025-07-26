@@ -87,7 +87,7 @@ impl ActiveCfg {
 }
 
 // Create a set of tests using `syn` to tokenize and then evaluate against the following string
-// using the approaches in `CfgAtom`, `CfgExpr`, `ActiveCfg` AI!
+// using the approaches in `CfgAtom`, `CfgExpr`, `ActiveCfg`!
 const TEST_CFG_EVAL_TARGET: &str = r#"
 // --- Scenario 12 & 13: Mutually Exclusive `cfg` Attributes ---
 #[cfg(feature = "cfg_a")]
@@ -123,56 +123,58 @@ fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {
     if !attr.path().is_ident("cfg") {
         return None;
     }
+    let Meta::List(list) = &attr.meta else { return None };
+    parse_cfg_list(list)
+}
 
-    let meta = attr.parse_meta().ok()?;
-    match meta {
-        Meta::List(list) => {
-            // Handle nested cfg expressions like cfg(all(...)), cfg(any(...)), cfg(not(...))
-            parse_cfg_meta(&list.nested.iter().next()?.clone())
-        }
-        _ => None,
+fn parse_cfg_list(list: &syn::MetaList) -> Option<CfgExpr> {
+    let mut iter = list.parse_args_with(
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+    ).ok()?;
+
+    if iter.len() == 1 {
+        parse_single_meta(iter.pop()?.into_value())
+    } else {
+        // cfg(feature = "a", feature = "b")  => treat as cfg(any(...))
+        let args: Vec<CfgExpr> = iter.into_iter().filter_map(parse_single_meta).collect();
+        Some(CfgExpr::Any(args))
     }
 }
 
-fn parse_cfg_meta(nested: &syn::NestedMeta) -> Option<CfgExpr> {
-    match nested {
-        syn::NestedMeta::Meta(Meta::Path(path)) => {
-            // Simple flag like `unix`
-            Some(CfgExpr::Atom(CfgAtom::Feature(
-                path.get_ident()?.to_string(),
-            )))
-        }
-        syn::NestedMeta::Meta(Meta::NameValue(nv)) => {
-            // Key-value like `feature = "cfg_a"`
-            if nv.path.is_ident("feature") {
-                if let syn::Lit::Str(s) = &nv.lit {
-                    return Some(CfgExpr::Atom(CfgAtom::Feature(s.value())));
-                }
+fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
+    match meta {
+        Meta::Path(path) => Some(CfgExpr::Atom(CfgAtom::Feature(
+            path.get_ident()?.to_string(),
+        ))),
+        Meta::NameValue(nv) => {
+            let key = nv.path.get_ident()?.to_string();
+            let value = match nv.value {
+                syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => s.value(),
+                _ => return None,
+            };
+            match key.as_str() {
+                "feature" => Some(CfgExpr::Atom(CfgAtom::Feature(value))),
+                "target_os" => Some(CfgExpr::Atom(CfgAtom::TargetOs(value))),
+                _ => None,
             }
-            if nv.path.is_ident("target_os") {
-                if let syn::Lit::Str(s) = &nv.lit {
-                    return Some(CfgExpr::Atom(CfgAtom::TargetOs(s.value())));
-                }
-            }
-            None
         }
-        syn::NestedMeta::Meta(Meta::List(list)) => {
-            // all, any, not
-            let ident = list.path.get_ident()?;
+        Meta::List(list) => {
+            let ident = list.path.get_ident()?.to_string();
             let args: Vec<CfgExpr> = list
-                .nested
-                .iter()
-                .filter_map(|n| parse_cfg_meta(n))
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .ok()?
+                .into_iter()
+                .filter_map(parse_single_meta)
                 .collect();
-
-            match ident.to_string().as_str() {
+            match ident.as_str() {
                 "all" => Some(CfgExpr::All(args)),
                 "any" => Some(CfgExpr::Any(args)),
                 "not" => args.into_iter().next().map(|e| CfgExpr::Not(Box::new(e))),
                 _ => None,
             }
         }
-        _ => None,
     }
 }
 
