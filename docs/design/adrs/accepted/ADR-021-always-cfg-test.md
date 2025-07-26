@@ -3,6 +3,8 @@
 ## Status
 ACCEPTED
 
+Git tracking: exp/cfg-handling 3ebb4859
+
 ## Context
 When developers ask the LLM to help write or evaluate tests, the RAG system needs
 to have complete context about test items (`#[test]` functions, `#[cfg(test)]`
