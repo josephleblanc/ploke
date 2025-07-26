@@ -1,6 +1,10 @@
 
 use std::collections::HashSet;
 
+// You can see here that we are implementing a hand-rolled evaluator, but from the tests you can
+// also see that there are some limitations we are hitting. Let's consider how we can make our
+// evaluator more robust, including getting access to the system information on the compiling
+// machine so we can more accurately evaluate the cfg AI!
 /// Very small hand-rolled `#[cfg(...)]` evaluator.
 ///
 /// Accepts the raw token string that lives between the parentheses
