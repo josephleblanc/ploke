@@ -4,9 +4,31 @@
 //! ingestion.  The implementation is intentionally minimal and will be extended
 //! as new configuration atoms and target triples are required.
 //!
-//! TODO: Add `target_abi`, `target_has_atomic`, `panic`, etc. to `CfgAtom`.
-//! TODO: Expand `ActiveCfg::from_crate_context` to handle more target triples
-//!       and target families instead of the current hard-coded fallback.
+//! # ⚠️ Known Limitations
+//!
+//! The evaluator **silently rejects** the following commonly-used atoms:
+//!
+//! * `target_pointer_width = "64"` / `"32"`  
+//! * `target_endian = "little"` / `"big"`  
+//! * `target_vendor = "unknown"` / `"apple"` / `"pc"`  
+//! * `target_env = "gnu"` / `"musl"` / `"msvc"`  
+//! * `windows`, `unix`, `test`, `debug_assertions`, `doc`, `proc_macro`  
+//! * `panic = "unwind"` / `"abort"`  
+//! * `target_has_atomic = "…"`, `target_feature = "…"`  
+//!
+//! Any item guarded by an unsupported atom is **dropped from the graph**.
+//!
+//! # Fallback Target Triple
+//!
+//! When the `TARGET` environment variable is missing, the evaluator falls back
+//! to `"x86_64-unknown-linux-gnu"`.  This is **not neutral**:
+//!
+//! * It biases the corpus toward Linux/x86-64 code paths.  
+//! * It breaks determinism across machines.  
+//!
+//! **Do not rely on this default for production ingestion.**
+//!
+//! TODO: Replace the fallback with an explicit CLI flag or error.
 
 use std::collections::HashSet;
 
