@@ -547,6 +547,16 @@ impl<'a> CodeVisitor<'a> {
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
     fn visit_item_fn(&mut self, func: &'ast ItemFn) {
+
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&func.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let is_proc_macro = func.attrs.iter().any(|attr| {
             attr.path().is_ident("proc_macro")
                 || attr.path().is_ident("proc_macro_derive")
@@ -849,25 +859,25 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit struct definitions
     #[cfg(feature = "cfg_eval")]
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
-         let struct_name = item_struct.ident.to_string();
+        let struct_name = item_struct.ident.to_string();
 
-         // --- CFG Handling (Expression Evaluation) ---
-         use crate::parser::visitor::attribute_processing::should_include_item;
-         let active_cfg = &self.state.active_cfg;
+        // --- CFG Handling (Expression Evaluation) ---
+        use crate::parser::visitor::attribute_processing::should_include_item;
+        let active_cfg = &self.state.active_cfg;
 
-         if !should_include_item(&item_struct.attrs, active_cfg) {
-             return; // Skip this item due to cfg
-         }
+        if !should_include_item(&item_struct.attrs, active_cfg) {
+            return; // Skip this item due to cfg
+        }
 
-         let scope_cfgs = self.state.current_scope_cfgs.clone();
-         let item_cfgs = extract_cfg_strings(&item_struct.attrs);
-         let provisional_effective_cfgs: Vec<String> = scope_cfgs
-             .iter()
-             .cloned()
-             .chain(item_cfgs.iter().cloned())
-             .collect();
-         let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
-         // --- End CFG Handling ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = extract_cfg_strings(&item_struct.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
 
         // Register the new node ID and get parent module ID
         let registration_result =
@@ -995,6 +1005,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit type alias definitions
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_type.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let type_alias_name = item_type.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1080,6 +1099,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit union definitions
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_union.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let union_name = item_union.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1221,6 +1249,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit enum definitions
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_enum.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let enum_name = item_enum.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1477,6 +1514,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_impl.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
 
         // --- CFG Handling (Raw Strings) ---
@@ -1708,6 +1754,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit trait definitions
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_trait.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let trait_name = item_trait.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1949,6 +2004,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&module.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let module_name = module.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -2078,6 +2143,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&use_item.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
         let item_cfgs = super::attribute_processing::extract_cfg_strings(&use_item.attrs);
@@ -2159,6 +2233,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     ///     - Adds a new `Contains` relation with current module (through `add_contains_rel`)
     ///     - `NodeId::Synthetic` created through `add_contains_rel` using the *visible name*.
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&extern_crate.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
         let item_cfgs = super::attribute_processing::extract_cfg_strings(&extern_crate.attrs);
@@ -2268,6 +2351,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_const.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let const_name = item_const.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -2344,6 +2436,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit static items
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_static.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let static_name = item_static.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -2422,6 +2523,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit macro definitions (macro_rules!)
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_macro.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let is_exported = item_macro
             .attrs
             .iter()
