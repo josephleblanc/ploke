@@ -39,6 +39,7 @@ anyhow = "1.0"
 toml = { version = "0.8" }
 walkdir = { version = "2.4" }
 
+# cfg handling
 parse_cfg = "4.1.1"
 # target-lexicon = "0.13"         # Removed: Not needed until Phase 3/RAG
 
@@ -50,6 +51,7 @@ colored = { workspace = true }
 # Convenience
 itertools = { workspace = true }
 lazy_static = { workspace = true } # Added lazy_static
+
 
 derive_test_helpers = { path = "../../../proc_macros/syn_parser/derive_test_helpers" }
 
