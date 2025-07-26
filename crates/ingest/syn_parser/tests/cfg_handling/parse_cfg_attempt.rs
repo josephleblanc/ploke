@@ -181,7 +181,7 @@ fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
 #[test]
 fn test_cfg_evaluation() {
     // Parse the test file
-    let file = parse_file(TEST_CFG_EVAL_TARGET).expect("Failed to parse test file");
+    let file = syn::parse_file(TEST_CFG_EVAL_TARGET).expect("Failed to parse test file");
 
     // Build active configurations to test
     let active_with_cfg_a = ActiveCfg {
@@ -209,7 +209,7 @@ fn test_cfg_evaluation() {
     // Find all module items and their cfg attributes
     let mut modules = Vec::new();
     for item in file.items {
-        if let Item::Mod(item_mod) = item {
+        if let syn::Item::Mod(item_mod) = item {
             let cfgs: Vec<CfgExpr> = item_mod
                 .attrs
                 .iter()
