@@ -78,6 +78,14 @@ pub enum SynParserError {
     #[error("I/O error: {0}")]
     Io(String), // Wrap std::io::Error details in a String for simplicity
 
+    /// An I/O error occurred during file discovery or reading.
+    #[error("Simple Discovery error: {path}")]
+    SimpleDiscovery{ path: String }, // Wrap std::io::Error details in a String for simplicity
+    
+    /// An I/O error occurred during file discovery or reading.
+    #[error("ComplexDiscovery error: {name} on path {path} from source: {source_string}")]
+    ComplexDiscovery {name: String, path: String, source_string: String}, // Wrap std::io::Error details in a String for simplicity
+    
     /// A parsing error from the `syn` crate occurred.
     #[error("Syn parsing error: {0}")]
     Syn(String), // Wrap syn::Error details in a String

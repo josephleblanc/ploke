@@ -18,6 +18,8 @@ use toml;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use crate::error::SynParserError;
+
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
 // Define a stable PROJECT_NAMESPACE UUID.
@@ -76,6 +78,26 @@ pub enum DiscoveryError {
     /// Multiple non-fatal errors occurred during discovery.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
+}
+
+impl TryFrom<DiscoveryError> for SynParserError {
+    type Error = SynParserError;
+
+    fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
+        use DiscoveryError::*;
+        Ok(
+            match value {
+                MissingPackageName {path} => SynParserError::SimpleDiscovery { path: path.display().to_string()},
+                MissingPackageVersion {path} => SynParserError::SimpleDiscovery { path: path.display().to_string()},
+                CratePathNotFound {path} => SynParserError::SimpleDiscovery { path: path.display().to_string()},
+                SrcNotFound {path} => SynParserError::SimpleDiscovery { path: path.display().to_string()},
+                Io { path, .. } => SynParserError::ComplexDiscovery { name: "".to_string(), path: path.display().to_string(), source_string: "Io".to_string() },
+                TomlParse { path, .. } => SynParserError::ComplexDiscovery { name: "".to_string(), path: path.display().to_string(), source_string: "Toml".to_string()},
+                Walkdir { path, .. } => SynParserError::ComplexDiscovery { name: "".to_string(), path: path.display().to_string(), source_string: "walkdir".to_string()},
+                NonFatalErrors(..) => todo!("Decide what to do with this one later."),
+            }
+        )
+    }
 }
 
 // Helper structs for deserializing Cargo.toml

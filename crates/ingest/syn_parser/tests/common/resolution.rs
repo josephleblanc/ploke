@@ -12,7 +12,16 @@ use syn_parser::{
     parser::{graph::CodeGraph, nodes::GraphNode},
 };
 
-use super::run_phases_and_collect;
+use super::{run_phases_and_collect, try_run_phases_and_collect};
+
+pub fn try_build_tree_for_tests(
+    fixture_name: &str,
+) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
+    let results = try_run_phases_and_collect(fixture_name)?;
+    let merged_graph = ParsedCodeGraph::merge_new(results)?;
+    let tree = merged_graph.build_module_tree()?; // dirty, placeholder
+    Ok((merged_graph, tree))
+}
 
 pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree) {
     let results = run_phases_and_collect(fixture_name);

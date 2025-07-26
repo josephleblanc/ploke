@@ -21,15 +21,13 @@ pub fn cfg_enabled(expr: &str, active: &HashSet<&str>) -> bool {
         eprintln!("all inner tokens: {:?}", inner.split(',').collect::<Vec<_>>());
         return inner
             .split(',')
-            .map(|s| cfg_enabled(s.trim(), active))
-            .all(|b| b);
+            .all(|s| cfg_enabled(s.trim(), active));
     }
     if let Some(inner) = expr.strip_prefix("any(").and_then(|s| s.strip_suffix(')')) {
         eprintln!("any inner tokens: {:?}", inner.split(',').collect::<Vec<_>>());
         return inner
             .split(',')
-            .map(|s| cfg_enabled(s.trim(), active))
-            .any(|b| b);
+            .any(|s| cfg_enabled(s.trim(), active));
     }
     if let Some(inner) = expr.strip_prefix("not(").and_then(|s| s.strip_suffix(')')) {
         return !cfg_enabled(inner.trim(), active);

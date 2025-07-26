@@ -131,6 +131,7 @@ pub(crate) fn extract_cfg_strings(attrs: &[syn::Attribute]) -> Vec<String> {
                         .split_whitespace()
                         .collect::<Vec<&str>>()
                         .join(" ");
+                    eprintln!("cfg_content: {}", cfg_content);
                     if cfg_content.is_empty() {
                         None // Ignore empty #[cfg()]
                     } else {
