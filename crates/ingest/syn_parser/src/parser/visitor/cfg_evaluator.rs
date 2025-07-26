@@ -38,6 +38,13 @@ pub struct ActiveCfg {
 }
 
 impl ActiveCfg {
+    /// Evaluate a parsed `#[cfg(...)]` expression against the active configuration.
+    ///
+    /// Returns `true` if the expression is satisfied under the current feature set
+    /// and target platform, `false` otherwise.
+    ///
+    /// Supported atoms: `feature`, `target_os`, `target_arch`, `target_family`.
+    /// Unsupported atoms are **not** evaluated and always yield `false`.
     pub fn eval(&self, expr: &CfgExpr) -> bool {
         match expr {
             CfgExpr::All(children) => children.iter().all(|c| self.eval(c)),
@@ -54,6 +61,17 @@ impl ActiveCfg {
 }
 
 impl ActiveCfg {
+    /// Build an `ActiveCfg` from the discovered crate context.
+    ///
+    /// Combines:
+    /// * enabled features defined in `Cargo.toml`,
+    /// * the target triple taken from the `$TARGET` environment variable (or a
+    ///   default fallback),
+    /// * derived `target_arch`, `target_os`, and `target_family` strings.
+    ///
+    /// # Panics
+    /// Never panics; unknown or malformed triples fall back to
+    /// `"x86_64-unknown-linux-gnu"` semantics.
     pub fn from_crate_context(context: &crate::discovery::CrateContext) -> Self {
         let features = context
             .features()
