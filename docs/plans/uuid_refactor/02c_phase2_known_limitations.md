@@ -94,4 +94,23 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
+## 7. `#[cfg(...)]` Attribute Evaluation – Unsupported Atoms & Fallback Bias
+
+*   **Limitation:** The evaluator in [`crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs`](../../../../crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs) recognizes only the atoms `feature`, `target_os`, `target_arch`, and `target_family`.  
+    All other widely-used atoms (e.g. `target_pointer_width`, `target_endian`, `windows`, `unix`, `test`, `debug_assertions`, `panic`, etc.) are silently treated as *false*, causing any item guarded by them to be **dropped from the graph**.
+
+*   **Fallback Target Triple:** When the `TARGET` environment variable is absent, the code defaults to `"x86_64-unknown-linux-gnu"`.  
+    This biases the corpus toward Linux/x86-64 code paths and breaks determinism across machines.
+
+*   **Impact:**  
+    • Valid conditional code is omitted without warning.  
+    • Cross-platform crates appear to contain far less code than they actually do.  
+    • Results are non-repeatable unless `TARGET` is explicitly set.
+
+*   **Future Work:**  
+    • Extend the atom set to match `rustc --print cfg`.  
+    • Replace the fallback with an explicit CLI flag or error.
+
+---
+
 *(Add subsequent limitations below this line)*
