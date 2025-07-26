@@ -107,18 +107,27 @@ pub trait RelationIndexer {
         })
     }
 
-    /// Returns an iterator over all `TreeRelation`s pointing to the given `target_id`.
+    /// Returns an iterator over all `TreeRelation`s whose `target` is `target_id`.
     ///
-    /// This provides efficient access to incoming relations without collecting them into a `Vec`.
-    /// Filtering by relation kind should be done by the caller on the resulting iterator,
-    /// or by using `get_relations_to` with a filter closure.
+    /// If `target_id` has no incoming relations, the iterator will simply be empty.
+    /// The method never panics and does not allocate.
     ///
-    /// # Arguments
-    /// * `target_id`: The ID of the target node.
-    ///
-    /// # Returns
-    /// An `Option` containing an iterator yielding `&TreeRelation` if the target ID exists
-    /// in the index, otherwise `None`.
+    /// # Examples
+    /// ```
+    /// let parsed_graphs = (*PARSED_FIXTURE_CRATE_NODES).clone();
+    /// let merged: ParsedCodeGraph = ParsedCodeGraph::merge_new(parsed_graphs).expect("Error parsing static graph");
+    /// let tree = merged
+    ///     .build_module_tree()
+    ///     .expect("Error building module tree from static graph");
+    /// let root_id = tree.root().as_any();
+    /// // root_id should return a None value here, which is acceptable
+    /// let mut should_be_none = tree.get_iter_relations_to(&root_id);
+    /// assert!(should_be_none.next().is_none());
+    /// for rel in tree.get_iter_relations_to(&root_id.as_any()) {
+    ///     eprintln!("{rel:?}");
+    /// }
+    /// ```
+    /// Reviewed by JL 25-07-2025, guided doc by kimi-k2
     fn get_iter_relations_to<'a>(
         &'a self,
         target_id: &AnyNodeId,
@@ -132,7 +141,37 @@ pub trait RelationIndexer {
                     .iter()
                     .filter_map(|&index| self.tree_relations().get(index))
             })
-            .unwrap_or_else(|| {
+            .into_iter()
+            .flatten()
+    }
+
+    /// Returns an iterator over all `TreeRelation`s whose `target` is `target_id`,
+    /// treating the absence of *any* entry for that id as a logic error.
+    ///
+    /// # Success
+    /// On success the iterator yields zero or more references to the incoming
+    /// relations.  The iterator does not allocate and is obtained in O(1) time.
+    ///
+    /// # Failure
+    /// Returns `Err(ModuleTreeError::NoRelationsFoundForId)` if no relations for
+    /// `target_id` were ever recorded.  This is considered an invariant violation
+    /// and a corresponding error is logged.
+    ///
+    /// Reviewed by JL 2025-07-25, guided doc by kimi-k2
+    fn try_get_iter_relations_to<'a>(
+        &'a self,
+        target_id: &AnyNodeId,
+    ) -> Result<impl Iterator<Item = &'a TreeRelation>, ModuleTreeError> {
+        self.relations_by_target()
+            .get(target_id)
+            .map(|indices| {
+                // Use AnyNodeId key
+                // Map indices directly to relation references
+                indices
+                    .iter()
+                    .filter_map(|&index| self.tree_relations().get(index))
+            })
+            .ok_or_else(|| {
                 log::error!(target: LOG_TARGET_MOD_TREE_BUILD,
                     "{}: {} | {} ({}) {} {:?}",
                     "Invariant Violated".log_error(),
@@ -142,7 +181,7 @@ pub trait RelationIndexer {
                     "Full ID:",
                     target_id
                 );
-                panic!()
+                ModuleTreeError::NoRelationsFoundForId(*target_id)
             })
     }
 
@@ -164,5 +203,29 @@ pub trait RelationIndexer {
             .entry(target_id) // Use AnyNodeId directly
             .or_default()
             .push(new_index);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::{
+        parser::nodes::AsAnyNodeId, utils::test_setup::PARSED_FIXTURE_CRATE_NODES, ParsedCodeGraph,
+    };
+
+    use super::RelationIndexer;
+
+    #[test]
+    fn some_test() {
+        let parsed_graphs = (*PARSED_FIXTURE_CRATE_NODES).clone();
+        let merged = ParsedCodeGraph::merge_new(parsed_graphs).expect("Error parsing static graph");
+        let tree = merged
+            .build_module_tree()
+            .expect("Error building module tree from static graph");
+        let root_id = tree.root().as_any();
+        // root_id should return a None value here, which is acceptable
+        let mut should_be_none = tree.get_iter_relations_to(&root_id);
+        assert!(should_be_none.next().is_none());
+        for rel in tree.get_iter_relations_to(&root_id.as_any()) {
+            eprintln!("{rel:?}");
+        }
     }
 }

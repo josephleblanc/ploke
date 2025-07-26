@@ -443,6 +443,8 @@ mod tests {
     #[test]
     fn test_build_mod_tree() -> Result<()> {
         let _ = env_logger::builder()
+            .format_file(true)
+            .format_line_number(true)
             .is_test(true)
             .format_timestamp(None) // Disable timestamps
             .try_init();

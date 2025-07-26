@@ -1,3 +1,4 @@
+use lazy_static::lazy_static;
 use ploke_common::{fixtures_crates_dir, workspace_root};
 
 use crate::{
@@ -6,6 +7,29 @@ use crate::{
     parser::{analyze_files_parallel, ParsedCodeGraph},
     resolve::module_tree::ModuleTree,
 };
+
+
+lazy_static! {
+    /// Parsed data for the "fixture_nodes" crate.
+    /// Contains various node types for individual node parsing tests.
+    pub static ref PARSED_FIXTURE_CRATE_NODES: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_nodes");
+}
+
+lazy_static! {
+    /// Parsed data for the "fixture_crate_dir_detection" crate.
+    /// Used for testing crate discovery and basic module structure.
+    pub static ref PARSED_FIXTURE_CRATE_DIR_DETECTION: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("file_dir_detection");
+}
+
+// Add other fixtures here as needed, for example:
+lazy_static! {
+    /// Parsed data for the "fixture_types" crate.
+    pub static ref PARSED_FIXTURE_CRATE_TYPES: Vec<ParsedCodeGraph> =
+        run_phases_and_collect("fixture_types");
+}
+
 pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
     let crate_path = fixtures_crates_dir().join(fixture_name);
     let project_root = workspace_root(); // Use workspace root for context
