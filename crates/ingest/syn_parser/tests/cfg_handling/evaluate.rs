@@ -1,44 +1,120 @@
 
 use std::collections::HashSet;
 
-// You can see here that we are implementing a hand-rolled evaluator, but from the tests you can
-// also see that there are some limitations we are hitting. Let's consider how we can make our
-// evaluator more robust, including getting access to the system information on the compiling
-// machine so we can more accurately evaluate the cfg AI!
-/// Very small hand-rolled `#[cfg(...)]` evaluator.
+/// Robust `#[cfg(...)]` evaluator with system information support.
 ///
 /// Accepts the raw token string that lives between the parentheses
 /// (e.g. `feature = "alpha"`, `all(feature = "a", target_os = "linux")`)
 /// and a set of currently active names.
 ///
 /// Returns true if the predicate evaluates to true under the supplied
-/// active set.
+/// active set and system configuration.
 pub fn cfg_enabled(expr: &str, active: &HashSet<&str>) -> bool {
     let expr = expr.trim();
     if expr.is_empty() {
         return true;
     }
 
-    // Simple recursive descent for the three combinators we need:
-    //   all(...), any(...), not(...)
-    if let Some(inner) = expr.strip_prefix("all(").and_then(|s| s.strip_suffix(')')) {
-        eprintln!("all inner tokens: {:?}", inner.split(',').collect::<Vec<_>>());
-        return inner
-            .split(',')
-            .all(|s| cfg_enabled(s.trim(), active));
-    }
-    if let Some(inner) = expr.strip_prefix("any(").and_then(|s| s.strip_suffix(')')) {
-        eprintln!("any inner tokens: {:?}", inner.split(',').collect::<Vec<_>>());
-        return inner
-            .split(',')
-            .any(|s| cfg_enabled(s.trim(), active));
-    }
-    if let Some(inner) = expr.strip_prefix("not(").and_then(|s| s.strip_suffix(')')) {
-        return !cfg_enabled(inner.trim(), active);
-    }
+    let system = get_system_cfg();
+    parse_and_evaluate(expr, active, &system)
+}
 
-    // Base predicates: `feature = "value"`, `test`, `target_os = "linux"` etc.
-    active.contains(expr)
+/// System configuration detection
+fn get_system_cfg() -> HashSet<String> {
+    let mut system = HashSet::new();
+    
+    // Add target OS
+    if cfg!(target_os = "linux") {
+        system.insert("target_os = \"linux\"".to_string());
+    } else if cfg!(target_os = "windows") {
+        system.insert("target_os = \"windows\"".to_string());
+    } else if cfg!(target_os = "macos") {
+        system.insert("target_os = \"macos\"".to_string());
+    }
+    
+    // Add target architecture
+    if cfg!(target_arch = "x86_64") {
+        system.insert("target_arch = \"x86_64\"".to_string());
+    } else if cfg!(target_arch = "aarch64") {
+        system.insert("target_arch = \"aarch64\"".to_string());
+    }
+    
+    // Add debug/release configuration
+    if cfg!(debug_assertions) {
+        system.insert("debug_assertions".to_string());
+    }
+    
+    // Add test configuration
+    if cfg!(test) {
+        system.insert("test".to_string());
+    }
+    
+    system
+}
+
+/// Parse and evaluate a cfg expression with proper handling of nested parentheses
+fn parse_and_evaluate(expr: &str, active: &HashSet<&str>, system: &HashSet<String>) -> bool {
+    let expr = expr.trim();
+    
+    // Handle combinators
+    if let Some(rest) = expr.strip_prefix("all(") {
+        if let Some((items, _)) = split_balanced(rest) {
+            return items.iter().all(|item| parse_and_evaluate(item.trim(), active, system));
+        }
+    }
+    
+    if let Some(rest) = expr.strip_prefix("any(") {
+        if let Some((items, _)) = split_balanced(rest) {
+            return items.iter().any(|item| parse_and_evaluate(item.trim(), active, system));
+        }
+    }
+    
+    if let Some(rest) = expr.strip_prefix("not(") {
+        if let Some((items, _)) = split_balanced(rest) {
+            if let Some(item) = items.first() {
+                return !parse_and_evaluate(item.trim(), active, system);
+            }
+        }
+    }
+    
+    // Base predicate
+    let full_active: HashSet<&str> = active
+        .iter()
+        .copied()
+        .chain(system.iter().map(|s| s.as_str()))
+        .collect();
+    
+    full_active.contains(expr)
+}
+
+/// Split a string by commas while respecting balanced parentheses
+fn split_balanced(s: &str) -> Option<(Vec<String>, usize)> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0;
+    
+    for (i, ch) in s.chars().enumerate() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    // Found the closing paren for the outer expression
+                    items.push(current.trim().to_string());
+                    return Some((items, i + 1));
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => {
+                items.push(current.trim().to_string());
+                current.clear();
+                continue;
+            }
+            _ => {}
+        }
+        current.push(ch);
+    }
+    
+    None // Unbalanced parentheses
 }
 
 #[test]
