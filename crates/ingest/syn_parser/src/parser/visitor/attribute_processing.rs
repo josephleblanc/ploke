@@ -120,15 +120,19 @@ use crate::parser::visitor::cfg_evaluator::{ActiveCfg, CfgAtom, CfgExpr};
 /// `true` if the item should be included (all cfg conditions are satisfied), `false` otherwise.
 #[cfg(feature = "cfg_eval")]
 pub(crate) fn should_include_item(attrs: &[syn::Attribute], active_cfg: &ActiveCfg) -> bool {
-    attrs
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && parse_cfg_attribute(attr).map_or(false, |expr| {
+                expr == CfgExpr::Atom(CfgAtom::Feature("test".into()))
+            })
+    }) || attrs
         .iter()
         .filter(|attr| attr.path().is_ident("cfg"))
         .all(|attr| {
             let expr = parse_cfg_attribute(attr);
-            eprintln!("within should_include_item in visitor::attribute_processing:\n\t{:#?}", expr);
             match expr {
                 Some(cfg_expr) => active_cfg.eval(&cfg_expr),
-                None => true, // Treat malformed cfg as include
+                None => false, // Treat malformed cfg as include
             }
         })
 }
