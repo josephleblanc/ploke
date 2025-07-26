@@ -1,3 +1,13 @@
+//! **WORK-IN-PROGRESS**
+//!
+//! This module provides basic evaluation of `#[cfg(...)]` attributes during
+//! ingestion.  The implementation is intentionally minimal and will be extended
+//! as new configuration atoms and target triples are required.
+//!
+//! TODO: Add `target_abi`, `target_has_atomic`, `panic`, etc. to `CfgAtom`.
+//! TODO: Expand `ActiveCfg::from_crate_context` to handle more target triples
+//!       and target families instead of the current hard-coded fallback.
+
 use std::collections::HashSet;
 
 /// Everything we can encounter inside a `#[cfg(…)]`
@@ -52,6 +62,7 @@ impl ActiveCfg {
             .collect();
 
         // Parse target triple from environment or use defaults
+        // TODO: Replace the fallback triple with a more complete target-triple parser.
         let target_triple =
             std::env::var("TARGET").unwrap_or_else(|_| "x86_64-unknown-linux-gnu".to_string());
         let parts: Vec<&str> = target_triple.split('-').collect();
