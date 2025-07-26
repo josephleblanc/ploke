@@ -706,7 +706,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         } // End else block for regular functions
     }
 
-    // Visit struct definitions
+    #[cfg(not(feature = "cfg_eval"))]
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_name = item_struct.ident.to_string();
 
@@ -720,6 +720,154 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             .collect();
         let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
         // --- End CFG Handling ---
+        // Visit struct definitions
+
+        // Register the new node ID and get parent module ID
+        let registration_result =
+            self.register_new_node_id(&struct_name, ItemKind::Struct, cfg_bytes.as_deref());
+        if registration_result.is_none() {
+            return;
+        } // Skip if parent module not found
+        let (struct_any_id, parent_mod_id) = registration_result.unwrap();
+
+        self.debug_new_id(&struct_name, struct_any_id); // Now uses trace!
+
+        let byte_range = item_struct.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+
+        // Push the struct's base ID onto the scope stack BEFORE processing fields/generics
+        // Use helper function for logging
+        let struct_typed_id: StructNodeId = struct_any_id.try_into().unwrap();
+        self.push_primary_scope(
+            &struct_name,
+            struct_typed_id.into(),
+            &provisional_effective_cfgs,
+        ); // Clone cfgs for push
+
+        // Process fields
+        let mut fields = Vec::new();
+        for (field, i) in item_struct.fields.iter().zip(u8::MIN..u8::MAX) {
+            let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            let field_ref = field_name.get_or_insert_default();
+            field_ref.extend("unnamed_field".chars().chain(struct_name.as_str().chars()));
+            field_ref.push(i.into());
+
+            // --- CFG Handling for Field (Raw Strings) ---
+            let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+            let field_item_cfgs = super::attribute_processing::extract_cfg_strings(&field.attrs);
+            let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                .iter()
+                .cloned()
+                .chain(field_item_cfgs.iter().cloned())
+                .collect();
+            let field_cfg_bytes = calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Generate base ID for the field
+            // Note: Fields are contained within the struct, not directly in the module,
+            // so we don't use register_new_node_id here.
+            let field_any_id = self.state.generate_synthetic_node_id(
+                &field_ref.clone(),
+                // .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
+                ItemKind::Field,
+                field_cfg_bytes.as_deref(), // Pass field's CFG bytes
+            );
+
+            // Removed #[cfg] block
+            self.debug_new_id(&field_ref.clone(), field_any_id);
+            let type_id = get_or_create_type(self.state, &field.ty);
+
+            let field_node_id: FieldNodeId = field_any_id.try_into().unwrap();
+            let field_node = FieldNode {
+                id: field_node_id,
+                name: field_name,
+                type_id,
+                visibility: self.state.convert_visibility(&field.vis),
+                attributes: extract_attributes(&field.attrs),
+                cfgs: field_item_cfgs,
+            };
+            fields.push(field_node);
+
+            // Add relation between struct and field (defer until struct node is created)
+            // We need the typed struct ID first.
+        }
+
+        // Process generic parameters (still within struct's scope)
+        let generic_params = self.state.process_generics(&item_struct.generics);
+
+        // Extract doc comments and other attributes
+        let docstring = extract_docstring(&item_struct.attrs);
+        let attributes = extract_attributes(&item_struct.attrs);
+
+        let struct_node_id: StructNodeId = struct_any_id.try_into().unwrap();
+        // Create the struct node
+        let struct_node = StructNode {
+            id: struct_node_id, // Use base ID
+            name: struct_name.clone(),
+            span,
+            visibility: self.state.convert_visibility(&item_struct.vis),
+            fields,
+            generic_params,
+            attributes,
+            docstring,
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_struct.to_token_stream()),
+            ),
+            cfgs: item_cfgs.clone(), // Store struct's own cfgs
+        };
+
+        // Now add the StructField relations using the fields from the created struct_node
+        for field_node in &struct_node.fields {
+            let relation = SyntacticRelation::StructField {
+                source: struct_node_id,
+                target: field_node.field_id(),
+            };
+            self.state.code_graph.relations.push(relation);
+        }
+
+        // Add the struct node to the graph
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::Struct(struct_node));
+
+        // Add the Contains relation for the struct itself
+        let contains_relation = SyntacticRelation::Contains {
+            source: parent_mod_id,
+            target: PrimaryNodeId::from(struct_node_id), // Use category enum
+        };
+        self.state.code_graph.relations.push(contains_relation);
+
+        // Continue visiting children (fields are handled above, visit generics/where clauses if needed)
+        visit::visit_item_struct(self, item_struct);
+
+        // Pop the struct's scope using the helper
+        self.pop_primary_scope(&struct_name);
+    }
+
+    // Visit struct definitions
+    #[cfg(feature = "cfg_eval")]
+    fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
+         let struct_name = item_struct.ident.to_string();
+
+         // --- CFG Handling (Expression Evaluation) ---
+         use crate::parser::visitor::attribute_processing::should_include_item;
+         let active_cfg = &self.state.active_cfg;
+
+         if !should_include_item(&item_struct.attrs, active_cfg) {
+             return; // Skip this item due to cfg
+         }
+
+         let scope_cfgs = self.state.current_scope_cfgs.clone();
+         let item_cfgs = extract_cfg_strings(&item_struct.attrs);
+         let provisional_effective_cfgs: Vec<String> = scope_cfgs
+             .iter()
+             .cloned()
+             .chain(item_cfgs.iter().cloned())
+             .collect();
+         let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+         // --- End CFG Handling ---
 
         // Register the new node ID and get parent module ID
         let registration_result =

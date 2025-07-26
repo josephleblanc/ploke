@@ -1,4 +1,3 @@
-
 #[test]
 pub fn basic_test() -> Result<(), ploke_error::Error> {
     use crate::common::resolution::try_build_tree_for_tests;
@@ -9,6 +8,12 @@ pub fn basic_test() -> Result<(), ploke_error::Error> {
 #[test]
 fn test_all_fixtures() -> Result<(), ploke_error::Error> {
     use crate::common::resolution::try_build_tree_for_tests;
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .format_file(true)
+        .format_line_number(true)
+        .try_init();
     let fixture_dirs = [
         "duplicate_name_fixture_1",
         "duplicate_name_fixture_2",

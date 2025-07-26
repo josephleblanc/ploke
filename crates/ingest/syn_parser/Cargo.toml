@@ -62,9 +62,15 @@ ploke-test-macros = { path = "../../../proc_macros/syn_parser/ploke-test-macros"
 
 # Feature flags
 [features]
-default = ["type_bearing_ids", "validate", "reexport", "not_wip_marker"]
-feature_a = []                                                           # Add feature_a used by fixture
-feature_b = []                                                           # Add feature_b used by test
+default = [
+    "type_bearing_ids",
+    "validate",
+    "reexport",
+    "not_wip_marker",
+    "cfg_eval",
+]
+feature_a = [] # Add feature_a used by fixture
+feature_b = [] # Add feature_b used by test
 verbose_debug = []
 temp_target = []
 not_wip_marker = []
@@ -76,3 +82,4 @@ mod_tree_cfg = []
 reexport = []
 # Post-MVP feature
 workspace_vis = []
+cfg_eval = []
