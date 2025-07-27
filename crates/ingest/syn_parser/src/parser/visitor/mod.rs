@@ -118,7 +118,7 @@ pub fn analyze_file_phase2(
     })?;
         // .expect("This is the primary problem? line 118 of visitor/mod.rs");
     // TODO: Add real error handling here.
-    let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
+    // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
     let file = syn::parse_file(&file_content).inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
         // .expect(&msg);
 
@@ -211,6 +211,8 @@ pub fn analyze_file_phase2(
     #[cfg(feature = "temp_target")]
     debug_relationships(&visitor);
 
+    log::trace!(target: "parse_target", "parsing target: {}
+validate_unique_rels = {}", file_path.display(), &visitor.validate_unique_rels());
     #[cfg(feature = "validate")]
     assert!(&visitor.validate_unique_rels());
 
@@ -504,6 +506,7 @@ pub fn analyze_files_parallel(
                 .map_err(|e| e.into())
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
             
+                log::debug!(target: "debug_dup", "file path in par_iter: {}", file_path.display());
                 #[cfg(feature = "cfg_eval")]
                 let parsed = analyze_file_phase2(
                     file_path.to_owned(),
