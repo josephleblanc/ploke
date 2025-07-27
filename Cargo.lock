@@ -3651,6 +3651,7 @@ dependencies = [
  "flume",
  "futures",
  "governor",
+ "itertools 0.14.0",
  "log",
  "nonzero_ext",
  "num_cpus",

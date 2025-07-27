@@ -2,6 +2,7 @@
 
 use crate::{parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError}, resolve::ModuleTreeError};
 use ploke_core::{IdConversionError, TypeId};
+use syn::spanned::Spanned;
 // use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
 
@@ -78,6 +79,14 @@ pub enum SynParserError {
     #[error("I/O error: {0}")]
     Io(String), // Wrap std::io::Error details in a String for simplicity
 
+    /// An I/O error occurred during file discovery or reading.
+    #[error("Simple Discovery error: {path}")]
+    SimpleDiscovery{ path: String }, // Wrap std::io::Error details in a String for simplicity
+    
+    /// An I/O error occurred during file discovery or reading.
+    #[error("ComplexDiscovery error: {name} on path {path} from source: {source_string}")]
+    ComplexDiscovery {name: String, path: String, source_string: String}, // Wrap std::io::Error details in a String for simplicity
+    
     /// A parsing error from the `syn` crate occurred.
     #[error("Syn parsing error: {0}")]
     Syn(String), // Wrap syn::Error details in a String
@@ -417,7 +426,9 @@ impl From<NodeError> for SynParserError {
 
 // Optional: Implement From<syn::Error> for SynParserError
 impl From<syn::Error> for SynParserError {
-    fn from(err: syn::Error) -> Self {
+    fn from(err: syn::Error) -> Self {                 // Print immediately so you see it even if the caller swallows it                                                  
+        eprintln!("   syn::Error: {}", err);
+        eprintln!("   span: {}", err.to_compile_error());
         SynParserError::Syn(err.to_string())
     }
 }

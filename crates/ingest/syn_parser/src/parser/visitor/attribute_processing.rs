@@ -108,6 +108,97 @@ pub(crate) fn extract_attributes(attrs: &[syn::Attribute]) -> Vec<Attribute> {
         .map(parse_attribute)
         .collect()
 }
+use crate::parser::visitor::cfg_evaluator::{ActiveCfg, CfgAtom, CfgExpr};
+
+/// Extracts and evaluates `#[cfg(...)]` attributes against active configuration.
+///
+/// # Arguments
+/// * `attrs` - A slice of `syn::Attribute` to parse.
+/// * `active_cfg` - The active configuration to evaluate against.
+///
+/// # Returns
+/// `true` if the item should be included (all cfg conditions are satisfied), `false` otherwise.
+#[cfg(feature = "cfg_eval")]
+pub(crate) fn should_include_item(attrs: &[syn::Attribute], active_cfg: &ActiveCfg) -> bool {
+    attrs.iter().any(|attr| {
+        attr.path().is_ident("cfg")
+            && parse_cfg_attribute(attr).map_or_else(|| false, |expr| {
+                expr == CfgExpr::Atom(CfgAtom::Feature("test".into()))
+            })
+    }) || attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("cfg"))
+        .all(|attr| {
+            let expr = parse_cfg_attribute(attr);
+            match expr {
+                Some(cfg_expr) => active_cfg.eval(&cfg_expr),
+                None => false, // Treat malformed cfg as include
+            }
+        })
+}
+
+/// Parse a `#[cfg(...)]` attribute into a CfgExpr
+#[cfg(feature = "cfg_eval")]
+fn parse_cfg_attribute(attr: &syn::Attribute) -> Option<CfgExpr> {
+    if !attr.path().is_ident("cfg") {
+        return None;
+    }
+    let syn::Meta::List(list) = &attr.meta else {
+        return None;
+    };
+
+    let mut iter = list
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated)
+        .ok()?;
+
+    if iter.len() == 1 {
+        parse_single_meta(iter.pop()?.into_value())
+    } else {
+        let args: Vec<CfgExpr> = iter.into_iter().filter_map(parse_single_meta).collect();
+        Some(CfgExpr::Any(args))
+    }
+}
+
+#[cfg(feature = "cfg_eval")]
+fn parse_single_meta(meta: syn::Meta) -> Option<CfgExpr> {
+    match meta {
+        syn::Meta::Path(path) => Some(CfgExpr::Atom(CfgAtom::Feature(
+            path.get_ident()?.to_string(),
+        ))),
+        syn::Meta::NameValue(nv) => {
+            let key = nv.path.get_ident()?.to_string();
+            let value = match nv.value {
+                syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) => s.value(),
+                _ => return None,
+            };
+            match key.as_str() {
+                "feature" => Some(CfgExpr::Atom(CfgAtom::Feature(value))),
+                "target_os" => Some(CfgExpr::Atom(CfgAtom::TargetOs(value))),
+                _ => None,
+            }
+        }
+        syn::Meta::List(list) => {
+            let ident = list.path.get_ident()?.to_string();
+            let args: Vec<CfgExpr> = list
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+                .ok()?
+                .into_iter()
+                .filter_map(parse_single_meta)
+                .collect();
+            match ident.as_str() {
+                "all" => Some(CfgExpr::All(args)),
+                "any" => Some(CfgExpr::Any(args)),
+                "not" => args.into_iter().next().map(|e| CfgExpr::Not(Box::new(e))),
+                _ => None,
+            }
+        }
+    }
+}
 
 /// Extracts the raw string content from `#[cfg(...)]` attributes.
 ///
@@ -131,6 +222,7 @@ pub(crate) fn extract_cfg_strings(attrs: &[syn::Attribute]) -> Vec<String> {
                         .split_whitespace()
                         .collect::<Vec<&str>>()
                         .join(" ");
+                    eprintln!("cfg_content: {}", cfg_content);
                     if cfg_content.is_empty() {
                         None // Ignore empty #[cfg()]
                     } else {

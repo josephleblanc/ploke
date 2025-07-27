@@ -5,6 +5,7 @@ use crate::{
     parser::resolve_target_dir,
     user_config::ProviderRegistry,
 };
+use itertools::Itertools;
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
@@ -762,6 +763,42 @@ pub async fn state_manager(
             StateCommand::LoadQuery { query_name, query_content } => {
                 let result = state.db.run_script_read_only(&query_content, BTreeMap::new());
                 tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
+                if let Ok(named_rows) = result {
+                    let mut output = String::new();
+                    let (header, rows) = ( named_rows.headers, named_rows.rows );
+                    let cols_num = header.len();
+                    let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
+                    tracing::info!(target: "load_query", "\n{display_header}");
+                    output.push('|');
+                    output.push_str(&display_header);
+                    output.push('|');
+                    output.push('\n');
+                    let divider = format!("|{}", 
+                        "-".chars().cycle().take(5)
+                            .chain("|".chars()).join("").repeat(cols_num)
+                    );
+                    output.push_str(&divider);
+                    output.push('\n');
+                    rows.into_iter().map(|r| r.into_iter()
+                            .map(|c| format!("{}", c))
+                            .map(|c| format!("{}", c)).join("|")
+                        )
+                        .for_each(|r| { 
+                            tracing::info!(target: "load_query", "\n{}", r) ;
+                            output.push('|');
+                            output.push_str(&r);
+                            output.push('|');
+                            output.push('\n');
+                        });
+                    let outfile_name = "output.md";
+                    let out_file = std::env::current_dir().map(|d| d.join("query").join(outfile_name));
+                    if let Ok(file) = out_file {
+                        // Writes to file within `if let`, only handling the error case if needed
+                        if let Err(e) = tokio::fs::write(file, output).await {
+                            tracing::error!(target: "load_query", "Error writing query output to file {e}")
+                        }
+                    }
+                }
                 // let db_return = result.unwrap();
                 // tracing::info!(target: "load_query", "db_return:\n{:#?}", db_return);
             }

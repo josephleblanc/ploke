@@ -1460,11 +1460,13 @@ impl ModuleTree {
         // 1. Identify prunable module IDs
         for (mod_id, module_node) in self.modules.iter() {
             // Skip root and non-file-based modules
+            // Said another way - Only targets inline or declaration modules
             if module_node.id.as_any() == root_any_id || !module_node.is_file_based() {
                 continue;
             }
 
-            // Check for incoming ResolvesToDefinition or CustomPath relations using get_relations_to with AnyNodeId
+            // Check for incoming ResolvesToDefinition or CustomPath relations using
+            // get_relations_to with AnyNodeId
             let is_linked = self
                 .get_iter_relations_to(&mod_id.as_any()) // Use AnyNodeId
                 .any(|tr| {

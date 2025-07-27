@@ -1,5 +1,6 @@
 // TODO: Go through the #needslinking tags in comments to make real links to other doc comments.
 
+use crate::discovery::CrateContext;
 use crate::parser::graph::CodeGraph;
 use crate::parser::nodes::{
     AnyNodeIdConversionError, GeneratesAnyNodeId, GenericParamNodeId, SecondaryNodeId,
@@ -46,10 +47,14 @@ pub struct VisitorState {
     pub(crate) current_scope_cfgs: Vec<String>,
     /// Stack to save/restore `current_scope_cfgs` when entering/leaving scopes.
     pub(crate) cfg_stack: Vec<Vec<String>>,
+    /// Active configuration for cfg evaluation
+    #[cfg(feature = "cfg_eval")]
+    pub active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg,
 }
 
 impl VisitorState {
-    pub(crate) fn new(crate_namespace: Uuid, current_file_path: PathBuf) -> Self {
+    pub(crate) fn new(crate_namespace: Uuid, current_file_path: PathBuf, crate_context: &CrateContext) 
+    -> Self {
         Self {
             code_graph: CodeGraph {
                 functions: Vec::new(),
@@ -77,6 +82,8 @@ impl VisitorState {
             cfg_stack: Vec::new(),
             current_secondary_defn_scope: Vec::new(),
             current_assoc_defn_scope: Vec::new(),
+            #[cfg(feature = "cfg_eval")]
+            active_cfg: crate::parser::visitor::cfg_evaluator::ActiveCfg::from_crate_context(crate_context),
         }
     }
 

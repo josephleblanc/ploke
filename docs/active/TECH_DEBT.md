@@ -41,6 +41,10 @@ This is a list of known fixes that I will want to make but are not terribly urge
     * [ ] Refactor `FileManager` or `AppEvent` to handle response with update
           on file save state completion.
 
+## Database
+* [ ] Change the Uuid type in the cozo database to be Bytes instead.
+  * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
+
 ## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
   Missing Rust types:

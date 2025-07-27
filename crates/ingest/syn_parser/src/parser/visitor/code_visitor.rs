@@ -218,8 +218,13 @@ impl<'a> CodeVisitor<'a> {
                 // name is not differentiated. Instead, we will just use the "*" as the name, and
                 // then if we run into issues later, we can use a replacement and store the "*" as
                 // the `original_name`.
+                // WARN: Using a simple "*" for the name, as we did previously, leads to id
+                // collisions among globs in the same module path. Instead we need to use the
+                // entire path of the glob import.
+                let mut full_path_string = base_path.join("::");
+                full_path_string.push_str("::*");
                 let registration_result = self.register_new_node_id(
-                    "*", // Use the literal "*" glob symbol directly.
+                    &full_path_string, // Use the literal "*" glob symbol directly.
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
@@ -257,7 +262,7 @@ impl<'a> CodeVisitor<'a> {
                     id: import_typed_id, // Use the typed ID
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
-                    visible_name: "*".to_string(), // Glob imports use "*" as the visible name placeholder
+                    visible_name: full_path_string, // Glob imports use "*" as the visible name placeholder
                     original_name: None,
                     is_glob: true,
                     span: glob.extract_span_bytes(),
@@ -547,6 +552,16 @@ impl<'a> CodeVisitor<'a> {
 impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit function definitions
     fn visit_item_fn(&mut self, func: &'ast ItemFn) {
+
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&func.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let is_proc_macro = func.attrs.iter().any(|attr| {
             attr.path().is_ident("proc_macro")
                 || attr.path().is_ident("proc_macro_derive")
@@ -706,11 +721,159 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         } // End else block for regular functions
     }
 
-    // Visit struct definitions
+    #[cfg(not(feature = "cfg_eval"))]
     fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
         let struct_name = item_struct.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let item_cfgs = extract_cfg_strings(&item_struct.attrs);
+        let provisional_effective_cfgs: Vec<String> = scope_cfgs
+            .iter()
+            .cloned()
+            .chain(item_cfgs.iter().cloned())
+            .collect();
+        let cfg_bytes = calculate_cfg_hash_bytes(&provisional_effective_cfgs);
+        // --- End CFG Handling ---
+        // Visit struct definitions
+
+        // Register the new node ID and get parent module ID
+        let registration_result =
+            self.register_new_node_id(&struct_name, ItemKind::Struct, cfg_bytes.as_deref());
+        if registration_result.is_none() {
+            return;
+        } // Skip if parent module not found
+        let (struct_any_id, parent_mod_id) = registration_result.unwrap();
+
+        self.debug_new_id(&struct_name, struct_any_id); // Now uses trace!
+
+        let byte_range = item_struct.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+
+        // Push the struct's base ID onto the scope stack BEFORE processing fields/generics
+        // Use helper function for logging
+        let struct_typed_id: StructNodeId = struct_any_id.try_into().unwrap();
+        self.push_primary_scope(
+            &struct_name,
+            struct_typed_id.into(),
+            &provisional_effective_cfgs,
+        ); // Clone cfgs for push
+
+        // Process fields
+        let mut fields = Vec::new();
+        for (field, i) in item_struct.fields.iter().zip(u8::MIN..u8::MAX) {
+            let mut field_name = field.ident.as_ref().map(|ident| ident.to_string());
+            let field_ref = field_name.get_or_insert_default();
+            field_ref.extend("unnamed_field".chars().chain(struct_name.as_str().chars()));
+            field_ref.push(i.into());
+
+            // --- CFG Handling for Field (Raw Strings) ---
+            let field_scope_cfgs = self.state.current_scope_cfgs.clone(); // Inherited scope
+            let field_item_cfgs = super::attribute_processing::extract_cfg_strings(&field.attrs);
+            let field_provisional_effective_cfgs: Vec<String> = field_scope_cfgs
+                .iter()
+                .cloned()
+                .chain(field_item_cfgs.iter().cloned())
+                .collect();
+            let field_cfg_bytes = calculate_cfg_hash_bytes(&field_provisional_effective_cfgs);
+            // --- End CFG Handling ---
+
+            // Generate base ID for the field
+            // Note: Fields are contained within the struct, not directly in the module,
+            // so we don't use register_new_node_id here.
+            let field_any_id = self.state.generate_synthetic_node_id(
+                &field_ref.clone(),
+                // .unwrap_or_else(|| format!("unnamed_field{}_in_{}", i, struct_name)),
+                ItemKind::Field,
+                field_cfg_bytes.as_deref(), // Pass field's CFG bytes
+            );
+
+            // Removed #[cfg] block
+            self.debug_new_id(&field_ref.clone(), field_any_id);
+            let type_id = get_or_create_type(self.state, &field.ty);
+
+            let field_node_id: FieldNodeId = field_any_id.try_into().unwrap();
+            let field_node = FieldNode {
+                id: field_node_id,
+                name: field_name,
+                type_id,
+                visibility: self.state.convert_visibility(&field.vis),
+                attributes: extract_attributes(&field.attrs),
+                cfgs: field_item_cfgs,
+            };
+            fields.push(field_node);
+
+            // Add relation between struct and field (defer until struct node is created)
+            // We need the typed struct ID first.
+        }
+
+        // Process generic parameters (still within struct's scope)
+        let generic_params = self.state.process_generics(&item_struct.generics);
+
+        // Extract doc comments and other attributes
+        let docstring = extract_docstring(&item_struct.attrs);
+        let attributes = extract_attributes(&item_struct.attrs);
+
+        let struct_node_id: StructNodeId = struct_any_id.try_into().unwrap();
+        // Create the struct node
+        let struct_node = StructNode {
+            id: struct_node_id, // Use base ID
+            name: struct_name.clone(),
+            span,
+            visibility: self.state.convert_visibility(&item_struct.vis),
+            fields,
+            generic_params,
+            attributes,
+            docstring,
+            tracking_hash: Some(
+                self.state
+                    .generate_tracking_hash(&item_struct.to_token_stream()),
+            ),
+            cfgs: item_cfgs.clone(), // Store struct's own cfgs
+        };
+
+        // Now add the StructField relations using the fields from the created struct_node
+        for field_node in &struct_node.fields {
+            let relation = SyntacticRelation::StructField {
+                source: struct_node_id,
+                target: field_node.field_id(),
+            };
+            self.state.code_graph.relations.push(relation);
+        }
+
+        // Add the struct node to the graph
+        self.state
+            .code_graph
+            .defined_types
+            .push(TypeDefNode::Struct(struct_node));
+
+        // Add the Contains relation for the struct itself
+        let contains_relation = SyntacticRelation::Contains {
+            source: parent_mod_id,
+            target: PrimaryNodeId::from(struct_node_id), // Use category enum
+        };
+        self.state.code_graph.relations.push(contains_relation);
+
+        // Continue visiting children (fields are handled above, visit generics/where clauses if needed)
+        visit::visit_item_struct(self, item_struct);
+
+        // Pop the struct's scope using the helper
+        self.pop_primary_scope(&struct_name);
+    }
+
+    // Visit struct definitions
+    #[cfg(feature = "cfg_eval")]
+    fn visit_item_struct(&mut self, item_struct: &'ast ItemStruct) {
+        let struct_name = item_struct.ident.to_string();
+
+        // --- CFG Handling (Expression Evaluation) ---
+        use crate::parser::visitor::attribute_processing::should_include_item;
+        let active_cfg = &self.state.active_cfg;
+
+        if !should_include_item(&item_struct.attrs, active_cfg) {
+            return; // Skip this item due to cfg
+        }
+
         let scope_cfgs = self.state.current_scope_cfgs.clone();
         let item_cfgs = extract_cfg_strings(&item_struct.attrs);
         let provisional_effective_cfgs: Vec<String> = scope_cfgs
@@ -847,6 +1010,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit type alias definitions
     fn visit_item_type(&mut self, item_type: &'ast syn::ItemType) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_type.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let type_alias_name = item_type.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -932,6 +1104,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit union definitions
     fn visit_item_union(&mut self, item_union: &'ast syn::ItemUnion) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_union.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let union_name = item_union.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1073,6 +1254,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit enum definitions
     fn visit_item_enum(&mut self, item_enum: &'ast ItemEnum) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_enum.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let enum_name = item_enum.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1330,6 +1520,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
         let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_impl.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
 
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
@@ -1514,6 +1713,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             cfgs: item_cfgs,
         };
         let typed_impl_id = impl_node.impl_id();
+        trace!(target:"duplicate_impl", "{:-^40}
+            ---- impl_node_id: {} --
+            current_file_path: {}
+            current_module_path: {:?}
+            current_mod: {:?}\nimpl_node: {:#?}\n{:-^40}", "", impl_node_id, self.state.current_file_path.display(), self.state.current_module, self.state.current_module_path, impl_node, "");
 
         // Now add the ImplAssociatedItem relations using methods from the created impl_node
         for method_node in &impl_node.methods {
@@ -1560,6 +1764,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit trait definitions
     fn visit_item_trait(&mut self, item_trait: &'ast ItemTrait) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_trait.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let trait_name = item_trait.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1801,6 +2014,16 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     }
 
     fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&module.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let module_name = module.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -1930,6 +2153,23 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
+        log::trace!(target: "some_target",
+            "current_primary_defn_scope is module: {:?}", self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ));
+        if !self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ) {
+            log::trace!("use statement primary scope: {:?}", self.state.current_primary_defn_scope);
+            return;
+        }
+        let item_clone = use_item.clone().to_token_stream().to_string();
+        log::trace!("use statement: {}", item_clone);
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&use_item.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
         let item_cfgs = super::attribute_processing::extract_cfg_strings(&use_item.attrs);
@@ -1954,6 +2194,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let imports_result =
             self.process_use_tree(&use_item.tree, base_path, cfg_bytes.as_deref(), &vis_kind);
 
+        log::trace!(target: LOG_TARGET_TRACE, "{:?}", imports_result);
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
         let current_module_path = &self.state.current_module_path;
@@ -1970,6 +2211,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             match imports_result {
                 Ok(imports) => {
                     for import_node in imports {
+                        trace!(target: "some_target", "\n\tmodule name: {}\t\nimport: {:?}",module.name, import_node);
                         let typed_import_id = import_node.import_id();
 
                         // Add Contains relation (Import is a PrimaryNode)
@@ -1989,6 +2231,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         // Add the node itself
                         graph.use_statements.push(import_node.clone());
                         // Add to module's imports list
+
                         module.imports.push(import_node);
                     }
                 }
@@ -2011,6 +2254,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     ///     - Adds a new `Contains` relation with current module (through `add_contains_rel`)
     ///     - `NodeId::Synthetic` created through `add_contains_rel` using the *visible name*.
     fn visit_item_extern_crate(&mut self, extern_crate: &'ast syn::ItemExternCrate) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&extern_crate.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
         let item_cfgs = super::attribute_processing::extract_cfg_strings(&extern_crate.attrs);
@@ -2120,6 +2372,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_const.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let const_name = item_const.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -2196,6 +2457,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit static items
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_static.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let static_name = item_static.ident.to_string();
 
         // --- CFG Handling (Raw Strings) ---
@@ -2274,6 +2544,18 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit macro definitions (macro_rules!)
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
+        if item_macro.ident.as_ref().is_none() {
+            return;
+        }
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&item_macro.attrs, active_cfg) {
+                return; // Skip this item due to cfg
+            }
+        }
         let is_exported = item_macro
             .attrs
             .iter()

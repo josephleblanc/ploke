@@ -1,6 +1,5 @@
 pub mod mod_tree_construction;
 
-#[cfg(not(feature = "type_bearing_ids"))]
 pub mod canon_resolver;
 #[cfg(not(feature = "type_bearing_ids"))]
 pub mod edge_cases;

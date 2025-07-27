@@ -36,6 +36,11 @@ impl MethodNode {
     pub fn method_id(&self) -> MethodNodeId {
         self.id
     }
+    pub fn validate(&self) -> Result<(), super::NodeError> {
+        // TODO: Implement validation logic if needed
+        Ok(())
+        // ... validation logic
+    }
 }
 
 impl GraphNode for MethodNode {
@@ -67,15 +72,10 @@ impl HasAttributes for MethodNode {
     }
 }
 
-impl MethodNode {
-    // Renamed from FunctionNode
-    /// Validates the method node structure
-    pub fn validate(&self) -> Result<(), super::NodeError> {
-        // TODO: Implement validation logic if needed
-        Ok(())
-        // ... validation logic
-    }
-}
+// impl MethodNode {
+//     // Renamed from FunctionNode
+//     /// Validates the method node structure
+// }
 
 // --- Function Node ---
 
@@ -103,6 +103,11 @@ impl FunctionNode {
     pub fn function_id(&self) -> FunctionNodeId {
         self.id
     }
+    pub fn validate(&self) -> Result<(), super::NodeError> {
+        // TODO: Implement validation logic if needed
+        Ok(())
+        // ... validation logic
+    }
 }
 
 impl GraphNode for FunctionNode {
@@ -129,14 +134,9 @@ impl HasAttributes for FunctionNode {
     }
 }
 
-impl FunctionNode {
-    /// Validates the function node structure
-    pub fn validate(&self) -> Result<(), super::NodeError> {
-        // TODO: Implement validation logic if needed
-        Ok(())
-        // ... validation logic
-    }
-}
+// impl FunctionNode {
+//     /// Validates the function node structure
+// }
 
 // Represents a parameter in a function
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

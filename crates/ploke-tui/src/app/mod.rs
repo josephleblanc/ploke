@@ -253,7 +253,7 @@ impl App {
                                 });
                             },
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
-                    }
+                        }
                     }
                     AppEvent::GenerateContext(id) => {
                         // self.send_cmd( StateCommand::)
@@ -646,6 +646,12 @@ impl App {
                     new_msg_id: Uuid::new_v4(),
                 });
                 self.send_cmd(StateCommand::SaveState);
+            },
+            "query load" | "ql" => {
+                self.send_cmd(StateCommand::ReadQuery {
+                    query_name: "default".to_string(),
+                    file_name: "default.dl".to_string(),
+                });
             },
             cmd if cmd.starts_with("query load ") => {
                 if let Some(( query_name, file_name )) = cmd.trim_start_matches("query load ").trim().split_once(' ') {

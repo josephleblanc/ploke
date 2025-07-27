@@ -112,7 +112,20 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [x] Extensive docs and example of context7 schema
     - [/] Doc tests
     - [x] Tool call tests 
-#### 7/24/2025
+#### 7/24/2025-7/25/2025
+- [x] Add `/query load <name> <file>` command to test different cozo queries
+  - [x] Add `/ql` shortcut to read from `./query/default.dl` and write to `./query/output.md`
+  - [x] Add documentation with recursive query example
+- [x] Revisit parser and solve remaining failure cases
+  - [x] multiple `impl` blocks in one file led to ID collision
+  - [x] unnamed `macro`s
+  - [x] identical `use` statements within nested scope of functions, `impl`
+  - [x] document [known limitations](./docs/plans/uuid_refactor/02c_phase2_known_limitations.md)
+- [x] Add more tests for module tree merging or partial per-file code graphs
+- [x] Use `syn_parser` to parse... ❗ 🙂 `syn_parser` 🙃 ❗ 
+
+### Coming Soon
+- **Minimum Expected Features**
 - [ ] Assess design of generalized MCP tool exposure through `rmcp`
 - [ ] Design mcp integration with project architecture
 - [ ] Integrate curated list of MCP servers
@@ -123,13 +136,10 @@ ploke is in rapid development, and can be considered in a prototype or alpha sta
     - [ ] Doc tests
     - [ ] Tool call tests 
 - [ ] Research and assess test framework for initial RAG performance on SWE-bench-like tasks
-- [ ] Begin testing of cozo RAG queries
+- [/] Begin testing of cozo RAG queries
   - [ ] Cosine similarity
   - [ ] L2 similarity
   - [ ] Traversal of 8 major `PrimaryNode` types
-
-### Coming Soon
-- **Minimum Expected Features**
 - [ ] Add easier way to immediately parse example fixture
   - [ ] add an alias, e.g. `/index start fixture_tracking_hash`, that gets the workspace directory and path to test fixture.
   - [ ] add other working fixtures

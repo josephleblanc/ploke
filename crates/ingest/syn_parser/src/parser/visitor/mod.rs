@@ -8,6 +8,7 @@ mod attribute_processing;
 mod code_visitor;
 mod state;
 mod type_processing;
+mod cfg_evaluator;
 
 pub use code_visitor::CodeVisitor;
 pub use state::VisitorState;
@@ -92,6 +93,148 @@ use {
 
 /// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
 /// Receives context from analyze_files_parallel.
+#[cfg(feature = "cfg_eval")]
+pub fn analyze_file_phase2(
+    file_path: PathBuf,
+    crate_namespace: Uuid,            // Context passed from caller
+    logical_module_path: Vec<String>, // NEW: The derived logical path for this file
+    crate_context: &crate::discovery::CrateContext
+) -> Result<ParsedCodeGraph, syn::Error> {
+    // Consider a more specific Phase2Error later
+
+    use super::nodes::ModuleKind;
+    use attribute_processing::{
+        extract_cfg_strings, // NEW: Import raw string extractor
+        extract_file_level_attributes,
+        extract_file_level_docstring,
+        // Removed parse_and_combine_cfgs_from_attrs import
+    };
+
+    let file_content = std::fs::read_to_string(&file_path).map_err(|e| {
+        syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!("Failed to read file {}: {}", file_path.display(), e),
+        )
+    })?;
+        // .expect("This is the primary problem? line 118 of visitor/mod.rs");
+    // TODO: Add real error handling here.
+    let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
+    let file = syn::parse_file(&file_content).inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
+        // .expect(&msg);
+
+    // 1. Create VisitorState with the provided context
+    let mut state = state::VisitorState::new(crate_namespace, file_path.to_path_buf(), crate_context);
+    // Set the correct initial module path for the visitor
+    state.current_module_path = logical_module_path.clone();
+
+    // Extract raw file-level CFG strings (#![cfg(...)])
+    let file_cfgs = extract_cfg_strings(&file.attrs);
+    // Set the initial scope CFGs for the visitor state
+    state.current_scope_cfgs = file_cfgs.clone();
+    // Hash the file-level CFG strings for the root module ID
+    let root_cfg_bytes = calculate_cfg_hash_bytes(&file_cfgs);
+
+    // 2. Generate root module ID using the derived logical path context AND CFG context
+    let root_module_name = logical_module_path
+        .last()
+        .cloned()
+        .unwrap_or_else(|| "crate".to_string()); // Use last segment as name, fallback to "crate"
+    let root_module_parent_path: Vec<String> = logical_module_path
+        .iter()
+        .take(logical_module_path.len().saturating_sub(1)) // Get parent path segments
+        .cloned()
+        .collect();
+
+    let root_module_node_id = NodeId::generate_synthetic(
+        crate_namespace,
+        &file_path,
+        &root_module_parent_path, // Use parent path for ID generation context
+        &root_module_name,
+        ItemKind::Module,          // Pass correct ItemKind
+        None,                      // Root module has no parent scope ID within the file context
+        root_cfg_bytes.as_deref(), // Pass hashed file-level CFG bytes
+    );
+    // #[cfg(test)]
+    debug_file_module_id_gen(
+        crate_namespace,
+        &file_path,
+        &root_module_parent_path,
+        &root_module_name,
+        ItemKind::Module,
+        None,
+        root_cfg_bytes.as_deref(),
+    );
+
+    // 3. Create the root module node using the derived path and name
+    // Determine visibility: Public only for crate root (main.rs/lib.rs), Inherited otherwise
+    let root_visibility = if logical_module_path == ["crate"] {
+        crate::parser::types::VisibilityKind::Public
+    } else {
+        crate::parser::types::VisibilityKind::Inherited
+    };
+
+    let root_module_info = ModuleNodeInfo {
+        id: root_module_node_id,
+        name: root_module_name,      // Use derived name
+        visibility: root_visibility, // Use determined visibility
+        attributes: Vec::new(),
+        docstring: None,
+        imports: Vec::new(),
+        exports: Vec::new(),
+        path: logical_module_path.clone(), // Use derived path
+        span: (0, file_content.len()),
+        tracking_hash: Some(state.generate_tracking_hash(&file.to_token_stream())),
+        module_def: ModuleKind::FileBased {
+            items: Vec::new(),
+            file_path: file_path.clone(),
+            file_attrs: extract_file_level_attributes(&file.attrs), // Non-CFG attributes
+            file_docs: extract_file_level_docstring(&file.attrs),
+            // cfgs removed from here, belongs on ModuleNode
+        },
+        cfgs: file_cfgs, // Store raw file-level CFGs on the ModuleNode
+    };
+
+    state
+        .code_graph
+        .modules
+        .push(ModuleNode::new(root_module_info));
+
+    let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
+
+    // Default parent scope for top-level items visited next.
+    state.current_primary_defn_scope.push(root_module_pid);
+
+    // 4. Create and run the visitor
+    let mut visitor = code_visitor::CodeVisitor::new(&mut state);
+    visitor.visit_file(&file);
+
+    #[cfg(feature = "temp_target")]
+    debug_relationships(&visitor);
+
+    #[cfg(feature = "validate")]
+    assert!(&visitor.validate_unique_rels());
+
+    // let module_ids: Vec<NodeId> = state.code_graph.modules.iter().map(|m| m.id).collect();
+    // for module_id in module_ids {
+    //     if module_id != root_module_id {
+    //         state.code_graph.relations.push(Relation {
+    //             source: root_module_id,
+    //             target: module_id,
+    //             kind: crate::parser::relations::RelationKind::Contains,
+    //         });
+    //     }
+    // }
+
+    Ok(ParsedCodeGraph::new(
+        file_path,
+        crate_namespace,
+        state.code_graph,
+    ))
+}
+
+/// Analyze a single file for Phase 2 (UUID Path) - The Worker Function
+/// Receives context from analyze_files_parallel.
+#[cfg(not(feature = "cfg_eval"))]
 pub fn analyze_file_phase2(
     file_path: PathBuf,
     crate_namespace: Uuid,            // Context passed from caller
@@ -350,14 +493,31 @@ pub fn analyze_files_parallel(
                 let logical_path = derive_logical_path(&src_dir, file_path);
 
                 // Call the single-file worker function with its specific context + logical path
-                analyze_file_phase2(
+                #[cfg(not(feature = "cfg_eval"))]
+                let parsed = analyze_file_phase2(
                     file_path.to_owned(),
                     crate_context.namespace,
                     logical_path, // Pass the derived path
+
                 ) 
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
                 .map_err(|e| e.into())
-                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) })
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
+            
+                #[cfg(feature = "cfg_eval")]
+                let parsed = analyze_file_phase2(
+                    file_path.to_owned(),
+                    crate_context.namespace,
+                    logical_path, // Pass the derived path
+                    crate_context
+                ) 
+                .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
+                .map_err(|e| { 
+                        eprintln!("Error found: {}", e);
+                        e.into() 
+                    })
+                .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
+                parsed
             })
         })
         .collect(); // Collect all results (Result<ParsedCodeGraph, Error>) into a Vec
@@ -366,7 +526,7 @@ pub fn analyze_files_parallel(
         .iter()
         .filter_map(|pr| pr.as_ref().ok())
         .find(|pr| pr.crate_context.is_some())
-        .unwrap();
+        .expect("At least one crate must carry the context");
     log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
 
     parsed_results

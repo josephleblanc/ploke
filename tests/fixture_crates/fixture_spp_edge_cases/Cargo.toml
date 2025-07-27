@@ -5,7 +5,7 @@ edition = "2021"
 
 # Added features to suppress unexpected_cfgs warnings
 [features]
-default = []
+default = ["cfg_a"]
 cfg_a = []
 cfg_b = []
 cfg_c = []

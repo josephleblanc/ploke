@@ -94,4 +94,96 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
+## 7. `#[cfg(...)]` Attribute Evaluation – Unsupported Atoms & Fallback Bias
+
+*   **Limitation:** The evaluator in [`crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs`](../../../../crates/ingest/syn_parser/src/parser/visitor/cfg_evaluator.rs) recognizes only the atoms `feature`, `target_os`, `target_arch`, and `target_family`.  
+    All other widely-used atoms (e.g. `target_pointer_width`, `target_endian`, `windows`, `unix`, `test`, `debug_assertions`, `panic`, etc.) are silently treated as *false*, causing any item guarded by them to be **dropped from the graph**.
+
+*   **Fallback Target Triple:** When the `TARGET` environment variable is absent, the code defaults to `"x86_64-unknown-linux-gnu"`.  
+    This biases the corpus toward Linux/x86-64 code paths and breaks determinism across machines.
+
+*   **Impact:**  
+    • Valid conditional code is omitted without warning.  
+    • Cross-platform crates appear to contain far less code than they actually do.  
+    • Results are non-repeatable unless `TARGET` is explicitly set.
+
+*   **Future Work:**  
+    • Extend the atom set to match `rustc --print cfg`.  
+    • Replace the fallback with an explicit CLI flag or error.
+
+---
+
+## 8. Duplicate unnamed impl blocks
+
+*   **Limitation:**: It is valid in Rust to have two `impl StructName` blocks, but the parser we have currently assigns each of these `impl` blocks the same id. Current tests expect all `Synthetic` Id items to be unique, however this would require either that we treat these two blocks separately or that we provide some special treatment to `impl` blocks.
+
+    In order to resolve this issue, we will need to either:
+    * add more information to the hash of the `impl` block (such as the span data)
+    * arbitrarily decide not to include one of them (unacceptable)
+    * explicitly allow only `impl` blocks to have duplicated `Synthetic` Ids, and then resolve those ids during the phase3 resolution step of processing.
+
+*   **Rejected Solutions**: Using a simple numbering system for the impl blocks could lead to errors in the case of having two different `impl` blocks in two different files... or it would if we didn't use the parent context as part of the impl block hash.
+
+*   **Patch Solution**: For the immediate future, we will allow duplicates specifically of `impl` blocks, and add an exception to all validation checks for `impl` blocks within the same file that collide with other `impl` blocks.
+    * Note, however, that we will still check for duplication using the `TrackingHash` to avoid slipping further into risk of invalidation than absolutely necessary.
+    * This introduced a relatively deep clone, could probably be done better. See [implementation](./../../../crates/ingest/syn_parser/src/parser/graph/mod.rs)
+
+*   **Impact:**  
+    • Incorrect handling could lead to invalid graph state by not including valid rust methods for a given `Struct` item. Second-order effects could lead to a call graph of methods being incorrect, similarly it could lead to an incomplete type graph and data flow graph.
+    • Even correct handling of the merging of the `impl` blocks at the graph level could lead to confusion if a distinction is not made that these are two different declarations of the `impl` block, both for human users and especially LLM-provided context.
+    • Handling with a global counter could lead to contention for access to the counter, though unlikely, this is a new variable we would need to track during performance evaluations.
+
+*   **Future Work:**  
+    • Figure out how to deal with this situation, or if I even want to deal with it. It seems like having multiple `impl` blocks in a single file is rather ridiculous, and we don't need to work too hard for this, at least not unless it is something holding back guaranteed correctness in the graph.
+
+---
+
+## 9. Not parsing `use` statements in scopes other than module/file 
+
+*   **Limitation:**: We are not going to parse the `use` statements within a function, impl, etc right now, because we aren't yet parsing that granularly. Once we do parse within a function, impl, etc, then we will want to pay attention to this.
+
+
+*   **Patch Solution**: For now we just return early if the last primary node scope id type is anything other than a module. See the `visit_item_use` method in `code_visitor.rs`
+
+*   **Impact:**  
+    • No impact for now, will be important during type resolution, expr parsing, etc
+    • NOTE: The lack of collision now means that the parser will not panic
+
+*   **Future Work:**  
+    • Handle these cases more specifically when we are handling type resolution and expr parsing by tracking state more closely, and either giving each instance of the `use` its own synthetic node id, or differentiate based on tracking hash.
+
+---
+
+## 10. Not parsing unnamed macros
+
+*   **Limitation:**: Unnamed macros
+
+*   **Patch Solution**: Ignore them for now, just return early if we come across one. 
+
+*   **Impact:**  
+    • Small?
+    • NOTE: The lack of collision now means that the parser will not panic
+
+*   **Future Work:**  
+    • Someday handle these.
+
+---
+
+## 11. Weird cfg setups + in-file errors
+
+*   **Limitation:**: If a file is not valid (i.e. contains errors and `syn` cannot parse it) then we won't try to handle it and just return an error (which the TUI should handle), but this is not always intuitive. 
+    * For example, `rust-analyzer` might not be trying to parse a given file if it is being brought into scope by a module declaration that is behind an inactive cfg flag. In this case, your editor might not let you known that there is an error in the file, but nonetheless there is an error somewhere in that file which would cause the program not to compile if the file's declaring module were to bring it into scope.
+
+*   **Patch Solution**: Ignore them for now, just return early with a detailed error if we come across one. Hopefully that helps users to avoid this somewhat obscure but very frustrating situation.
+
+*   **Impact:**  
+    • Small? Could be a footgun.
+    • NOTE: The lack of collision now means that the parser will not panic
+
+*   **Future Work:**  
+    • Add specific tests to track this case.
+    • None, this is a case that we don't really want to deal with. If anything, we surface the information the LLM in the TUI so it can advise the user.
+
+---
+
 *(Add subsequent limitations below this line)*

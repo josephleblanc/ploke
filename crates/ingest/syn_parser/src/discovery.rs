@@ -9,6 +9,7 @@ use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::env::current_dir;
 use std::fmt; // Import fmt for Display trait
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,8 @@ use thiserror::Error;
 use toml;
 use uuid::Uuid;
 use walkdir::WalkDir;
+
+use crate::error::SynParserError;
 
 // PROJECT_NAMESPACE_UUID is now defined in ploke_core
 // The old comment block explaining it remains relevant but the constant itself is moved.
@@ -76,6 +79,44 @@ pub enum DiscoveryError {
     /// Multiple non-fatal errors occurred during discovery.
     #[error("Multiple non-fatal errors occurred during discovery")]
     NonFatalErrors(Box<Vec<DiscoveryError>>), // Box to avoid large enum variant
+}
+
+impl TryFrom<DiscoveryError> for SynParserError {
+    type Error = SynParserError;
+
+    fn try_from(value: DiscoveryError) -> Result<Self, Self::Error> {
+        use DiscoveryError::*;
+        Ok(match value {
+            MissingPackageName { path } => SynParserError::SimpleDiscovery {
+                path: path.display().to_string(),
+            },
+            MissingPackageVersion { path } => SynParserError::SimpleDiscovery {
+                path: path.display().to_string(),
+            },
+            CratePathNotFound { path } => SynParserError::SimpleDiscovery {
+                path: path.display().to_string(),
+            },
+            SrcNotFound { path } => SynParserError::SimpleDiscovery {
+                path: path.display().to_string(),
+            },
+            Io { path, .. } => SynParserError::ComplexDiscovery {
+                name: "".to_string(),
+                path: path.display().to_string(),
+                source_string: "Io".to_string(),
+            },
+            TomlParse { path, .. } => SynParserError::ComplexDiscovery {
+                name: "".to_string(),
+                path: path.display().to_string(),
+                source_string: "Toml".to_string(),
+            },
+            Walkdir { path, .. } => SynParserError::ComplexDiscovery {
+                name: "".to_string(),
+                path: path.display().to_string(),
+                source_string: "walkdir".to_string(),
+            },
+            NonFatalErrors(..) => todo!("Decide what to do with this one later."),
+        })
+    }
 }
 
 // Helper structs for deserializing Cargo.toml
@@ -677,6 +718,25 @@ pub fn run_discovery_phase(
                     }
                 }
             }
+            // Debugging:
+            // let env_vars = std::env::vars()
+            //     .filter(|(k, _)| k.starts_with("CARGO_"))
+            //     .collect::<Vec<_>>();
+            // println!("discovery: will parse files with std::env::vars() {:?}", env_vars);
+            // println!("discovery: will parse files (stripping prefix)");
+            // for file in &files {
+            //     let different_vars = std::env::vars()
+            //         .filter(|(k, _)| k.starts_with("CARGO_"))
+            //         .filter(|item| !env_vars.contains(item))
+            //         .collect::<Vec<_>>();
+            //     println!(
+            //         "\t{} with changed cfgs = {:?}",
+            //         file.strip_prefix(current_dir().expect("error getting current dir"))
+            //             .expect("error stripping prefix")
+            //             .display(),
+            //         different_vars
+            //     );
+            // }
         }
 
         // --- Combine into CrateContext (Always created, might have empty files) ---
@@ -735,7 +795,7 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
 /// This conversion maps discovery-phase errors to appropriate ploke_error variants
 /// based on their severity and impact on the overall parsing process:
 ///
-/// - **FatalError::FileOperation**: Used for I/O errors and walkdir errors during 
+/// - **FatalError::FileOperation**: Used for I/O errors and walkdir errors during
 ///   file discovery, as these indicate filesystem access issues.
 /// - **FatalError::PathResolution**: Used for TOML parse errors and missing
 ///   critical files (Cargo.toml, src directory). These prevent any meaningful parsing.
@@ -747,61 +807,64 @@ pub fn derive_crate_namespace(name: &str, version: &str) -> Uuid {
 impl From<DiscoveryError> for ploke_error::Error {
     fn from(err: DiscoveryError) -> Self {
         match err {
-            DiscoveryError::Io { path, source } => {
-                ploke_error::FatalError::FileOperation {
-                    operation: "read",
-                    path,
-                    source,
-                }.into()
+            DiscoveryError::Io { path, source } => ploke_error::FatalError::FileOperation {
+                operation: "read",
+                path,
+                source,
             }
-            DiscoveryError::TomlParse { path, source } => {
-                ploke_error::FatalError::PathResolution {
-                    path: format!("Failed to parse Cargo.toml at {}", path.display()),
-                    source: Some(source),
-                }.into()
+            .into(),
+            DiscoveryError::TomlParse { path, source } => ploke_error::FatalError::PathResolution {
+                path: format!("Failed to parse Cargo.toml at {}", path.display()),
+                source: Some(source),
             }
+            .into(),
             DiscoveryError::MissingPackageName { path } => {
                 ploke_error::FatalError::PathResolution {
                     path: format!("Missing package.name in Cargo.toml at {}", path.display()),
                     source: None,
-                }.into()
+                }
+                .into()
             }
             DiscoveryError::MissingPackageVersion { path } => {
                 ploke_error::FatalError::PathResolution {
-                    path: format!("Missing package.version in Cargo.toml at {}", path.display()),
+                    path: format!(
+                        "Missing package.version in Cargo.toml at {}",
+                        path.display()
+                    ),
                     source: None,
-                }.into()
+                }
+                .into()
             }
-            DiscoveryError::CratePathNotFound { path } => {
-                ploke_error::FatalError::PathResolution {
-                    path: format!("Crate path not found: {}", path.display()),
-                    source: None,
-                }.into()
+            DiscoveryError::CratePathNotFound { path } => ploke_error::FatalError::PathResolution {
+                path: format!("Crate path not found: {}", path.display()),
+                source: None,
             }
+            .into(),
             DiscoveryError::Walkdir { path, source } => {
                 // Convert walkdir::Error to std::io::Error using string representation
-                let io_error = std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    source.to_string()
-                );
+                let io_error = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
                 ploke_error::FatalError::FileOperation {
                     operation: "walk",
                     path,
                     source: Arc::new(io_error),
-                }.into()
+                }
+                .into()
             }
-            DiscoveryError::SrcNotFound { path } => {
-                ploke_error::FatalError::PathResolution {
-                    path: format!("Source directory not found for crate at: {}", path.display()),
-                    source: None,
-                }.into()
+            DiscoveryError::SrcNotFound { path } => ploke_error::FatalError::PathResolution {
+                path: format!(
+                    "Source directory not found for crate at: {}",
+                    path.display()
+                ),
+                source: None,
             }
+            .into(),
             DiscoveryError::NonFatalErrors(errors) => {
                 // Convert the boxed vector to a warning about multiple issues
                 ploke_error::WarningError::UnresolvedRef {
                     name: "Discovery phase".to_string(),
                     location: Some(format!("{} non-fatal errors occurred", errors.len())),
-                }.into()
+                }
+                .into()
             }
         }
     }
@@ -844,7 +907,7 @@ mod tests {
             path: PathBuf::from("/test/path"),
             source: Arc::new(io_error),
         };
-        
+
         let ploke_err: ploke_error::Error = discovery_err.into();
         assert!(matches!(ploke_err, ploke_error::Error::Fatal(_)));
     }
