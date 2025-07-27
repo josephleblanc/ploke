@@ -113,7 +113,7 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
-## 8. `#[cfg(...)]` Duplicate unnamed impl blocks
+## 8. Duplicate unnamed impl blocks
 
 *   **Limitation:**: It is valid in Rust to have two `impl StructName` blocks, but the parser we have currently assigns each of these `impl` blocks the same id. Current tests expect all `Synthetic` Id items to be unique, however this would require either that we treat these two blocks separately or that we provide some special treatment to `impl` blocks.
 
@@ -135,6 +135,21 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 *   **Future Work:**  
     • Figure out how to deal with this situation, or if I even want to deal with it. It seems like having multiple `impl` blocks in a single file is rather ridiculous, and we don't need to work too hard for this, at least not unless it is something holding back guaranteed correctness in the graph.
+
+---
+
+## 9. Not parsing `use` statements in scopes other than module/file 
+
+*   **Limitation:**: We are not going to parse the `use` statements within a function, impl, etc right now, because we aren't yet parsing that granularly. Once we do parse within a function, impl, etc, then we will want to pay attention to this.
+
+
+*   **Patch Solution**: For now we just return early if the last primary node scope id type is anything other than a module. See the `visit_item_use` method in `code_visitor.rs`
+
+*   **Impact:**  
+    • No impact for now, will be important during type resolution, expr parsing, etc
+
+*   **Future Work:**  
+    • Handle these cases more specifically when we are handling type resolution and expr parsing by tracking state more closely, and either giving each instance of the `use` its own synthetic node id, or differentiate based on tracking hash.
 
 ---
 
