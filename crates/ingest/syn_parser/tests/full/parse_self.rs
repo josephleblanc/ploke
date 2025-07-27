@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use log::error;
 use ploke_common::workspace_root;
 use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
 
@@ -26,7 +27,7 @@ pub fn try_run_phases_and_collect_path(
 // docs/plans/uuid_refactor/02c_phase2_known_limitations.md
 
 #[test]
-pub fn basic_test() -> Result<(), ploke_error::Error> {
+pub fn basic_test_parse_self() -> Result<(), ploke_error::Error> {
     let _ = env_logger::builder()
         .is_test(true)
         .format_timestamp(None) // Disable timestamps
@@ -36,5 +37,19 @@ pub fn basic_test() -> Result<(), ploke_error::Error> {
     let project_root = workspace_root(); // Use workspace root for context
     let crate_path = workspace_root().join("crates").join("ingest").join("syn_parser");
     try_run_phases_and_collect_path(&project_root, crate_path)?;
+    Ok(())
+}
+
+#[test]
+pub fn basic_test_parse_transform() -> Result<(), ploke_error::Error> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .format_file(true)
+        .format_line_number(true)
+        .try_init();
+    let project_root = workspace_root(); // Use workspace root for context
+    let crate_path = workspace_root().join("crates").join("ingest").join("ploke-transform");
+    try_run_phases_and_collect_path(&project_root, crate_path).inspect_err(|e| error!("error running try_run_phases and collect: {e}"))?;
     Ok(())
 }

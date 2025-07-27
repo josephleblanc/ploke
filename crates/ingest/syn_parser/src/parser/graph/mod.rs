@@ -94,14 +94,36 @@ pub trait GraphAccess {
             }
             acc
         });
+        // WARN: Count for valid duplicate impls
+        // - These are valid, but we don't ultimately want duplicates.
+        // - Find a way to remove the duplicates in overall architecture somehow.
+        // - See known limitation #8 in ploke/docs/plans/uuid_refactor/02c_phase2_known_limitations.md
+        let mut valid_impl_dup = 0;
         for dup in &dups {
-            debug!("{:#?}", dup);
+            debug!(target: "dup", "{:#?}", dup);
             if let Err(e) = self.find_node_unique(dup.target()) {
                 match ImplNodeId::try_from(dup.target()) {
                     Ok(id)  => {
-                        let dup_impls = self.impls().iter().filter(|imp| imp.id() == id);
-                        let unique_spans = dup_impls.clone().map(|imp| imp.span()).collect::<HashSet<(usize, usize)>>();
-                        if !(dup_impls.count() == unique_spans.len()) {panic!("impl with same span and id: {id}")}
+                        let dup_impls = self.impls().iter().filter(|imp| imp.id() == id).inspect(|imp| debug!(target: "debug_dup", "dup impls | span: {:?}, name: {}, id: {}", imp.span(), imp.name(), imp.id())).map(|imp| (imp.id(), imp.span()));
+                        let unique_spans = dup_impls.clone().collect::<HashSet<(ImplNodeId, (usize, usize) )>>();
+                        // Check if all the non-unique rels have different spans. 
+                        // Count the number of duplicated items and ensure that there is the same
+                        // number of duplicates of that relation.
+                        let count_non_unique = usize::max(1, unique_spans.len() - 1);
+                        let dup_count = dup_impls.count();
+                        let dup_accounted = dup_count == unique_spans.len();
+                        debug!(target: "debug_dup", "
+dup_impls.count() / 2 = {}
+unique_spans.len() = {}
+dup_accounted: {}", 
+                            ( dup_count / 2 ),
+                            unique_spans.len(),
+                            dup_accounted);
+                        if !dup_accounted {panic!("impl with same span and id: {id}, dup_accounted: {dup_accounted}")}
+                        // if dup_impls.count() != unique_spans.len() {panic!("impl with same span and id: {id}")}
+                        // if dup_impls.count() != unique_spans.iter().inspect(|( id, span )| debug!(target: "debug_dup", "hashset impls | span: {:?}, id: {}", span, id) ).count() {panic!("impl with same span and id: {id}")}
+                        debug!(target: "debug_dup", "continuing after checking impl dup for {id}");
+                        valid_impl_dup += count_non_unique;
                         continue;
                     },
                     _ => panic!("Expected unique relations, found invalid duplicate impl with error: {}", e),
@@ -126,25 +148,33 @@ pub trait GraphAccess {
             target.log_node_debug();
             source.log_node_debug();
             if let Some(m_target) = target.as_module() {
-                debug!("{:#?}", m_target);
+                debug!(target: "debug_dup", "{:#?}", m_target);
                 for (i, node ) in self.modules().iter().filter(|m| m.path == m_target.path ).enumerate() {
-                    debug!("{}: {} | {}", "Find by Path:".log_header(), i, node.name());
+                    debug!(target: "debug_dup","{}: {} | {}", "Find by Path:".log_header(), i, node.name());
                 }
             }
             if let Some(module_source_node) = source.as_module() {
-                debug!("{:#?}", module_source_node);
+                debug!(target: "debug_dup","{:#?}", module_source_node);
             }
             for (i, module ) in self.modules().iter().filter(|m| m.any_id() == source.any_id()).enumerate() {
-                debug!("{}: {} | {}", "Counting source:".log_header(), i, module.name());
+                debug!(target: "debug_dup","{}: {} | {}", "Counting source:".log_header(), i, module.name());
             }
 
 
             for (i, module ) in self.modules().iter().filter(|m| m.id.as_any() == target.any_id()).enumerate() {
-                debug!("{}: {} | {}", "Counting target:".log_header(), i, module.name());
+                debug!(target: "debug_dup","{}: {} | {}", "Counting target:".log_header(), i, module.name());
             }
 
         }
-        unique_rels.len() == rels.len()
+        let n_unique = unique_rels.len();
+        let n_unique_with_impl_dups = n_unique + valid_impl_dup;
+        let n_rels = rels.len();
+        debug!(target: "debug_dup", 
+            "\nunique_rels equal: unique {n_unique} vs {n_rels} total
+equal? {}
+unique + impl dups = {n_unique} + {valid_impl_dup} = {} vs {n_rels} total", 
+            ( n_unique == n_rels ), (n_unique + valid_impl_dup));
+        n_unique_with_impl_dups == n_rels
     }
 
     fn debug_relationships(&self) {
