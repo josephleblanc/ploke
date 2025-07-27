@@ -218,8 +218,13 @@ impl<'a> CodeVisitor<'a> {
                 // name is not differentiated. Instead, we will just use the "*" as the name, and
                 // then if we run into issues later, we can use a replacement and store the "*" as
                 // the `original_name`.
+                // WARN: Using a simple "*" for the name, as we did previously, leads to id
+                // collisions among globs in the same module path. Instead we need to use the
+                // entire path of the glob import.
+                let mut full_path_string = base_path.join("::");
+                full_path_string.push_str("::*");
                 let registration_result = self.register_new_node_id(
-                    "*", // Use the literal "*" glob symbol directly.
+                    &full_path_string, // Use the literal "*" glob symbol directly.
                     ItemKind::Import,
                     cfg_bytes, // Pass down received cfg_bytes
                 );
@@ -257,7 +262,7 @@ impl<'a> CodeVisitor<'a> {
                     id: import_typed_id, // Use the typed ID
                     source_path: full_path,
                     kind: ImportKind::UseStatement(vis_kind.to_owned()),
-                    visible_name: "*".to_string(), // Glob imports use "*" as the visible name placeholder
+                    visible_name: full_path_string, // Glob imports use "*" as the visible name placeholder
                     original_name: None,
                     is_glob: true,
                     span: glob.extract_span_bytes(),
@@ -2148,6 +2153,14 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
+        log::trace!(target: "some_target",
+            "current_primary_defn_scope is module: {:?}", self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ));
+        if !self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ) {
+            log::trace!("use statement primary scope: {:?}", self.state.current_primary_defn_scope);
+            return;
+        }
+        let item_clone = use_item.clone().to_token_stream().to_string();
+        log::trace!("use statement: {}", item_clone);
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -2198,6 +2211,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             match imports_result {
                 Ok(imports) => {
                     for import_node in imports {
+                        trace!(target: "some_target", "\n\tmodule name: {}\t\nimport: {:?}",module.name, import_node);
                         let typed_import_id = import_node.import_id();
 
                         // Add Contains relation (Import is a PrimaryNode)
@@ -2217,6 +2231,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         // Add the node itself
                         graph.use_statements.push(import_node.clone());
                         // Add to module's imports list
+
                         module.imports.push(import_node);
                     }
                 }
