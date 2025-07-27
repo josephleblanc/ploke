@@ -89,7 +89,7 @@ pub trait GraphAccess {
             if !acc.contains(rel) {
                 acc.push(*rel);
             } else {
-                log::debug!("DUPLICATE: {}", rel);
+                log::debug!(target: "debug_dup", "DUPLICATE: {}", rel);
                 dups.push(*rel);
             }
             acc
@@ -126,7 +126,7 @@ dup_accounted: {}",
                         valid_impl_dup += count_non_unique;
                         continue;
                     },
-                    _ => panic!("Expected unique relations, found invalid duplicate impl with error: {}", e),
+                    _ => panic!("Expected unique relations, found invalid duplicate with error: {}", e),
                 }
             } 
             let target = self.find_node_unique(dup.target())

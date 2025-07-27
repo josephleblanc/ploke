@@ -9,7 +9,6 @@ use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::env::current_dir;
 use std::fmt; // Import fmt for Display trait
 use std::fs;
 use std::path::{Path, PathBuf};

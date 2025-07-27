@@ -716,8 +716,12 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             };
             self.state.code_graph.relations.push(relation);
 
-            // Continue visiting the function body (fn_any_id is already off the stack)
-            visit::visit_item_fn(self, func);
+            // NOTE: We are already visiting all the items we are processing within this
+            // visit_item_fn, but this is where we would put the `visit_item_fn` to call the method
+            // again and continue visiting, like this:
+            // self.push_primary_scope(&fn_name);
+            // visit::visit_item_fn(self, func);
+            // self.pop_primary_scope(&fn_name);
         } // End else block for regular functions
     }
 
@@ -2153,10 +2157,19 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
     /// 2. Normalizes `self`/`super` prefixes
     /// 3. Stores statements in `VisitorState` for later resolution
     fn visit_item_use(&mut self, use_item: &'ast syn::ItemUse) {
+        let is_in_module_scope = self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module );
         log::trace!(target: "some_target",
-            "current_primary_defn_scope is module: {:?}", self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ));
-        if !self.state.current_primary_defn_scope.last().is_some_and(|tyid| tyid.kind() == ItemKind::Module ) {
-            log::trace!("use statement primary scope: {:?}", self.state.current_primary_defn_scope);
+            "
+is_in_module_scope: {}
+current_primary_defn_scope is module: {:?}", 
+            is_in_module_scope,
+            self.state.current_primary_defn_scope.last());
+        if !is_in_module_scope {
+            log::trace!(target: "some_target", "
+use statement primary scope: {:?}
+use statement ident: {:?}
+", self.state.current_primary_defn_scope, use_item.tree.to_token_stream().to_string());
+            log::trace!(target: "some_target", "use statement : {:?}", self.state.current_primary_defn_scope);
             return;
         }
         let item_clone = use_item.clone().to_token_stream().to_string();

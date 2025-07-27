@@ -118,7 +118,7 @@ pub fn analyze_file_phase2(
     })?;
         // .expect("This is the primary problem? line 118 of visitor/mod.rs");
     // TODO: Add real error handling here.
-    let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
+    // let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
     let file = syn::parse_file(&file_content).inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
         // .expect(&msg);
 

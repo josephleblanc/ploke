@@ -2,8 +2,6 @@
 
 use crate::{parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError}, resolve::ModuleTreeError};
 use ploke_core::{IdConversionError, TypeId};
-use syn::spanned::Spanned;
-// use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
 
 use crate::parser::nodes::{ModuleNode, NodeError};
