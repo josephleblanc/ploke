@@ -16,10 +16,14 @@ pub fn try_run_phases_and_collect_path(
     // Collect successful results, panicking if any file failed to parse in Phase 2
     let mut results = Vec::new();
     for result in results_with_errors {
+        eprintln!("result is ok? | {}", result.is_ok());
         results.push(result?);
     }
     Ok(results)
 }
+
+// TODO: Add specific tests to handle known limitation #11 from
+// docs/plans/uuid_refactor/02c_phase2_known_limitations.md
 
 #[test]
 pub fn basic_test() -> Result<(), ploke_error::Error> {

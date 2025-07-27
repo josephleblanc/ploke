@@ -14,7 +14,7 @@ pub fn traverse_tree(
 ) -> IntoIterator<Item = TreeRelation> {
     let first_rel = tree.get_relations_to(item_pid.as_any())
         .map(|rels| rels.iter().find(|&tr| tr.rel().is_contains())
-        .expect("todo: error Orphaned Node, invalid state");
+        .expect("todo: error Orphaned Node, invalid state"));
 
     let mut arbitrary_traversal = parsed
         .relations()

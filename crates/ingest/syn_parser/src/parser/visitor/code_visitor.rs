@@ -2544,6 +2544,9 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit macro definitions (macro_rules!)
     fn visit_item_macro(&mut self, item_macro: &'ast syn::ItemMacro) {
+        if item_macro.ident.as_ref().is_none() {
+            return;
+        }
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;

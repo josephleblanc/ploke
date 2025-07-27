@@ -116,7 +116,11 @@ pub fn analyze_file_phase2(
             format!("Failed to read file {}: {}", file_path.display(), e),
         )
     })?;
-    let file = syn::parse_file(&file_content)?;
+        // .expect("This is the primary problem? line 118 of visitor/mod.rs");
+    // TODO: Add real error handling here.
+    let msg = format!("This is the primary problem? line 121 of visitor/mod.rs parsing: {}", file_path.display());
+    let file = syn::parse_file(&file_content).inspect_err(|e| eprintln!("Getting closer to the source: {e}"))?;
+        // .expect(&msg);
 
     // 1. Create VisitorState with the provided context
     let mut state = state::VisitorState::new(crate_namespace, file_path.to_path_buf(), crate_context);
@@ -508,7 +512,10 @@ pub fn analyze_files_parallel(
                     crate_context
                 ) 
                 .map(|pg| set_root_context(crate_context, pg)) // Give root module's graph the crate context  
-                .map_err(|e| e.into())
+                .map_err(|e| { 
+                        eprintln!("Error found: {}", e);
+                        e.into() 
+                    })
                 .inspect(|pg| { log::debug!(target: "crate_context", "{}", info_crate_context(&src_dir, pg)) });
                 parsed
             })
@@ -519,7 +526,7 @@ pub fn analyze_files_parallel(
         .iter()
         .filter_map(|pr| pr.as_ref().ok())
         .find(|pr| pr.crate_context.is_some())
-        .unwrap();
+        .expect("At least one crate must carry the context");
     log::trace!(target: "crate_context", "root graph contains files: {:#?}", root_graph.crate_context);
 
     parsed_results

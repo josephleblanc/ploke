@@ -2,6 +2,7 @@
 
 use crate::{parser::nodes::{AnyNodeId, ImportNodeId, TryFromPrimaryError}, resolve::ModuleTreeError};
 use ploke_core::{IdConversionError, TypeId};
+use syn::spanned::Spanned;
 // use std::backtrace::Backtrace; // requires nightly for thiserror integration
 use thiserror::Error;
 
@@ -425,7 +426,9 @@ impl From<NodeError> for SynParserError {
 
 // Optional: Implement From<syn::Error> for SynParserError
 impl From<syn::Error> for SynParserError {
-    fn from(err: syn::Error) -> Self {
+    fn from(err: syn::Error) -> Self {                 // Print immediately so you see it even if the caller swallows it                                                  
+        eprintln!("   syn::Error: {}", err);
+        eprintln!("   span: {}", err.to_compile_error());
         SynParserError::Syn(err.to_string())
     }
 }

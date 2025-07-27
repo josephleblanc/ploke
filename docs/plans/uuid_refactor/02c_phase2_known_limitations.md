@@ -147,9 +147,42 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 *   **Impact:**  
     • No impact for now, will be important during type resolution, expr parsing, etc
+    • NOTE: The lack of collision now means that the parser will not panic
 
 *   **Future Work:**  
     • Handle these cases more specifically when we are handling type resolution and expr parsing by tracking state more closely, and either giving each instance of the `use` its own synthetic node id, or differentiate based on tracking hash.
+
+---
+
+## 10. Not parsing unnamed macros
+
+*   **Limitation:**: Unnamed macros
+
+*   **Patch Solution**: Ignore them for now, just return early if we come across one. 
+
+*   **Impact:**  
+    • Small?
+    • NOTE: The lack of collision now means that the parser will not panic
+
+*   **Future Work:**  
+    • Someday handle these.
+
+---
+
+## 11. Weird cfg setups + in-file errors
+
+*   **Limitation:**: If a file is not valid (i.e. contains errors and `syn` cannot parse it) then we won't try to handle it and just return an error (which the TUI should handle), but this is not always intuitive. 
+    * For example, `rust-analyzer` might not be trying to parse a given file if it is being brought into scope by a module declaration that is behind an inactive cfg flag. In this case, your editor might not let you known that there is an error in the file, but nonetheless there is an error somewhere in that file which would cause the program not to compile if the file's declaring module were to bring it into scope.
+
+*   **Patch Solution**: Ignore them for now, just return early with a detailed error if we come across one. Hopefully that helps users to avoid this somewhat obscure but very frustrating situation.
+
+*   **Impact:**  
+    • Small? Could be a footgun.
+    • NOTE: The lack of collision now means that the parser will not panic
+
+*   **Future Work:**  
+    • Add specific tests to track this case.
+    • None, this is a case that we don't really want to deal with. If anything, we surface the information the LLM in the TUI so it can advise the user.
 
 ---
 

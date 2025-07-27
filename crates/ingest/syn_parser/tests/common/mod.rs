@@ -59,6 +59,7 @@ pub fn try_run_phases_and_collect(
     // Collect successful results, panicking if any file failed to parse in Phase 2
     let mut results = Vec::new();
     for result in results_with_errors {
+        eprintln!("result is ok? | {}", result.is_ok());
         results.push(result?);
     }
     Ok(results)
