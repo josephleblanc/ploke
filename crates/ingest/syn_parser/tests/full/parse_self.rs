@@ -23,6 +23,12 @@ pub fn try_run_phases_and_collect_path(
 
 #[test]
 pub fn basic_test() -> Result<(), ploke_error::Error> {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .format_timestamp(None) // Disable timestamps
+        .format_file(true)
+        .format_line_number(true)
+        .try_init();
     let project_root = workspace_root(); // Use workspace root for context
     let crate_path = workspace_root().join("crates").join("ingest").join("syn_parser");
     try_run_phases_and_collect_path(&project_root, crate_path)?;

@@ -1514,6 +1514,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
 
     // Visit impl blocks
     fn visit_item_impl(&mut self, item_impl: &'ast ItemImpl) {
+        let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
         #[cfg(feature = "cfg_eval")]
         {
             use crate::parser::visitor::attribute_processing::should_include_item;
@@ -1523,7 +1524,6 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 return; // Skip this item due to cfg
             }
         }
-        let impl_name = name_impl(item_impl); // Use helper to generate a name for the impl block
 
         // --- CFG Handling (Raw Strings) ---
         let scope_cfgs = self.state.current_scope_cfgs.clone();
@@ -1708,6 +1708,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
             cfgs: item_cfgs,
         };
         let typed_impl_id = impl_node.impl_id();
+        trace!(target:"duplicate_impl", "{:-^40}
+            ---- impl_node_id: {} --
+            current_file_path: {}
+            current_module_path: {:?}
+            current_mod: {:?}\nimpl_node: {:#?}\n{:-^40}", "", impl_node_id, self.state.current_file_path.display(), self.state.current_module, self.state.current_module_path, impl_node, "");
 
         // Now add the ImplAssociatedItem relations using methods from the created impl_node
         for method_node in &impl_node.methods {
@@ -2176,6 +2181,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
         let imports_result =
             self.process_use_tree(&use_item.tree, base_path, cfg_bytes.as_deref(), &vis_kind);
 
+        log::trace!(target: LOG_TARGET_TRACE, "{:?}", imports_result);
         // Get a mutable reference to the graph only once
         let graph = &mut self.state.code_graph;
         let current_module_path = &self.state.current_module_path;

@@ -52,6 +52,7 @@ pub enum CfgExpr {
 }
 
 /// Active flags as seen by Cargo
+#[derive(Debug, Clone)]
 pub struct ActiveCfg {
     pub features: HashSet<String>,
     pub target_os: String,

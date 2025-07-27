@@ -3,6 +3,7 @@ mod code_graph;
 mod parsed_graph;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use crate::utils::logging::{LOG_TARGET_GRAPH_FIND, LOG_TARGET_NODE};
 
 pub use code_graph::CodeGraph;
@@ -95,11 +96,28 @@ pub trait GraphAccess {
         });
         for dup in &dups {
             debug!("{:#?}", dup);
+            if let Err(e) = self.find_node_unique(dup.target()) {
+                match ImplNodeId::try_from(dup.target()) {
+                    Ok(id)  => {
+                        let dup_impls = self.impls().iter().filter(|imp| imp.id() == id);
+                        let unique_spans = dup_impls.clone().map(|imp| imp.span()).collect::<HashSet<(usize, usize)>>();
+                        if !(dup_impls.count() == unique_spans.len()) {panic!("impl with same span and id: {id}")}
+                        continue;
+                    },
+                    _ => panic!("Expected unique relations, found invalid duplicate impl with error: {}", e),
+                }
+            } 
             let target = self.find_node_unique(dup.target())
                 .unwrap_or_else(|e| {
                 self.debug_relationships();
                 panic!("Expected unique relations, found duplicate with error: {}", e);
             });
+            // if let Err(e) = self.find_node_unique(dup.source()) {
+            //     match ImplNodeId::try_from(dup.source()) {
+            //         Ok(id) if 1 == self.impls().iter().filter(|imp| imp.impl_id() == id).map(|imp| imp.span).count() => {continue;},
+            //         _ => panic!(),
+            //     }
+            // } 
             let source = self.find_node_unique(dup.source())
                 .unwrap_or_else(|e| {
                 self.debug_relationships();

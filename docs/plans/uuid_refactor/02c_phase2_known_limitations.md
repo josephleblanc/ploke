@@ -113,4 +113,29 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
+## 8. `#[cfg(...)]` Duplicate unnamed impl blocks
+
+*   **Limitation:**: It is valid in Rust to have two `impl StructName` blocks, but the parser we have currently assigns each of these `impl` blocks the same id. Current tests expect all `Synthetic` Id items to be unique, however this would require either that we treat these two blocks separately or that we provide some special treatment to `impl` blocks.
+
+    In order to resolve this issue, we will need to either:
+    * add more information to the hash of the `impl` block (such as the span data)
+    * arbitrarily decide not to include one of them (unacceptable)
+    * explicitly allow only `impl` blocks to have duplicated `Synthetic` Ids, and then resolve those ids during the phase3 resolution step of processing.
+
+*   **Rejected Solutions**: Using a simple numbering system for the impl blocks could lead to errors in the case of having two different `impl` blocks in two different files... or it would if we didn't use the parent context as part of the impl block hash.
+
+*   **Patch Solution**: For the immediate future, we will allow duplicates specifically of `impl` blocks, and add an exception to all validation checks for `impl` blocks within the same file that collide with other `impl` blocks.
+    * Note, however, that we will still check for duplication using the `TrackingHash` to avoid slipping further into risk of invalidation than absolutely necessary.
+    * This introduced a relatively deep clone, could probably be done better. See [implementation](./../../../crates/ingest/syn_parser/src/parser/graph/mod.rs)
+
+*   **Impact:**  
+    • Incorrect handling could lead to invalid graph state by not including valid rust methods for a given `Struct` item. Second-order effects could lead to a call graph of methods being incorrect, similarly it could lead to an incomplete type graph and data flow graph.
+    • Even correct handling of the merging of the `impl` blocks at the graph level could lead to confusion if a distinction is not made that these are two different declarations of the `impl` block, both for human users and especially LLM-provided context.
+    • Handling with a global counter could lead to contention for access to the counter, though unlikely, this is a new variable we would need to track during performance evaluations.
+
+*   **Future Work:**  
+    • Figure out how to deal with this situation, or if I even want to deal with it. It seems like having multiple `impl` blocks in a single file is rather ridiculous, and we don't need to work too hard for this, at least not unless it is something holding back guaranteed correctness in the graph.
+
+---
+
 *(Add subsequent limitations below this line)*
