@@ -102,6 +102,7 @@ fn process_func(
         .get_iter_relations_to(&function.id.as_any())
         .find_map(|r| r.rel().source_contains(function.id.to_pid()))
         .unwrap_or_else(|| {
+            tracing::error!(target: "debug_dup", "duplicate_function: {:#?}", function);
             panic!("Invariant Violated: FunctionNode must have Contains relation with module")
         });
 
@@ -177,18 +178,18 @@ mod test {
     use syn_parser::parser::nodes::AsAnyNodeId;
     use syn_parser::parser::ParsedCodeGraph;
     use syn_parser::utils::{LogStyle, LogStyleDebug};
-    use tracing::Level;
+    // use tracing::Level;
 
     use crate::error::TransformError;
     use crate::schema::primary_nodes::FunctionNodeSchema;
     use crate::schema::secondary_nodes::ParamNodeSchema;
     use crate::transform::functions::script_put;
     use crate::transform::functions::{process_func, process_generic_params};
-    use ploke_test_utils::init_test_tracing;
+    // use ploke_test_utils::init_test_tracing;
 
     #[test]
     fn func_transform() -> Result<(), TransformError> {
-        init_test_tracing(Level::TRACE);
+        // init_test_tracing(Level::TRACE);
         // TODO: Make separate tests for each of these steps:
         //  - function processing
         //  - param processing
@@ -196,8 +197,8 @@ mod test {
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_types");
-        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+        let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
             tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e

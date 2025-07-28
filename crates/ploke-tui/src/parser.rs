@@ -60,8 +60,8 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
         .collect::<Result<_, _>>()
         .map_err(ploke_error::Error::from)?;
 
-    let merged = ParsedCodeGraph::merge_new(graphs)?;
-    let tree = merged.build_module_tree()?;
+    let mut merged = ParsedCodeGraph::merge_new(graphs)?;
+    let tree = merged.build_tree_and_prune()?;
     ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
     tracing::info!(
         "{}: Parsing and Database Transform Complete",

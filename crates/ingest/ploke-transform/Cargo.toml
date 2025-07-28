@@ -10,6 +10,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
 ploke-core = { path = "../../ploke-core" }
+ploke-common = { path = "../../common" }
 uuid = { workspace = true }
 
 # debugging
@@ -20,8 +21,8 @@ ploke-error = { path = "../../ploke-error" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-env_logger = "0.11"                              # Add env_logger for test logging
-ploke-test-utils = { path = "../../test-utils" }
+env_logger = "0.11"                                                         # Add env_logger for test logging
+ploke-test-utils = { path = "../../test-utils", features = ["test_setup"] }
 
 [features]
 default = ["type_bearing_ids"]

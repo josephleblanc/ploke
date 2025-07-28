@@ -5,6 +5,7 @@
 //! crate. The `CrateContext` contains information about the crate, such as
 //! its name, version, and a list of all its source files.
 
+use itertools::Itertools;
 use ploke_core::PROJECT_NAMESPACE_UUID;
 use serde::Deserialize;
 use serde::Serialize;
@@ -738,13 +739,25 @@ pub fn run_discovery_phase(
             // }
         }
 
+        // WARN: We are not including the main.rs file (and hopefully not its imports either) in
+        // the case of a project having both a main.rs and a lib.rs
+        // - This is a stopgap for now. We would like to provide the user with the ability to parse
+        // both of these code graphs into the database at the same time as separate packages in the
+        // same crate, but it is beyond our scope for now.
+        // - See [known limitation](ploke/docs/plans/uuid_refactor/01b_phase1_known_limitations.md)
+        let files = if files.iter().any(|p| p.file_name().is_some_and(|f| f == "lib.rs")) {
+             files.into_iter()
+                .filter(|p| p.file_name().is_some_and(|f| f != "main.rs"))
+                .collect_vec()
+        } else { files };
+
         // --- Combine into CrateContext (Always created, might have empty files) ---
         let context = CrateContext {
             name: crate_name.clone(),
             version: crate_version,
             namespace,
             root_path: crate_root_path.clone(),
-            files: files.clone(), // Clone needed for module mapping below
+            files: files, // Clone needed for module mapping below
             features,             // Add the parsed features
             dependencies,         // Add the parsed dependencies
             dev_dependencies,     // Add the parsed dev-dependencies

@@ -148,6 +148,19 @@ where
         self.log_node_id_verbose(rel.rel().target()); // Use rel()
     }
 
+    /// Logs detailed information about a relation for debugging purposes.
+    /// This function is intended for verbose debugging and may perform lookups.
+    fn log_relation_verbose_target(&self, rel: TreeRelation, target: &str) {
+        debug!(target: target, "{} Relation Details:", "Verbose Log:".log_header());
+        debug!(target: target, "  Kind: {}", rel.rel().to_string().log_name()); // Use rel()
+
+        debug!(target: target, "  Source:");
+        self.log_node_id_verbose(rel.rel().source()); // Use rel()
+
+        debug!(target: target, "  Target:");
+        self.log_node_id_verbose(rel.rel().target()); // Use rel()
+    }
+
     /// Logs detailed information about a NodeId for debugging purposes.
     /// This function is intended for verbose debugging and may perform lookups within the ModuleTree.
     fn log_node_id_verbose(&self, node_id: AnyNodeId) {
