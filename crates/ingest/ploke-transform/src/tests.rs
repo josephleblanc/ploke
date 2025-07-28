@@ -23,63 +23,33 @@ macro_rules! crate_test_transform {
     }
 }
 
-crate_test_transform!(test_transform_syn_new, "ingest/syn_parser");
+crate_test_transform!(test_transform_syn, "ingest/syn_parser");
+crate_test_transform!(test_transform_self, "ingest/ploke-transform");
+crate_test_transform!(test_transform_embed, "ingest/ploke-embed");
+crate_test_transform!(test_transform_core, "ploke-core");
+crate_test_transform!(test_transform_db, "ploke-db");
+crate_test_transform!(test_transform_error, "ploke-error");
+crate_test_transform!(test_transform_io, "ploke-io");
+crate_test_transform!(test_transform_rag, "ploke-rag");
+crate_test_transform!(test_transform_tui, "ploke-tui");
+crate_test_transform!(test_transform_ty_mcp, "ploke-ty-mcp");
+crate_test_transform!(test_transform_, "test-utils");
+// crate_test_transform!(test_transform_, "ploke-");
 
-#[test]
-fn test_transform_syn() -> Result<(), ploke_error::Error> {
-    // let _ = init_tracing_v2();
-    // initialize db
-    let db = Db::new(MemStorage::default()).expect("Failed to create database");
-    db.initialize().expect("Failed to initialize database");
-    // create and insert schema for all nodes
-    create_schema_all(&db)?;
-    let (merged, tree) = parse_and_build_tree("ingest/syn_parser")?; // Use workspace root for context
-    transform_parsed_graph(&db, merged, &tree)?;
+// NOTE: Keeping this commented out as refernce for the macro above for sanity checks should
+// something fail.
+//
+// #[test]
+// fn test_transform_syn() -> Result<(), ploke_error::Error> {
+//     // let _ = init_tracing_v2();
+//     // initialize db
+//     let db = Db::new(MemStorage::default()).expect("Failed to create database");
+//     db.initialize().expect("Failed to initialize database");
+//     // create and insert schema for all nodes
+//     create_schema_all(&db)?;
+//     let (merged, tree) = parse_and_build_tree("ingest/syn_parser")?; // Use workspace root for context
+//     transform_parsed_graph(&db, merged, &tree)?;
+//
+//     Ok(())
+// }
 
-    Ok(())
-}
-
-crate_test_transform!(test_transform_self_new, "ingest/ploke-transform");
-#[test]
-fn test_transform_self() -> Result<(), ploke_error::Error> {
-    // let _ = init_tracing_v2();
-    // initialize db
-    let db = Db::new(MemStorage::default()).expect("Failed to create database");
-    db.initialize().expect("Failed to initialize database");
-    // create and insert schema for all nodes
-    create_schema_all(&db)?;
-    let (merged, tree) = parse_and_build_tree("ingest/ploke-transform")?; // Use workspace root for context
-    transform_parsed_graph(&db, merged, &tree)?;
-
-    Ok(())
-}
-
-crate_test_transform!(test_transform_embed_new, "ingest/ploke-embed");
-#[test]
-fn test_transform_embed() -> Result<(), ploke_error::Error> {
-    // let _ = init_tracing_v2();
-    // initialize db
-    let db = Db::new(MemStorage::default()).expect("Failed to create database");
-    db.initialize().expect("Failed to initialize database");
-    // create and insert schema for all nodes
-    create_schema_all(&db)?;
-    let (merged, tree) = parse_and_build_tree("ingest/ploke-embed")?; // Use workspace root for context
-    transform_parsed_graph(&db, merged, &tree)?;
-
-    Ok(())
-}
-
-crate_test_transform!(test_transform_core_new, "ploke-core");
-#[test]
-fn test_transform_core() -> Result<(), ploke_error::Error> {
-    // let _ = init_tracing_v2();
-    // initialize db
-    let db = Db::new(MemStorage::default()).expect("Failed to create database");
-    db.initialize().expect("Failed to initialize database");
-    // create and insert schema for all nodes
-    create_schema_all(&db)?;
-    let (merged, tree) = parse_and_build_tree("ploke-core")?; // Use workspace root for context
-    transform_parsed_graph(&db, merged, &tree)?;
-
-    Ok(())
-}
