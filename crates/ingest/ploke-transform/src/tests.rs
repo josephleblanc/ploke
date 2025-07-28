@@ -7,7 +7,7 @@ use crate::{schema::create_schema_all, transform::transform_parsed_graph};
 
 #[test]
 fn test_transform_syn() -> Result<(), ploke_error::Error> {
-    let _ = init_tracing_v2();
+    // let _ = init_tracing_v2();
     // initialize db
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
     db.initialize().expect("Failed to initialize database");

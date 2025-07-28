@@ -189,7 +189,7 @@ mod test {
 
     #[test]
     fn func_transform() -> Result<(), TransformError> {
-        init_test_tracing(Level::TRACE);
+        // init_test_tracing(Level::TRACE);
         // TODO: Make separate tests for each of these steps:
         //  - function processing
         //  - param processing

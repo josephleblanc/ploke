@@ -1612,6 +1612,7 @@ impl ModuleTree {
                 .push(index);
         }
 
+        all_prunable_item_ids.retain(|item| !initial_prunable_module_ids.iter().map(|m| m.as_any()).any(|m| m == *item));
         // --- Step 6: Prepare return data ---
         let result_data = PruningResult {
             pruned_module_ids: initial_prunable_module_ids, // Return the IDs of the modules that triggered pruning
