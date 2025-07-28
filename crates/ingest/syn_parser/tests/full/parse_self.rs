@@ -30,12 +30,11 @@ macro_rules! crate_test {
                 .join("crates")
                 .join($crate_name);
 
-            let parsed_graphs = try_run_phases_and_collect_path(&project_root,
-crate_path)?;
+            let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
 
             if $build_tree {
                 let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-                let tree = merged.build_tree_and_prune()?;
+                let _tree = merged.build_tree_and_prune()?;
             }
 
             Ok(())
