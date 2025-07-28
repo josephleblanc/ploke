@@ -217,10 +217,10 @@ mod tests {
         // run the parser
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
         // merge results from all files
-        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
         // build module tree
-        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
             tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e
@@ -230,43 +230,6 @@ mod tests {
 
         transform_parsed_graph(&db, merged, &tree)?;
 
-        Ok(())
-    }
-
-    #[test]
-    #[deprecated = "use test_insert_all instead"]
-    fn test_insert_all_deprecated() -> Result<(), TransformError> {
-        // initialize db
-        let db = Db::new(MemStorage::default()).expect("Failed to create database");
-        db.initialize().expect("Failed to initialize database");
-        // create and insert schema for all nodes
-        create_schema_all(&db)?;
-
-        // run the parser
-        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
-        // merge results from all files
-        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-
-        // build module tree
-        let tree = merged.build_module_tree().unwrap_or_else(|e| {
-            tracing::error!(target: "transform_function",
-                "Error building tree: {}",
-                e
-            );
-            panic!()
-        });
-
-        transform_code_graph(&db, merged.graph, &tree, merged.crate_namespace)?;
-
-        // NOTE: NEW
-        // Recently added this section, so if there are issues, it is likely due to this new function.
-        // Note that there is the standard unit test with this item.
-        transform_crate_context(
-            &db,
-            merged
-                .crate_context
-                .expect("Merged Graphs must have a Code Context."),
-        )?;
         Ok(())
     }
 }

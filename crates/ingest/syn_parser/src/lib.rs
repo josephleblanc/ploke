@@ -125,10 +125,10 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Result< Vec<ParsedCodeGraph
 ///
 /// This function will panic if the initial discovery phase fails, similar to
 /// [`run_phases_and_collect`].
-pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, SynParserError> {
+pub fn run_phases_and_merge(fixture_name: &str) -> Result<ParserOutput, ploke_error::Error> {
     let parsed_graphs = run_phases_and_collect(fixture_name)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let tree = merged.build_module_tree()?;
+    let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+    let tree = merged.build_tree_and_prune()?;
     Ok(ParserOutput {
         merged_graph: Some(merged),
         module_tree: Some(tree),

@@ -1,6 +1,6 @@
 use crate::{
     discovery::DependencyMap as _,
-    resolve::{ModuleTreeError, TreeRelation, UnlinkedModuleInfo},
+    resolve::{ModuleTreeError, PruningResult, TreeRelation, UnlinkedModuleInfo},
 };
 use anyhow::Result;
 use std::{
@@ -113,7 +113,7 @@ impl ParsedCodeGraph {
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(&new_graph);
-            log::debug!(target: "validate", 
+            log::debug!(target: "validate",
                 "{} <- {}",
                 "Validating".log_step(),
                 new_graph.root_file().unwrap().display(),
@@ -145,7 +145,7 @@ impl ParsedCodeGraph {
         #[cfg(feature = "validate")]
         {
             ParsedCodeGraph::debug_relationships(self);
-            log::debug!(target: "validate", 
+            log::debug!(target: "validate",
                 "{} <- {}",
                 "Validating".log_step(),
                 self.file_path.as_os_str().to_string_lossy()
@@ -177,7 +177,7 @@ impl ParsedCodeGraph {
     // We need a new Relation to represent that connection, but it will be in a different set of
     // logical relations, whereas all of these relations are meant to be syntactically accurate.
     // Changed back to &self as graph is immutable again.
-    pub fn build_module_tree(&self) -> Result<ModuleTree, SynParserError> {
+    pub fn build_module_tree(&self) -> Result<(ModuleTree, PruningResult), SynParserError> {
         #[cfg(feature = "validate")]
         assert!(self.validate_unique_rels());
         let root_module = self.get_root_module_checked()?;
@@ -251,19 +251,113 @@ impl ParsedCodeGraph {
         // tree.process_export_rels(self)?; // Re-exports processed after ID resolution
 
         // 6. Prune unlinked file modules from the ModuleTree state
-        let pruning_result = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
-        if !pruning_result.pruned_module_ids.is_empty() {
-            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and _fill me in_ relations from ModuleTree.",
-                pruning_result.pruned_module_ids.len(),
-                pruning_result.pruned_item_ids.len(),
-                // pruning_result.pruned_relations.len()
+        let pruned_items = tree.prune_unlinked_file_modules()?; // Call prune, graph is not modified
+        if !pruned_items.pruned_module_ids.is_empty() {
+            debug!(target: LOG_TARGET_MOD_TREE_BUILD, "Pruned {} unlinked modules, {} associated items, and {} relations from ModuleTree.",
+                pruned_items.pruned_module_ids.len(),
+                pruned_items.pruned_item_ids.len(),
+                pruned_items.pruned_relations.len()
             );
-            // TODO: Decide if/how to use pruning_result later (e.g., for diagnostics, incremental updates)
+            // TODO: Decide if/how to use pruned_items later (e.g., for diagnostics, incremental updates)
         }
         // By the time we are finished, we should have all the necessary relations to form the path
         // of all defined items by ModuleTree's shortest_public_path method.
         //  - Contains: Module --> contained items
         //  - Imports:
+        Ok((tree, pruned_items))
+    }
+
+    /// Removes every node and relation that belongs to a module that was pruned
+    /// from the `ModuleTree`.
+    ///
+    /// After `ModuleTree::prune_unlinked_file_modules` is executed it returns a
+    /// `PruningResult` that lists the module IDs, item IDs and relation IDs that
+    /// are no longer part of the tree.
+    /// This method uses that list to delete the corresponding data from the
+    /// concrete `ParsedCodeGraph` so that the graph and the tree stay in sync.
+    ///
+    /// **Note:** The current implementation is intentionally simple and may be
+    /// optimized later.
+    /// **Limitation:** Type nodes that are only referenced by the pruned items
+    /// are *not* removed, so the graph may still contain “orphaned” types after
+    /// pruning.
+    /// - reviewed by JL Jul 27, 2025
+    fn prune(&mut self, pruned_items: PruningResult) {
+        // WARN: We are pruning all the unused items from the unlinked files, but that does not
+        // include the unused types currently, meaning we could be ending up with unlinked types?
+        // - Look into handling this problem within the way ModuleTree is handling types. It might
+        // cause an issue later when we try to handle Canonical type ids, or earlier if there is
+        // some behavior that relies on all items in the graph having a relation, and then there is
+        // no relation found with type nodes (which I don't think we currently guarentee?).
+        // NOTE: There are smarter ways of doing the below, this is just the easiest to write. We
+        // could also be going through the children of the modules being removed, but I'd rather be
+        // inefficient and hamfisted for now. Improve this later.
+        //
+        // -- handle pruning items
+        // AI: See how I counted the functions before and added them to a running count of the
+        // difference in the actual change in the number of functions in the code graph? I want you
+        // to do the same thing below for the other elements, and do a similar comparison with the
+        // modules and relations
+        let mut total_count_diff = 0;
+        let func_count_pre = self.functions().len();
+        self.functions_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        total_count_diff += self.functions().len() - func_count_pre;
+        self.defined_types_mut()
+            .retain(|defty| !pruned_items.pruned_item_ids.contains(&defty.any_id()));
+        self.consts_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        self.statics_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        self.macros_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        self.use_statements_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        // methods are included in impls and traits for now, could need special handling later if
+        // we make them their own field in the `ParsedCodeGraph`.
+        self.impls_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        self.traits_mut()
+            .retain(|m| !pruned_items.pruned_item_ids.contains(&m.id.as_any()));
+        assert_eq!(total_count_diff, pruned_items.pruned_item_ids.len(), "Count of expected pruned items vs. pruned items does not match.");
+        // -- handle pruning module ids
+        self.modules_mut()
+            .retain(|m| !pruned_items.pruned_module_ids.contains(&m.id));
+        // -- handle pruning relations
+        self.relations_mut().retain(|r| {
+            !pruned_items
+                .pruned_relations
+                .contains(&TreeRelation::new(*r))
+        });
+        // AI
+    }
+
+    /// Builds the complete module-tree for this crate and prunes all items that
+    /// belong to file-based modules that could not be linked to the tree.
+    ///
+    /// This is the primary public-facing API for turning the flat set of parsed
+    /// files into a coherent crate-level structure:
+    ///
+    /// 1. Constructs a `ModuleTree` from the root module.
+    /// 2. Registers every `ModuleNode` (definitions and declarations).
+    /// 3. Copies all syntactic relations into the tree.
+    /// 4. Establishes inter-module links (`ResolvesToDefinition`,
+    ///    `CustomPath`, …).
+    /// 5. Prunes file-based modules that remain unlinked after the above steps.
+    /// 6. Removes every node, module and relation listed in the `PruningResult`
+    ///    from the current `ParsedCodeGraph`, keeping the graph and the tree
+    ///    consistent.
+    ///
+    /// After a successful call the `ParsedCodeGraph` contains only items that are
+    /// reachable through the resulting `ModuleTree`.
+    ///
+    /// # Errors
+    /// Returns any error encountered during tree construction, path resolution,
+    /// or pruning (in creating the items to prune within build_module_tree).
+    /// - JL Reviewed, Jul 28, 2025
+    pub fn build_tree_and_prune(&mut self) -> Result<ModuleTree, ploke_error::Error> {
+        let (tree, pruned_items) = self.build_module_tree()?;
+        self.prune(pruned_items);
         Ok(tree)
     }
 

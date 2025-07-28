@@ -17,7 +17,7 @@ fn test_mod_paths() -> Result<(), Box<dyn std::error::Error>> {
         .build_module_tree() // dirty, placeholder
         .expect("Failed to build module tree for edge cases fixture");
 
-    let _module_tree = merged.build_module_tree()?;
+    let (_module_tree, pruned_items) = merged.build_tree_and_prune()?;
 
     println!("File paths in merged modules:");
     let base_path: &Path = Path::new(

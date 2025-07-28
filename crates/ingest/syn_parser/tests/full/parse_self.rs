@@ -21,8 +21,8 @@ macro_rules! crate_test {
             let _ = env_logger::builder()
                 .is_test(true)
                 .format_timestamp(None)
-                .format_file(true)
-                .format_line_number(true)
+                // .format_file(true)
+                // .format_line_number(true)
                 .try_init();
 
             let project_root = workspace_root();
@@ -34,8 +34,8 @@ macro_rules! crate_test {
 crate_path)?;
 
             if $build_tree {
-                let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-                let _tree = merged.build_module_tree()?;
+                let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+                let tree = merged.build_tree_and_prune()?;
             }
 
             Ok(())
@@ -91,7 +91,7 @@ pub fn try_run_phases_and_collect_path(
 //     let crate_path = workspace_root().join("crates").join("ingest").join("syn_parser");
 //     let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
 //     let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-//     let _tree = merged.build_module_tree()?;
+//     let _(tree, pruned_items) = merged.build_tree_and_prune()?;
 //     Ok(())
 // }
 

@@ -55,9 +55,9 @@ pub fn run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
 
 pub fn build_tree_for_tests(fixture_name: &str) -> (ParsedCodeGraph, ModuleTree) {
     let results = run_phases_and_collect(fixture_name);
-    let merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
+    let mut merged_graph = ParsedCodeGraph::merge_new(results).expect("Failed to merge graphs");
     let tree = merged_graph
-        .build_module_tree() // dirty, placeholder
+        .build_tree_and_prune() // dirty, placeholder
         .expect("Failed to build module tree for fixture");
     (merged_graph, tree)
 }

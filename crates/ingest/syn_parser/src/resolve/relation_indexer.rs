@@ -216,9 +216,9 @@ mod tests {
     #[test]
     fn some_test() {
         let parsed_graphs = (*PARSED_FIXTURE_CRATE_NODES).clone();
-        let merged = ParsedCodeGraph::merge_new(parsed_graphs).expect("Error parsing static graph");
+        let mut merged = ParsedCodeGraph::merge_new(parsed_graphs).expect("Error parsing static graph");
         let tree = merged
-            .build_module_tree()
+            .build_tree_and_prune()
             .expect("Error building module tree from static graph");
         let root_id = tree.root().as_any();
         // root_id should return a None value here, which is acceptable

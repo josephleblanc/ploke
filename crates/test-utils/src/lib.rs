@@ -62,6 +62,19 @@ pub fn try_run_phases_and_collect_path(
     }
     Ok(results)
 }
+#[cfg(feature = "test_setup")]
+use syn_parser::ModuleTree;
+
+#[cfg(feature = "test_setup")]
+pub fn parse_and_build_tree(crate_name: &str) -> Result<(ParsedCodeGraph, ModuleTree), ploke_error::Error> {
+
+    let project_root = workspace_root(); // Use workspace root for context
+    let crate_path = workspace_root().join("crates").join(crate_name);
+    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
+    let mut merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+    let tree = merged.build_tree_and_prune()?;
+    Ok((merged, tree ))
+}
 
 #[cfg(feature = "test_setup")]
 pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
@@ -81,11 +94,11 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
     let successful_graphs = test_run_phases_and_collect(fixture);
     // merge results from all files
     tracing::info!("{}: merge the graphs", "Parse".log_step());
-    let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+    let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
 
     // build module tree
     tracing::info!("{}: build module tree", "Parse".log_step());
-    let tree = merged.build_module_tree().unwrap_or_else(|e| {
+    let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
         log::error!(target: "transform_function",
             "Error building tree: {}",
             e
@@ -150,28 +163,30 @@ pub fn init_tracing_v2() -> WorkerGuard {
 
 #[cfg(feature = "test_setup")]
 pub fn init_test_tracing(level: tracing::Level) {
+    use tracing::Level;
 
-    // let filter = filter::Targets::new()
-    //     .with_target("cozo", tracing::Level::ERROR)
-    //     .with_target("ploke", level)
-    //     .with_target("ploke-db", level)
-    //     .with_target("ploke-embed", level)
-    //     .with_target("ploke-io", level)
-    //     .with_target("ploke-transform", level)
-    //     .with_target("transform_functions", level);
-    //
-    // let layer = tracing_subscriber::fmt::layer()
-    //     .with_writer(std::io::stderr)
-    //     .with_file(true)
-    //     .with_line_number(true)
-    //     .with_target(false) // Show module path
-    //     .with_level(true) // Show log level
-    //     .without_time() // Remove timestamps
-    //     .pretty(); // Use compact format
-    // tracing_subscriber::registry()
-    //     .with(layer)
-    //     .with(filter)
-    //     .init();
+    let filter = filter::Targets::new()
+        .with_target("debug_dup", Level::ERROR)
+        // .with_target("ploke", level)
+        // .with_target("ploke-db", level)
+        // .with_target("ploke-embed", level)
+        // .with_target("ploke-io", level)
+        // .with_target("ploke-transform", level)
+        .with_target("cozo", Level::ERROR);
+
+    let layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_file(true)
+        .with_line_number(true)
+        .with_target(false) // Show module path
+        .with_level(true) // Show log level
+        .without_time() // Remove timestamps
+        .with_ansi(true)
+        .pretty(); 
+    tracing_subscriber::registry()
+        .with(layer)
+        .with(filter)
+        .init();
 }
 
 // Should return result

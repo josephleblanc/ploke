@@ -102,6 +102,7 @@ fn process_func(
         .get_iter_relations_to(&function.id.as_any())
         .find_map(|r| r.rel().source_contains(function.id.to_pid()))
         .unwrap_or_else(|| {
+            tracing::error!(target: "debug_dup", "duplicate_function: {:#?}", function);
             panic!("Invariant Violated: FunctionNode must have Contains relation with module")
         });
 
@@ -196,8 +197,8 @@ mod test {
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_types");
-        let merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
-        let tree = merged.build_module_tree().unwrap_or_else(|e| {
+        let mut merged = ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
             tracing::error!(target: "transform_function",
                 "Error building tree: {}",
                 e

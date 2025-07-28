@@ -21,8 +21,8 @@ ploke-error = { path = "../../ploke-error" }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-env_logger = "0.11"                              # Add env_logger for test logging
-ploke-test-utils = { path = "../../test-utils" }
+env_logger = "0.11"                                                         # Add env_logger for test logging
+ploke-test-utils = { path = "../../test-utils", features = ["test_setup"] }
 
 [features]
 default = ["type_bearing_ids"]
