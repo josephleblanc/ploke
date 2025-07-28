@@ -7,8 +7,10 @@
 
 pub mod nodes;
 
+use std::path::{Path, PathBuf};
+
 use cozo::MemStorage;
-use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
+pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
 use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
@@ -39,6 +41,26 @@ pub fn test_run_phases_and_collect(fixture_name: &str) -> Vec<ParsedCodeGraph> {
             })
         })
         .collect()
+}
+
+
+#[cfg(feature = "test_setup")]
+pub fn try_run_phases_and_collect_path(
+    project_root: &Path,
+    crate_path: PathBuf
+) -> Result<Vec<ParsedCodeGraph>, ploke_error::Error> {
+    let discovery_output = run_discovery_phase(project_root, &[crate_path.clone()])?;
+
+    let results_with_errors: Vec<Result<ParsedCodeGraph, SynParserError>> =
+        analyze_files_parallel(&discovery_output, 0); // num_workers ignored by rayon bridge
+
+    // Collect successful results, panicking if any file failed to parse in Phase 2
+    let mut results = Vec::new();
+    for result in results_with_errors {
+        eprintln!("result is ok? | {}", result.is_ok());
+        results.push(result?);
+    }
+    Ok(results)
 }
 
 #[cfg(feature = "test_setup")]

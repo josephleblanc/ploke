@@ -1,3 +1,5 @@
+use crate::parser::nodes::ImplNodeId;
+
 use super::*;
 
 impl LogDataStructure for ModuleTree {}
@@ -169,6 +171,7 @@ impl ModuleTree {
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     // Path already exists
                     let existing_id = *entry.get();
+                    log::error!(target: "debug_dup", "Duplicate path detected for module:\n{:#?}", module);
                     return Err(ModuleTreeError::DuplicatePath {
                         path: node_path,                         // Use the cloned path
                         existing_id: existing_id.as_any(),       // This is ModuleNodeId, convert
@@ -186,6 +189,7 @@ impl ModuleTree {
                 std::collections::hash_map::Entry::Occupied(entry) => {
                     // Path already exists
                     let existing_id = *entry.get(); // This is AnyNodeId
+                    log::error!(target: "debug_dup", "Duplicate path detected for module:\n{:#?}", module);
                     return Err(ModuleTreeError::DuplicatePath {
                         path: node_path,                         // Use the cloned path
                         existing_id,                             // Keep as AnyNodeId
@@ -1288,8 +1292,13 @@ impl ModuleTree {
     /// the necessary `CustomPath` relations. It does *not* yet handle updating paths for items
     /// *contained within* the modules affected by `#[path]`.
     pub(crate) fn update_path_index_for_custom_paths(&mut self) -> Result<(), ModuleTreeError> {
+        // assert!(self.validate_unique_rels());
         #[cfg(feature = "validate")]
-        assert!(self.validate_unique_rels());
+        if !self.validate_unique_rels() {
+            log::warn!(target: "debug_dup", "Before pruning: Detected duplicate relations");
+            assert!( self.validate_nonunique_rels() );
+            log::warn!(target: "debug_dup","Before pruning: Validated non-unique relations");
+        }
         self.log_update_path_index_entry_exit(true);
         // Collect keys to avoid borrowing issues while modifying the map inside the loop.
         // We iterate based on the declarations found to have path attributes.
@@ -1378,6 +1387,7 @@ impl ModuleTree {
                         def_mod_id,
                         ex_id, // This is AnyNodeId
                     );
+                    log::error!(target: "debug_dup", "Duplicate path detected for module:\n{:#?}", self.get_module_checked( def_mod_any_id.try_into().as_ref().unwrap()));
                     return Err(ModuleTreeError::DuplicatePath {
                         path: canonical_path,
                         existing_id,                    // AnyNodeId
@@ -1392,8 +1402,13 @@ impl ModuleTree {
 
         self.log_update_path_index_entry_exit(false);
 
+        // assert!(self.validate_unique_rels());
         #[cfg(feature = "validate")]
-        assert!(self.validate_unique_rels());
+        if !self.validate_unique_rels() {
+            log::warn!(target: "debug_dup", "After pruning: Detected duplicate relations");
+            assert!( self.validate_nonunique_rels() );
+            log::warn!(target: "debug_dup","After pruning: Validated non-unique relations");
+        }
         Ok(())
     }
 
@@ -1611,6 +1626,7 @@ impl ModuleTree {
         Ok(result_data)
     }
 
+    /// Checks for duplicates among all relations
     pub(crate) fn validate_unique_rels(&self) -> bool {
         let rels = &self.tree_relations();
         let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
@@ -1622,6 +1638,26 @@ impl ModuleTree {
             acc
         });
         unique_rels.len() == rels.len()
+    }
+
+    /// Checks for duplicates among all relations, but returns true in the case of duplicate
+    /// Contains relations with `impl` targets.
+    // WARN: Note that this is due to the known limitation documented here:
+    // - See known limitation #8 in ploke/docs/plans/uuid_refactor/02c_phase2_known_limitations.md
+    pub(crate) fn validate_nonunique_rels(&self) -> bool {
+        let rels = &self.tree_relations();
+        let mut dup_impls = Vec::new();
+        let unique_rels = rels.iter().fold(Vec::new(), |mut acc, rel| {
+            if !acc.contains(rel) {
+                acc.push(*rel);
+            } else if rel.rel().is_contains() && TryInto::<ImplNodeId>::try_into(rel.rel().target()).is_ok() {
+                dup_impls.push(rel);
+                self.log_relation_verbose_target(*rel, "debug_dup");
+            }
+            acc
+        });
+        let unique_with_dups = unique_rels.len() + dup_impls.len();
+        unique_with_dups == rels.len()
     }
 }
 // Extension trait for Path normalization

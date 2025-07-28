@@ -4,7 +4,9 @@ This document tracks known limitations, missing features, or areas where the Pha
 
 ---
 
-## 1. `ModuleTree` Construction Fails on Duplicate Paths from `cfg`
+## 1. (SOLVED) `ModuleTree` Construction Fails on Duplicate Paths from `cfg`
+
+Solved Jul 26, 2025
 
 *   **Limitation:** The `CodeGraph::build_module_tree` function fails with a `ModuleTreeError::DuplicatePath` (wrapped as `SynParserError::ModuleTreeDuplicateDefnPath`) when processing a `CodeGraph` containing multiple `ModuleNode`s that resolve to the same logical path due to mutually exclusive `#[cfg]` attributes.
 *   **Discovery:** This was identified when all tests in [`crates/ingest/syn_parser/tests/uuid_phase3_resolution/edge_cases.rs`](../../../../crates/ingest/syn_parser/tests/uuid_phase3_resolution/edge_cases.rs) using the `fixture_spp_edge_cases` fixture panicked during the `build_tree_for_edge_cases()` setup phase.
