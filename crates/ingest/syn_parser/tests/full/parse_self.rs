@@ -45,6 +45,9 @@ use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::
 //                  Version 2: Advanced Macro with Optional Features
 //
 //
+// Use this macro to duplicate the following tests. DO NOT DELETE THE TESTS. I want to make sure
+// the tests run correctly both with the macro version and the non-macro version before removing
+// the current tests AI!
 macro_rules! crate_test {
     // Basic case - just name and crate path
     ($test_name:ident, $crate_name:expr) => {
@@ -84,7 +87,6 @@ crate_path)?;
         }
     };
 }
-//
 
 
 pub fn try_run_phases_and_collect_path(
