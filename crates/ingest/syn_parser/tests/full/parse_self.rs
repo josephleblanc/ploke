@@ -3,51 +3,6 @@ use std::path::{Path, PathBuf};
 use ploke_common::workspace_root;
 use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
 
-// NOTE: If these tests need to be refactored at some point, consider using/improving the following
-// macro, suggested by the AI.
-// Also consider adding a lazy constructor for each of these module trees for further testing in
-// end-to-end testing later.
-// - See tests in: ploke/crates/ingest/ploke-transform/src/tests.rs
-//
-//                                 The Macro Solution
-//
-// Here are two versions - a simple one that just reduces repetition, and a more
-// advanced one that gives you full control:
-//
-//                         Version 1: Simple Declarative Macro
-//
-//
-// macro_rules! crate_test {
-//     ($test_name:ident, $crate_name:expr) => {
-//         #[test]
-//         pub fn $test_name() -> Result<(), ploke_error::Error> {
-//             let _ = env_logger::builder()
-//                 .is_test(true)
-//                 .format_timestamp(None)
-//                 .format_file(true)
-//                 .format_line_number(true)
-//                 .try_init();
-//
-//             let project_root = workspace_root();
-//             let crate_path = workspace_root()
-//                 .join("crates")
-//                 .join($crate_name);
-//
-//             try_run_phases_and_collect_path(&project_root, crate_path)
-//                 .inspect_err(|e| error!("error running try_run_phases and collect
-// {e}"))?;
-//             Ok(())
-//         }
-//     };
-// }
-//
-//
-//                  Version 2: Advanced Macro with Optional Features
-//
-//
-// Use this macro to duplicate the following tests. DO NOT DELETE THE TESTS. I want to make sure
-// the tests run correctly both with the macro version and the non-macro version before removing
-// the current tests!
 macro_rules! crate_test {
     // Basic case - just name and crate path
     ($test_name:ident, $crate_name:expr) => {
@@ -88,6 +43,18 @@ crate_path)?;
     };
 }
 
+crate_test!(new_parse_syn, "ingest/syn_parser", build_tree);
+crate_test!(new_parse_transform, "ingest/ploke-transform", build_tree);
+crate_test!(new_parse_embed, "ingest/ploke-embed", build_tree);
+crate_test!(new_parse_core, "ploke-core", build_tree);
+crate_test!(new_parse_db, "ploke-db", build_tree);
+crate_test!(new_parse_error, "ploke-error", build_tree);
+crate_test!(new_parse_io, "ploke-io", build_tree);
+crate_test!(new_parse_rag, "ploke-rag", build_tree);
+crate_test!(new_parse_tui, "ploke-tui", build_tree);
+crate_test!(new_parse_ty_mcp, "ploke-ty-mcp", build_tree);
+crate_test!(new_parse_test_utils, "test-utils", build_tree);
+
 
 pub fn try_run_phases_and_collect_path(
     project_root: &Path,
@@ -110,179 +77,21 @@ pub fn try_run_phases_and_collect_path(
 // TODO: Add specific tests to handle known limitation #11 from
 // docs/plans/uuid_refactor/02c_phase2_known_limitations.md
 
-#[test]
-pub fn parse_syn() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ingest").join("syn_parser");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_transform() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ingest").join("ploke-transform");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_embed() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ingest").join("ploke-embed");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_core() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-core");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_db() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-db");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_error() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-error");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_io() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-io");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_rag() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-rag");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_tui() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-tui");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_ty_mcp() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("ploke-ty-mcp");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
-
-#[test]
-pub fn parse_test_utils() -> Result<(), ploke_error::Error> {
-    let _ = env_logger::builder()
-        .is_test(true)
-        .format_timestamp(None) // Disable timestamps
-        .format_file(true)
-        .format_line_number(true)
-        .try_init();
-    let project_root = workspace_root(); // Use workspace root for context
-    let crate_path = workspace_root().join("crates").join("test-utils");
-    let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
-    let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
-    let _tree = merged.build_module_tree()?;
-    Ok(())
-}
+// NOTE: Leaving this duplicated test of the macro functionality above for later reference, in case
+// #[test]
+// // there are any issues with the macro.
+// pub fn parse_syn() -> Result<(), ploke_error::Error> {
+//     let _ = env_logger::builder()
+//         .is_test(true)
+//         .format_timestamp(None) // Disable timestamps
+//         .format_file(true)
+//         .format_line_number(true)
+//         .try_init();
+//     let project_root = workspace_root(); // Use workspace root for context
+//     let crate_path = workspace_root().join("crates").join("ingest").join("syn_parser");
+//     let parsed_graphs = try_run_phases_and_collect_path(&project_root, crate_path)?;
+//     let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+//     let _tree = merged.build_module_tree()?;
+//     Ok(())
+// }
 
