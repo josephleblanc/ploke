@@ -204,7 +204,7 @@ mod tests {
 
     use crate::{error::TransformError, schema::create_schema_all};
 
-    use super::{crate_context::transform_crate_context, transform_code_graph, transform_parsed_graph};
+    use super::transform_parsed_graph;
 
     #[test]
     fn test_insert_all() -> Result<(), TransformError> {
