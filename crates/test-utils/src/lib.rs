@@ -113,6 +113,29 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 }
 
 #[cfg(feature = "test_setup")]
+pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
+    use syn_parser::utils::LogStyle;
+
+    tracing::info!("Settup up database with setup_db_full_crate");
+    // initialize db
+    let db = cozo::Db::new(MemStorage::default()).expect("Failed to create database");
+    tracing::info!("{}: Initialize", "Database".log_step());
+    db.initialize().expect("Failed to initialize database");
+    // create and insert schema for all nodes
+    tracing::info!("{}: Create and Insert Schema", "Transform/Database".log_step());
+    ploke_transform::schema::create_schema_all(&db)?;
+
+    // run the parse
+    tracing::info!("{}: run the parser, merge graphs, build tree", "Parse".log_step());
+    let (merged, tree) = parse_and_build_tree(crate_name)?;
+
+    tracing::info!("{}: transform graph into db", "Transform".log_step());
+    ploke_transform::transform::transform_parsed_graph(&db, merged, &tree)?;
+    tracing::info!("{}: Parsing and Database Transform Complete", "Setup".log_step());
+    Ok(db)
+}
+
+#[cfg(feature = "test_setup")]
 pub fn setup_db_full_embeddings(
     fixture: &'static str,
 ) -> std::result::Result<std::vec::Vec<ploke_db::TypedEmbedData>, ploke_error::Error> {
