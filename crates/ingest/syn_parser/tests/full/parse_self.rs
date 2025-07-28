@@ -3,6 +3,89 @@ use std::path::{Path, PathBuf};
 use ploke_common::workspace_root;
 use syn_parser::{discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ParsedCodeGraph};
 
+// NOTE: If these tests need to be refactored at some point, consider using/improving the following
+// macro, suggested by the AI.
+// Also consider adding a lazy constructor for each of these module trees for further testing in
+// end-to-end testing later.
+// - See tests in: ploke/crates/ingest/ploke-transform/src/tests.rs
+//
+//                                 The Macro Solution
+//
+// Here are two versions - a simple one that just reduces repetition, and a more
+// advanced one that gives you full control:
+//
+//                         Version 1: Simple Declarative Macro
+//
+//
+// macro_rules! crate_test {
+//     ($test_name:ident, $crate_name:expr) => {
+//         #[test]
+//         pub fn $test_name() -> Result<(), ploke_error::Error> {
+//             let _ = env_logger::builder()
+//                 .is_test(true)
+//                 .format_timestamp(None)
+//                 .format_file(true)
+//                 .format_line_number(true)
+//                 .try_init();
+//
+//             let project_root = workspace_root();
+//             let crate_path = workspace_root()
+//                 .join("crates")
+//                 .join($crate_name);
+//
+//             try_run_phases_and_collect_path(&project_root, crate_path)
+//                 .inspect_err(|e| error!("error running try_run_phases and collect
+// {e}"))?;
+//             Ok(())
+//         }
+//     };
+// }
+//
+//
+//                  Version 2: Advanced Macro with Optional Features
+//
+//
+macro_rules! crate_test {
+    // Basic case - just name and crate path
+    ($test_name:ident, $crate_name:expr) => {
+        crate_test!($test_name, $crate_name, false);
+    };
+
+    // With module tree building
+    ($test_name:ident, $crate_name:expr, build_tree) => {
+        crate_test!($test_name, $crate_name, true);
+    };
+
+    // Internal implementation
+    ($test_name:ident, $crate_name:expr, $build_tree:expr) => {
+        #[test]
+        pub fn $test_name() -> Result<(), ploke_error::Error> {
+            let _ = env_logger::builder()
+                .is_test(true)
+                .format_timestamp(None)
+                .format_file(true)
+                .format_line_number(true)
+                .try_init();
+
+            let project_root = workspace_root();
+            let crate_path = workspace_root()
+                .join("crates")
+                .join($crate_name);
+
+            let parsed_graphs = try_run_phases_and_collect_path(&project_root,
+crate_path)?;
+
+            if $build_tree {
+                let merged = ParsedCodeGraph::merge_new(parsed_graphs)?;
+                let _tree = merged.build_module_tree()?;
+            }
+
+            Ok(())
+        }
+    };
+}
+//
+
 
 pub fn try_run_phases_and_collect_path(
     project_root: &Path,
@@ -200,3 +283,4 @@ pub fn parse_test_utils() -> Result<(), ploke_error::Error> {
     let _tree = merged.build_module_tree()?;
     Ok(())
 }
+
