@@ -218,6 +218,8 @@ impl App {
                         })
                     },
                     // AppEvent::System(system_event) => {},
+                    // NOTE: This system event handling is a bad pattern. This should probably be
+                    // managed by the event_bus system instead.
                     AppEvent::System(system_event) => {
                         match system_event {
                             system::SystemEvent::ModelSwitched(new_model)=>{
@@ -252,6 +254,27 @@ impl App {
                                     query_content,
                                 });
                             },
+                            SystemEvent::BackupDb {file_dir, is_success, .. } if is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives BackupDb successful db save to file: {}", &file_dir);
+                                    self.send_cmd(StateCommand::AddMessageImmediate {
+                                        msg: format!("Success: Cozo data for code graph saved successfully to {file_dir}"),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    });
+                                
+                            }
+                            SystemEvent::BackupDb {file_dir, is_success, error } if !is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives BackupDb unsuccessful event: {}\nwith error: {:?}", &file_dir, &error);
+                                    if let Some(error_str) = error {
+                                        self.send_cmd(StateCommand::AddMessageImmediate {
+                                            msg: format!("Error: Cozo data for code graph not saved to {file_dir}\n\tFailed with error: {}", &error_str),
+                                            kind: MessageKind::SysInfo,
+                                            new_msg_id: Uuid::new_v4(),
+                                        });
+                                    }
+                            }
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
                     }

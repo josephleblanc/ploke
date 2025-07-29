@@ -495,7 +495,15 @@ pub async fn state_manager(
             StateCommand::IndexWorkspace { workspace } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 // Extract task from mutex (consumes guard)
+                if let Some( crate_name ) = workspace.split('/').next_back() {
+                    let mut write_guard = state.system.write().await;
+                    tracing::debug!("Setting crate_focus to {crate_name}");
+                    write_guard.crate_focus = Some(crate_name.to_string());
+                }
 
+                // TODO: maybe run_parse should be returning the name of the crate it parsed, as
+                // defined in the `Cargo.toml`? For now we are just going to use the directory name
+                // as the name of the crate.
                 match run_parse(Arc::clone(&state.db), Some(workspace.clone().into())) {
                     Ok(_) => tracing::info!("Parse of target workspace {} successful", &workspace),
                     Err(e) => {
@@ -822,7 +830,26 @@ pub async fn state_manager(
                 let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { 
                     msg: "Could not locate default config directory on system" 
                 }).emit_warning()) { dir.join("ploke").join("data") } else { continue; };
+
+                // make sure directory exists, otherwise report error
+                if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
+                    let msg = format!( "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}", 
+                        default_dir.display(),  e);
+                    tracing::error!(msg);
+                            event_bus.send(AppEvent::System(
+                                SystemEvent::BackupDb { 
+                                    file_dir: format!("{}", default_dir.display() ), 
+                                    is_success: false, 
+                                    error: Some(msg)
+                                }));
+                }
+                
                 let system_guard = state.system.read().await;
+                // Using crate focus here, which we set when we perform indexing.
+                // TODO: Revisit this design. Consider how to best allow for potential switches in
+                // focus of the user's target crate within the same session.
+                // - Explicit command?
+                // - Model-allowed tool calling?
                 if let Some(crate_focus) = &system_guard.crate_focus {
                     let crate_name_version = if let Ok(db_result) = state.db.get_crate_name_id(crate_focus)
                         .map_err(ploke_error::Error::from).inspect_err(|e| { e.emit_warning(); }) {
