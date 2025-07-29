@@ -308,7 +308,7 @@ mod test {
             .graph
             .functions
             .iter()
-            .inspect(|f| println!("function: {}", f.name.log_name()))
+            // .inspect(|f| println!("function: {}", f.name.log_name()))
             .find(|f| f.name == "old_function")
             .cloned()
             .expect("Cannot find target function node");

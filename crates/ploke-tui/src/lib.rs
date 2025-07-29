@@ -211,6 +211,8 @@ impl std::fmt::Display for UiError {
 }
 
 pub mod system {
+    use std::borrow::Cow;
+
     use ploke_db::TypedEmbedData;
 
     use crate::UiError;
@@ -225,6 +227,7 @@ pub mod system {
         ModelSwitched(String),
         ReadQuery{ file_name: String, query_name: String },
         LoadQuery{ query_name: String, query_content: String },
+        BackupDb {file_dir: String, is_success: bool, error: Option<String>}
     }
 }
 
@@ -282,6 +285,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,

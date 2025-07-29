@@ -16,6 +16,7 @@ use itertools::Itertools;
 use ploke_core::EmbeddingData;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
+use serde::Deserialize;
 use tracing::instrument;
 use uuid::Uuid;
 
@@ -23,6 +24,12 @@ use uuid::Uuid;
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
+}
+
+#[derive(Deserialize)]
+struct CrateRow {
+    name: String,
+    id: String, // the UUID already arrives as a string
 }
 
 impl std::ops::Deref for Database {
@@ -88,7 +95,7 @@ impl Database {
     pub fn new_init() -> Result<Self, ploke_error::Error> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self {db})
+        Ok(Self { db })
     }
 
     pub fn init_with_schema() -> Result<Self, ploke_error::Error> {
@@ -128,6 +135,31 @@ impl Database {
             // },
         ];
         Ok(mock_nodes)
+    }
+    pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
+        use serde_json::Value;
+
+        let rows = self
+            .raw_query("?[name, id] := *crate_context {id, name}")?;
+
+        // Unwrap row 0
+        let row = rows.rows.first().expect("no rows returned");
+
+        // Pull the two columns out as strings
+        let name = match &row[0] {
+            DataValue::Str(s) => s.clone(),
+            _ => panic!("Invariant Violated: name is not a string"),
+        };
+
+        let id = match &row[1] {
+            DataValue::Uuid(UuidWrapper(uuid)) => uuid.to_string(), // fallback
+            _ => panic!("Invariant Violated: id is not a Uuid"),
+        };
+
+        // Build the filename
+        let name_id = format!("{}_{}", name, id);
+        Ok(name_id)
+
     }
 
     pub async fn index_embeddings(

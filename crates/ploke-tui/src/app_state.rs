@@ -9,6 +9,7 @@ use itertools::Itertools;
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
+use serde::{Deserialize, Serialize};
 use syn_parser::parser::types::TypeNode;
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
@@ -144,19 +145,19 @@ impl AppState {
 }
 
 // Placeholder
-#[derive(Debug)]
-pub struct SystemStatus {/* ... */}
+#[derive(Debug, Default)]
+pub struct SystemStatus {crate_focus: Option< String >}
 impl SystemStatus {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(crate_focus: Option< String >) -> Self {
+        Self {crate_focus}
     }
 }
 
-impl Default for SystemStatus {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for SystemStatus {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
 pub enum StateError {/* ... */}
 
 /// Directions which can be taken when selecting an item in a list.
@@ -313,7 +314,9 @@ pub enum StateCommand {
     ReadQuery {
         query_name: String,
         file_name: String,
-    }
+    },
+    SaveDb,
+    LoadDb,
 }
 
 impl StateCommand {
@@ -347,6 +350,8 @@ impl StateCommand {
             SwitchModel { .. } => "SwitchModel",
             LoadQuery { .. } => "LoadQuery",
             ReadQuery { .. } => "ReadQuery",
+            SaveDb => "SaveDb",
+            LoadDb => "LoadDb",
             // ... other variants
         }
     }
@@ -811,6 +816,45 @@ pub async fn state_manager(
                     query_name, 
                     file_name
                 })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+            }
+            StateCommand::SaveDb => {
+                // TODO: This error handling feels really cumbersome, should rework.
+                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { 
+                    msg: "Could not locate default config directory on system" 
+                }).emit_warning()) { dir.join("ploke").join("data") } else { continue; };
+                let system_guard = state.system.read().await;
+                if let Some(crate_focus) = &system_guard.crate_focus {
+                    let crate_name_version = if let Ok(db_result) = state.db.get_crate_name_id(crate_focus)
+                        .map_err(ploke_error::Error::from).inspect_err(|e| { e.emit_warning(); }) {
+                            db_result
+                        } else { 
+                            continue; 
+                        };
+
+                    let file_dir = default_dir.join(crate_name_version);
+                    // TODO: Clones are bad. This is bad code. Fix it.
+                    // - Wish I could blame the AI but its all me :( in a rush
+                    match state.db.backup_db(file_dir.clone()) {
+                        Ok(()) => {
+                            event_bus.send(AppEvent::System(
+                                SystemEvent::BackupDb { 
+                                    file_dir: format!("{}", file_dir.display() ), 
+                                    is_success: true, 
+                                    error: None
+                                }));
+                        },
+                        Err(e) => {
+                            event_bus.send(AppEvent::System(
+                                SystemEvent::BackupDb { 
+                                    file_dir: format!("{}", file_dir.display() ), 
+                                    is_success: false, 
+                                    error: Some(e.to_string())
+                                }));
+                        }
+                    };
+                }
+
+                
             }
 
             // ... other commands

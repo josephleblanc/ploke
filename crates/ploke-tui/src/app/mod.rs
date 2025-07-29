@@ -653,6 +653,10 @@ impl App {
                     file_name: "default.dl".to_string(),
                 });
             },
+            "save db" | "sd" => {
+                self.send_cmd(StateCommand::SaveDb);
+
+            },
             cmd if cmd.starts_with("query load ") => {
                 if let Some(( query_name, file_name )) = cmd.trim_start_matches("query load ").trim().split_once(' ') {
                     tracing::debug!("Reading Query {} from file {}", query_name, file_name);

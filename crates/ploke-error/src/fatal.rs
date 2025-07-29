@@ -59,6 +59,8 @@ pub enum FatalError {
         path: PathBuf,
         source: std::string::FromUtf8Error,
     },
+    #[error("{msg}")]
+    DefaultConfigDir{ msg: &'static str }
 }
 
 impl Clone for FatalError {
@@ -122,6 +124,7 @@ impl Clone for FatalError {
                 path: path.clone(),
                 source: source.clone(),
             },
+            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg: msg.clone() }
         }
     }
 }

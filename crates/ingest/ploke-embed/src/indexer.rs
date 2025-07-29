@@ -1547,7 +1547,7 @@ mod tests {
         test_next_batch_ss("crates/ploke-tui").await
     }
     #[tokio::test]
-    // NOTE: passing - takes about 43.71 seconds
+    // NOTE: passing - takes about 43.71 seconds <-- probably wrong
     // - embedded 9/9
     async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
         let _guard = init_test_tracing(Level::INFO);
