@@ -62,10 +62,16 @@ impl EmbeddingProcessor {
         match &self.source {
             EmbeddingSource::Local(backend) => {
                 let text_slices: Vec<&str> = snippets.iter().map(|s| s.as_str()).collect();
-                Ok(backend.embed_batch(&text_slices).inspect(|v| {
-                    tracing::trace!("OK Returning from embed_batch with vec(s): {:?}", v);
-                }).inspect_err(|e| {
-                    tracing::trace!("Error Returning from embed_batch with error: {:?}", e.to_string());
+                Ok(backend
+                    .embed_batch(&text_slices)
+                    .inspect(|v| {
+                        tracing::trace!("OK Returning from embed_batch with vec(s): {:?}", v);
+                    })
+                    .inspect_err(|e| {
+                        tracing::trace!(
+                            "Error Returning from embed_batch with error: {:?}",
+                            e.to_string()
+                        );
                     })?)
             }
             EmbeddingSource::HuggingFace(backend) => backend.compute_batch(snippets).await,
@@ -148,7 +154,7 @@ pub enum IndexerCommand {
 pub struct IndexerTask {
     pub db: Arc<Database>,
     pub io: IoManagerHandle,
-    pub embedding_processor: Arc< EmbeddingProcessor >,
+    pub embedding_processor: Arc<EmbeddingProcessor>,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
@@ -159,7 +165,7 @@ impl IndexerTask {
     pub fn new(
         db: Arc<Database>,
         io: IoManagerHandle,
-        embedding_processor: Arc< EmbeddingProcessor >,
+        embedding_processor: Arc<EmbeddingProcessor>,
         cancellation_token: CancellationToken,
         batch_size: usize,
     ) -> Self {
@@ -200,7 +206,9 @@ impl IndexerTask {
         mut progress_rx: broadcast::Receiver<IndexingStatus>,
         control_rx: mpsc::Receiver<IndexerCommand>,
         callback_handler: std::thread::JoinHandle<Result<(), ploke_db::DbError>>,
-        db_callbacks: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), ploke_db::DbError>>,
+        db_callbacks: crossbeam_channel::Receiver<
+            Result<(CallbackOp, NamedRows, NamedRows), ploke_db::DbError>,
+        >,
         counter: Arc<AtomicUsize>,
         shutdown: crossbeam_channel::Sender<()>,
     ) -> Result<(), ploke_error::Error> {
@@ -333,7 +341,13 @@ impl IndexerTask {
             .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
             .for_each(|(i, idx, name)| {
                 let is_not_indexed = all_pending_rows.rows.iter().any(|r| r[0] == idx);
-                tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_not_indexed, name, idx);
+                tracing::trace!(
+                    "row {: <2}: {} | {:?} {: >30}",
+                    i,
+                    is_not_indexed,
+                    name,
+                    idx
+                );
                 let node_data = (i, name, idx);
                 if is_not_indexed {
                     not_indexed.push(node_data);
@@ -726,7 +740,7 @@ mod tests {
     use ploke_db::{hnsw_all_types, CallbackManager, Database, DbError, NodeType};
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
-    use ploke_test_utils::{init_test_tracing, setup_db_full};
+    use ploke_test_utils::{setup_db_full, setup_db_full_crate};
     use tokio::{
         sync::{
             broadcast::{self, error::TryRecvError},
@@ -734,7 +748,7 @@ mod tests {
         },
         time::{self, Instant},
     };
-    use tracing::Level;
+    use tracing::{level_filters::LevelFilter, Level};
     use tracing_subscriber::{filter, fmt, prelude::*, EnvFilter};
 
     use crate::{
@@ -744,34 +758,38 @@ mod tests {
         local::{EmbeddingConfig, EmbeddingError, LocalEmbedder},
     };
 
-    pub fn init_test_tracing_temporary(level: tracing::Level) {
-        let filter = filter::Targets::new()
-            .with_target("cozo", tracing::Level::ERROR)
+    pub fn init_test_tracing(level: impl Into<LevelFilter> + Into<Level> + Copy) -> tracing::subscriber::DefaultGuard {
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+        let filter = tracing_subscriber::filter::Targets::new()
             .with_target("ploke", level)
             .with_target("ploke-db", level)
             .with_target("ploke-embed", level)
             .with_target("ploke-io", level)
             .with_target("ploke-transform", level)
-            .with_target("transform_functions", level);
+            .with_target("transform_functions", level)
+            .with_target("cozo", tracing::Level::ERROR);
 
-        let layer = tracing_subscriber::fmt::layer()
+        let fmt = tracing_subscriber::fmt::layer()
             .with_writer(std::io::stderr)
             .with_file(true)
             .with_line_number(true)
-            .with_target(false) // Show module path
-            .with_level(true) // Show log level
-            .without_time() // Remove timestamps
-            .pretty(); // Use compact format
+            .with_target(false)
+            .with_level(true)
+            .without_time()
+            .pretty();
+
+        // Build a subscriber and set it as the *default for the current scope only*
         tracing_subscriber::registry()
-            .with(layer)
             .with(filter)
-            .init();
+            .with(fmt)
+            .set_default()
     }
 
     #[tokio::test]
     // NOTE: passing
     async fn test_next_batch_only() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_nodes").await
     }
     #[tokio::test]
@@ -780,73 +798,73 @@ mod tests {
     // INFO  Parse: build module tree
     //    at crates/test-utils/src/lib.rs:65
     async fn test_batch_file_dir_detection() -> Result<(), Error> {
-        init_test_tracing(Level::TRACE);
+        let _guard = init_test_tracing(Level::TRACE);
         test_next_batch("file_dir_detection").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_attributes() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_attributes").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_cyclic_types() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_cyclic_types").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_edge_cases() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_edge_cases").await
     }
     #[tokio::test]
     // INFO: passing
     async fn test_batch_generics() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_generics").await
     }
     #[tokio::test]
     // INFO: passing
     async fn test_batch_macros() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_macros").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_path_resolution() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_path_resolution").await
     }
     #[tokio::test]
     #[ignore = "requires further improvement of syn_parser"]
     // WARN: failing (dependent upon other improvements in cfg?)
     async fn test_batch_spp_edge_cases_cfg() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_spp_edge_cases").await
     }
     #[tokio::test]
     #[ignore = "requires further improvement of syn_parser"]
     // WARN: failing (dependent upon other improvements)
     async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_spp_edge_cases_no_cfg").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_tracking_hash() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_tracking_hash").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_types() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch("fixture_types").await
     }
     async fn test_full() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         let start = Instant::now();
         let mut results = Vec::new();
         results.push(test_next_batch("fixture_nodes").await);
@@ -924,7 +942,7 @@ mod tests {
     //  9. Spawns the `IndexerTask::run` in a separate tokio task.
     //  10. Then it waits for the indexing to complete by listening to progress updates and the task handle.
     // async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
-    // init_test_tracing(Level::INFO);
+    // let _guard = init_test_tracing(Level::INFO);
     async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error> {
         tracing::info!("Starting test_next_batch: {fixture}");
 
@@ -947,7 +965,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            Arc::new( embedding_processor ),
+            Arc::new(embedding_processor),
             cancellation_token,
             batch_size,
         );
@@ -1157,10 +1175,17 @@ mod tests {
         );
     }
 
-    async fn test_next_batch_ss(fixture: &'static str) -> Result<(), ploke_error::Error> {
-        tracing::info!("Starting test_next_batch: {fixture}");
+    async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_error::Error> {
+        tracing::info!("Starting test_next_batch: {target_crate}");
 
-        let cozo_db = setup_db_full(fixture)?;
+        let cozo_db = if target_crate.starts_with("fixture") { 
+            setup_db_full(target_crate)
+        } else if target_crate.starts_with("crates") {
+            let crate_name = target_crate.trim_start_matches("crates/");
+            setup_db_full_crate(crate_name)
+        } else { 
+            return Err(ploke_error::Error::Fatal(ploke_error::FatalError::SyntaxError("Incorrect usage of test_next_batch_ss test input.".to_string())));
+        }?;
         let db = Arc::new(Database::new(cozo_db));
         let total_count = db.count_unembedded_nonfiles()?;
         let io = IoManagerHandle::new();
@@ -1179,7 +1204,7 @@ mod tests {
         let idx_tag = IndexerTask::new(
             Arc::clone(&db),
             io,
-            Arc::new( embedding_processor ),
+            Arc::new(embedding_processor),
             cancellation_token,
             batch_size,
         );
@@ -1370,7 +1395,7 @@ mod tests {
             not_found.len(),
             found.len()
         );
-        tracing::info!("Ending test_next_batch: {fixture}: total count {inner}, counter {total_count} | {inner}/{total_count}");
+        tracing::info!("Ending test_next_batch: {target_crate}: total count {inner}, counter {total_count} | {inner}/{total_count}");
         assert!(
             total_count == counter.load(std::sync::atomic::Ordering::SeqCst),
             // received_completed.load(std::sync::atomic::Ordering::SeqCst),
@@ -1384,79 +1409,155 @@ mod tests {
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_nodes() -> Result<(), Error> {
-        init_test_tracing_temporary(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_nodes").await
     }
 
-    #[tokio::test]
-    #[ignore = "requires further improvement of syn_parser"]
+    // #[ignore = "requires further improvement of syn_parser"]
     // FIX: failing on step:
     // INFO  Parse: build module tree
     //    at crates/test-utils/src/lib.rs:65
+    #[tokio::test]
     async fn test_batch_ss_file_dir_detection() -> Result<(), Error> {
-        init_test_tracing(Level::TRACE);
+        let _guard = init_test_tracing(Level::TRACE);
         test_next_batch_ss("file_dir_detection").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_attributes() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_attributes").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_cyclic_types() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_cyclic_types").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_edge_cases() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_edge_cases").await
     }
     #[tokio::test]
     // INFO: passing
     async fn test_batch_ss_generics() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_generics").await
     }
     #[tokio::test]
     // INFO: passing
     async fn test_batch_ss_macros() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_macros").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_path_resolution() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_path_resolution").await
     }
     #[tokio::test]
     #[ignore = "requires further improvement of syn_parser"]
     // WARN: failing (dependent upon other improvements in cfg?)
     async fn test_batch_ss_spp_edge_cases_cfg() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_spp_edge_cases").await
     }
     #[tokio::test]
     #[ignore = "requires further improvement of syn_parser"]
     // WARN: failing (dependent upon other improvements)
     async fn test_batch_ss_spp_edge_cases_no_cfg() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_spp_edge_cases_no_cfg").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_tracking_hash() -> Result<(), Error> {
-        init_test_tracing_temporary(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_tracking_hash").await
     }
     #[tokio::test]
     // NOTE: passing
     async fn test_batch_ss_types() -> Result<(), Error> {
-        init_test_tracing(Level::INFO);
+        let _guard = init_test_tracing(Level::INFO);
         test_next_batch_ss("fixture_types").await
+    }
+    // ------- test on own crates -------
+    #[tokio::test]
+    // NOTE: passing - takes about 800 seconds
+    async fn test_batch_ss_syn() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ingest/syn_parser").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 575 seconds
+    async fn test_batch_ss_transform() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ingest/ploke-transform").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 260 seconds
+    // - embedded 83/83
+    async fn test_batch_ss_embed() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ingest/ploke-embed").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 98 seconds
+    // - embedded 28/28
+    async fn test_batch_ss_core() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-core").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 258 seconds
+    // - embedded 74/74
+    async fn test_batch_ss_db() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-db").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 30 seconds
+    // - embedded 10/10
+    async fn test_batch_ss_error() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-error").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 159 seconds
+    // - embedded 33/33
+    async fn test_batch_ss_io() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-io").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 1.06 seconds
+    // - embedded 2/2
+    async fn test_batch_ss_rag() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-rag").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 413.18 seconds
+    // - embedded 132/132
+    async fn test_batch_ss_tui() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-tui").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 43.71 seconds
+    // - embedded 9/9
+    async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/ploke-ty-mcp").await
+    }
+    #[tokio::test]
+    // NOTE: passing - takes about 76.80 seconds
+    // - embedded 17/17
+    async fn test_batch_ss_test_utils() -> Result<(), Error> {
+        let _guard = init_test_tracing(Level::INFO);
+        test_next_batch_ss("crates/test-utils").await
     }
 }
