@@ -146,7 +146,7 @@ impl Database {
     /// 
     /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
     /// ```
-    pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
+    pub async fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
             .run_script(
@@ -157,13 +157,52 @@ impl Database {
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| !n.starts_with("::")).intersperse(", ".to_string()); // keep only user relations
+            .filter(|n| !n.starts_with("::")).join(", "); // keep only user relations
 
         let mut script = String::from("::remove ");
-        script.extend(rels);
+        script.extend(rels.split("\""));
+        eprintln!("script: {}", script);
         self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
         Ok(())
     }
+
+    // NOTE: the goal of the following todo items is to be able to provide quick and easy calls to
+    // the database to present more simple and increasingly granular information to the user. We
+    // want it to be easy and intuitive to explore the data of their code.
+    // - For example, we might show something simple like, "X relations created in the code graph",
+    // where the "X" is in bold with a colored background, and maybe pulses or something, or
+    // otherwise invites the user to click on it (maybe have a grey-text "click me" pointing to the
+    // text or something that is only included once or until the user clicks on it for the first
+    // time).
+    // - When the user clicks on the number of relations created, it drops down (running the query
+    // in the background) with each of the relations and the numbers for each.
+    //  - A similar similar color/text style is used on each of these, numbers, and when they click
+    //  on those... you get the idea. Think Matrioshka
+    //
+    // TODO: Add a way to count the number of relations in the cozo database, returning a Result
+    // with the number of total relations (not including hnsw indices).
+
+    // Add docs here, include a doc test using similar approach to `clear_relations` AI!
+    pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
+        let rel_count = self
+            .db
+            .run_script(
+                "::relations",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            ).map_err(DbError::from)?
+            .rows.len();
+        Ok(rel_count)
+    }
+    // TODO: Add a way to count the number of hnsw indices loaded.
+
+    // TODO: Add a way to return the number of items in a given relation.
+
+    // TODO: Add a way to see the last time a relation was changed (given that we implement time
+    // travel)
+    
+    // TODO: Add a way to return all the members of a given relation.
+
 
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
