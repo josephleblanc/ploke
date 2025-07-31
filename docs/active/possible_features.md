@@ -8,3 +8,14 @@ functionality of enabling database queries.
 
 If we had this feature, it might have helped to avoid the error linked below:
 [See Potential Insights from E-DESIGN-DRIFT (Violating Core Design)] "Section 4 System/Tooling Factors"
+
+## Cracked Smol Model
+
+- Change the agentic framework to optimize for uptime, meaning the AI does as much as possible as often as possible.
+- Rather than minimize the number of steps, instead it will
+  - review + cargo check more often,
+  - step through code every few lines,
+  - always use a relatively large number of parallel attempts, either literally or prompting the same model multiple times with cycling histories
+  - other cool shit!
+- Goal is to use the small AI as usefully as possible within the given time frame, not to reduce token cost.
+  - This does not mean inefficient processes

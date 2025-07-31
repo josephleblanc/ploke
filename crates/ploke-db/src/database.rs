@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::path::Path;
 
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
@@ -174,26 +175,35 @@ impl Database {
     /// Clears all HNSW indices from the database.
     ///
     /// This method removes all HNSW (Hierarchical Navigable Small World) indices that were created
-    /// for embedding similarity search. These indices have names ending with ":hnsw_idx" and are
-    /// separate from regular database relations. Unlike regular relations which can be removed with
-    /// "::remove", indices must be dropped using the "::index drop" command.
+    /// for embedding similarity search. These indices have names ending with ":hnsw_idx", e.g.
+    /// `functions:hnsw_idx` and are separate from regular database relations. Unlike regular
+    /// relations which can be removed with "::remove", indices must be dropped using the "::index
+    /// drop" command.
+    ///
+    /// The choice of naming for the HNSW indices as "hnsw_idx" is arbitrary, and could have been
+    /// named "whatever_noxd", but is named "hnsw_idx" for consistency
     ///
     /// This is useful when you need to reset the embedding indices, such as during testing or
     /// when rebuilding indices with new parameters.
     ///
+    /// It is also used when clearing all relations in the database in preparation for a database
+    /// restore from backup, as cozo requires the database must be empty before a restore.
+    ///
     /// # Examples
     ///
-    /// ```rust
-    /// #[tokio::main]
-    /// async fn main() {
+    /// ```ignore
+    /// # tokio_test::block_on(async {
     ///     use ploke_db::Database;
     ///     use cozo::ScriptMutability;
     ///     
     ///     // Initialize database with schema
-    ///     let db = Database::init_with_schema().unwrap();
+    ///     let mut db = Database::init_with_schema().expect("Could not init database with schema");
     ///     
     ///     // Create some HNSW indices for testing
-    ///     let _ = db.index_embeddings(ploke_db::NodeType::Function, 384).await;
+    ///     // WARN: This doesn't actually work because we don't have anything to index yet, we
+    ///     // need a better test that uses a lazily loaded database that already contains embeddings.
+    ///     db.index_embeddings(ploke_db::NodeType::Function, 384).await
+    ///         .expect("Error indexing embeddings");
     ///     
     ///     // Count initial relations (including indices)
     ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
@@ -212,7 +222,7 @@ impl Database {
     ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
     ///     
     ///     // Clear all HNSW indices
-    ///     db.clear_hnsw_idx().await.unwrap();
+    ///     db.clear_hnsw_idx().await.expect("Error clearing hnsw indicies from database");
     ///     
     ///     // Verify no HNSW indices remain
     ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
@@ -228,7 +238,7 @@ impl Database {
     ///         .collect();
     ///     
     ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
-    /// }
+    /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
     pub async fn clear_hnsw_idx(&self) -> Result<(), ploke_error::Error> {
@@ -242,11 +252,13 @@ impl Database {
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| n.ends_with(":hnsw_idx")).join(", ");
+            .filter(|n| n.ends_with(":hnsw_idx"));
 
-        let mut script = String::from("::index drop ");
-        script.extend(rels.split("\""));
-        self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+        for index in rels {
+            let mut script = String::from("::index drop ");
+            script.extend(index.chars().filter(|c| *c == '\"'));
+            self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+        }
         Ok(())
     }
 
@@ -258,6 +270,7 @@ impl Database {
     /// # Examples
     ///
     /// ```
+    /// # tokio_test::block_on(async {
     /// use ploke_db::Database;
     /// use cozo::ScriptMutability;
     /// 
@@ -271,9 +284,10 @@ impl Database {
     /// // Verify count matches ::relations output
     /// let relations_result = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     /// assert_eq!(initial_count, relations_result.rows.len());
+    /// # })
     /// ```
     /// - JL, Reviewed and edited Jul 30, 2025
-    pub fn count_relations(&self) -> Result<usize, ploke_error::Error> {
+    pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
         let rel_count = self
             .db
             .run_script_read_only(
@@ -345,6 +359,11 @@ impl Database {
             // },
         ];
         Ok(mock_nodes)
+    }
+    pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, ploke_error::Error> {
+        let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
+        new_db.restore_backup(&path).map_err(DbError::from)?;
+        Ok( Self { db: new_db } )
     }
     pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
         use serde_json::Value;

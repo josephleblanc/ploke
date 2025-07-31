@@ -7,7 +7,7 @@ use crate::{
     utils::helper::find_file_by_prefix,
 };
 use itertools::Itertools;
-use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
+use ploke_db::{create_index_warn, replace_index_warn, search_similar, Database, DbError, NodeType};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
@@ -967,34 +967,27 @@ pub async fn state_manager(
                         continue;
                     }
                         Err(e) => {
+                            tracing::error!("Error here");
                             e.emit_warning();
                             continue;
                         }
                     };
-                // clear relations so we can restore from backup
-                if let Err(e) = state.db.clear_relations().await {
-                    e.emit_warning();
-                    continue;
-                }
-                // double check that there aren't any relations left
-                if let Ok(count) = state.db.count_relations() {
-                    if count == 0 {
-                        tracing::info!("After clearing, 0 relations remain as expected.");
-                    } else {
-                        tracing::error!("Count of relations in database greater than zero after clearing it, remaining relations count: {count}");
-                    }
-                }
-
-                // restore from backup
-                if let Err(e) = state.db.restore_backup(&valid_file)
+                match state.db.import_relations(exported_data)
                     .map_err(ploke_db::DbError::from)
-                    .map_err(ploke_error::Error::from) {
-                        e.emit_warning();
-                        continue;
-                };
+                    .map_err(ploke_error::Error::from)
+                { Ok(()) => {}, Err(e) => {e.emit_error(); continue}};
+                // tracing::info!("result: {:#?}", result);
+                // restore from backup
+                // if let Err(e) = state.db.restore_backup(&valid_file)
+                //     .map_err(ploke_db::DbError::from)
+                //     .map_err(ploke_error::Error::from) {
+                //             tracing::error!("Error here");
+                //         e.emit_warning();
+                //         continue;
+                // };
                 
                 // get count for sanity and user feedback
-                match state.db.count_relations() {
+                match state.db.count_relations().await {
                     Ok(count) if count > 0 => {event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                         crate_name,
                         file_dir: Arc::new(valid_file),
@@ -1008,6 +1001,7 @@ pub async fn state_manager(
                         error: Some("Database backed up from file, but 0 relations found."),
                     }));},
                     Err(e) => {
+                            tracing::error!("Error here");
                         e.emit_warning();
                     }
                 }

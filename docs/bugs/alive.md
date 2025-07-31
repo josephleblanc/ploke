@@ -13,3 +13,6 @@ Run with RUST_BACKTRACE=full to include source snippets.
 ```
 
 This happened after indexing `/index start tests/fixture_crates/fixture_tracking_hash`. I may or may not have immediately entered another command.
+
+#### Update Jul 30, 2025
+Ran into this one again, then when I ran the TUI once more and entered the same commands, no issue. Definitely a race condition then. Fuck.
