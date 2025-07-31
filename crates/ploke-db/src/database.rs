@@ -171,20 +171,66 @@ impl Database {
         Ok(())
     }
 
-    // AI:
-    // I want you to write similar documentation for this function, along with similar tests to the
-    // above test. In cozo, when an hnsw index is created, it adds an index with a name of the form
-    // "relation_name:index_name". This index is returned along with all the other relations when
-    // using the "::relations" system opt command, but the regular relations are removed from the
-    // database with "::remove <relation_name>", but cannot be removed while they still have
-    // indices, and indices cannot be removed by the "::remove" command. Instead, they must be
-    // removed with "::index drop <relation_name:index_name>" command. That is why we need a
-    // different function if we want to remove the indices.
-    // I have arbitrarily chosen the name of the index, "hnsw_idx", and used it for all the hnsw
-    // indexes we create. I have guarenteed that there are no other indices being created now by
-    // querying the database after initialization and hnsw indices are created, but in the future
-    // if we add more indices we will want to update this function.
-    // AI!
+    /// Clears all HNSW indices from the database.
+    ///
+    /// This method removes all HNSW (Hierarchical Navigable Small World) indices that were created
+    /// for embedding similarity search. These indices have names ending with ":hnsw_idx" and are
+    /// separate from regular database relations. Unlike regular relations which can be removed with
+    /// "::remove", indices must be dropped using the "::index drop" command.
+    ///
+    /// This is useful when you need to reset the embedding indices, such as during testing or
+    /// when rebuilding indices with new parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     use ploke_db::Database;
+    ///     use cozo::ScriptMutability;
+    ///     
+    ///     // Initialize database with schema
+    ///     let db = Database::init_with_schema().unwrap();
+    ///     
+    ///     // Create some HNSW indices for testing
+    ///     let _ = db.index_embeddings(ploke_db::NodeType::Function, 384).await;
+    ///     
+    ///     // Count initial relations (including indices)
+    ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let hnsw_indices: Vec<_> = initial_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     // Should have some HNSW indices after creating them
+    ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
+    ///     
+    ///     // Clear all HNSW indices
+    ///     db.clear_hnsw_idx().await.unwrap();
+    ///     
+    ///     // Verify no HNSW indices remain
+    ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let remaining_hnsw: Vec<_> = remaining_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
+    /// }
+    /// ```
+    /// - JL, Reviewed and edited Jul 30, 2025
     pub async fn clear_hnsw_idx(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
