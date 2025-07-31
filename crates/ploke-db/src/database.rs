@@ -20,6 +20,8 @@ use serde::Deserialize;
 use tracing::instrument;
 use uuid::Uuid;
 
+pub const HNSW_SUFFIX: &str = ":hnsw_idx";
+
 /// Main database connection and query interface
 #[derive(Debug)]
 pub struct Database {
@@ -111,12 +113,14 @@ impl Database {
     /// Clears all user-defined relations from the database.
     ///
     /// This method removes all relations that were created by the application,
-    /// excluding system relations that start with "::". It's useful for resetting
+    /// excluding system relations that contain ":". It's useful for resetting
     /// the database state during testing or when reprocessing data.
     ///
     /// # Examples
     ///
     /// ```
+    /// # tokio_test::block_on(async {
+    ///
     /// use ploke_db::Database;
     /// use cozo::ScriptMutability;
     /// 
@@ -129,7 +133,7 @@ impl Database {
     /// assert!(initial_count > 0, "Should have some relations after schema creation");
     /// 
     /// // Clear all user relations
-    /// db.clear_relations().unwrap();
+    /// db.clear_relations().await.unwrap();
     /// 
     /// // Verify no user relations remain
     /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
@@ -145,7 +149,9 @@ impl Database {
     ///     .collect();
     /// 
     /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
+    /// # })
     /// ```
+    /// - JL, Reviewed and edited Jul 30, 2025
     pub async fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
@@ -157,32 +163,51 @@ impl Database {
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| !n.starts_with("::")).join(", "); // keep only user relations
+            .filter(|n| !n.contains(":")).join(", "); // keep only user relations
 
         let mut script = String::from("::remove ");
         script.extend(rels.split("\""));
-        eprintln!("script: {}", script);
         self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
         Ok(())
     }
 
-    // NOTE: the goal of the following todo items is to be able to provide quick and easy calls to
-    // the database to present more simple and increasingly granular information to the user. We
-    // want it to be easy and intuitive to explore the data of their code.
-    // - For example, we might show something simple like, "X relations created in the code graph",
-    // where the "X" is in bold with a colored background, and maybe pulses or something, or
-    // otherwise invites the user to click on it (maybe have a grey-text "click me" pointing to the
-    // text or something that is only included once or until the user clicks on it for the first
-    // time).
-    // - When the user clicks on the number of relations created, it drops down (running the query
-    // in the background) with each of the relations and the numbers for each.
-    //  - A similar similar color/text style is used on each of these, numbers, and when they click
-    //  on those... you get the idea. Think Matrioshka
-    //
+    // AI
+    // I want you to write similar documentation for this function, along with similar tests to the
+    // above test. In cozo, when an hnsw index is created, it adds an index with a name of the form
+    // "relation_name:index_name". This index is returned along with all the other relations when
+    // using the "::relations" system opt command, but the regular relations are removed from the
+    // database with "::remove <relation_name>", but cannot be removed while they still have
+    // indices, and indices cannot be removed by the "::remove" command. Instead, they must be
+    // removed with "::index drop <relation_name:index_name>" command. That is why we need a
+    // different function if we want to remove the indices.
+    // I have arbitrarily chosen the name of the index, "hnsw_idx", and used it for all the hnsw
+    // indexes we create. I have guarenteed that there are no other indices being created now by
+    // querying the database after initialization and hnsw indices are created, but in the future
+    // if we add more indices we will want to update this function.
+    // AI
+    pub async fn clear_hnsw_idx(&self) -> Result<(), ploke_error::Error> {
+        let rels = self
+            .db
+            .run_script(
+                "::relations",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            ).map_err(DbError::from)?
+            .rows
+            .into_iter()
+            .map(|r| r[0].to_string())
+            .filter(|n| n.ends_with(":hnsw_idx")).join(", ");
+
+        let mut script = String::from("::index drop ");
+        script.extend(rels.split("\""));
+        self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+        Ok(())
+    }
+
     /// Counts the total number of relations in the database.
     ///
     /// This method returns the count of all relations in the database, including
-    /// both system relations (starting with "::") and user-defined relations.
+    /// both system relations (containing ":") and user-defined relations.
     ///
     /// # Examples
     ///
@@ -201,17 +226,30 @@ impl Database {
     /// let relations_result = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     /// assert_eq!(initial_count, relations_result.rows.len());
     /// ```
-    pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
+    /// - JL, Reviewed and edited Jul 30, 2025
+    pub fn count_relations(&self) -> Result<usize, ploke_error::Error> {
         let rel_count = self
             .db
-            .run_script(
+            .run_script_read_only(
                 "::relations",
                 BTreeMap::new(),
-                cozo::ScriptMutability::Mutable,
             ).map_err(DbError::from)?
             .rows.len();
         Ok(rel_count)
     }
+    // NOTE: the goal of the following todo items is to be able to provide quick and easy calls to
+    // the database to present more simple and increasingly granular information to the user. We
+    // want it to be easy and intuitive to explore the data of their code.
+    // - For example, we might show something simple like, "X relations created in the code graph",
+    // where the "X" is in bold with a colored background, and maybe pulses or something, or
+    // otherwise invites the user to click on it (maybe have a grey-text "click me" pointing to the
+    // text or something that is only included once or until the user clicks on it for the first
+    // time).
+    // - When the user clicks on the number of relations created, it drops down (running the query
+    // in the background) with each of the relations and the numbers for each.
+    //  - A similar similar color/text style is used on each of these, numbers, and when they click
+    //  on those... you get the idea. Think Matrioshka
+    //
     // TODO: Add a way to count the number of hnsw indices loaded.
 
     // TODO: Add a way to return the number of items in a given relation.
@@ -230,6 +268,18 @@ impl Database {
                 script,
                 std::collections::BTreeMap::new(),
                 cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
+    pub fn raw_query_mut(&self, script: &str)  -> Result<QueryResult, DbError> { 
+        let result = self
+            .db
+            .run_script(
+                script,
+                std::collections::BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))

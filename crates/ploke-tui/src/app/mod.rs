@@ -123,7 +123,7 @@ impl App {
     fn send_cmd(&self, cmd: StateCommand) {
         // Use try_send to prevent the UI from blocking
         if let Err(e) = self.cmd_tx.try_send(cmd) {
-            eprintln!("Failed to send command: {}", e);
+            tracing::warn!("Failed to send command: {}", e);
         }
     }
 
@@ -263,7 +263,7 @@ impl App {
                                         new_msg_id: Uuid::new_v4(),
                                     });
 
-                            }
+                            },
                             SystemEvent::BackupDb {file_dir, is_success, error } if !is_success => {
                                 // TODO: Add crate name to data type and require in command
                                 tracing::debug!("App receives BackupDb unsuccessful event: {}\nwith error: {:?}", &file_dir, &error);
@@ -274,7 +274,26 @@ impl App {
                                             new_msg_id: Uuid::new_v4(),
                                         });
                                     }
-                            }
+                            },
+                            SystemEvent::LoadDb {crate_name, file_dir, is_success, .. } if is_success => {
+                                tracing::debug!("App receives LoadDb successful db save to file: {}", file_dir.display());
+                                    self.send_cmd(StateCommand::AddMessageImmediate {
+                                        msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}", file_dir.display()),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    });
+                            },
+                            SystemEvent::LoadDb {crate_name, file_dir, is_success, error } if !is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives LoadDb unsuccessful event: {}\nwith error: {:?}", file_dir.display(), &error);
+                                    if let Some(error_str) = error {
+                                        self.send_cmd(StateCommand::AddMessageImmediate {
+                                            msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", file_dir.display(), &error_str),
+                                            kind: MessageKind::SysInfo,
+                                            new_msg_id: Uuid::new_v4(),
+                                        });
+                                    }
+                            },
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
                     }
@@ -719,7 +738,7 @@ impl App {
                 // Placeholder for command error handling
                 // Add more helpful message here
                 self.show_command_help();
-                eprintln!("Unknown command: {}", cmd);
+                tracing::warn!("Unknown command: {}", cmd);
             }
         }
     }

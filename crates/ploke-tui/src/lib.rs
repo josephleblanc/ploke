@@ -211,7 +211,7 @@ impl std::fmt::Display for UiError {
 }
 
 pub mod system {
-    use std::borrow::Cow;
+    use std::{borrow::Cow, sync::Arc};
 
     use ploke_db::TypedEmbedData;
 
@@ -227,7 +227,8 @@ pub mod system {
         ModelSwitched(String),
         ReadQuery{ file_name: String, query_name: String },
         LoadQuery{ query_name: String, query_content: String },
-        BackupDb {file_dir: String, is_success: bool, error: Option<String>}
+        BackupDb {file_dir: String, is_success: bool, error: Option<String>},
+        LoadDb {crate_name: String, file_dir: Arc<std::path::PathBuf>, is_success: bool, error: Option<&'static str>}
     }
 }
 

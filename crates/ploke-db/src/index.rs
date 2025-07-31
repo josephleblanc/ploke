@@ -4,6 +4,8 @@ use cozo::{DataValue, Num, ScriptMutability};
 use itertools::Itertools;
 use tracing::instrument;
 
+use crate::database::HNSW_SUFFIX;
+
 use super::*;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
@@ -44,7 +46,7 @@ pub fn hnsw_all_types(
                 },
                 ~"#,
             rel,
-            r#":hnsw_idx{id, name| 
+            HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $"#,
             k_for_ty.as_str(),
@@ -125,7 +127,7 @@ pub fn hnsw_of_type(
                 },
                 ~"#,
         rel,
-        r#":hnsw_idx{id, name| 
+        HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
@@ -216,19 +218,19 @@ pub fn search_similar(
     ?[id, name, file_path, file_hash, hash, span, namespace] := 
         batch[id, name, file_path, file_hash, hash, span, namespace]
      "#;
-    let hnsw_script = r#"
+    let hnsw_script = [r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
                     name, 
                 },
-                ~function:hnsw_idx{id, name| 
+                ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 },
-            "#;
+            "#];
     let limit_param = ":limit $limit";
 
     let rel = ty.relation_str();
@@ -276,8 +278,7 @@ pub fn search_similar_test(
     params.insert("k".to_string(), DataValue::from(k as i64));
     params.insert("ef".to_string(), DataValue::from(ef as i64));
 
-    let result = db
-        .run_script(
+    let hnsw_script = [
             r#"
             ?[id, name, distance] := 
                 *function{
@@ -285,13 +286,17 @@ pub fn search_similar_test(
                     name, 
                     embedding: v
                 },
-                ~function:hnsw_idx{id, name| 
+                ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 }
             "#,
+    ].concat();
+    let result = db
+        .run_script(
+            &hnsw_script,
             params,
             ScriptMutability::Immutable,
         )
@@ -320,7 +325,7 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -347,7 +352,7 @@ pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error:
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -374,7 +379,7 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
         r#"
             ::hnsw replace "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,

@@ -784,7 +784,7 @@ pub async fn state_manager(
             } => {
                 let result = state
                     .db
-                    .run_script_read_only(&query_content, BTreeMap::new());
+                    .raw_query_mut(&query_content);
                 tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
                 if let Ok(named_rows) = result {
                     let mut output = String::new();
@@ -959,20 +959,59 @@ pub async fn state_manager(
                                 msg: "Could not find saved file, io error",
                             })
                         }) {
-                        Ok(path_buf) => path_buf,
+                        Ok(Some( path_buf )) => path_buf,
+                    Ok(None) => {
+                        ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
+                            "No backup file detected at default configuration location".to_string(),
+                        )).emit_warning();
+                        continue;
+                    }
                         Err(e) => {
                             e.emit_warning();
                             continue;
                         }
                     };
-                let rels: Vec<String> = state
-                    .db
-                    .run_script("::relations", BTreeMap::new(), cozo::ScriptMutability::Mutable)?
-                    .rows
-                    .into_iter()
-                    .map(|r| r[0].as_str().unwrap().to_string())
-                    .filter(|n| !n.starts_with("::")) // keep only user relations
-                    .collect();
+                // clear relations so we can restore from backup
+                if let Err(e) = state.db.clear_relations().await {
+                    e.emit_warning();
+                    continue;
+                }
+                // double check that there aren't any relations left
+                if let Ok(count) = state.db.count_relations() {
+                    if count == 0 {
+                        tracing::info!("After clearing, 0 relations remain as expected.");
+                    } else {
+                        tracing::error!("Count of relations in database greater than zero after clearing it, remaining relations count: {count}");
+                    }
+                }
+
+                // restore from backup
+                if let Err(e) = state.db.restore_backup(&valid_file)
+                    .map_err(ploke_db::DbError::from)
+                    .map_err(ploke_error::Error::from) {
+                        e.emit_warning();
+                        continue;
+                };
+                
+                // get count for sanity and user feedback
+                match state.db.count_relations() {
+                    Ok(count) if count > 0 => {event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                        crate_name,
+                        file_dir: Arc::new(valid_file),
+                        is_success: true,
+                        error: None,
+                    }));},
+                    Ok(count) => {event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                        crate_name,
+                        file_dir: Arc::new(valid_file),
+                        is_success: false,
+                        error: Some("Database backed up from file, but 0 relations found."),
+                    }));},
+                    Err(e) => {
+                        e.emit_warning();
+                    }
+                }
+
             }
 
             // ... other commands
