@@ -171,7 +171,7 @@ impl Database {
         Ok(())
     }
 
-    // AI
+    // AI:
     // I want you to write similar documentation for this function, along with similar tests to the
     // above test. In cozo, when an hnsw index is created, it adds an index with a name of the form
     // "relation_name:index_name". This index is returned along with all the other relations when
@@ -184,7 +184,7 @@ impl Database {
     // indexes we create. I have guarenteed that there are no other indices being created now by
     // querying the database after initialization and hnsw indices are created, but in the future
     // if we add more indices we will want to update this function.
-    // AI
+    // AI!
     pub async fn clear_hnsw_idx(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
