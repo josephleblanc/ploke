@@ -108,7 +108,11 @@ impl Database {
         Ok(Self { db })
     }
 
-    // Write docs here AI!
+    /// Clears all user-defined relations from the database.
+    ///
+    /// This method removes all relations that were created by the application,
+    /// excluding system relations that start with "::". It's useful for resetting
+    /// the database state during testing or when reprocessing data.
     pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
