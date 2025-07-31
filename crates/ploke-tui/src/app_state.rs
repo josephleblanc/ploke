@@ -4,6 +4,7 @@ use crate::{
     chat_history::{Message, MessageKind},
     parser::resolve_target_dir,
     user_config::ProviderRegistry,
+    utils::helper::find_file_by_prefix,
 };
 use itertools::Itertools;
 use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
@@ -146,10 +147,12 @@ impl AppState {
 
 // Placeholder
 #[derive(Debug, Default)]
-pub struct SystemStatus {crate_focus: Option< String >}
+pub struct SystemStatus {
+    crate_focus: Option<String>,
+}
 impl SystemStatus {
-    pub fn new(crate_focus: Option< String >) -> Self {
-        Self {crate_focus}
+    pub fn new(crate_focus: Option<String>) -> Self {
+        Self { crate_focus }
     }
 }
 
@@ -316,7 +319,9 @@ pub enum StateCommand {
         file_name: String,
     },
     SaveDb,
-    LoadDb,
+    LoadDb {
+        crate_name: String,
+    },
 }
 
 impl StateCommand {
@@ -455,11 +460,11 @@ pub async fn state_manager(
             } => {
                 add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
-            StateCommand::PruneHistory { max_messages } => { 
+            StateCommand::PruneHistory { max_messages } => {
                 // TODO: This will provide a way to prune the alternate branches of the
                 // conversation tree, once the conversation tree has been implemented.
-                todo!("Handle PruneHistory") 
-            },
+                todo!("Handle PruneHistory")
+            }
 
             StateCommand::NavigateList { direction } => {
                 let mut chat_guard = state.chat.0.write().await;
@@ -495,7 +500,7 @@ pub async fn state_manager(
             StateCommand::IndexWorkspace { workspace } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 // Extract task from mutex (consumes guard)
-                if let Some( crate_name ) = workspace.split('/').next_back() {
+                if let Some(crate_name) = workspace.split('/').next_back() {
                     let mut write_guard = state.system.write().await;
                     tracing::debug!("Setting crate_focus to {crate_name}");
                     write_guard.crate_focus = Some(crate_name.to_string());
@@ -773,12 +778,17 @@ pub async fn state_manager(
                 }
             }
 
-            StateCommand::LoadQuery { query_name, query_content } => {
-                let result = state.db.run_script_read_only(&query_content, BTreeMap::new());
+            StateCommand::LoadQuery {
+                query_name,
+                query_content,
+            } => {
+                let result = state
+                    .db
+                    .run_script_read_only(&query_content, BTreeMap::new());
                 tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
                 if let Ok(named_rows) = result {
                     let mut output = String::new();
-                    let (header, rows) = ( named_rows.headers, named_rows.rows );
+                    let (header, rows) = (named_rows.headers, named_rows.rows);
                     let cols_num = header.len();
                     let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
                     tracing::info!(target: "load_query", "\n{display_header}");
@@ -786,25 +796,34 @@ pub async fn state_manager(
                     output.push_str(&display_header);
                     output.push('|');
                     output.push('\n');
-                    let divider = format!("|{}", 
-                        "-".chars().cycle().take(5)
-                            .chain("|".chars()).join("").repeat(cols_num)
+                    let divider = format!(
+                        "|{}",
+                        "-".chars()
+                            .cycle()
+                            .take(5)
+                            .chain("|".chars())
+                            .join("")
+                            .repeat(cols_num)
                     );
                     output.push_str(&divider);
                     output.push('\n');
-                    rows.into_iter().map(|r| r.into_iter()
-                            .map(|c| format!("{}", c))
-                            .map(|c| format!("{}", c)).join("|")
-                        )
-                        .for_each(|r| { 
-                            tracing::info!(target: "load_query", "\n{}", r) ;
+                    rows.into_iter()
+                        .map(|r| {
+                            r.into_iter()
+                                .map(|c| format!("{}", c))
+                                .map(|c| format!("{}", c))
+                                .join("|")
+                        })
+                        .for_each(|r| {
+                            tracing::info!(target: "load_query", "\n{}", r);
                             output.push('|');
                             output.push_str(&r);
                             output.push('|');
                             output.push('\n');
                         });
                     let outfile_name = "output.md";
-                    let out_file = std::env::current_dir().map(|d| d.join("query").join(outfile_name));
+                    let out_file =
+                        std::env::current_dir().map(|d| d.join("query").join(outfile_name));
                     if let Ok(file) = out_file {
                         // Writes to file within `if let`, only handling the error case if needed
                         if let Err(e) = tokio::fs::write(file, output).await {
@@ -815,35 +834,53 @@ pub async fn state_manager(
                 // let db_return = result.unwrap();
                 // tracing::info!(target: "load_query", "db_return:\n{:#?}", db_return);
             }
-            StateCommand::ReadQuery { query_name, file_name } => {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ReadQuery {
-                    query_name: query_name.clone(), 
-                    file_name: file_name.clone()
-                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
-                let _ = event_bus.background_tx.send(AppEvent::System(SystemEvent::ReadQuery {
-                    query_name, 
-                    file_name
-                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+            StateCommand::ReadQuery {
+                query_name,
+                file_name,
+            } => {
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ReadQuery {
+                        query_name: query_name.clone(),
+                        file_name: file_name.clone(),
+                    }))
+                    .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+                let _ = event_bus
+                    .background_tx
+                    .send(AppEvent::System(SystemEvent::ReadQuery {
+                        query_name,
+                        file_name,
+                    }))
+                    .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
             }
             StateCommand::SaveDb => {
                 // TODO: This error handling feels really cumbersome, should rework.
-                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { 
-                    msg: "Could not locate default config directory on system" 
-                }).emit_warning()) { dir.join("ploke").join("data") } else { continue; };
+                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
+                    ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+                        msg: "Could not locate default config directory on system",
+                    })
+                    .emit_warning()
+                }) {
+                    dir.join("ploke").join("data")
+                } else {
+                    continue;
+                };
 
                 // make sure directory exists, otherwise report error
                 if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
-                    let msg = format!( "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}", 
-                        default_dir.display(),  e);
+                    let msg = format!(
+                        "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}",
+                        default_dir.display(),
+                        e
+                    );
                     tracing::error!(msg);
-                            event_bus.send(AppEvent::System(
-                                SystemEvent::BackupDb { 
-                                    file_dir: format!("{}", default_dir.display() ), 
-                                    is_success: false, 
-                                    error: Some(msg)
-                                }));
+                    event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                        file_dir: format!("{}", default_dir.display()),
+                        is_success: false,
+                        error: Some(msg),
+                    }));
                 }
-                
+
                 let system_guard = state.system.read().await;
                 // Using crate focus here, which we set when we perform indexing.
                 // TODO: Revisit this design. Consider how to best allow for potential switches in
@@ -851,37 +888,91 @@ pub async fn state_manager(
                 // - Explicit command?
                 // - Model-allowed tool calling?
                 if let Some(crate_focus) = &system_guard.crate_focus {
-                    let crate_name_version = if let Ok(db_result) = state.db.get_crate_name_id(crate_focus)
-                        .map_err(ploke_error::Error::from).inspect_err(|e| { e.emit_warning(); }) {
-                            db_result
-                        } else { 
-                            continue; 
-                        };
+                    let crate_name_version = if let Ok(db_result) = state
+                        .db
+                        .get_crate_name_id(crate_focus)
+                        .map_err(ploke_error::Error::from)
+                        .inspect_err(|e| {
+                            e.emit_warning();
+                        }) {
+                        db_result
+                    } else {
+                        continue;
+                    };
 
                     let file_dir = default_dir.join(crate_name_version);
                     // TODO: Clones are bad. This is bad code. Fix it.
                     // - Wish I could blame the AI but its all me :( in a rush
                     match state.db.backup_db(file_dir.clone()) {
                         Ok(()) => {
-                            event_bus.send(AppEvent::System(
-                                SystemEvent::BackupDb { 
-                                    file_dir: format!("{}", file_dir.display() ), 
-                                    is_success: true, 
-                                    error: None
-                                }));
-                        },
+                            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                                file_dir: format!("{}", file_dir.display()),
+                                is_success: true,
+                                error: None,
+                            }));
+                        }
                         Err(e) => {
-                            event_bus.send(AppEvent::System(
-                                SystemEvent::BackupDb { 
-                                    file_dir: format!("{}", file_dir.display() ), 
-                                    is_success: false, 
-                                    error: Some(e.to_string())
-                                }));
+                            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                                file_dir: format!("{}", file_dir.display()),
+                                is_success: false,
+                                error: Some(e.to_string()),
+                            }));
                         }
                     };
                 }
-
-                
+            }
+            // This command will check the default dir for a file saved by `SaveDb` earlier,
+            // following the same naming convention and searching for a file which has been saved
+            // with the method for finding the name via `state.db.get_crate_name_id`, namely that
+            // it begins with a human-readable name, then is separated by an underscore with the v5
+            // Uuid hash.
+            // So here we need to:
+            // 1. check if the backup db exists
+            // 2. if it exists, use cozo's builtin `:restore` command, which seems to correspond to
+            //    the `restore_backup` method for `cozo::Db`
+            //  - [cozo docs on restore](https://docs.cozodb.org/en/latest/nonscript.html#API.restore)
+            //  - expects a path to the database backup
+            //  - must be called on an empty database.
+            //      - Since `restore_backup` can only be called on an empty database, that means we need
+            //      to re-initialize the cozo database if we find a backup that matches the
+            //      user-specified crate name.
+            //      - In that case, the two Arc references (in `state` and `IndexerTask`) to the
+            //      current database must be dropped and we must re-initialize a database, then use
+            //      the cozo command to restore the database.
+            //
+            StateCommand::LoadDb { crate_name } => {
+                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
+                    ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+                        msg: "Could not locate default config directory on system",
+                    })
+                    .emit_warning()
+                }) {
+                    dir.join("ploke").join("data")
+                } else {
+                    continue;
+                };
+                let valid_file =
+                    match find_file_by_prefix(default_dir, &crate_name)
+                        .await
+                        .map_err(|e| {
+                            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+                                msg: "Could not find saved file, io error",
+                            })
+                        }) {
+                        Ok(path_buf) => path_buf,
+                        Err(e) => {
+                            e.emit_warning();
+                            continue;
+                        }
+                    };
+                let rels: Vec<String> = state
+                    .db
+                    .run_script("::relations", BTreeMap::new(), cozo::ScriptMutability::Mutable)?
+                    .rows
+                    .into_iter()
+                    .map(|r| r[0].as_str().unwrap().to_string())
+                    .filter(|n| !n.starts_with("::")) // keep only user relations
+                    .collect();
             }
 
             // ... other commands
@@ -967,9 +1058,8 @@ mod tests {
         fn mock() -> Self {
             // Simple mock that does nothing
             Self::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect(
-                    "LocalEmbedder failed to construct within test - should not happen",
-                ),
+                LocalEmbedder::new(EmbeddingConfig::default())
+                    .expect("LocalEmbedder failed to construct within test - should not happen"),
             ))
         }
     }
@@ -1033,7 +1123,10 @@ mod tests {
         // Check if the embed message read the user message or not
         let chat = state.chat.0.read().await;
         let last_user_msg = chat.last_user_msg();
-        assert!(last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())), "User message should be present");
+        assert!(
+            last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
+            "User message should be present"
+        );
     }
 
     #[tokio::test]

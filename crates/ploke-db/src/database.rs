@@ -108,6 +108,25 @@ impl Database {
         Ok(Self { db })
     }
 
+    pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
+        let rels = self
+            .db
+            .run_script(
+                "::relations",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            ).map_err(DbError::from)?
+            .rows
+            .into_iter()
+            .map(|r| r[0].to_string())
+            .filter(|n| !n.starts_with("::")).intersperse(", ".to_string()); // keep only user relations
+
+        let mut script = String::from("::remove ");
+        script.extend(rels);
+        self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+        Ok(())
+    }
+
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
@@ -139,8 +158,7 @@ impl Database {
     pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
         use serde_json::Value;
 
-        let rows = self
-            .raw_query("?[name, id] := *crate_context {id, name}")?;
+        let rows = self.raw_query("?[name, id] := *crate_context {id, name}")?;
 
         // Unwrap row 0
         let row = rows.rows.first().expect("no rows returned");
@@ -159,7 +177,6 @@ impl Database {
         // Build the filename
         let name_id = format!("{}_{}", name, id);
         Ok(name_id)
-
     }
 
     pub async fn index_embeddings(

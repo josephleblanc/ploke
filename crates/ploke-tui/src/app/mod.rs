@@ -262,7 +262,7 @@ impl App {
                                         kind: MessageKind::SysInfo,
                                         new_msg_id: Uuid::new_v4(),
                                     });
-                                
+
                             }
                             SystemEvent::BackupDb {file_dir, is_success, error } if !is_success => {
                                 // TODO: Add crate name to data type and require in command
@@ -661,7 +661,7 @@ impl App {
                         alias_or_id: alias.to_string(),
                     });
                 }
-            },
+            }
             "save history" => {
                 self.send_cmd(StateCommand::AddMessageImmediate {
                     msg: "Saving conversation history...".to_string(),
@@ -669,22 +669,47 @@ impl App {
                     new_msg_id: Uuid::new_v4(),
                 });
                 self.send_cmd(StateCommand::SaveState);
-            },
+            }
+            // Loads a single target backup database from the default config dir into cozo,
+            // overwriting any currently loaded db.
+            // Expects a the command `/load crate`
+            cmd if cmd.starts_with("load crate") => {
+                match cmd.trim_start_matches("load crate").trim() {
+                    crate_name if !crate_name.contains(' ') => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Attempting to load code graph for {crate_name}..."),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                        self.send_cmd(StateCommand::LoadDb {
+                            crate_name: crate_name.to_string(),
+                        });
+                    }
+                    _ => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                }
+            }
             "query load" | "ql" => {
                 self.send_cmd(StateCommand::ReadQuery {
                     query_name: "default".to_string(),
                     file_name: "default.dl".to_string(),
                 });
-            },
+            }
             "save db" | "sd" => {
                 self.send_cmd(StateCommand::SaveDb);
-
-            },
+            }
             cmd if cmd.starts_with("query load ") => {
-                if let Some(( query_name, file_name )) = cmd.trim_start_matches("query load ").trim().split_once(' ') {
+                if let Some((query_name, file_name)) =
+                    cmd.trim_start_matches("query load ").trim().split_once(' ')
+                {
                     tracing::debug!("Reading Query {} from file {}", query_name, file_name);
                     self.send_cmd(StateCommand::ReadQuery {
-                        query_name: query_name.to_string(), 
+                        query_name: query_name.to_string(),
                         file_name: file_name.to_string(),
                     });
                 }
