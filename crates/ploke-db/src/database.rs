@@ -114,10 +114,38 @@ impl Database {
     /// excluding system relations that start with "::". It's useful for resetting
     /// the database state during testing or when reprocessing data.
     ///
-    /// // Write a doc test that uses `init_with_schema()`, the prints out all the relations, then
-    /// removes the realtions, then attempts to print all the relations again, then asserts that
-    /// there are no relations returned by the database for the cozo script `run_script` command
-    /// for "::relations" AI!
+    /// # Examples
+    ///
+    /// ```
+    /// use ploke_db::Database;
+    /// use cozo::ScriptMutability;
+    /// 
+    /// // Initialize database with schema
+    /// let db = Database::init_with_schema().unwrap();
+    /// 
+    /// // Get initial relations
+    /// let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let initial_count = initial_relations.rows.len();
+    /// assert!(initial_count > 0, "Should have some relations after schema creation");
+    /// 
+    /// // Clear all user relations
+    /// db.clear_relations().unwrap();
+    /// 
+    /// // Verify no user relations remain
+    /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let user_relations: Vec<_> = remaining_relations.rows
+    ///     .into_iter()
+    ///     .filter(|row| {
+    ///         if let cozo::DataValue::Str(name) = &row[0] {
+    ///             !name.starts_with("::")
+    ///         } else {
+    ///             false
+    ///         }
+    ///     })
+    ///     .collect();
+    /// 
+    /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
+    /// ```
     pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
