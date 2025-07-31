@@ -108,6 +108,7 @@ impl Database {
         Ok(Self { db })
     }
 
+    // Write docs here AI!
     pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
