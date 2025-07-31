@@ -113,6 +113,11 @@ impl Database {
     /// This method removes all relations that were created by the application,
     /// excluding system relations that start with "::". It's useful for resetting
     /// the database state during testing or when reprocessing data.
+    ///
+    /// // Write a doc test that uses `init_with_schema()`, the prints out all the relations, then
+    /// removes the realtions, then attempts to print all the relations again, then asserts that
+    /// there are no relations returned by the database for the cozo script `run_script` command
+    /// for "::relations" AI!
     pub fn clear_relations(&self) -> Result<(), ploke_error::Error> {
         let rels = self
             .db
