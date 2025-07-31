@@ -179,10 +179,28 @@ impl Database {
     //  - A similar similar color/text style is used on each of these, numbers, and when they click
     //  on those... you get the idea. Think Matrioshka
     //
-    // TODO: Add a way to count the number of relations in the cozo database, returning a Result
-    // with the number of total relations (not including hnsw indices).
-
-    // Add docs here, include a doc test using similar approach to `clear_relations` AI!
+    /// Counts the total number of relations in the database.
+    ///
+    /// This method returns the count of all relations in the database, including
+    /// both system relations (starting with "::") and user-defined relations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ploke_db::Database;
+    /// use cozo::ScriptMutability;
+    /// 
+    /// // Initialize database with schema
+    /// let db = Database::init_with_schema().unwrap();
+    /// 
+    /// // Count initial relations
+    /// let initial_count = db.count_relations().await.unwrap();
+    /// assert!(initial_count > 0, "Should have some relations after schema creation");
+    /// 
+    /// // Verify count matches ::relations output
+    /// let relations_result = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// assert_eq!(initial_count, relations_result.rows.len());
+    /// ```
     pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
         let rel_count = self
             .db
