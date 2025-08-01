@@ -972,19 +972,15 @@ pub async fn state_manager(
                             continue;
                         }
                     };
-                match state.db.import_relations(exported_data)
+                let prior_rels_vec = match state.db.relations_vec() {
+                    Ok(v) => {v},
+                    Err(e) => {e.emit_warning(); continue;}
+                };
+                log::debug!("prior rels for import: {:#?}", prior_rels_vec);
+                match state.db.import_from_backup(&valid_file, &prior_rels_vec)
                     .map_err(ploke_db::DbError::from)
                     .map_err(ploke_error::Error::from)
                 { Ok(()) => {}, Err(e) => {e.emit_error(); continue}};
-                // tracing::info!("result: {:#?}", result);
-                // restore from backup
-                // if let Err(e) = state.db.restore_backup(&valid_file)
-                //     .map_err(ploke_db::DbError::from)
-                //     .map_err(ploke_error::Error::from) {
-                //             tracing::error!("Error here");
-                //         e.emit_warning();
-                //         continue;
-                // };
                 
                 // get count for sanity and user feedback
                 match state.db.count_relations().await {

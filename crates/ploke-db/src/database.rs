@@ -365,6 +365,20 @@ impl Database {
         new_db.restore_backup(&path).map_err(DbError::from)?;
         Ok( Self { db: new_db } )
     }
+
+    pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, ploke_error::Error> {
+        let output = self.raw_query("::relations")?;
+        Ok( output.rows.into_iter().filter_map(|r| 
+            r.first().into_iter()
+                .filter_map(|c| c.get_str().iter().map(|s| s.to_string()).next())
+                .next()
+            )
+        )
+    }
+    pub fn relations_vec(&self) -> Result<Vec<String>, ploke_error::Error> {
+        let vector = Vec::from_iter(self.iter_relations()?);
+        Ok(vector)
+    }
     pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
         use serde_json::Value;
 
