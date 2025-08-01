@@ -945,7 +945,7 @@ pub async fn state_manager(
     }
 }
 
-// : Write documentation for the `load_db` function below, using my informal comments as a
+// AI: Write documentation for the `load_db` function below, using my informal comments as a
 // guide:
 // This command will check the default dir for a file saved by `SaveDb` earlier,
 // following the same naming convention and searching for a file which has been saved
@@ -965,7 +965,7 @@ pub async fn state_manager(
 //      - In that case, the two Arc references (in `state` and `IndexerTask`) to the
 //      current database must be dropped and we must re-initialize a database, then use
 //      the cozo command to restore the database.
-// 
+// AI!
 async fn load_db(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
