@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::ControlFlow};
 
 use crate::{
     chat_history::{Message, MessageKind},
@@ -7,7 +7,9 @@ use crate::{
     utils::helper::find_file_by_prefix,
 };
 use itertools::Itertools;
-use ploke_db::{create_index_warn, replace_index_warn, search_similar, Database, DbError, NodeType};
+use ploke_db::{
+    Database, DbError, NodeType, create_index_warn, replace_index_warn, search_similar,
+};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
 use serde::{Deserialize, Serialize};
@@ -782,9 +784,7 @@ pub async fn state_manager(
                 query_name,
                 query_content,
             } => {
-                let result = state
-                    .db
-                    .raw_query_mut(&query_content);
+                let result = state.db.raw_query_mut(&query_content);
                 tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
                 if let Ok(named_rows) = result {
                     let mut output = String::new();
@@ -921,93 +921,107 @@ pub async fn state_manager(
                     };
                 }
             }
-            // This command will check the default dir for a file saved by `SaveDb` earlier,
-            // following the same naming convention and searching for a file which has been saved
-            // with the method for finding the name via `state.db.get_crate_name_id`, namely that
-            // it begins with a human-readable name, then is separated by an underscore with the v5
-            // Uuid hash.
-            // So here we need to:
-            // 1. check if the backup db exists
-            // 2. if it exists, use cozo's builtin `:restore` command, which seems to correspond to
-            //    the `restore_backup` method for `cozo::Db`
-            //  - [cozo docs on restore](https://docs.cozodb.org/en/latest/nonscript.html#API.restore)
-            //  - expects a path to the database backup
-            //  - must be called on an empty database.
-            //      - Since `restore_backup` can only be called on an empty database, that means we need
-            //      to re-initialize the cozo database if we find a backup that matches the
-            //      user-specified crate name.
-            //      - In that case, the two Arc references (in `state` and `IndexerTask`) to the
-            //      current database must be dropped and we must re-initialize a database, then use
-            //      the cozo command to restore the database.
-            //
             StateCommand::LoadDb { crate_name } => {
-                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
-                    ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-                        msg: "Could not locate default config directory on system",
-                    })
-                    .emit_warning()
-                }) {
-                    dir.join("ploke").join("data")
-                } else {
-                    continue;
-                };
-                let valid_file =
-                    match find_file_by_prefix(default_dir, &crate_name)
-                        .await
-                        .map_err(|e| {
-                            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-                                msg: "Could not find saved file, io error",
-                            })
-                        }) {
-                        Ok(Some( path_buf )) => path_buf,
-                    Ok(None) => {
-                        ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(
-                            "No backup file detected at default configuration location".to_string(),
-                        )).emit_warning();
-                        continue;
-                    }
-                        Err(e) => {
-                            tracing::error!("Error here");
-                            e.emit_warning();
-                            continue;
+                // TODO: Refactor this to be a function, and change the `continue` to handling the
+                // result with `?`
+                if let Err(e) = load_db(&state, &event_bus, crate_name).await {
+                    match e {
+                        ploke_error::Error::Fatal(_) => e.emit_fatal(),
+                        ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => {
+                            e.emit_warning()
                         }
-                    };
-                let prior_rels_vec = match state.db.relations_vec() {
-                    Ok(v) => {v},
-                    Err(e) => {e.emit_warning(); continue;}
-                };
-                log::debug!("prior rels for import: {:#?}", prior_rels_vec);
-                match state.db.import_from_backup(&valid_file, &prior_rels_vec)
-                    .map_err(ploke_db::DbError::from)
-                    .map_err(ploke_error::Error::from)
-                { Ok(()) => {}, Err(e) => {e.emit_error(); continue}};
-                
-                // get count for sanity and user feedback
-                match state.db.count_relations().await {
-                    Ok(count) if count > 0 => {event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                        crate_name,
-                        file_dir: Arc::new(valid_file),
-                        is_success: true,
-                        error: None,
-                    }));},
-                    Ok(count) => {event_bus.send(AppEvent::System(SystemEvent::LoadDb {
-                        crate_name,
-                        file_dir: Arc::new(valid_file),
-                        is_success: false,
-                        error: Some("Database backed up from file, but 0 relations found."),
-                    }));},
-                    Err(e) => {
-                            tracing::error!("Error here");
-                        e.emit_warning();
+                        _ => {
+                            todo!("These should neveer happen.")
+                        }
                     }
                 }
-
+                // TODO: run hnsw indexer again here using cozo command.
             }
 
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
         };
+    }
+}
+
+// : Write documentation for the `load_db` function below, using my informal comments as a
+// guide:
+// This command will check the default dir for a file saved by `SaveDb` earlier,
+// following the same naming convention and searching for a file which has been saved
+// with the method for finding the name via `state.db.get_crate_name_id`, namely that
+// it begins with a human-readable name, then is separated by an underscore with the v5
+// Uuid hash.
+// So here we need to:
+// 1. check if the backup db exists
+// 2. if it exists, use cozo's builtin `:restore` command, which seems to correspond to
+//    the `restore_backup` method for `cozo::Db`
+//  - [cozo docs on restore](https://docs.cozodb.org/en/latest/nonscript.html#API.restore)
+//  - expects a path to the database backup
+//  - must be called on an empty database.
+//      - Since `restore_backup` can only be called on an empty database, that means we need
+//      to re-initialize the cozo database if we find a backup that matches the
+//      user-specified crate name.
+//      - In that case, the two Arc references (in `state` and `IndexerTask`) to the
+//      current database must be dropped and we must re-initialize a database, then use
+//      the cozo command to restore the database.
+// 
+async fn load_db(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    crate_name: String,
+) -> Result<(), ploke_error::Error> {
+    let default_dir = dirs::config_local_dir().ok_or_else(|| {
+        let e = ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+            msg: "Could not locate default config directory on system",
+        });
+        e.emit_warning();
+        e
+    })?;
+    let valid_file = match find_file_by_prefix(default_dir, &crate_name).await {
+        Ok(Some(path_buf)) => Ok(path_buf),
+        Ok(None) => Err(ploke_error::WarningError::PlokeDb(
+            "No backup file detected at default configuration location".to_string(),
+        )),
+        Err(e) => Err(ploke_error::FatalError::DefaultConfigDir {
+            msg: "Could not find saved file, io error",
+        })?,
+    }?;
+
+    let prior_rels_vec = state.db.relations_vec()?;
+    tracing::debug!("prior rels for import: {:#?}", prior_rels_vec);
+    state
+        .db
+        .import_from_backup(&valid_file, &prior_rels_vec)
+        .map_err(ploke_db::DbError::from)
+        .map_err(ploke_error::Error::from)?;
+    // .inspect_err(|e| e.emit_error())?;
+
+    // get count for sanity and user feedback
+    match state.db.count_relations().await {
+        Ok(count) if count > 0 => {
+            {
+                let mut system_guard = state.system.write().await;
+                system_guard.crate_focus = Some(crate_name.clone());
+            }
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name,
+                file_dir: Arc::new(valid_file),
+                is_success: true,
+                error: None,
+            }));
+            Ok(())
+        }
+        Ok(count) => {
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name,
+                file_dir: Arc::new(valid_file),
+                is_success: false,
+                error: Some("Database backed up from file, but 0 relations found."),
+            }));
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }
 
