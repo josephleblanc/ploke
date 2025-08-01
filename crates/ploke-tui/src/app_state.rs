@@ -945,27 +945,33 @@ pub async fn state_manager(
     }
 }
 
-// AI: Write documentation for the `load_db` function below, using my informal comments as a
-// guide:
-// This command will check the default dir for a file saved by `SaveDb` earlier,
-// following the same naming convention and searching for a file which has been saved
-// with the method for finding the name via `state.db.get_crate_name_id`, namely that
-// it begins with a human-readable name, then is separated by an underscore with the v5
-// Uuid hash.
-// So here we need to:
-// 1. check if the backup db exists
-// 2. if it exists, use cozo's builtin `:restore` command, which seems to correspond to
-//    the `restore_backup` method for `cozo::Db`
-//  - [cozo docs on restore](https://docs.cozodb.org/en/latest/nonscript.html#API.restore)
-//  - expects a path to the database backup
-//  - must be called on an empty database.
-//      - Since `restore_backup` can only be called on an empty database, that means we need
-//      to re-initialize the cozo database if we find a backup that matches the
-//      user-specified crate name.
-//      - In that case, the two Arc references (in `state` and `IndexerTask`) to the
-//      current database must be dropped and we must re-initialize a database, then use
-//      the cozo command to restore the database.
-// AI!
+/// Loads a previously saved database backup into the application.
+///
+/// This function searches the default configuration directory for a database backup file
+/// created by the `SaveDb` command. The backup file follows a naming convention where it
+/// begins with the human-readable crate name, followed by an underscore and a v5 UUID hash
+/// obtained from `state.db.get_crate_name_id`.
+///
+/// # Process
+/// 1. Locates the backup file in the default configuration directory
+/// 2. Imports the backup into the current database using CozoDB's restore functionality
+/// 3. Validates the restored database has content
+/// 4. Updates application state to reflect the loaded crate
+/// 5. Emits appropriate success/failure events
+///
+/// # Arguments
+/// * `state` - Reference to the application state containing the database
+/// * `event_bus` - Event bus for sending status updates
+/// * `crate_name` - Name of the crate to load from backup
+///
+/// # Returns
+/// Returns `Ok(())` if the database was successfully loaded, or an appropriate error
+/// if the backup file was not found or the restore operation failed.
+///
+/// # Notes
+/// The CozoDB restore operation must be performed on an empty database. If the current
+/// database contains data, it will be replaced by the backup. The function handles
+/// the full lifecycle of locating, validating, and restoring the database state.
 async fn load_db(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
