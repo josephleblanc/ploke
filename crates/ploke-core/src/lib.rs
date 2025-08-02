@@ -32,6 +32,15 @@ pub struct EmbeddingData {
     pub namespace: Uuid
 }
 
+// TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
+#[derive(Debug, Clone)]
+pub struct FileData {
+    pub id: Uuid,
+    pub namespace: Uuid,
+    pub file_tracking_hash: TrackingHash,
+    pub file_path: PathBuf,
+}
+
 // Helper Hasher to collect bytes for UUID generation
 pub mod byte_hasher {
     use std::hash::Hasher;

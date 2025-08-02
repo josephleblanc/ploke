@@ -1,9 +1,9 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 //! # ploke-io
 //!
-//! `ploke-io` provides a high-performance, non-blocking I/O actor system for reading
+//! `ploke-io` provides a non-blocking I/O actor system for reading
 //! file snippets concurrently. It is designed for applications that need to read from
-//! many files without blocking critical threads, such as a UI or a request-response loop.
+//! many files without blocking.
 //!
 //! ## Core Components
 //!
@@ -117,7 +117,9 @@
 //! ```
 
 use futures::future::join_all;
+use itertools::Itertools;
 use ploke_core::EmbeddingData;
+use ploke_core::FileData;
 use ploke_core::TrackingHash;
 use ploke_error::fatal::FatalError;
 use ploke_error::Error as PlokeError;
@@ -184,6 +186,23 @@ impl IoManagerHandle {
         response_rx.await.map_err(|_| RecvError::RecvError)
     }
 
+    /// Asynchronously requests a batch of file hash checks.
+    pub async fn scan_changes_batch(
+        &self,
+        requests: Vec<FileData>,
+    ) -> Result<Result<Vec<Option<PathBuf>>, PlokeError>, IoError> {
+        let (responder, response_rx) = oneshot::channel();
+        let request = IoRequest::ScanChangeBatch {
+            requests,
+            responder,
+        };
+        self.request_sender
+            .send(IoManagerMessage::Request(request))
+            .await
+            .map_err(|_| RecvError::SendError).map_err(IoError::from)?;
+        response_rx.await.map_err(|_| RecvError::RecvError).map_err(IoError::from)
+    }
+
     /// Sends a shutdown signal to the IoManager.
     pub async fn shutdown(&self) {
         let _ = self.request_sender.send(IoManagerMessage::Shutdown).await;
@@ -212,11 +231,23 @@ enum IoRequest {
         requests: Vec<EmbeddingData>,
         responder: oneshot::Sender<Vec<Result<String, PlokeError>>>,
     },
+    ScanChangeBatch {
+        requests: Vec<FileData>,
+        responder: oneshot::Sender<Result<Vec<Option<PathBuf>>, PlokeError>>,
+    },
 }
 
 /// The `IoManager` is a central actor responsible for handling all file I/O operations
-/// in a non-blocking manner. It runs in a dedicated thread and processes requests
+/// in a non-blocking manner. It runs in a dedicated thread and processes request
 /// received through a message-passing channel.
+///
+/// ## Supported operations
+///
+/// - **Read snippets**: given a batch of `EmbeddingData`, return the requested byte
+///   ranges from source files, verifying content hashes to detect concurrent edits.
+/// - **Scan for changes**: given a batch of `FileData`, compute fresh tracking hashes
+///   and return the paths whose contents no longer match the stored hash.
+///
 ///
 /// ## Architecture
 ///
@@ -243,7 +274,12 @@ enum IoRequest {
 /// 5.  The results, including any errors, are collected and returned to the original
 ///     caller, preserving the order of the initial requests.
 ///
-/// This design ensures that I/O is handled efficiently, concurrently, and safely.
+/// ### Change Scanning
+/// When processing change scan requests:
+/// 1.  Files are processed concurrently with bounded parallelism (limited by semaphore permits)
+/// 2.  Each file is fully read and parsed to tokens
+/// 3.  A fresh tracking hash is generated and compared against the stored reference
+/// 4.  Changed files paths are returned while unchanged files are omitted
 pub struct IoManager {
     request_receiver: mpsc::Receiver<IoManagerMessage>,
     semaphore: Arc<Semaphore>,
@@ -283,6 +319,16 @@ impl IoManager {
                 let semaphore = self.semaphore.clone();
                 tokio::spawn(async move {
                     let results = Self::handle_read_snippet_batch(requests, semaphore).await;
+                    let _ = responder.send(results);
+                });
+            }
+            IoRequest::ScanChangeBatch {
+                requests,
+                responder,
+            } => {
+                let semaphore = self.semaphore.clone();
+                tokio::spawn(async move {
+                    let results = Self::handle_scan_batch(requests, semaphore).await;
                     let _ = responder.send(results);
                 });
             }
@@ -344,7 +390,7 @@ impl IoManager {
                 result_idx += 1;
             } else {
                 final_results.push(Err(ploke_error::InternalError::InvalidState(
-                    "Result missing for request".to_string(),
+                    "Result missing for request",
                 )
                 .into()));
             }
@@ -353,6 +399,7 @@ impl IoManager {
     }
 
     /// Processes all snippet requests for a single file efficiently.
+    // TODO: refactor to return a result and use `?` instead of all the match and returns below
     async fn process_file(
         file_path: PathBuf,
         requests: Vec<OrderedRequest>,
@@ -439,9 +486,10 @@ impl IoManager {
         // probably just be sending the file tracking hash along once with the OrederedRequest.
         if actual_tracking_hash != requests[0].request.file_tracking_hash {
             for req in requests {
-                eprintln!(
+                tracing::error!(
                     "file: {}, database: {}",
-                    actual_tracking_hash.0, req.request.file_tracking_hash.0
+                    actual_tracking_hash.0,
+                    req.request.file_tracking_hash.0
                 );
                 results.push((
                     // TODO: Replace req.idx with the actual node id
@@ -498,6 +546,65 @@ impl IoManager {
         }
 
         results
+    }
+
+    /// Scans a batch of `FileData` in parallel, bounded by the given semaphore,
+    /// and returns the paths whose contents no longer match their stored tracking hash.
+    ///
+    /// Files that have changed are returned as `Some(path)`; unchanged files are omitted
+    /// (`None`).  I/O or parse errors are propagated as `Err`.
+    ///
+    /// Concurrency is limited by the semaphore’s available permits; no more permits than
+    /// `semaphore.available_permits()` files are processed concurrently.
+    async fn handle_scan_batch(
+        requests: Vec<FileData>,
+        semaphore: Arc<Semaphore>,
+    ) -> Result<Vec<Option<PathBuf>>, PlokeError> {
+        use futures::stream::StreamExt;
+        let concurrency_limit = semaphore.available_permits();
+        let mut futs = Vec::new();
+        for file_data in requests {
+            let clone_sema = semaphore.clone();
+            futs.push(async move { Self::check_file_hash(file_data, clone_sema).await });
+        }
+        let mut results = Vec::new();
+        for result in futures::future::join_all(futs).await {
+            let ok_res = result?;
+            results.push(ok_res);
+        }
+        Ok(results)
+    }
+
+    /// Computes a fresh tracking hash for a single file and compares it to the store value.
+    ///
+    /// Acquires one semaphore permit while the file is read.
+    /// Returns `Some(path)` if the hash differs, `None` if it matches, or an error in the
+    /// file cannot be read or parsed.
+    async fn check_file_hash(
+        file_data: FileData,
+        semaphore: Arc<Semaphore>,
+    ) -> Result<Option<PathBuf>, PlokeError> {
+        let _permit = semaphore
+            .acquire()
+            .await
+            .map_err(|_| IoError::ShutdownInitiated)?;
+        let bytes = tokio::fs::read(&file_data.file_path)
+            .await
+            .map_err(|e| ploke_error::FatalError::from((e, "read", file_data.file_path.clone())))?;
+        let tokens = syn::parse_file(&String::from_utf8_lossy(&bytes))
+            .map_err(|e| IoError::ParseError {
+                path: file_data.file_path.clone(),
+                message: e.to_string(),
+            })?
+            .into_token_stream();
+
+        let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);
+
+        if new_hash != file_data.file_tracking_hash {
+            Ok(Some(file_data.file_path))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -1450,14 +1557,14 @@ mod tests {
         for data in &embedding_data {
             let ty = data.ty;
             for tyemb in data.iter() {
-            tracing::trace!(target: "handle_data",
-                "EmbeddingData: ty={:?}, id={}, file={}, range={}..{}",
-                ty,
-                tyemb.id,
-                tyemb.file_path.display(),
-                tyemb.start_byte,
-                tyemb.end_byte
-            );
+                tracing::trace!(target: "handle_data",
+                    "EmbeddingData: ty={:?}, id={}, file={}, range={}..{}",
+                    ty,
+                    tyemb.id,
+                    tyemb.file_path.display(),
+                    tyemb.start_byte,
+                    tyemb.end_byte
+                );
             }
         }
         assert_ne!(0, embedding_data.len());
@@ -1490,7 +1597,8 @@ mod tests {
                 Ok(snip) => {
                     correct += 1;
                     if let Some(embed_data) = data_expensive_clone
-                        .iter().flat_map(|emb| emb.v.iter())
+                        .iter()
+                        .flat_map(|emb| emb.v.iter())
                         .find(|emb| snip.contains(&emb.name))
                     {
                         tracing::trace!(target: "handle", "name: {}, snip: {}", embed_data.name, snip);
@@ -1506,7 +1614,7 @@ mod tests {
                     // tracing::error!(target: "handle", "{:?}", e);
                 }
             }
-            tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}", 
+            tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}",
                 correct, error_count, contains_name, total_snips
             );
         }
@@ -1527,7 +1635,7 @@ mod tests {
             error_count,
             snippets.len()
         );
-        tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}\n\tcorrect: {:.2}% | error_count: {:.2}% | contains_name: {:.2}%", 
+        tracing::info!(target: "handle", "correct: {} | error_count: {} | contains_name: {} | total: {}\n\tcorrect: {:.2}% | error_count: {:.2}% | contains_name: {:.2}%",
             correct, error_count, contains_name, total_snips,
             percent(correct, total_snips),
             percent(error_count, total_snips),
@@ -1551,7 +1659,7 @@ mod tests {
     }
 
     fn percent(i: usize, t: usize) -> f32 {
-        i as f32 /(t as f32) * 100.0
+        i as f32 / (t as f32) * 100.0
     }
 
     // pub fn setup_db_full_embeddings(fixture: &'static str) -> Result<Vec<ploke_core::EmbeddingData>, ploke_error::Error> {

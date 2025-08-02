@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::ControlFlow};
+use std::{collections::BTreeMap, env::current_dir, ops::ControlFlow, path::PathBuf, str::FromStr};
 
 use crate::{
     chat_history::{Message, MessageKind},
@@ -150,10 +150,10 @@ impl AppState {
 // Placeholder
 #[derive(Debug, Default)]
 pub struct SystemStatus {
-    crate_focus: Option<String>,
+    crate_focus: Option<PathBuf>,
 }
 impl SystemStatus {
-    pub fn new(crate_focus: Option<String>) -> Self {
+    pub fn new(crate_focus: Option<PathBuf>) -> Self {
         Self { crate_focus }
     }
 }
@@ -163,7 +163,19 @@ impl SystemStatus {
 //         Self::new()
 //     }
 // }
-pub enum StateError {/* ... */}
+#[derive(thiserror::Error, Clone, Debug)]
+pub enum StateError {
+    #[error("The app state does not have a currently set crate focus")]
+    MissingCrateFocus{ msg: &'static str }
+}
+
+impl From<StateError> for ploke_error::Error {
+    fn from(value: StateError) -> Self {
+        match value {
+            StateError::MissingCrateFocus{msg} => ploke_error::Error::UiError(msg.to_string())
+        }
+    }
+}
 
 /// Directions which can be taken when selecting an item in a list.
 /// Note that `left` and `right` are not included, because rather than moving `left` or `right` in
@@ -305,9 +317,7 @@ pub enum StateCommand {
     EmbedMessage {
         new_msg_id: Uuid,
         completion_rx: oneshot::Receiver<()>,
-    },
-    ForwardContext {
-        new_msg_id: Uuid,
+        scan_rx: oneshot::Receiver<()>,
     },
     SwitchModel {
         alias_or_id: String,
@@ -323,6 +333,9 @@ pub enum StateCommand {
     SaveDb,
     LoadDb {
         crate_name: String,
+    },
+    ScanForChange {
+        scan_tx: oneshot::Sender<()>,
     },
 }
 
@@ -353,7 +366,6 @@ impl StateCommand {
             AddMessageImmediate { .. } => "AddMessageImmediate",
             UpdateDatabase => "UpdateDatabase",
             EmbedMessage { .. } => "EmbedMessage",
-            ForwardContext { .. } => "ForwardContext",
             SwitchModel { .. } => "SwitchModel",
             LoadQuery { .. } => "LoadQuery",
             ReadQuery { .. } => "ReadQuery",
@@ -363,6 +375,7 @@ impl StateCommand {
         }
     }
 }
+
 
 /// Event fired when a message is successfully updated.
 ///
@@ -502,10 +515,17 @@ pub async fn state_manager(
             StateCommand::IndexWorkspace { workspace } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 // Extract task from mutex (consumes guard)
-                if let Some(crate_name) = workspace.split('/').next_back() {
+                {
                     let mut write_guard = state.system.write().await;
-                    tracing::debug!("Setting crate_focus to {crate_name}");
-                    write_guard.crate_focus = Some(crate_name.to_string());
+                    let crate_focus = match std::env::current_dir() {
+                        Ok(crate_focus) => crate_focus,
+                        Err(e) => {
+                            tracing::error!("Error resolving current dir: {e}");
+                            continue;
+                        }
+                    };
+                    tracing::debug!("Setting crate_focus to {}", workspace);
+                    write_guard.crate_focus = Some(crate_focus);
                 }
 
                 // TODO: maybe run_parse should be returning the name of the crate it parsed, as
@@ -663,17 +683,10 @@ pub async fn state_manager(
             StateCommand::EmbedMessage {
                 new_msg_id,
                 completion_rx,
+                scan_rx,
             } => {
-                match completion_rx.await {
-                    Ok(_) => {
-                        tracing::trace!("UserMessage received new_msg_id: {new_msg_id}")
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {new_msg_id}"
-                        );
-                        return;
-                    }
+                if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
+                    return;
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
@@ -683,12 +696,21 @@ pub async fn state_manager(
                             .embedder
                             .generate_embeddings(vec![last_user_msg])
                             .await
-                            .expect("Error while generating embeddings");
+                            .expect("Error while generating embedding of user message");
                         // drop guard after we are done with last_usr_message, which is consumed by
                         // generate_embeddings
                         drop(chat_guard);
-                        let embeddings = temp_embed.first().expect("No results from vector search");
+                        let embeddings = temp_embed
+                            .first()
+                            .expect("No results from user message embedding generation");
                         tracing::info!("Finish embedding user message");
+
+                        tracing::info!("Waiting to finish parsing target crate");
+                        if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, scan_rx).await {
+                            return;
+                        }
+                        tracing::info!("Finished waiting on parsing target crate");
+
                         match search_similar(
                             &state.db,
                             embeddings.clone(),
@@ -713,24 +735,33 @@ pub async fn state_manager(
                                     .collect::<Vec<String>>();
 
                                 // Send snippets directly to context manager
-                                let _ = context_tx
+                                if let Err(e) = context_tx
                                     .send(RagEvent::ContextSnippets(new_msg_id, snippets))
-                                    .await;
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Error sending snippets to context manager: {e}"
+                                    );
+                                };
 
                                 // Then trigger context construction with the correct parent ID
                                 let messages: Vec<Message> =
                                     state.chat.0.read().await.clone_current_path_conv();
-                                // .messages
-                                // .iter()
-                                // .map(|m| m.1.clone())
-                                // .collect();
 
-                                let _ = context_tx
+                                if let Err(e) = context_tx
                                     .send(RagEvent::UserMessages(new_msg_id, messages))
-                                    .await;
-                                let _ = context_tx
+                                    .await
+                                {
+                                    tracing::error!("Error with channel sending UserMessages: {e}")
+                                };
+                                if let Err(e) = context_tx
                                     .send(RagEvent::ConstructContext(new_msg_id))
-                                    .await;
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Error with channel sending ConstructContext: {e}"
+                                    )
+                                };
                             }
                             Err(e) => {
                                 tracing::error!(
@@ -887,7 +918,14 @@ pub async fn state_manager(
                 // focus of the user's target crate within the same session.
                 // - Explicit command?
                 // - Model-allowed tool calling?
-                if let Some(crate_focus) = &system_guard.crate_focus {
+                if let Some(crate_focus) = system_guard
+                    .crate_focus.clone()
+                    .iter()
+                    .filter_map(|cr| cr.file_name())
+                    .filter_map(|cr| cr.to_str())
+                    .next()
+                {
+                    // let crate_focus_str = crate_focus.to_string_lossy();
                     let crate_name_version = if let Ok(db_result) = state
                         .db
                         .get_crate_name_id(crate_focus)
@@ -931,11 +969,15 @@ pub async fn state_manager(
                             e.emit_warning()
                         }
                         _ => {
-                            todo!("These should neveer happen.")
+                            todo!("These should never happen.")
                         }
                     }
                 }
                 // TODO: run hnsw indexer again here using cozo command.
+            }
+
+            StateCommand::ScanForChange { scan_tx } => {
+                scan_for_change(&state, scan_tx).await;
             }
 
             // ... other commands
@@ -943,6 +985,70 @@ pub async fn state_manager(
             _ => {}
         };
     }
+}
+
+async fn scan_for_change(state: &Arc<AppState>, scan_tx: oneshot::Sender<()>) -> Result<(), ploke_error::Error> {
+    use ploke_error::Error as PlokeError;
+    let guard = state.system.read().await;
+    // TODO: Make a wrapper type for this and make it a method to get just the crate
+    // name.
+    // 1. Get the currently focused crate name, checking for errors.
+    let crate_path = guard.crate_focus.as_ref().ok_or_else(|| {
+        tracing::error!("Missing crate focus, cannot scan unspecified target crate");
+        let e = PlokeError::from(StateError::MissingCrateFocus {msg: "Missing crate focus is None, cannot scan unspecified target crate"});
+        e.emit_warning();
+        e
+    })?;
+    let crate_name = crate_path.file_name().and_then(|os_str| os_str.to_str()).ok_or_else(|| { 
+        tracing::error!("Crate name is empty, cannot scan empty crate name");
+        let e = PlokeError::from(StateError::MissingCrateFocus {msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate"});
+        e.emit_warning();
+        e
+    })?;
+
+    // 2. get the files in the target project from the db, with hashes
+    let file_data = state.db.get_crate_files(crate_name)?;
+
+    // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
+    //    changed.
+    let result = state.io_handle.scan_changes_batch(file_data).await?;
+    let vec_ok = result?;
+
+    if !vec_ok.iter().any(|f| f.is_some()) {
+        // 4. if no changes, send complete in oneshot
+        match scan_tx.send(()) {
+            Ok(()) => {},
+            Err(e) => {
+                tracing::error!("Error sending parse oneshot from ScanForChange");
+            }
+        };
+        return Ok(());
+    } else {
+
+    }
+    //
+    // 5. if changes, send IndexFile event (not yet made)
+
+    Ok(())
+}
+
+async fn wait_on_oneshot(
+    new_msg_id: Uuid,
+    completion_rx: oneshot::Receiver<()>,
+) -> ControlFlow<()> {
+    match completion_rx.await {
+        Ok(_) => {
+            tracing::trace!("UserMessage received new_msg_id: {}", new_msg_id)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {}",
+                new_msg_id
+            );
+            return ControlFlow::Break(());
+        }
+    }
+    ControlFlow::Continue(())
 }
 
 /// Loads a previously saved database backup into the application.
@@ -977,21 +1083,45 @@ async fn load_db(
     event_bus: &Arc<EventBus>,
     crate_name: String,
 ) -> Result<(), ploke_error::Error> {
-    let default_dir = dirs::config_local_dir().ok_or_else(|| {
-        let e = ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
-            msg: "Could not locate default config directory on system",
-        });
+    let mut default_dir = dirs::config_local_dir().ok_or_else(|| {
+        let err_msg = "Could not locate default config directory on system";
+        let e =
+            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg });
         e.emit_warning();
+        event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+            crate_name: crate_name.clone(),
+            file_dir: None,
+            is_success: false,
+            error: Some(err_msg),
+        }));
         e
     })?;
-    let valid_file = match find_file_by_prefix(default_dir, &crate_name).await {
+    default_dir.push("ploke/data");
+    let valid_file = match find_file_by_prefix(default_dir.as_path(), &crate_name).await {
         Ok(Some(path_buf)) => Ok(path_buf),
-        Ok(None) => Err(ploke_error::WarningError::PlokeDb(
-            "No backup file detected at default configuration location".to_string(),
-        )),
-        Err(e) => Err(ploke_error::FatalError::DefaultConfigDir {
-            msg: "Could not find saved file, io error",
-        })?,
+        Ok(None) => {
+            let err_msg = "No backup file detected at default configuration location";
+            let error = ploke_error::WarningError::PlokeDb(err_msg.to_string());
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name: crate_name.clone(),
+                file_dir: Some(Arc::new(default_dir)),
+                is_success: false,
+                error: Some(err_msg),
+            }));
+            Err(error)
+        }
+        Err(e) => {
+            // TODO: Improve this error message
+            tracing::error!("Failed to load file: {}", e);
+            let err_msg = "Could not find saved file, io error";
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name: crate_name.clone(),
+                file_dir: Some(Arc::new(default_dir)),
+                is_success: false,
+                error: Some(err_msg),
+            }));
+            Err(ploke_error::FatalError::DefaultConfigDir { msg: err_msg })?
+        }
     }?;
 
     let prior_rels_vec = state.db.relations_vec()?;
@@ -1008,11 +1138,13 @@ async fn load_db(
         Ok(count) if count > 0 => {
             {
                 let mut system_guard = state.system.write().await;
-                system_guard.crate_focus = Some(crate_name.clone());
+                let target_dir = std::env::current_dir().inspect_err(|e| tracing::error!("Error finding current dir: {e}")).ok();
+                
+                system_guard.crate_focus = target_dir.map(|cd| cd.join(&crate_name));
             }
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
-                file_dir: Arc::new(valid_file),
+                file_dir: Some(Arc::new(valid_file)),
                 is_success: true,
                 error: None,
             }));
@@ -1021,7 +1153,7 @@ async fn load_db(
         Ok(count) => {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
-                file_dir: Arc::new(valid_file),
+                file_dir: Some(Arc::new(valid_file)),
                 is_success: false,
                 error: Some("Database backed up from file, but 0 relations found."),
             }));
@@ -1161,6 +1293,7 @@ mod tests {
                 tx2.send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: oneshot::channel().1, // dummy
+                    scan_rx: oneshot::channel().1,      // dummy
                 })
                 .await
                 .unwrap();
@@ -1216,6 +1349,8 @@ mod tests {
             .send(StateCommand::EmbedMessage {
                 new_msg_id: embed_msg_id,
                 completion_rx: rx,
+                // TODO: revisit this test
+                scan_rx: oneshot::channel().1, // dummy
             })
             .await
             .unwrap();
@@ -1274,6 +1409,8 @@ mod tests {
                 .send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: rx,
+                    // TODO: Revisit and update this test
+                    scan_rx: oneshot::channel().1, // dummy
                 })
                 .await
                 .unwrap();

@@ -5,7 +5,6 @@ use std::path::Path;
 
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
-use crate::result::FileData;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::DataValue;
@@ -13,8 +12,10 @@ use cozo::Db;
 use cozo::MemStorage;
 use cozo::NamedRows;
 use cozo::UuidWrapper;
+use itertools::concat;
 use itertools::Itertools;
 use ploke_core::EmbeddingData;
+use ploke_core::FileData;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
 use serde::Deserialize;
@@ -90,6 +91,15 @@ impl Deref for TypedEmbedData {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    module_name: String,
+    module_id: Uuid,
+    crate_name: String,
+    namespace: Uuid,
+    file_path: String,
+}
+
 impl Database {
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
@@ -109,6 +119,22 @@ impl Database {
         ploke_transform::schema::create_schema_all(&db)?;
 
         Ok(Self { db })
+    }
+
+    /// Gets all the file data in the same namespace as the crate name given as argument.
+    /// This is useful when you want to compare which files have changed since the database was
+    /// last updated.
+    pub fn get_crate_files(&self, crate_name: &str) -> Result< Vec<FileData>, ploke_error::Error > {
+        let script = format!(
+            "{} \"{}\"",
+r#"?[id, tracking_hash, namespace, file_path] := 
+    *module { id, tracking_hash },
+    *file_mod { file_path, namespace, owner_id: id},
+    *crate_context { name: crate_name, namespace },
+    crate_name = "#, 
+            crate_name);
+        let ret = self.raw_query(&script)?;
+        ret.try_into_file_data()
     }
 
     /// Clears all user-defined relations from the database.

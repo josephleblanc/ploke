@@ -225,10 +225,25 @@ pub mod system {
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
         ModelSwitched(String),
-        ReadQuery{ file_name: String, query_name: String },
-        LoadQuery{ query_name: String, query_content: String },
-        BackupDb {file_dir: String, is_success: bool, error: Option<String>},
-        LoadDb {crate_name: String, file_dir: Arc<std::path::PathBuf>, is_success: bool, error: Option<&'static str>}
+        ReadQuery {
+            file_name: String,
+            query_name: String,
+        },
+        LoadQuery {
+            query_name: String,
+            query_content: String,
+        },
+        BackupDb {
+            file_dir: String,
+            is_success: bool,
+            error: Option<String>,
+        },
+        LoadDb {
+            crate_name: String,
+            file_dir: Option<Arc<std::path::PathBuf>>,
+            is_success: bool,
+            error: Option<&'static str>,
+        },
     }
 }
 
@@ -287,6 +302,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,
