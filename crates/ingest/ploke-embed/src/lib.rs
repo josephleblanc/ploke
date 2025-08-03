@@ -7,6 +7,7 @@ pub mod providers;
 pub mod local;
 pub mod cancel_token;
 pub mod config;
+pub mod partial;
 
 #[cfg(test)]
 mod tests {

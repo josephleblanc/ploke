@@ -809,6 +809,105 @@ r#"?[id, tracking_hash, namespace, file_path] :=
         Ok(ty_embed)
     }
 
+    /// Gets the primary node typed embed data needed to update the nodes in the database
+    /// that are within the given file.
+    /// Note that this does not include the module nodes for the files themselves.
+    /// This is useful when doing a partial update of the database following change detection in
+    /// previously parsed and inserted files.
+    // WARN: This needs to be tested
+    pub fn get_nodes_by_file_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+    ) -> Result<TypedEmbedData, ploke_error::Error> {
+        todo!();
+        let ancestor_rule = r#"
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc],
+    *file_mod{owner_id: asc}
+        "#;
+
+        let mut query: String = String::new();
+        query.push_str(ancestor_rule);
+
+        let needs_update_start = r#"
+needs_update[id, name, hash, span] :=
+        "#;
+        query.push_str(needs_update_start);
+
+        let rel_name = node_type.relation_str();
+
+        // TODO: Change this function to apply to all types at once, rather than the per-type
+        // approach we are using right now. This requires that we somehow encode the type of the
+        // node within the relation - if possible, use the node relation name for this, if that is
+        // not possible (due to cozo rules or something, add a new field to the relations, probably
+        // using the discriminant of the enum PrimaryNodeType)
+        // let primary_nodes = NodeType::primary_nodes();
+        // for (i, primary_node) in primary_nodes.iter().enumerate() {
+        //     query.push_str(&format!(
+        //     "*{} {{ id, tracking_hash, span }}",
+        //         primary_node.relation_str()
+        //     ));
+        //     if i + 1 < primary_nodes.len() {
+        //         query.push_str(" or ")
+        //     }
+        // }
+
+        let batch_rule = r#"
+batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
+    needs_update[id, name, hash, span],
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *module{id: mod_id, tracking_hash: file_hash },
+    *file_mod {owner_id: mod_id, file_path: target_file, namespace },
+    target_file = "crates/ploke-tui/src/lib.rs",
+    to_string(id) > to_string($cursor),
+    string_id = to_string(id)
+        "#;
+        query.push_str(batch_rule);
+
+        let final_query = r#"
+?[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
+    batch[id, name, target_file, file_hash, hash, span, namespace, string_id]
+    :sort string_id
+    :limit $limit
+        "#;
+        query.push_str(final_query);
+
+        let rel_name = node_type.relation_str();
+
+        let mut params: BTreeMap<String, DataValue> = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::Uuid(UuidWrapper(cursor)));
+
+        let query_result = self
+            .db
+            .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        let less_flat_row = query_result.rows.first();
+        let count_less_flat = query_result.rows.len();
+        if let Some(lfr) = less_flat_row {
+            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+        }
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        if !v.is_empty() {
+            tracing::info!(
+                "\n== after truncated, {} remain: {:?} ==\n{:=^80}",
+                v.len(),
+                v.iter().map(|c| &c.name).join(" | "),
+                ""
+            );
+        }
+        let ty_embed = TypedEmbedData { v, ty: node_type };
+        Ok(ty_embed)
+    }
+
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
         let nodes = self.count_pending_embeddings()?;
         let files = self.count_unembedded_files()?;
@@ -833,7 +932,6 @@ r#"?[id, tracking_hash, namespace, file_path] :=
                 query.push_str(" or ")
             }
         }
-        query.push_str("");
         let result = self
             .db
             .run_script_read_only(&query, Default::default())

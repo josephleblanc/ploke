@@ -506,7 +506,7 @@ impl IndexerTask {
         skip_all,
         fields(total_counted, num_not_proc, recent_processed, status="Running", batch_size)  // Track key state
     )]
-    async fn next_batch(
+    pub(crate) async fn next_batch(
         &self,
         num_not_proc: usize,
     ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
@@ -673,7 +673,7 @@ fn log_row(r: Vec<DataValue>) {
         tracing::info!("{}: {:?}", i, row);
     }
 }
-fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
+pub(crate) fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
     let new_count = new.rows.len();
     let last_count = counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
     let header = new.headers.clone();
