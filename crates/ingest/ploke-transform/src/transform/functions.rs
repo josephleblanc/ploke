@@ -115,6 +115,7 @@ fn process_func(
     // Insert into functions table
     let func_params = BTreeMap::from([
         (schema.id().to_string(), function.id.into()),
+        // ("at".to_string(), "'ASSERT'".into()),
         (
             schema.name().to_string(),
             DataValue::from(function.name.as_str()),
@@ -141,13 +142,25 @@ fn process_func(
 }
 
 fn script_put(params: &BTreeMap<String, DataValue>, relation_name: &str) -> String {
-    let entry_names = params.keys().join(", ");
-    let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+    // let entry_names = params.keys().join(", ");
+    let id_keywords = &["id", "function_id"];
+    
+    let key_names = params.keys().filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at").join(", ");
+    let entry_names = params.keys().filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at").join(", ");
+    // let entry_names = params.keys().filter(|k| k.as_str() != "id" && k.as_str() != "at").join(", ");
+
+    // let param_names = params.keys().map(|k| format!("${}", k)).join(", ");
+    
+    let key_param_names = params.keys().filter(|k| id_keywords.contains(&k.as_str()) && k.as_str() != "at").map(|k| format!("${}", k)).join(", ");
+    let param_names = params.keys().filter(|k| !id_keywords.contains(&k.as_str()) && k.as_str() != "at").map(|k| format!("${}", k)).join(", ");
+
     // Should come out looking like:
     // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
     let script = format!(
-        "?[{}] <- [[{}]] :put {}",
-        entry_names, param_names, relation_name
+        "?[at, {}, {}] <- [['ASSERT', {}, {}]] :put {}",
+        key_names, entry_names, 
+        key_param_names, param_names, 
+        relation_name
     );
     script
 }
@@ -190,6 +203,7 @@ mod test {
     #[test]
     fn func_transform() -> Result<(), TransformError> {
         // init_test_tracing(Level::TRACE);
+        tracing::info!("Start test, tracing functioning correctly");
         // TODO: Make separate tests for each of these steps:
         //  - function processing
         //  - param processing
@@ -243,7 +257,12 @@ mod test {
             script,
         );
 
-        let db_result = db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)?;
+        let db_result = db.run_script(&script, func_params, cozo::ScriptMutability::Mutable)
+            .inspect_err(|e| {
+                for link in e.chain() {
+                    tracing::error!("{}", link);
+                }
+            })?;
         tracing::debug!(target: "transform_function",
             "{} {:#?}",
             "  Db return: ".log_step(),

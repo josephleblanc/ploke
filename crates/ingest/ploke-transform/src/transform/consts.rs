@@ -79,13 +79,17 @@ mod tests {
         schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema},
     };
 
+    use ploke_test_utils::init_test_tracing;
+    use tracing::Level;
+
     use super::transform_consts;
     #[test]
     fn test_transform_consts() -> Result<(), Box<TransformError>> {
-        let _ = env_logger::builder()
-            .is_test(true)
-            .format_timestamp(None) // Disable timestamps
-            .try_init();
+        // init_test_tracing(Level::TRACE);
+        // let _ = env_logger::builder()
+        //     .is_test(true)
+        //     .format_timestamp(None) // Disable timestamps
+        //     .try_init();
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
@@ -95,7 +99,12 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         let const_schema = ConstNodeSchema::SCHEMA;
-        const_schema.create_and_insert(&db)?;
+        tracing::info!("identity script:\n{}", const_schema.script_identity());
+        tracing::info!("create script:\n{}", const_schema.script_create());
+        const_schema.create_and_insert(&db)
+            .inspect_err(|e| {
+                tracing::error!("{e}");
+            })?;
 
         let attribute_schema = &AttributeNodeSchema::SCHEMA;
         attribute_schema.create_and_insert(&db)?;

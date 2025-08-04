@@ -189,7 +189,9 @@ pub fn init_test_tracing(level: tracing::Level) {
     use tracing::Level;
 
     let filter = filter::Targets::new()
-        .with_target("debug_dup", Level::ERROR)
+        // .with_target("debug_dup", Level::ERROR)
+        .with_target("db", Level::TRACE)
+        .with_target("", Level::TRACE)
         // .with_target("ploke", level)
         // .with_target("ploke-db", level)
         // .with_target("ploke-embed", level)
