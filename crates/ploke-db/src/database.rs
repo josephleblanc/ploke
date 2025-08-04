@@ -124,15 +124,16 @@ impl Database {
     /// Gets all the file data in the same namespace as the crate name given as argument.
     /// This is useful when you want to compare which files have changed since the database was
     /// last updated.
-    pub fn get_crate_files(&self, crate_name: &str) -> Result< Vec<FileData>, ploke_error::Error > {
+    pub fn get_crate_files(&self, crate_name: &str) -> Result<Vec<FileData>, ploke_error::Error> {
         let script = format!(
             "{} \"{}\"",
-r#"?[id, tracking_hash, namespace, file_path] := 
+            r#"?[id, tracking_hash, namespace, file_path] := 
     *module { id, tracking_hash },
     *file_mod { file_path, namespace, owner_id: id},
     *crate_context { name: crate_name, namespace },
-    crate_name = "#, 
-            crate_name);
+    crate_name = "#,
+            crate_name
+        );
         let ret = self.raw_query(&script)?;
         ret.try_into_file_data()
     }
@@ -150,18 +151,18 @@ r#"?[id, tracking_hash, namespace, file_path] :=
     ///
     /// use ploke_db::Database;
     /// use cozo::ScriptMutability;
-    /// 
+    ///
     /// // Initialize database with schema
     /// let db = Database::init_with_schema().unwrap();
-    /// 
+    ///
     /// // Get initial relations
     /// let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     /// let initial_count = initial_relations.rows.len();
     /// assert!(initial_count > 0, "Should have some relations after schema creation");
-    /// 
+    ///
     /// // Clear all user relations
     /// db.clear_relations().await.unwrap();
-    /// 
+    ///
     /// // Verify no user relations remain
     /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     /// let user_relations: Vec<_> = remaining_relations.rows
@@ -174,7 +175,7 @@ r#"?[id, tracking_hash, namespace, file_path] :=
     ///         }
     ///     })
     ///     .collect();
-    /// 
+    ///
     /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
     /// # })
     /// ```
@@ -186,15 +187,19 @@ r#"?[id, tracking_hash, namespace, file_path] :=
                 "::relations",
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
-            ).map_err(DbError::from)?
+            )
+            .map_err(DbError::from)?
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
-            .filter(|n| !n.contains(":")).join(", "); // keep only user relations
+            .filter(|n| !n.contains(":"))
+            .join(", "); // keep only user relations
 
         let mut script = String::from("::remove ");
         script.extend(rels.split("\""));
-        self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+        self.db
+            .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
         Ok(())
     }
 
@@ -274,7 +279,8 @@ r#"?[id, tracking_hash, namespace, file_path] :=
                 "::relations",
                 BTreeMap::new(),
                 cozo::ScriptMutability::Mutable,
-            ).map_err(DbError::from)?
+            )
+            .map_err(DbError::from)?
             .rows
             .into_iter()
             .map(|r| r[0].to_string())
@@ -283,7 +289,9 @@ r#"?[id, tracking_hash, namespace, file_path] :=
         for index in rels {
             let mut script = String::from("::index drop ");
             script.extend(index.chars().filter(|c| *c == '\"'));
-            self.db.run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable).map_err(DbError::from)?;
+            self.db
+                .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+                .map_err(DbError::from)?;
         }
         Ok(())
     }
@@ -299,14 +307,14 @@ r#"?[id, tracking_hash, namespace, file_path] :=
     /// # tokio_test::block_on(async {
     /// use ploke_db::Database;
     /// use cozo::ScriptMutability;
-    /// 
+    ///
     /// // Initialize database with schema
     /// let db = Database::init_with_schema().unwrap();
-    /// 
+    ///
     /// // Count initial relations
     /// let initial_count = db.count_relations().await.unwrap();
     /// assert!(initial_count > 0, "Should have some relations after schema creation");
-    /// 
+    ///
     /// // Verify count matches ::relations output
     /// let relations_result = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     /// assert_eq!(initial_count, relations_result.rows.len());
@@ -316,11 +324,10 @@ r#"?[id, tracking_hash, namespace, file_path] :=
     pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
         let rel_count = self
             .db
-            .run_script_read_only(
-                "::relations",
-                BTreeMap::new(),
-            ).map_err(DbError::from)?
-            .rows.len();
+            .run_script_read_only("::relations", BTreeMap::new())
+            .map_err(DbError::from)?
+            .rows
+            .len();
         Ok(rel_count)
     }
     // NOTE: the goal of the following todo items is to be able to provide quick and easy calls to
@@ -342,9 +349,8 @@ r#"?[id, tracking_hash, namespace, file_path] :=
 
     // TODO: Add a way to see the last time a relation was changed (given that we implement time
     // travel)
-    
-    // TODO: Add a way to return all the members of a given relation.
 
+    // TODO: Add a way to return all the members of a given relation.
 
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
@@ -359,7 +365,7 @@ r#"?[id, tracking_hash, namespace, file_path] :=
         Ok(QueryResult::from(result))
     }
 
-    pub fn raw_query_mut(&self, script: &str)  -> Result<QueryResult, DbError> { 
+    pub fn raw_query_mut(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
             .db
             .run_script(
@@ -389,17 +395,17 @@ r#"?[id, tracking_hash, namespace, file_path] :=
     pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, ploke_error::Error> {
         let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
         new_db.restore_backup(&path).map_err(DbError::from)?;
-        Ok( Self { db: new_db } )
+        Ok(Self { db: new_db })
     }
 
     pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, ploke_error::Error> {
         let output = self.raw_query("::relations")?;
-        Ok( output.rows.into_iter().filter_map(|r| 
-            r.first().into_iter()
+        Ok(output.rows.into_iter().filter_map(|r| {
+            r.first()
+                .into_iter()
                 .filter_map(|c| c.get_str().iter().map(|s| s.to_string()).next())
                 .next()
-            )
-        )
+        }))
     }
     pub fn relations_vec(&self) -> Result<Vec<String>, ploke_error::Error> {
         let vector = Vec::from_iter(self.iter_relations()?);
@@ -501,25 +507,53 @@ r#"?[id, tracking_hash, namespace, file_path] :=
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
+            let keys_iter = node_type.keys();
+            // Filter out "embedding" so there isn't a conflict in the returned values from the
+            // database vs the added values in the `put`
+            let vals_iter = node_type.vals().filter(|v| *v != "embedding");
+            let key_vals_string = keys_iter.chain(vals_iter).join(", ");
+            let rel_identity = node_type.identity();
 
-            let script2 = [
-                r#"
+            // A bit convoluted, but should ultimately come out to something like:
+            //
+            // {
+            //     ?[new_id, new_embedding] <- $updates
+            //     :replace _new {new_id, new_embedding}
+            // }
+            // {
+            //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash, 
+            //              cfgs, return_type_id, body, module_id] 
+            //      := 
+            //         *_new{new_id: id, new_embedding: embedding},
+            //         at = 'ASSERT',
+            //         *function {id, name, docstring, vis_kind, vis_path, span, tracking_hash,
+            //              cfgs, return_type_id, body, module_id}
+            //     :put function {id, at => name, docstring, vis_kind, vis_path, span, tracking_hash,
+            //              cfgs, return_type_id, body, module_id, embedding}
+            // }
+            let script2_first_block = [r#"
 {
     ?[new_id, new_embedding] <- $updates 
     :replace _new {new_id, new_embedding} 
-} 
+}"#]
+            .into_iter();
+            let script2_second_block = [
+                r#"
 { 
-    ?[id, embedding] := *_new{new_id: id, new_embedding: embedding}, 
-    *"#,
-                rel_name,
-                r#"{id}
-    :update "#,
-                rel_name,
-                r#" {id, embedding}
-}
-"#,
+    ?[at, embedding, "#, &key_vals_string, r#"] := *_new{new_id: id, new_embedding: embedding}, 
+        at = 'ASSERT',
+        *"#, rel_name, " { "
             ]
-            .join("");
+            .into_iter();
+            let mut script2 = String::from_iter(
+                script2_first_block
+                    .chain(script2_second_block)
+            );
+            script2.push_str(&key_vals_string);
+            script2.push_str("}\n");
+            script2.push_str(":put ");
+            script2.push_str(&rel_identity);
+            script2.push_str("\n}");
 
             let result = self
                 .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
@@ -529,7 +563,10 @@ r#"?[id, tracking_hash, namespace, file_path] :=
                     tracing::error!("{}", error_str);
                     DbError::Cozo(error_str)
                 })
-                .inspect_err(|e| tracing::error!("{}", e));
+                .inspect_err(|e| {
+                    tracing::error!("{}", e);
+                    tracing::error!("script2:\n{}", &script2)
+                });
             if result.is_err() {
                 tracing::error!("full_result: {:#?}", result);
             }

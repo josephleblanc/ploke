@@ -152,36 +152,35 @@ macro_rules! define_schema {
         }
 
         impl $schema_name {
+            /// An iterator over the keys for a given schema (the fields for the scheme on the left
+            /// of the => symbol in cozo)
+            /// e.g. `id`, `owner_id`, etc, not including `at`
+            pub fn keys(&self) -> impl Iterator<Item = &&'static str> {
+                Self::SCHEMA_FIELDS.iter().filter(|f| ID_KEYWORDS.contains(f))
+            }
+
+            /// An iterator over the values for a given schema (the fields for the scheme on the right
+            /// of the => symbol in cozo)
+            /// e.g. `name`, `items`, etc
+            pub fn vals(&self) -> impl Iterator<Item = &&'static str> {
+                Self::SCHEMA_FIELDS.iter().filter(|f| !ID_KEYWORDS.contains(f))
+            }
+
             pub fn script_identity(&self) -> String {
                 let fields = vec![
                     $(
-                        // if self.$field_name.st() != "id" && self.$field_name.st() != "at" {
-                        //     format!("{}", self.$field_name.st())
-                        // } else { "skip_me_id".to_string() }
-                        // if !ID_KEYWORDS.contains(&self.$field_name.st()) && self.$field_name.st() != "at" {
                             format!("{}", self.$field_name.st())
-                        // } else { "skip_me_id".to_string() }
                     ),+
                 ];
-                // if fields.contains(&"skip_me_id".to_string()) {
                 let keys = fields.iter().filter(|f| ID_KEYWORDS.contains(&f.as_str())).join(", ");
                 let vals = fields.iter().filter(|f| !ID_KEYWORDS.contains(&f.as_str())).join(", ");
                     format!("{} {{ {keys}, at => {vals} }}", $relation)
-                //
-                // } else {
-                //     format!("{} {{ {} }}", $relation, fields.iter().join(", "))
-                // }
             }
 
             pub fn script_create(&self) -> String {
                 let fields = vec![
                     $(
-                        // if self.$field_name.st() != "id" {
-                        //     format!("{}: {}", self.$field_name.st(), self.$field_name.dv())
-                        // } else { "skip_me_id".to_string() }
-                        // if !ID_KEYWORDS.contains( &self.$field_name.st() ) {
                             format!("{}: {}", self.$field_name.st(), self.$field_name.dv())
-                        // } else { keys.push(self.$field_name.st()); "skip_me_id".to_string() }
                     ),+
                 ];
                 let keys = fields.iter().filter(|f| ID_VAL_KEYWORDS.contains(&f.as_str())).join(", ");
@@ -190,17 +189,12 @@ macro_rules! define_schema {
             }
 
             pub fn script_put(&self, params: &BTreeMap<String, cozo::DataValue>) -> String {
-                // let key = "id";
-                // let entry_names = params.keys().filter(|k| *k != key).join(", ");
-                // let param_names = params.keys().filter(|k| *k != key).map(|k| { 
-                //     format!("${}", k)
-                // }).join(", ");
                 let lhs_keys = params.keys()
                         .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
                         .join(", ");
                 let lhs_entries = params.keys()
-                    .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
-                    .join(", ");
+                        .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
+                        .join(", ");
                 let rhs_keys = params.keys()
                         .filter(|k| ID_KEYWORDS.contains(&k.as_str()))
                         .map(|k| format!("${}", k))
@@ -209,15 +203,9 @@ macro_rules! define_schema {
                         .filter(|k| !ID_KEYWORDS.contains(&k.as_str()))
                         .map(|k| format!("${}", k))
                         .join(", ");
-                // Should come out looking like:
-                // "?[owner_id, param_index, kind, name, type_id] <- [[$owner_id, $param_index, $kind, $name, $type_id]] :put generic_params",
                 let script = format!(
                     "?[{}, at, {}] <- [[{}, 'ASSERT', {}]] :put {}",
                     lhs_keys, lhs_entries, rhs_keys, rhs_entries,
-                    // if params.keys().contains(&key.to_string()) {format!("{}, {}", key, entry_names ) }
-                    // else { entry_names },
-                    // if params.keys().contains(&key.to_string()) {format!("${}, {}", key, param_names )}
-                    // else { param_names },
                     self.script_identity()
                 );
                 script
