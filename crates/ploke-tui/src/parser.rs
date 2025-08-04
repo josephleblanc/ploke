@@ -6,8 +6,7 @@ use std::{
 
 use ploke_db::Database;
 use syn_parser::{
-    ParsedCodeGraph, discovery::run_discovery_phase, error::SynParserError,
-    parser::analyze_files_parallel,
+    discovery::run_discovery_phase, error::SynParserError, parser::analyze_files_parallel, ModuleTree, ParsedCodeGraph
 };
 
 /// Returns the directory to process.
@@ -68,6 +67,38 @@ pub fn run_parse(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<(), p
         "Setup".log_step()
     );
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct ParserOutput {
+    pub merged: ParsedCodeGraph,
+    pub tree: ModuleTree
+}
+
+pub fn run_parse_no_transform(db: Arc<Database>, target_dir: Option<PathBuf>) -> Result<ParserOutput, ploke_error::Error> {
+    use syn_parser::utils::LogStyle;
+
+    let target = resolve_target_dir(target_dir)?;
+    tracing::info!(
+        "{}: run the parser on {}",
+        "Parse".log_step(),
+        target.display()
+    );
+
+    let discovery_output =
+        run_discovery_phase(&target, &[target.clone()]).map_err(ploke_error::Error::from)?;
+
+    let results: Vec<Result<ParsedCodeGraph, SynParserError>> =
+        analyze_files_parallel(&discovery_output, 0);
+
+    let graphs: Vec<_> = results
+        .into_iter()
+        .collect::<Result<_, _>>()
+        .map_err(ploke_error::Error::from)?;
+
+    let mut merged = ParsedCodeGraph::merge_new(graphs)?;
+    let tree = merged.build_tree_and_prune()?;
+    Ok( ParserOutput {merged, tree} )
 }
 
 #[cfg(test)]

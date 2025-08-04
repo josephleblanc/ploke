@@ -118,6 +118,7 @@
 
 use futures::future::join_all;
 use itertools::Itertools;
+use ploke_core::ChangedFileData;
 use ploke_core::EmbeddingData;
 use ploke_core::FileData;
 use ploke_core::TrackingHash;
@@ -190,7 +191,7 @@ impl IoManagerHandle {
     pub async fn scan_changes_batch(
         &self,
         requests: Vec<FileData>,
-    ) -> Result<Result<Vec<Option<PathBuf>>, PlokeError>, IoError> {
+    ) -> Result<Result<Vec<Option<ChangedFileData>>, PlokeError>, IoError> {
         let (responder, response_rx) = oneshot::channel();
         let request = IoRequest::ScanChangeBatch {
             requests,
@@ -233,7 +234,7 @@ enum IoRequest {
     },
     ScanChangeBatch {
         requests: Vec<FileData>,
-        responder: oneshot::Sender<Result<Vec<Option<PathBuf>>, PlokeError>>,
+        responder: oneshot::Sender<Result<Vec<Option<ChangedFileData>>, PlokeError>>,
     },
 }
 
@@ -559,7 +560,7 @@ impl IoManager {
     async fn handle_scan_batch(
         requests: Vec<FileData>,
         semaphore: Arc<Semaphore>,
-    ) -> Result<Vec<Option<PathBuf>>, PlokeError> {
+    ) -> Result<Vec<Option<ChangedFileData>>, PlokeError> {
         use futures::stream::StreamExt;
         let concurrency_limit = semaphore.available_permits();
         let mut futs = Vec::new();
@@ -583,7 +584,7 @@ impl IoManager {
     async fn check_file_hash(
         file_data: FileData,
         semaphore: Arc<Semaphore>,
-    ) -> Result<Option<PathBuf>, PlokeError> {
+    ) -> Result<Option<ChangedFileData>, PlokeError> {
         let _permit = semaphore
             .acquire()
             .await
@@ -601,7 +602,7 @@ impl IoManager {
         let new_hash = TrackingHash::generate(file_data.namespace, &file_data.file_path, &tokens);
 
         if new_hash != file_data.file_tracking_hash {
-            Ok(Some(file_data.file_path))
+            Ok(Some(ChangedFileData::from_file_data(file_data, new_hash)))
         } else {
             Ok(None)
         }

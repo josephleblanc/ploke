@@ -1,19 +1,21 @@
-use std::{collections::BTreeMap, env::current_dir, ops::ControlFlow, path::PathBuf, str::FromStr};
+use std::{collections::{BTreeMap, HashSet}, env::current_dir, ops::ControlFlow, path::PathBuf, str::FromStr};
 
 use crate::{
     chat_history::{Message, MessageKind},
-    parser::resolve_target_dir,
+    parser::{resolve_target_dir, run_parse_no_transform, ParserOutput},
     user_config::ProviderRegistry,
     utils::helper::find_file_by_prefix,
 };
 use itertools::Itertools;
+use ploke_core::NodeId;
 use ploke_db::{
     Database, DbError, NodeType, create_index_warn, replace_index_warn, search_similar,
 };
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
+use ploke_transform::macro_traits::HasAnyNodeId;
 use serde::{Deserialize, Serialize};
-use syn_parser::parser::types::TypeNode;
+use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, GraphAccess, TestIds};
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
@@ -358,7 +360,6 @@ impl StateCommand {
             NavigateList { .. } => "NavigateList",
             NavigateBranch { .. } => "NavigateBranch",
             CreateAssistantMessage { .. } => "CreateAssistantMessage",
-            // TODO: fill out the following
             IndexWorkspace { .. } => "IndexWorkspace",
             PauseIndexing => "PauseIndexing",
             ResumeIndexing => "ResumeIndexing",
@@ -370,6 +371,7 @@ impl StateCommand {
             LoadQuery { .. } => "LoadQuery",
             ReadQuery { .. } => "ReadQuery",
             SaveDb => "SaveDb",
+            #[allow(non_snake_case)]
             LoadDb => "LoadDb",
             // ... other variants
         }
@@ -1011,6 +1013,8 @@ async fn scan_for_change(state: &Arc<AppState>, scan_tx: oneshot::Sender<()>) ->
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
+    //  - Note that this does not do anything for those files which may have been added, which will
+    //  be handled in parsing during the IndexFiles event process mentioned in step 5 below.
     let result = state.io_handle.scan_changes_batch(file_data).await?;
     let vec_ok = result?;
 
@@ -1024,10 +1028,36 @@ async fn scan_for_change(state: &Arc<AppState>, scan_tx: oneshot::Sender<()>) ->
         };
         return Ok(());
     } else {
+        // 5. if changes, send IndexFiles event (not yet made) or handle here.
+        //  Let's see how far we get handling it here first.
+        //  - Since we are parsing the whole target in any case, we might as well do it
+        //  concurrently. Test sequential appraoch first, then move to be parallel earlier.
 
+        // TODO: Move this into `syn_parser` probably
+        // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
+        // on I'll do something more efficient.
+        let ParserOutput { mut merged, tree } = run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
+        // WARN: coercing into ModuleNodeId with the test method escape hatch, do properly
+        let module_ids = vec_ok.into_iter().filter_map(|f| f).map(|f| ModuleNodeId::new_test(NodeId::Synthetic(f.id)));
+        // WARN: Half-assed implementation, this should be a recurisve function instead of simple
+        // collection.
+        let module_set: HashSet<ModuleNodeId> = module_ids.collect();
+        let item_set: HashSet<AnyNodeId> = module_set.iter()
+            .filter_map(|id| tree.modules().get(id))
+            .filter_map(|m| m.items())
+            .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
+            .collect();
+        let union = module_set.iter().copied().map(|m_id| m_id.as_any()).collect::<HashSet<AnyNodeId>>()
+            .union(&item_set).copied().collect::<HashSet<AnyNodeId>>();
+        // filter relations
+        merged.graph.relations.retain(|r| {
+            union.contains(&r.source()) || union.contains(&r.target())
+        });
+        // filter nodes
+        merged.retain_all(union);
+        // TODO: Add validation step here.
     }
     //
-    // 5. if changes, send IndexFile event (not yet made)
 
     Ok(())
 }

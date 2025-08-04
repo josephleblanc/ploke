@@ -3660,6 +3660,7 @@ dependencies = [
  "nonzero_ext",
  "num_cpus",
  "once_cell",
+ "ploke-core",
  "ploke-db",
  "ploke-embed",
  "ploke-error",
