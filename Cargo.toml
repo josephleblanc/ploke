@@ -19,6 +19,7 @@ exclude = [
     "tests/fixture_crates/fixture_path_resolution",
     "tests/fixture_crates/fixture_spp_edge_cases",
     "tests/fixture_crates/fixture_spp_edge_cases_no_cfg",
+    "tests/fixture_crates/fixture_update_embed",
     "fixture_test_crate",
 ]
 resolver = "2"

@@ -244,6 +244,9 @@ pub mod system {
             is_success: bool,
             error: Option<&'static str>,
         },
+        ReIndex {
+            workspace: String
+        }
     }
 }
 
@@ -303,6 +306,7 @@ impl AppEvent {
             AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,

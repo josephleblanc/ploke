@@ -190,8 +190,11 @@ pub fn init_test_tracing(level: tracing::Level) {
 
     let filter = filter::Targets::new()
         // .with_target("debug_dup", Level::ERROR)
-        .with_target("db", Level::TRACE)
-        .with_target("", Level::TRACE)
+        .with_target("db", Level::ERROR)
+        .with_target("ploke_tui::app_state", Level::INFO)
+        .with_target("ploke_embed", Level::TRACE)
+        .with_target("specific_target", Level::TRACE)
+        .with_target("", Level::INFO)
         // .with_target("ploke", level)
         // .with_target("ploke-db", level)
         // .with_target("ploke-embed", level)
@@ -203,7 +206,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_writer(std::io::stderr)
         .with_file(true)
         .with_line_number(true)
-        .with_target(false) // Show module path
+        .with_target(true) // Show module path
         .with_level(true) // Show log level
         .without_time() // Remove timestamps
         .with_ansi(true)

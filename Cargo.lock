@@ -3665,6 +3665,7 @@ dependencies = [
  "ploke-embed",
  "ploke-error",
  "ploke-io",
+ "ploke-test-utils",
  "ploke-transform",
  "rand 0.9.1",
  "ratatui",

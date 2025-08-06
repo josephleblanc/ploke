@@ -303,6 +303,9 @@ impl App {
                                     });
                                 }
                             },
+                            SystemEvent::ReIndex { workspace } => {
+                                    self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: false });
+                                }
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
                     }
@@ -675,7 +678,7 @@ impl App {
                 // Validate the directory exists
                 match std::fs::metadata(&workspace) {
                     Ok(metadata) if metadata.is_dir() => {
-                        self.send_cmd(StateCommand::IndexWorkspace { workspace });
+                        self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: true });
                     }
                     Ok(_) => {
                         self.send_cmd(StateCommand::AddMessageImmediate {
