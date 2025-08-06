@@ -817,13 +817,13 @@ impl Database {
         let mut base_script = String::new();
         // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     needs_embedding[id, name, hash, span] := *"#;
-        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, is_null(embedding)
 
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
@@ -831,8 +831,8 @@ impl Database {
         needs_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
+        *module{id: mod_id, tracking_hash: file_hash @ 'NOW' },
+        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW' },
         to_string(id) > to_string($cursor),
         string_id = to_string(id)
 

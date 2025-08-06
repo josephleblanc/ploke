@@ -15,7 +15,7 @@ use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, Inde
 use ploke_io::IoManagerHandle;
 use ploke_transform::{macro_traits::HasAnyNodeId, transform::transform_parsed_graph};
 use serde::{Deserialize, Serialize};
-use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, GraphAccess, TestIds};
+use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, GraphAccess, TestIds};
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
@@ -1052,6 +1052,25 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
         //     ModuleNodeId::new_test(NodeId::Synthetic(id.id))));
         let module_set: HashSet<ModuleNodeId> = module_ids.collect();
 
+        let any_node_mod_set: Vec<AnyNodeId> = module_set.iter().map(|m_id| m_id.as_any()).collect();
+        let printable_union_items = printable_nodes(&merged, any_node_mod_set.iter());
+        tracing::info!("Nodes in file set has count: {}\nitems:\n{}", module_set.len(),
+            printable_union_items);
+
+        let item_map_printable = module_set.iter()
+            .filter_map(|id| tree.modules().get(id)
+                .filter(|m| m.items().is_some())
+                .map(|m| { 
+                    let module = format!("name: {} | is_file: {} | id: {}", m.name, m.id.as_any(), m.is_file_based());
+                    let items = m.items().unwrap()
+                        .iter().filter_map(|item_id| merged.find_any_node(item_id.as_any()).map(|n| {
+                            format!("\tname: {} | id: {}", n.name(), n.any_id())
+                    } )).join("\n");
+                    format!("{}\n{}", module, items)
+                })
+            ).join("\n");
+        tracing::info!("--- items by module ---\n{}", item_map_printable);
+
         // Gets all items that are contained by the modules.
         //  - May be missing some of the secondary node types like params, etc
         let item_set: HashSet<AnyNodeId> = module_set.iter()
@@ -1061,6 +1080,10 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
             .collect();
         let union = module_set.iter().copied().map(|m_id| m_id.as_any()).collect::<HashSet<AnyNodeId>>()
             .union(&item_set).copied().collect::<HashSet<AnyNodeId>>();
+
+        tracing::info!("Nodes in union set:");
+        let printable_union_items = printable_nodes(&merged, union.iter());
+        tracing::info!("prinable_union_items:\n{}", printable_union_items);
         // filter relations
         merged.graph.relations.retain(|r| union.contains(&r.source()) || union.contains(&r.target()));
         // filter nodes
@@ -1089,6 +1112,17 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
     //
 
     Ok(())
+}
+
+fn printable_nodes<'a>(merged: &syn_parser::ParsedCodeGraph, union: impl Iterator<Item = &'a AnyNodeId>) -> String {
+    let mut printable_union_items = String::new();
+    for id in union.into_iter() {
+        if let Some( node ) = merged.find_any_node(*id) {
+            let printable_node = format!("name: {} | id: {}\n", node.name(), id);
+            printable_union_items.push_str(&printable_node);
+        }
+    }
+    printable_union_items
 }
 
 async fn wait_on_oneshot(
@@ -1439,7 +1473,8 @@ mod tests {
 
         // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
         let script = r#"?[name, time, is_assert, maybe_null] := *function{ at, name, embedding }
-                                or *struct{ at, name, embedding }, 
+                                or *struct{ at, name, embedding } 
+                                or *module{ at, name, embedding }, 
                                   time = format_timestamp(at),
                                   is_assert = to_bool(at),
                                   maybe_null = !is_null(embedding)
