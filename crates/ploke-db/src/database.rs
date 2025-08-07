@@ -678,9 +678,9 @@ impl Database {
     pub fn count_unembedded_files(&self) -> Result<usize, DbError> {
         let script = r#"
             ?[count( id )] := 
-                *module { id, tracking_hash },
-                *file_mod { owner_id: id, namespace, file_path },
-                *crate_context { namespace }
+                *module { id, tracking_hash @ 'NOW' },
+                *file_mod { owner_id: id, namespace, file_path @ 'NOW' },
+                *crate_context { namespace @ 'NOW' }
         "#;
 
         let result = self
@@ -993,17 +993,19 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         query.push_str(lhs);
         for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
             query.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span }}",
+                "*{} {{ id, embedding: null, tracking_hash, span @ 'NOW' }}",
                 primary_node.relation_str()
             ));
             if i + 1 < NodeType::primary_nodes().len() {
                 query.push_str(" or ")
             }
         }
+        tracing::info!("count nodes with query:\n{}", query);
         let result = self
             .db
             .run_script_read_only(&query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
+        tracing::info!("result of query:\n{:?}", result);
 
         Self::into_usize(result)
     }
@@ -1014,6 +1016,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
             .first()
             .and_then(|row| row.first())
             .and_then(|v| v.get_int())
+            .inspect(|v| tracing::info!("the value in first row, first cell is: {:?}", v))
             .map(|n| n as usize)
             .ok_or(DbError::NotFound)
     }

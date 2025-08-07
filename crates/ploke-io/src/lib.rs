@@ -484,7 +484,7 @@ impl IoManager {
 
         // Verify against the expected tracking hash
         // TODO: Replace just using the first file_tracking_hash with a better method. we should
-        // probably just be sending the file tracking hash along once with the OrederedRequest.
+        // probably just be sending the file tracking hash along once with the OrderedRequest.
         if actual_tracking_hash != requests[0].request.file_tracking_hash {
             for req in requests {
                 tracing::error!(

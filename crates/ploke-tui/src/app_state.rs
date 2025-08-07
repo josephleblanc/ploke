@@ -15,7 +15,7 @@ use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, Inde
 use ploke_io::IoManagerHandle;
 use ploke_transform::{macro_traits::HasAnyNodeId, transform::transform_parsed_graph};
 use serde::{Deserialize, Serialize};
-use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, GraphAccess, TestIds};
+use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, resolve::RelationIndexer, GraphAccess, ModuleTree, TestIds};
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
@@ -1057,19 +1057,31 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
         tracing::info!("Nodes in file set has count: {}\nitems:\n{}", module_set.len(),
             printable_union_items);
 
-        let item_map_printable = module_set.iter()
-            .filter_map(|id| tree.modules().get(id)
-                .filter(|m| m.items().is_some())
-                .map(|m| { 
-                    let module = format!("name: {} | is_file: {} | id: {}", m.name, m.id.as_any(), m.is_file_based());
-                    let items = m.items().unwrap()
-                        .iter().filter_map(|item_id| merged.find_any_node(item_id.as_any()).map(|n| {
-                            format!("\tname: {} | id: {}", n.name(), n.any_id())
-                    } )).join("\n");
-                    format!("{}\n{}", module, items)
-                })
-            ).join("\n");
-        tracing::info!("--- items by module ---\n{}", item_map_printable);
+        print_module_set(&merged, &tree, &module_set);
+
+        // NOTE: Better implementation to get all nodes in the target files that is recursive
+        let mut full_mod_set: HashSet<AnyNodeId> = HashSet::new();
+        for mod_id in module_set.iter() {
+            full_mod_set = mods_in_file(*mod_id, full_mod_set, &tree);
+            // full_mod_set.insert(mod_id.as_any());
+            let printable_nodes = printable_nodes(&merged, full_mod_set.iter());
+            tracing::info!("recursive printable nodes for module_id:\n{}\n{}", mod_id, printable_nodes);
+        }
+        fn mods_in_file(current: ModuleNodeId, mut mods: HashSet<AnyNodeId>, tree: &ModuleTree) -> HashSet<AnyNodeId> {
+            let start_len = mods.len();
+            if let Some(tree_rels) = tree.get_iter_relations_from(&current.as_any()).map(|it| it.filter(|r| r.rel().is_contains())) {
+                for tree_rel in tree_rels {
+                    let maybe_next = tree_rel.rel().target();
+                    mods.insert(maybe_next);
+                if tree.get_iter_relations_from(&maybe_next).is_some_and(|mut trels| trels.any(|tr| tr.rel().is_contains())) {
+                        let next_mod: ModuleNodeId = maybe_next.try_into()
+                            .expect("Invariant Violated: Contains should only be from ModuleNode -> PrimaryNode, found other");
+                        mods = mods_in_file(next_mod, mods, tree);
+                    }
+                }
+            }
+            mods
+        }
 
         // Gets all items that are contained by the modules.
         //  - May be missing some of the secondary node types like params, etc
@@ -1078,16 +1090,24 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
             .filter_map(|m| m.items())
             .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
             .collect();
-        let union = module_set.iter().copied().map(|m_id| m_id.as_any()).collect::<HashSet<AnyNodeId>>()
+        let union = full_mod_set.iter().copied().map(|m_id| m_id.as_any())
+            .chain(module_set.iter().copied().map(|m_id| m_id.as_any()))
+            .collect::<HashSet<AnyNodeId>>()
+            // let union = module_set.iter().copied().map(|m_id| m_id.as_any()).collect::<HashSet<AnyNodeId>>()
             .union(&item_set).copied().collect::<HashSet<AnyNodeId>>();
+            // for now filter out anything that isn't one of the PrimaryNode types
+        let filtered_union = union.into_iter().filter(|&id| PrimaryNodeId::try_from(id).is_ok())
+            // .filter(|&id| !matches!(id, AnyNodeId::Import(_)) || !matches!(id, AnyNodeId::Impl(_)))
+            .collect::<HashSet<AnyNodeId>>();
 
         tracing::info!("Nodes in union set:");
-        let printable_union_items = printable_nodes(&merged, union.iter());
+        let printable_union_items = printable_nodes(&merged, filtered_union.iter());
         tracing::info!("prinable_union_items:\n{}", printable_union_items);
         // filter relations
-        merged.graph.relations.retain(|r| union.contains(&r.source()) || union.contains(&r.target()));
+        merged.graph.relations.retain(|r| filtered_union.contains(&r.source()) || filtered_union.contains(&r.target()));
         // filter nodes
-        merged.retain_all(union);
+        merged.retain_all(filtered_union);
+        // merged.graph.modules.retain(|m| m.is_file_based() || m.is_inline());
 
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             tracing::error!("Error transforming partial graph into database:\n{e}");
@@ -1112,6 +1132,22 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
     //
 
     Ok(())
+}
+
+fn print_module_set(merged: &syn_parser::ParsedCodeGraph, tree: &ModuleTree, module_set: &HashSet<ModuleNodeId>) {
+    let item_map_printable = module_set.iter()
+        .filter_map(|id| tree.modules().get(id)
+            .filter(|m| m.items().is_some())
+            .map(|m| { 
+                let module = format!("name: {} | is_file: {} | id: {}", m.name, m.id.as_any(), m.is_file_based());
+                let items = m.items().unwrap()
+                    .iter().filter_map(|item_id| merged.find_any_node(item_id.as_any()).map(|n| {
+                        format!("\tname: {} | id: {}", n.name(), n.any_id())
+                } )).join("\n");
+                format!("{}\n{}", module, items)
+            })
+        ).join("\n");
+    tracing::info!("--- items by module ---\n{}", item_map_printable);
 }
 
 fn printable_nodes<'a>(merged: &syn_parser::ParsedCodeGraph, union: impl Iterator<Item = &'a AnyNodeId>) -> String {
@@ -1314,7 +1350,12 @@ async fn add_msg_immediate(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Index;
+
+    use cozo::DataValue;
+    use ploke_db::QueryResult;
     use ploke_embed::local::EmbeddingConfig;
+    use syn_parser::parser::nodes::ToCozoUuid;
 
     use crate::tracing_setup::init_tracing;
 
@@ -1472,9 +1513,11 @@ mod tests {
         set_global_event_bus(event_bus.clone()).await;
 
         // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
-        let script = r#"?[name, time, is_assert, maybe_null] := *function{ at, name, embedding }
-                                or *struct{ at, name, embedding } 
-                                or *module{ at, name, embedding }, 
+        let script = r#"?[name, time, is_assert, maybe_null, id] := *function{ id, at, name, embedding }
+                                or *struct{ id, at, name, embedding } 
+                                or *module{ id, at, name, embedding } 
+                                or *static{ id, at, name, embedding } 
+                                or *const{ id, at, name, embedding }, 
                                   time = format_timestamp(at),
                                   is_assert = to_bool(at),
                                   maybe_null = !is_null(embedding)
@@ -1508,11 +1551,79 @@ mod tests {
             }
         }
 
+        // items in changed file, expect to be embedded initially (before scan sets them to null
+        // again)
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
         // print database output after indexing
         // or *struct{name, id, embedding & 'NOW'}
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
         tracing::info!("rows from db:\n{printable_rows}");
+
+        fn iter_col<'a>(query_result: &'a QueryResult, col_title: &str) -> Option< impl Iterator<Item = &'a DataValue> > {
+            let col_idx = query_result.headers.iter().enumerate().find(|(idx, col)| col.as_str() == col_title)
+                .map(|(idx, col)| idx)?;
+            Some( query_result.rows.iter().map(move |r| r.index(col_idx)  ) )
+        }
+        fn is_id_embed_null(db_handle: &Database, ty: NodeType, id: AnyNodeId) -> Result< bool > {
+            let rel_name = ty.relation_str();
+            let cozo_id = id.to_cozo_uuid();
+            let one_script = format!(
+                "?[name, item_id, is_embedding_null] := *{rel_name}{{ name, id: item_id, embedding @ 'NOW' }},
+                    is_embedding_null = is_null(embedding),
+                    item_id = {cozo_id}"
+            );
+            let query = db_handle.raw_query(&one_script)?;
+            let is_embedding_null_now = iter_col(&query, "is_embedding_null").expect("column not found")
+                .next().expect("row not found")
+                .get_bool().expect("cell not expected datatype (bool)");
+            Ok(is_embedding_null_now)
+        }
+        fn is_name_embed_null(db_handle: &Database, ty: NodeType, name: &str) -> Result< bool > {
+            let rel_name = ty.relation_str();
+            let one_script = format!(
+                "?[item_name, id, is_embedding_null] := *{rel_name}{{ name: item_name, id, embedding @ 'NOW' }},
+                    is_embedding_null = is_null(embedding),
+                    item_name = {name:?}"
+            );
+            let query = db_handle.raw_query(&one_script)?;
+            let is_embedding_null_now = iter_col(&query, "is_embedding_null").expect("column not found")
+                .next().expect("row not found")
+                .get_bool().expect("cell not expected datatype (bool)");
+            Ok(is_embedding_null_now)
+        }
+        let one_script = r#"
+            ?[name, id, is_embedding_null] := *const{ name, id, embedding @ 'NOW' },
+                is_embedding_null = is_null(embedding)
+        "#;
+        let query_one = db_handle.raw_query(one_script)?;
+        let is_const_embedding_null_now = iter_col(&query_one, "is_embedding_null").expect("column not found")
+            .next().expect("row not found")
+            .get_bool().expect("cell not expected datatype (bool)");
+        assert!(!is_const_embedding_null_now);
+
+        // items in changed file, expect to be embedded initially (before scan sets them to null
+        // again)
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
         // ----- start test function ------
         let (scan_tx, scan_rx) = oneshot::channel();
@@ -1520,16 +1631,34 @@ mod tests {
         tracing::info!("result of scan_for_change: {:?}", result);
         // ----- end test start test ------
 
+
         
         tracing::info!("waiting for scan_rx");
 
         // ----- await on end of test function `scan_for_change` -----
-        let _ = scan_rx.await;
+        match scan_rx.await {
+            Ok(_) => tracing::info!("scan_rx received for end of scan_for_change"),
+            Err(_) => tracing::info!("error in scan_rx awaiting on end of scan_for_change")
+        };
+
         
         // print database output after scan
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
         tracing::info!("rows from db:\n{printable_rows}");
+
+        // Nothing should have changed after running scan on the target when the target has not
+        // changed.
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // Same here
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
         // ----- make change to target file -----
         let mut target_file = PathBuf::new();
@@ -1565,6 +1694,18 @@ mod tests {
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
         tracing::info!("rows from db:\n{printable_rows}");
 
+        // items in changed file, expect to have null embeddings after scan
+        assert!(is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
 
         // -- simulating sending response from app back to index --
         // At the end of `scan_for_change`, an `AppEvent` is sent, which is processed inside the
@@ -1591,6 +1732,18 @@ mod tests {
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
         tracing::info!("rows from db:\n{printable_rows}");
+
+        // items in changed file, expect to have embeddings again after scan
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
         tracing::info!("changing back:\n{}", target_file.display());
         let contents = std::fs::read_to_string(&target_file)?;
