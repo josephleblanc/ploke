@@ -6,7 +6,7 @@ pub enum InternalError {
     CompilerError(String),
 
     #[error("Unexpected state: {0}")]
-    InvalidState(String),
+    InvalidState(&'static str),
 
     #[error("Feature not implemented: {0}")]
     NotImplemented(String),

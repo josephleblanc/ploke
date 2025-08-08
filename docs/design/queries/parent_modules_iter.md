@@ -60,3 +60,103 @@ Returns:
 |"SubItem"|"sub_imports"|
 |"TupleStruct"|"structs"|
 |"UnitStruct"|"structs"|
+
+
+### All module, function, struct nodes within target file (not including file-level mod itself)
+- Recursively queries the parents of each item, stopping with the target file.
+- Does not include the file-based module which is the parent itself.
+- arbitrarily has a limit of 12, which could just as easily be removed
+  - same re: sorting by hash (which is actually not sorting by hash, see cozo docs on uuid ordering)
+
+
+```
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc],
+    *file_mod{owner_id: asc}
+
+needs_embedding[id, name, hash, span] :=
+    *module{id, name, tracking_hash: hash, span, embedding }
+    or *function{id, name, tracking_hash: hash, span, embedding }
+    or *struct{id, name, tracking_hash: hash, span, embedding},
+    !is_null(embedding)
+
+is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+
+batch[id, name, target_file, file_hash, hash, span, namespace] :=
+    needs_embedding[id, name, hash, span],
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *module{id: mod_id, tracking_hash: file_hash },
+    *file_mod {owner_id: mod_id, file_path: target_file, namespace },
+    target_file = "crates/ploke-tui/src/lib.rs"
+
+?[id, name, target_file, file_hash, hash, span, namespace] :=
+    batch[id, name, target_file, file_hash, hash, span, namespace]
+    :sort id
+    :limit 10
+```
+
+### Time-travel with Recursion
+
+Finds all the functions in the target file that are descendants of the file-level module for that file.
+
+In other words finds all functions within the target file.
+```cozo
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc],
+    *file_mod{owner_id: asc}
+
+needs_update[id, name, hash, span, embedding] :=
+    *function{id, name, tracking_hash: hash, span, embedding @ 'NOW' },
+    !is_null(embedding)
+
+batch[id, target_file, name, hash, span, embedding] := needs_update[id, name, hash, span, embedding],
+    ancestor[id, owner_id],
+    *file_mod {file_path: target_file, owner_id @ 'NOW' },
+    target_file = "crates/ploke-tui/src/app_state.rs"
+
+?[id, file_path, name, hash, span, embedding] := batch[id, file_path, name, hash, span, embedding]
+```
+
+Time travel with retract
+```cozo
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+needs_update[id, name, at, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, embedding, module_id, body] :=
+    *function{id, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, embedding, module_id, body @ 'NOW' },
+    !is_null(embedding),
+    at = 'RETRACT'
+
+?[id, name, at, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, embedding, module_id, body] := needs_update[id, name, at, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, embedding, module_id, body]
+
+```
+
+```cozo
+:put function {id, at => name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, embedding, module_id, body}
+```
+
+Get all of the currently valid functions in the database that have embeddings and retract them.
+```cozo
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+needs_update[id, at, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, module_id, body] :=
+    *function{id, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, module_id, body @ 'NOW'},
+    !is_null(embedding),
+    at = 'RETRACT',
+
+?[id, at, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, module_id, body] := needs_update[id, at, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, module_id, body]
+
+:put function { id, at, name, docstring, embedding, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, module_id, body }
+```
+
+

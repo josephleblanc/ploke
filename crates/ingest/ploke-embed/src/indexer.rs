@@ -295,7 +295,11 @@ impl IndexerTask {
                         break;
                     } else {
                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        // shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        match shutdown.send(()) {
+                            Ok(_) => tracing::info!("Sending shutdown message"),
+                            Err(e) => tracing::error!("Cannot send shutdown message, other side dropped"),
+                        };
                         // break;
                     }
                     let task_result = res.expect("Task panicked");
@@ -338,33 +342,34 @@ impl IndexerTask {
             .into_iter()
             .flat_map(|nr| nr.rows)
             .enumerate()
-            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
-            .for_each(|(i, idx, name)| {
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone(), r[2].clone()))
+            .for_each(|(i, idx, at, name)| {
                 let is_not_indexed = all_pending_rows.rows.iter().any(|r| r[0] == idx);
                 tracing::trace!(
-                    "row {: <2}: {} | {:?} {: >30}",
+                    "row {: <2}: {} | {:?} - {} - {: >30}",
                     i,
                     is_not_indexed,
+                    at,
                     name,
                     idx
                 );
-                let node_data = (i, name, idx);
+                let node_data = (i, at, name, idx);
                 if is_not_indexed {
                     not_indexed.push(node_data);
                 } else {
                     indexed.push(node_data);
                 }
             });
-        for (i, name, idx) in indexed {
-            tracing::trace!(target: "dbg_rows", "row indexed {: <2} | {:?} {: >30}", i, name, idx);
+        for (i, at, name, idx) in indexed {
+            tracing::trace!(target: "dbg_rows", "row indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
-        for (i, name, idx) in all_pending_rows
+        for (i, at, name, idx) in all_pending_rows
             .rows
             .iter()
             .enumerate()
-            .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+            .map(|(i, r)| (i, r[0].clone(), r[1].clone(), r[2].clone()))
         {
-            tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} {: >30}", i, name, idx);
+            tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
@@ -402,6 +407,7 @@ impl IndexerTask {
             // time::sleep(Duration::from_millis(500)).await;
             // state.recent_processed = 0;
             let node_count = batch.iter().fold(0, |acc, b| acc + b.v.len());
+            tracing::trace!("node_count after next_batch: {}", node_count);
 
             // Check for control commands
             if let Ok(cmd) = control_rx.try_recv() {
@@ -487,6 +493,7 @@ impl IndexerTask {
                 state.recent_processed,
             );
             state.status = IndexStatus::Completed;
+            self.reset_cursors().await;
             progress_tx.send(state)?;
         } else {
             tracing::warn!("Indexing cancelled");
@@ -494,6 +501,13 @@ impl IndexerTask {
             progress_tx.send(state)?;
         };
         Ok(())
+    }
+
+    pub async fn reset_cursors(&self) {
+        let mut cursors = self.cursors.lock().await;
+        for value in cursors.values_mut() {
+            *value = Uuid::nil();
+        }
     }
 
     /// This function next_batch:
@@ -506,10 +520,11 @@ impl IndexerTask {
         skip_all,
         fields(total_counted, num_not_proc, recent_processed, status="Running", batch_size)  // Track key state
     )]
-    async fn next_batch(
+    pub(crate) async fn next_batch(
         &self,
         num_not_proc: usize,
     ) -> Result<Option<Vec<TypedEmbedData>>, EmbedError> {
+        tracing::trace!("starting next_batch");
         let mut batch = Vec::new();
         let mut total_counted = 0;
 
@@ -673,7 +688,7 @@ fn log_row(r: Vec<DataValue>) {
         tracing::info!("{}: {:?}", i, row);
     }
 }
-fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
+pub(crate) fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counter: Arc<AtomicUsize>) {
     let new_count = new.rows.len();
     let last_count = counter.fetch_add(new_count, std::sync::atomic::Ordering::Relaxed);
     let header = new.headers.clone();
@@ -1547,7 +1562,7 @@ mod tests {
         test_next_batch_ss("crates/ploke-tui").await
     }
     #[tokio::test]
-    // NOTE: passing - takes about 43.71 seconds
+    // NOTE: passing - takes about 43.71 seconds <-- probably wrong
     // - embedded 9/9
     async fn test_batch_ss_ty_mcp() -> Result<(), Error> {
         let _guard = init_test_tracing(Level::INFO);

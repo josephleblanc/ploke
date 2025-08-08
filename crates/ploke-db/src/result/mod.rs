@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 pub use formatter::ResultFormatter;
 use itertools::Itertools;
-use ploke_core::{EmbeddingData, TrackingHash};
+use ploke_core::{EmbeddingData, FileData, TrackingHash};
 pub use snippet::CodeSnippet;
 use uuid::Uuid;
 
@@ -24,14 +24,14 @@ pub struct QueryResult {
     pub headers: Vec<String>,
 }
 
-// TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
-#[derive(Debug, Clone)]
-pub struct FileData {
-    pub id: Uuid,
-    pub namespace: Uuid,
-    pub file_tracking_hash: TrackingHash,
-    pub file_path: PathBuf,
-}
+// // TODO: Make these Typed Ids, and put the typed id definitions into ploke-core
+// #[derive(Debug, Clone)]
+// pub struct FileData {
+//     pub id: Uuid,
+//     pub namespace: Uuid,
+//     pub file_tracking_hash: TrackingHash,
+//     pub file_path: PathBuf,
+// }
 
 impl QueryResult {
     /// Convert query results into code snippets

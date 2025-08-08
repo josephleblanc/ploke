@@ -705,7 +705,7 @@ pub fn run_discovery_phase(
                     Err(e) => {
                         // Non-fatal: Log, collect error, and continue walking.
                         let path = e.path().unwrap_or(&src_path).to_path_buf();
-                        eprintln!("Warning: Error walking directory {:?}: {}", path, e);
+                        // eprintln!("Warning: Error walking directory {:?}: {}", path, e);
                         // Note: walkdir::Error might not directly implement Error needed for #[source]
                         // depending on its structure. Wrapping it ensures compatibility.
                         // If walkdir::Error *does* implement std::error::Error, Arc::new(e) is fine.
@@ -757,7 +757,7 @@ pub fn run_discovery_phase(
             version: crate_version,
             namespace,
             root_path: crate_root_path.clone(),
-            files: files, // Clone needed for module mapping below
+            files, // Clone needed for module mapping below
             features,             // Add the parsed features
             dependencies,         // Add the parsed dependencies
             dev_dependencies,     // Add the parsed dev-dependencies

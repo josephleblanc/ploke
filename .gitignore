@@ -58,6 +58,9 @@ GEMINI.md
 .opencode/
 OpenCode.md
 
+# organization stuff - not used by ploke program
+.applications/
+
 # diagrams
 .diagrams/
 

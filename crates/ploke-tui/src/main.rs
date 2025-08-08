@@ -13,9 +13,11 @@ use ploke_tui::{tracing_setup, try_main};
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {
     let _guard = tracing_setup::init_tracing();
-    color_eyre::config::HookBuilder::default()
-        .display_location_section(false)
-        .install()?;
+    //  TODO: Getting weird stuff writing to terminal, might be this.
+    //  Look more into it later
+    // color_eyre::config::HookBuilder::default()
+    //     .display_location_section(false)
+    //     .install()?;
 
     if let Err(e) = try_main().await {
         tracing::error!(error = %e, "Application error");

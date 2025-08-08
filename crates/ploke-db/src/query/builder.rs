@@ -401,6 +401,7 @@ impl Default for QueryBuilder {
         Self::new()
     }
 }
+use ploke_transform::schema::ID_KEYWORDS;
 
 macro_rules! define_static_fields {
     (
@@ -430,6 +431,22 @@ macro_rules! define_static_fields {
                 match self {
                     $(
                         NodeType::$node_type => <$schema>::SCHEMA.relation
+                    ),+
+                }
+            }
+            /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
+            pub fn keys(self) -> impl Iterator<Item = &'static str > {
+                self.fields().iter().filter(|f| ID_KEYWORDS.contains(f)).copied()
+            }
+            /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
+            pub fn vals(self) -> impl Iterator<Item = &'static str > {
+                self.fields().iter().filter(|f| !ID_KEYWORDS.contains(f)).copied()
+            }
+            // NOTE: Seems like there should be a way to make this a &'static str, look into it.
+            pub fn identity(self) -> String {
+                match self {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA.script_identity()
                     ),+
                 }
             }

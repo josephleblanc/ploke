@@ -1,3 +1,4 @@
+use std::collections::btree_map::Keys;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -59,6 +60,19 @@ pub enum FatalError {
         path: PathBuf,
         source: std::string::FromUtf8Error,
     },
+    #[error("{msg}")]
+    DefaultConfigDir{ msg: &'static str }
+}
+
+// TODO: Cumbersome, make this better.
+impl From<( std::io::Error, &'static str, PathBuf )> for FatalError {
+    fn from((source, operation, path): ( std::io::Error, &'static str, PathBuf )) -> Self {
+        FatalError::FileOperation {
+            operation,
+            path,
+            source: Arc::new(source)
+        }
+    }
 }
 
 impl Clone for FatalError {
@@ -122,6 +136,7 @@ impl Clone for FatalError {
                 path: path.clone(),
                 source: source.clone(),
             },
+            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg: msg.clone() }
         }
     }
 }

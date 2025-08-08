@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::path::Path;
 
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
-use crate::result::FileData;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::DataValue;
@@ -12,17 +12,28 @@ use cozo::Db;
 use cozo::MemStorage;
 use cozo::NamedRows;
 use cozo::UuidWrapper;
+use itertools::concat;
 use itertools::Itertools;
 use ploke_core::EmbeddingData;
+use ploke_core::FileData;
 use rayon::iter::ParallelBridge;
 use rayon::iter::ParallelIterator;
+use serde::Deserialize;
 use tracing::instrument;
 use uuid::Uuid;
+
+pub const HNSW_SUFFIX: &str = ":hnsw_idx";
 
 /// Main database connection and query interface
 #[derive(Debug)]
 pub struct Database {
     db: Db<MemStorage>,
+}
+
+#[derive(Deserialize)]
+struct CrateRow {
+    name: String,
+    id: String, // the UUID already arrives as a string
 }
 
 impl std::ops::Deref for Database {
@@ -80,6 +91,15 @@ impl Deref for TypedEmbedData {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    module_name: String,
+    module_id: Uuid,
+    crate_name: String,
+    namespace: Uuid,
+    file_path: String,
+}
+
 impl Database {
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
@@ -88,7 +108,7 @@ impl Database {
     pub fn new_init() -> Result<Self, ploke_error::Error> {
         let db = Db::new(MemStorage::default()).map_err(|e| DbError::Cozo(e.to_string()))?;
         db.initialize().map_err(|e| DbError::Cozo(e.to_string()))?;
-        Ok(Self {db})
+        Ok(Self { db })
     }
 
     pub fn init_with_schema() -> Result<Self, ploke_error::Error> {
@@ -101,6 +121,269 @@ impl Database {
         Ok(Self { db })
     }
 
+    /// Gets all the file data in the same namespace as the crate name given as argument.
+    /// This is useful when you want to compare which files have changed since the database was
+    /// last updated.
+    pub fn get_crate_files(&self, crate_name: &str) -> Result<Vec<FileData>, ploke_error::Error> {
+        let script = format!(
+            "{} \"{}\"",
+            r#"?[id, tracking_hash, namespace, file_path] := 
+    *module { id, tracking_hash @ 'NOW' },
+    *file_mod { file_path, namespace, owner_id: id @ 'NOW' },
+    *crate_context { name: crate_name, namespace @ 'NOW' },
+    crate_name = "#,
+            crate_name
+        );
+        let ret = self.raw_query(&script)?;
+        tracing::info!("get_crate_files output: {:#?}", ret);
+        ret.try_into_file_data()
+    }
+
+    pub fn retract_embedded_files(&self, file_mod: Uuid, ty: NodeType) -> Result<QueryResult, ploke_error::Error> {
+        let rel_name = ty.relation_str();
+        let keys = ty.keys().join(", ");
+        let vals = ty.vals().join(", ");
+        let script = format!(
+            "parent_of[child, parent] := *syntax_edge{{
+                source_id: parent, 
+                target_id: child, 
+                relation_kind: \"Contains\"
+            }}
+
+            ancestor[desc, asc] := parent_of[desc, asc]
+            ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+
+            to_retract[{keys}, at, {vals}] := *{rel_name} {{ {keys}, {vals}  @ 'NOW'}},
+                *file_mod {{ owner_id: file_mod }},
+                ancestor[id, file_mod],
+                file_mod = \"{file_mod}\",
+                !is_null(embedding),
+                at = 'RETRACT'
+
+            ?[{keys}, at, {vals}] := to_retract[{keys}, at, {vals}]
+                :put {rel_name} {{ {keys}, at => {vals} }}
+                :returning
+            "
+        );
+        self.raw_query_mut(&script).inspect_err(|_| {
+            tracing::error!("using script:\n {}", script);
+        }).map_err(ploke_error::Error::from)
+    }
+
+    /// Clears all user-defined relations from the database.
+    ///
+    /// This method removes all relations that were created by the application,
+    /// excluding system relations that contain ":". It's useful for resetting
+    /// the database state during testing or when reprocessing data.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    ///
+    /// use ploke_db::Database;
+    /// use cozo::ScriptMutability;
+    ///
+    /// // Initialize database with schema
+    /// let db = Database::init_with_schema().unwrap();
+    ///
+    /// // Get initial relations
+    /// let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let initial_count = initial_relations.rows.len();
+    /// assert!(initial_count > 0, "Should have some relations after schema creation");
+    ///
+    /// // Clear all user relations
+    /// db.clear_relations().await.unwrap();
+    ///
+    /// // Verify no user relations remain
+    /// let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// let user_relations: Vec<_> = remaining_relations.rows
+    ///     .into_iter()
+    ///     .filter(|row| {
+    ///         if let cozo::DataValue::Str(name) = &row[0] {
+    ///             !name.starts_with("::")
+    ///         } else {
+    ///             false
+    ///         }
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(user_relations.len(), 0, "Should have no user relations after clearing");
+    /// # })
+    /// ```
+    /// - JL, Reviewed and edited Jul 30, 2025
+    pub async fn clear_relations(&self) -> Result<(), ploke_error::Error> {
+        let rels = self
+            .db
+            .run_script(
+                "::relations",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?
+            .rows
+            .into_iter()
+            .map(|r| r[0].to_string())
+            .filter(|n| !n.contains(":"))
+            .join(", "); // keep only user relations
+
+        let mut script = String::from("::remove ");
+        script.extend(rels.split("\""));
+        self.db
+            .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+            .map_err(DbError::from)?;
+        Ok(())
+    }
+
+    /// Clears all HNSW indices from the database.
+    ///
+    /// This method removes all HNSW (Hierarchical Navigable Small World) indices that were created
+    /// for embedding similarity search. These indices have names ending with ":hnsw_idx", e.g.
+    /// `functions:hnsw_idx` and are separate from regular database relations. Unlike regular
+    /// relations which can be removed with "::remove", indices must be dropped using the "::index
+    /// drop" command.
+    ///
+    /// The choice of naming for the HNSW indices as "hnsw_idx" is arbitrary, and could have been
+    /// named "whatever_noxd", but is named "hnsw_idx" for consistency
+    ///
+    /// This is useful when you need to reset the embedding indices, such as during testing or
+    /// when rebuilding indices with new parameters.
+    ///
+    /// It is also used when clearing all relations in the database in preparation for a database
+    /// restore from backup, as cozo requires the database must be empty before a restore.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # tokio_test::block_on(async {
+    ///     use ploke_db::Database;
+    ///     use cozo::ScriptMutability;
+    ///     
+    ///     // Initialize database with schema
+    ///     let mut db = Database::init_with_schema().expect("Could not init database with schema");
+    ///     
+    ///     // Create some HNSW indices for testing
+    ///     // WARN: This doesn't actually work because we don't have anything to index yet, we
+    ///     // need a better test that uses a lazily loaded database that already contains embeddings.
+    ///     db.index_embeddings(ploke_db::NodeType::Function, 384).await
+    ///         .expect("Error indexing embeddings");
+    ///     
+    ///     // Count initial relations (including indices)
+    ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let hnsw_indices: Vec<_> = initial_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     // Should have some HNSW indices after creating them
+    ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
+    ///     
+    ///     // Clear all HNSW indices
+    ///     db.clear_hnsw_idx().await.expect("Error clearing hnsw indicies from database");
+    ///     
+    ///     // Verify no HNSW indices remain
+    ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    ///     let remaining_hnsw: Vec<_> = remaining_relations.rows
+    ///         .into_iter()
+    ///         .filter(|row| {
+    ///             if let cozo::DataValue::Str(name) = &row[0] {
+    ///                 name.ends_with(":hnsw_idx")
+    ///             } else {
+    ///                 false
+    ///             }
+    ///         })
+    ///         .collect();
+    ///     
+    ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
+    /// # })
+    /// ```
+    /// - JL, Reviewed and edited Jul 30, 2025
+    pub async fn clear_hnsw_idx(&self) -> Result<(), ploke_error::Error> {
+        let rels = self
+            .db
+            .run_script(
+                "::relations",
+                BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
+            )
+            .map_err(DbError::from)?
+            .rows
+            .into_iter()
+            .map(|r| r[0].to_string())
+            .filter(|n| n.ends_with(":hnsw_idx"));
+
+        for index in rels {
+            let mut script = String::from("::index drop ");
+            script.extend(index.chars().filter(|c| *c == '\"'));
+            self.db
+                .run_script(&script, BTreeMap::new(), cozo::ScriptMutability::Mutable)
+                .map_err(DbError::from)?;
+        }
+        Ok(())
+    }
+
+    /// Counts the total number of relations in the database.
+    ///
+    /// This method returns the count of all relations in the database, including
+    /// both system relations (containing ":") and user-defined relations.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # tokio_test::block_on(async {
+    /// use ploke_db::Database;
+    /// use cozo::ScriptMutability;
+    ///
+    /// // Initialize database with schema
+    /// let db = Database::init_with_schema().unwrap();
+    ///
+    /// // Count initial relations
+    /// let initial_count = db.count_relations().await.unwrap();
+    /// assert!(initial_count > 0, "Should have some relations after schema creation");
+    ///
+    /// // Verify count matches ::relations output
+    /// let relations_result = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
+    /// assert_eq!(initial_count, relations_result.rows.len());
+    /// # })
+    /// ```
+    /// - JL, Reviewed and edited Jul 30, 2025
+    pub async fn count_relations(&self) -> Result<usize, ploke_error::Error> {
+        let rel_count = self
+            .db
+            .run_script_read_only("::relations", BTreeMap::new())
+            .map_err(DbError::from)?
+            .rows
+            .len();
+        Ok(rel_count)
+    }
+    // NOTE: the goal of the following todo items is to be able to provide quick and easy calls to
+    // the database to present more simple and increasingly granular information to the user. We
+    // want it to be easy and intuitive to explore the data of their code.
+    // - For example, we might show something simple like, "X relations created in the code graph",
+    // where the "X" is in bold with a colored background, and maybe pulses or something, or
+    // otherwise invites the user to click on it (maybe have a grey-text "click me" pointing to the
+    // text or something that is only included once or until the user clicks on it for the first
+    // time).
+    // - When the user clicks on the number of relations created, it drops down (running the query
+    // in the background) with each of the relations and the numbers for each.
+    //  - A similar similar color/text style is used on each of these, numbers, and when they click
+    //  on those... you get the idea. Think Matrioshka
+    //
+    // TODO: Add a way to count the number of hnsw indices loaded.
+
+    // TODO: Add a way to return the number of items in a given relation.
+
+    // TODO: Add a way to see the last time a relation was changed (given that we implement time
+    // travel)
+
+    // TODO: Add a way to return all the members of a given relation.
+
     /// Execute a raw CozoScript query
     pub fn raw_query(&self, script: &str) -> Result<QueryResult, DbError> {
         let result = self
@@ -109,6 +392,18 @@ impl Database {
                 script,
                 std::collections::BTreeMap::new(),
                 cozo::ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        Ok(QueryResult::from(result))
+    }
+
+    pub fn raw_query_mut(&self, script: &str) -> Result<QueryResult, DbError> {
+        let result = self
+            .db
+            .run_script(
+                script,
+                std::collections::BTreeMap::new(),
+                cozo::ScriptMutability::Mutable,
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         Ok(QueryResult::from(result))
@@ -128,6 +423,74 @@ impl Database {
             // },
         ];
         Ok(mock_nodes)
+    }
+    pub async fn create_new_backup(path: impl AsRef<Path>) -> Result<Database, ploke_error::Error> {
+        let new_db = cozo::new_cozo_mem().map_err(DbError::from)?;
+        new_db.restore_backup(&path).map_err(DbError::from)?;
+        Ok(Self { db: new_db })
+    }
+
+    pub fn iter_relations(&self) -> Result<impl IntoIterator<Item = String>, ploke_error::Error> {
+        let output = self.raw_query("::relations")?;
+        Ok(output.rows.into_iter().filter_map(|r| {
+            r.first()
+                .into_iter()
+                .filter_map(|c| c.get_str().iter().map(|s| s.to_string()).next())
+                .next()
+        }))
+    }
+    pub fn relations_vec(&self) -> Result<Vec<String>, ploke_error::Error> {
+        let vector = Vec::from_iter(self.iter_relations()?);
+        Ok(vector)
+    }
+    pub fn get_crate_name_id(&self, crate_name: &str) -> Result<String, DbError> {
+        use serde_json::Value;
+
+        let rows = self.raw_query("?[name, id] := *crate_context {id, name}")?;
+
+        // Unwrap row 0
+        let row = rows.rows.first().expect("no rows returned");
+
+        // Pull the two columns out as strings
+        let name = match &row[0] {
+            DataValue::Str(s) => s.clone(),
+            _ => panic!("Invariant Violated: name is not a string"),
+        };
+
+        let id = match &row[1] {
+            DataValue::Uuid(UuidWrapper(uuid)) => uuid.to_string(), // fallback
+            _ => panic!("Invariant Violated: id is not a Uuid"),
+        };
+
+        // Build the filename
+        let name_id = format!("{}_{}", name, id);
+        Ok(name_id)
+    }
+    pub fn get_path_info(&self, path: &str) -> Result<QueryResult, ploke_error::Error> {
+        let ty = NodeType::Module;
+        let rel = ty.relation_str();
+        let keys: String = ty.keys().join(", ");
+        let vals: String = ty.vals().join(", ");
+        let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        target_path = \"{path}\",
+                        is_embedding_null = is_null(embedding)
+        ");
+        tracing::info!(target: "file_hashes", "using script\n{}", &script);
+        let res = self.raw_query(&script)?;
+        Ok(res)
+    }
+    pub fn get_mod_info(&self, mod_id: Uuid) -> Result<QueryResult, ploke_error::Error> {
+        let ty = NodeType::Module;
+        let rel = ty.relation_str();
+        let keys: String = ty.keys().filter(|s| *s != "id").join(", ");
+        let vals: String = ty.vals().join(", ");
+        let script = format!("?[file_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        is_embedding_null = is_null(embedding)
+        ");
+        let res = self.raw_query(&script)?;
+        Ok(res)
     }
 
     pub async fn index_embeddings(
@@ -202,25 +565,53 @@ impl Database {
 
         for node_type in NodeType::primary_nodes() {
             let rel_name = node_type.relation_str();
+            let keys_iter = node_type.keys();
+            // Filter out "embedding" so there isn't a conflict in the returned values from the
+            // database vs the added values in the `put`
+            let vals_iter = node_type.vals().filter(|v| *v != "embedding");
+            let key_vals_string = keys_iter.chain(vals_iter).join(", ");
+            let rel_identity = node_type.identity();
 
-            let script2 = [
-                r#"
+            // A bit convoluted, but should ultimately come out to something like:
+            //
+            // {
+            //     ?[new_id, new_embedding] <- $updates
+            //     :replace _new {new_id, new_embedding}
+            // }
+            // {
+            //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash, 
+            //              cfgs, return_type_id, body, module_id] 
+            //      := 
+            //         *_new{new_id: id, new_embedding: embedding},
+            //         at = 'ASSERT',
+            //         *function {id, name, docstring, vis_kind, vis_path, span, tracking_hash,
+            //              cfgs, return_type_id, body, module_id}
+            //     :put function {id, at => name, docstring, vis_kind, vis_path, span, tracking_hash,
+            //              cfgs, return_type_id, body, module_id, embedding}
+            // }
+            let script2_first_block = [r#"
 {
     ?[new_id, new_embedding] <- $updates 
     :replace _new {new_id, new_embedding} 
-} 
+}"#]
+            .into_iter();
+            let script2_second_block = [
+                r#"
 { 
-    ?[id, embedding] := *_new{new_id: id, new_embedding: embedding}, 
-    *"#,
-                rel_name,
-                r#"{id}
-    :update "#,
-                rel_name,
-                r#" {id, embedding}
-}
-"#,
+    ?[at, embedding, "#, &key_vals_string, r#"] := *_new{new_id: id, new_embedding: embedding}, 
+        at = 'ASSERT',
+        *"#, rel_name, " { "
             ]
-            .join("");
+            .into_iter();
+            let mut script2 = String::from_iter(
+                script2_first_block
+                    .chain(script2_second_block)
+            );
+            script2.push_str(&key_vals_string);
+            script2.push_str("}\n");
+            script2.push_str(":put ");
+            script2.push_str(&rel_identity);
+            script2.push_str("\n}");
 
             let result = self
                 .run_script(&script2, params.clone(), cozo::ScriptMutability::Mutable)
@@ -230,7 +621,10 @@ impl Database {
                     tracing::error!("{}", error_str);
                     DbError::Cozo(error_str)
                 })
-                .inspect_err(|e| tracing::error!("{}", e));
+                .inspect_err(|e| {
+                    tracing::error!("{}", e);
+                    tracing::error!("script2:\n{}", &script2)
+                });
             if result.is_err() {
                 tracing::error!("full_result: {:#?}", result);
             }
@@ -311,9 +705,9 @@ impl Database {
     pub fn count_unembedded_files(&self) -> Result<usize, DbError> {
         let script = r#"
             ?[count( id )] := 
-                *module { id, tracking_hash },
-                *file_mod { owner_id: id, namespace, file_path },
-                *crate_context { namespace }
+                *module { id, tracking_hash @ 'NOW' },
+                *file_mod { owner_id: id, namespace, file_path @ 'NOW' },
+                *crate_context { namespace @ 'NOW' }
         "#;
 
         let result = self
@@ -450,13 +844,13 @@ impl Database {
         let mut base_script = String::new();
         // TODO: Add pre-registered fixed rules to the system.
         let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW' }
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     needs_embedding[id, name, hash, span] := *"#;
-        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, is_null(embedding)
+        let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, is_null(embedding)
 
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
@@ -464,8 +858,8 @@ impl Database {
         needs_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
+        *module{id: mod_id, tracking_hash: file_hash @ 'NOW' },
+        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW' },
         to_string(id) > to_string($cursor),
         string_id = to_string(id)
 
@@ -510,6 +904,105 @@ impl Database {
         Ok(ty_embed)
     }
 
+    /// Gets the primary node typed embed data needed to update the nodes in the database
+    /// that are within the given file.
+    /// Note that this does not include the module nodes for the files themselves.
+    /// This is useful when doing a partial update of the database following change detection in
+    /// previously parsed and inserted files.
+    // WARN: This needs to be tested
+    pub fn get_nodes_by_file_with_cursor(
+        &self,
+        node_type: NodeType,
+        limit: usize,
+        cursor: Uuid,
+    ) -> Result<TypedEmbedData, ploke_error::Error> {
+        todo!();
+        let ancestor_rule = r#"
+parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+ancestor[desc, asc] := parent_of[desc, asc]
+ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc],
+    *file_mod{owner_id: asc}
+        "#;
+
+        let mut query: String = String::new();
+        query.push_str(ancestor_rule);
+
+        let needs_update_start = r#"
+needs_update[id, name, hash, span] :=
+        "#;
+        query.push_str(needs_update_start);
+
+        let rel_name = node_type.relation_str();
+
+        // TODO: Change this function to apply to all types at once, rather than the per-type
+        // approach we are using right now. This requires that we somehow encode the type of the
+        // node within the relation - if possible, use the node relation name for this, if that is
+        // not possible (due to cozo rules or something, add a new field to the relations, probably
+        // using the discriminant of the enum PrimaryNodeType)
+        // let primary_nodes = NodeType::primary_nodes();
+        // for (i, primary_node) in primary_nodes.iter().enumerate() {
+        //     query.push_str(&format!(
+        //     "*{} {{ id, tracking_hash, span }}",
+        //         primary_node.relation_str()
+        //     ));
+        //     if i + 1 < primary_nodes.len() {
+        //         query.push_str(" or ")
+        //     }
+        // }
+
+        let batch_rule = r#"
+batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
+    needs_update[id, name, hash, span],
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *module{id: mod_id, tracking_hash: file_hash },
+    *file_mod {owner_id: mod_id, file_path: target_file, namespace },
+    target_file = "crates/ploke-tui/src/lib.rs",
+    to_string(id) > to_string($cursor),
+    string_id = to_string(id)
+        "#;
+        query.push_str(batch_rule);
+
+        let final_query = r#"
+?[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
+    batch[id, name, target_file, file_hash, hash, span, namespace, string_id]
+    :sort string_id
+    :limit $limit
+        "#;
+        query.push_str(final_query);
+
+        let rel_name = node_type.relation_str();
+
+        let mut params: BTreeMap<String, DataValue> = BTreeMap::new();
+        params.insert("limit".into(), DataValue::from(limit as i64));
+        params.insert("cursor".into(), DataValue::Uuid(UuidWrapper(cursor)));
+
+        let query_result = self
+            .db
+            .run_script(&query, BTreeMap::new(), cozo::ScriptMutability::Immutable)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        let less_flat_row = query_result.rows.first();
+        let count_less_flat = query_result.rows.len();
+        if let Some(lfr) = less_flat_row {
+            tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\nlimit: {limit}", rel_name);
+        }
+        let mut v = QueryResult::from(query_result).to_embedding_nodes()?;
+        v.truncate(limit.min(count_less_flat));
+        if !v.is_empty() {
+            tracing::info!(
+                "\n== after truncated, {} remain: {:?} ==\n{:=^80}",
+                v.len(),
+                v.iter().map(|c| &c.name).join(" | "),
+                ""
+            );
+        }
+        let ty_embed = TypedEmbedData { v, ty: node_type };
+        Ok(ty_embed)
+    }
+
     pub fn count_unembedded_nonfiles(&self) -> Result<usize, DbError> {
         let nodes = self.count_pending_embeddings()?;
         let files = self.count_unembedded_files()?;
@@ -527,18 +1020,19 @@ impl Database {
         query.push_str(lhs);
         for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
             query.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span }}",
+                "*{} {{ id, embedding: null, tracking_hash, span @ 'NOW' }}",
                 primary_node.relation_str()
             ));
             if i + 1 < NodeType::primary_nodes().len() {
                 query.push_str(" or ")
             }
         }
-        query.push_str("");
+        tracing::info!("count nodes with query:\n{}", query);
         let result = self
             .db
             .run_script_read_only(&query, Default::default())
             .map_err(|e| DbError::Cozo(e.to_string()))?;
+        tracing::info!("result of query:\n{:?}", result);
 
         Self::into_usize(result)
     }
@@ -549,18 +1043,19 @@ impl Database {
             .first()
             .and_then(|row| row.first())
             .and_then(|v| v.get_int())
+            .inspect(|v| tracing::info!("the value in first row, first cell is: {:?}", v))
             .map(|n| n as usize)
             .ok_or(DbError::NotFound)
     }
 
     pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
-        let lhs = r#"?[ id, name ] := 
+        let lhs = r#"?[ at, name, id] := 
         "#;
         let mut query2: String = String::new();
         query2.push_str(lhs);
         for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
             query2.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span, name }}",
+                "*{} {{ id, at, embedding: null, tracking_hash, span, name @ 'NOW' }}",
                 primary_node.relation_str()
             ));
             if i + 1 < NodeType::primary_nodes().len() {
@@ -650,7 +1145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_two() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing(Level::INFO);
+        // ploke_test_utils::init_test_tracing(Level::INFO);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
 
@@ -663,7 +1158,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nodes_for_embedding() -> Result<(), ploke_error::Error> {
-        ploke_test_utils::init_test_tracing(Level::ERROR);
+        // ploke_test_utils::init_test_tracing(Level::ERROR);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let count1 = db.count_pending_embeddings()?;

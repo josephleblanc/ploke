@@ -1,15 +1,21 @@
-use std::collections::BTreeMap;
+use std::{collections::{BTreeMap, HashSet}, env::current_dir, ops::ControlFlow, path::PathBuf, str::FromStr};
 
 use crate::{
     chat_history::{Message, MessageKind},
-    parser::resolve_target_dir,
+    parser::{resolve_target_dir, run_parse_no_transform, ParserOutput},
     user_config::ProviderRegistry,
+    utils::helper::find_file_by_prefix,
 };
 use itertools::Itertools;
-use ploke_db::{Database, NodeType, create_index_warn, replace_index_warn, search_similar};
+use ploke_core::NodeId;
+use ploke_db::{
+    Database, DbError, NodeType, create_index_warn, replace_index_warn, search_similar,
+};
 use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, IndexerTask};
 use ploke_io::IoManagerHandle;
-use syn_parser::parser::types::TypeNode;
+use ploke_transform::{macro_traits::HasAnyNodeId, transform::transform_parsed_graph};
+use serde::{Deserialize, Serialize};
+use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, resolve::RelationIndexer, GraphAccess, ModuleTree, TestIds};
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
@@ -144,20 +150,34 @@ impl AppState {
 }
 
 // Placeholder
-#[derive(Debug)]
-pub struct SystemStatus {/* ... */}
+#[derive(Debug, Default)]
+pub struct SystemStatus {
+    crate_focus: Option<PathBuf>,
+}
 impl SystemStatus {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(crate_focus: Option<PathBuf>) -> Self {
+        Self { crate_focus }
     }
 }
 
-impl Default for SystemStatus {
-    fn default() -> Self {
-        Self::new()
+// impl Default for SystemStatus {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
+#[derive(thiserror::Error, Clone, Debug)]
+pub enum StateError {
+    #[error("The app state does not have a currently set crate focus")]
+    MissingCrateFocus{ msg: &'static str }
+}
+
+impl From<StateError> for ploke_error::Error {
+    fn from(value: StateError) -> Self {
+        match value {
+            StateError::MissingCrateFocus{msg} => ploke_error::Error::UiError(msg.to_string())
+        }
     }
 }
-pub enum StateError {/* ... */}
 
 /// Directions which can be taken when selecting an item in a list.
 /// Note that `left` and `right` are not included, because rather than moving `left` or `right` in
@@ -291,6 +311,7 @@ pub enum StateCommand {
     /// Triggers a background task to index the entire workspace.
     IndexWorkspace {
         workspace: String,
+        needs_parse: bool
     },
     PauseIndexing,
     ResumeIndexing,
@@ -299,9 +320,7 @@ pub enum StateCommand {
     EmbedMessage {
         new_msg_id: Uuid,
         completion_rx: oneshot::Receiver<()>,
-    },
-    ForwardContext {
-        new_msg_id: Uuid,
+        scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
     },
     SwitchModel {
         alias_or_id: String,
@@ -313,7 +332,14 @@ pub enum StateCommand {
     ReadQuery {
         query_name: String,
         file_name: String,
-    }
+    },
+    SaveDb,
+    LoadDb {
+        crate_name: String,
+    },
+    ScanForChange {
+        scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+    },
 }
 
 impl StateCommand {
@@ -335,7 +361,6 @@ impl StateCommand {
             NavigateList { .. } => "NavigateList",
             NavigateBranch { .. } => "NavigateBranch",
             CreateAssistantMessage { .. } => "CreateAssistantMessage",
-            // TODO: fill out the following
             IndexWorkspace { .. } => "IndexWorkspace",
             PauseIndexing => "PauseIndexing",
             ResumeIndexing => "ResumeIndexing",
@@ -343,14 +368,17 @@ impl StateCommand {
             AddMessageImmediate { .. } => "AddMessageImmediate",
             UpdateDatabase => "UpdateDatabase",
             EmbedMessage { .. } => "EmbedMessage",
-            ForwardContext { .. } => "ForwardContext",
             SwitchModel { .. } => "SwitchModel",
             LoadQuery { .. } => "LoadQuery",
             ReadQuery { .. } => "ReadQuery",
+            SaveDb => "SaveDb",
+            #[allow(non_snake_case)]
+            LoadDb => "LoadDb",
             // ... other variants
         }
     }
 }
+
 
 /// Event fired when a message is successfully updated.
 ///
@@ -450,11 +478,11 @@ pub async fn state_manager(
             } => {
                 add_msg_immediate(&state, &event_bus, new_msg_id, msg, kind).await;
             }
-            StateCommand::PruneHistory { max_messages } => { 
+            StateCommand::PruneHistory { max_messages } => {
                 // TODO: This will provide a way to prune the alternate branches of the
                 // conversation tree, once the conversation tree has been implemented.
-                todo!("Handle PruneHistory") 
-            },
+                todo!("Handle PruneHistory")
+            }
 
             StateCommand::NavigateList { direction } => {
                 let mut chat_guard = state.chat.0.write().await;
@@ -487,18 +515,41 @@ pub async fn state_manager(
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
-            StateCommand::IndexWorkspace { workspace } => {
+            StateCommand::IndexWorkspace { workspace, needs_parse } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
+                let mut target_dir = PathBuf::new();
                 // Extract task from mutex (consumes guard)
+                {
+                    let mut write_guard = state.system.write().await;
+                    let crate_focus = match std::env::current_dir() {
+                        Ok(current_dir) => { 
+                            let mut pwd = current_dir;
+                            pwd.push(&workspace);
+                            pwd
+                        },
+                        Err(e) => {
+                            tracing::error!("Error resolving current dir: {e}");
+                            continue;
+                        }
+                    };
+                    tracing::debug!("Setting crate_focus to {}", crate_focus.display());
+                    write_guard.crate_focus = Some(crate_focus.clone());
+                    target_dir = crate_focus;
+                }
 
-                match run_parse(Arc::clone(&state.db), Some(workspace.clone().into())) {
-                    Ok(_) => tracing::info!("Parse of target workspace {} successful", &workspace),
-                    Err(e) => {
-                        tracing::info!(
-                            "Failure parsing directory from IndexWorkspace event: {}",
-                            e
-                        );
-                        return;
+                // TODO: maybe run_parse should be returning the name of the crate it parsed, as
+                // defined in the `Cargo.toml`? For now we are just going to use the directory name
+                // as the name of the crate.
+                if needs_parse {
+                    match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
+                        Ok(_) => tracing::info!("Parse of target workspace {} successful", &target_dir.display()),
+                        Err(e) => {
+                            tracing::info!(
+                                "Failure parsing directory from IndexWorkspace event: {}",
+                                e
+                            );
+                            return;
+                        }
                     }
                 }
                 // let mut chat_guard = state.chat.0.write().await;
@@ -643,17 +694,10 @@ pub async fn state_manager(
             StateCommand::EmbedMessage {
                 new_msg_id,
                 completion_rx,
+                scan_rx,
             } => {
-                match completion_rx.await {
-                    Ok(_) => {
-                        tracing::trace!("UserMessage received new_msg_id: {new_msg_id}")
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {new_msg_id}"
-                        );
-                        return;
-                    }
+                if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
+                    continue;
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
@@ -663,12 +707,23 @@ pub async fn state_manager(
                             .embedder
                             .generate_embeddings(vec![last_user_msg])
                             .await
-                            .expect("Error while generating embeddings");
+                            .expect("Error while generating embedding of user message");
                         // drop guard after we are done with last_usr_message, which is consumed by
                         // generate_embeddings
                         drop(chat_guard);
-                        let embeddings = temp_embed.first().expect("No results from vector search");
+                        let embeddings = temp_embed
+                            .first()
+                            .expect("No results from user message embedding generation");
                         tracing::info!("Finish embedding user message");
+
+                        tracing::info!("Waiting to finish processing updates to files, if any");
+                        // Wait on the oneshot from `scan_for_change`, letting us know that the database
+                        // has been updated with the embeddings from any recent changes, if there were any.
+                        if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, scan_rx).await {
+                            continue;
+                        }
+                        tracing::info!("Finished waiting on parsing target crate");
+
                         match search_similar(
                             &state.db,
                             embeddings.clone(),
@@ -693,28 +748,37 @@ pub async fn state_manager(
                                     .collect::<Vec<String>>();
 
                                 // Send snippets directly to context manager
-                                let _ = context_tx
+                                if let Err(e) = context_tx
                                     .send(RagEvent::ContextSnippets(new_msg_id, snippets))
-                                    .await;
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Error sending snippets to context manager: {e}"
+                                    );
+                                };
 
                                 // Then trigger context construction with the correct parent ID
                                 let messages: Vec<Message> =
                                     state.chat.0.read().await.clone_current_path_conv();
-                                // .messages
-                                // .iter()
-                                // .map(|m| m.1.clone())
-                                // .collect();
 
-                                let _ = context_tx
+                                if let Err(e) = context_tx
                                     .send(RagEvent::UserMessages(new_msg_id, messages))
-                                    .await;
-                                let _ = context_tx
+                                    .await
+                                {
+                                    tracing::error!("Error with channel sending UserMessages: {e}")
+                                };
+                                if let Err(e) = context_tx
                                     .send(RagEvent::ConstructContext(new_msg_id))
-                                    .await;
+                                    .await
+                                {
+                                    tracing::error!(
+                                        "Error with channel sending ConstructContext: {e}"
+                                    )
+                                };
                             }
                             Err(e) => {
                                 tracing::error!(
-                                    "The at tempt to create the index at the database failed
+                                    "The attempt to create the index at the database failed
                                     error message: {:?}",
                                     e
                                 );
@@ -760,12 +824,16 @@ pub async fn state_manager(
                 }
             }
 
-            StateCommand::LoadQuery { query_name, query_content } => {
-                let result = state.db.run_script_read_only(&query_content, BTreeMap::new());
+            StateCommand::LoadQuery {
+                query_name,
+                query_content,
+            } => {
+                let result = state.db.raw_query_mut(&query_content)
+                    .inspect_err(|e| tracing::error!("{e}"));
                 tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
                 if let Ok(named_rows) = result {
                     let mut output = String::new();
-                    let (header, rows) = ( named_rows.headers, named_rows.rows );
+                    let (header, rows) = (named_rows.headers, named_rows.rows);
                     let cols_num = header.len();
                     let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
                     tracing::info!(target: "load_query", "\n{display_header}");
@@ -773,25 +841,34 @@ pub async fn state_manager(
                     output.push_str(&display_header);
                     output.push('|');
                     output.push('\n');
-                    let divider = format!("|{}", 
-                        "-".chars().cycle().take(5)
-                            .chain("|".chars()).join("").repeat(cols_num)
+                    let divider = format!(
+                        "|{}",
+                        "-".chars()
+                            .cycle()
+                            .take(5)
+                            .chain("|".chars())
+                            .join("")
+                            .repeat(cols_num)
                     );
                     output.push_str(&divider);
                     output.push('\n');
-                    rows.into_iter().map(|r| r.into_iter()
-                            .map(|c| format!("{}", c))
-                            .map(|c| format!("{}", c)).join("|")
-                        )
-                        .for_each(|r| { 
-                            tracing::info!(target: "load_query", "\n{}", r) ;
+                    rows.into_iter()
+                        .map(|r| {
+                            r.into_iter()
+                                .map(|c| format!("{}", c))
+                                .map(|c| format!("{}", c))
+                                .join("|")
+                        })
+                        .for_each(|r| {
+                            tracing::info!(target: "load_query", "\n{}", r);
                             output.push('|');
                             output.push_str(&r);
                             output.push('|');
                             output.push('\n');
                         });
                     let outfile_name = "output.md";
-                    let out_file = std::env::current_dir().map(|d| d.join("query").join(outfile_name));
+                    let out_file =
+                        std::env::current_dir().map(|d| d.join("query").join(outfile_name));
                     if let Ok(file) = out_file {
                         // Writes to file within `if let`, only handling the error case if needed
                         if let Err(e) = tokio::fs::write(file, output).await {
@@ -802,21 +879,446 @@ pub async fn state_manager(
                 // let db_return = result.unwrap();
                 // tracing::info!(target: "load_query", "db_return:\n{:#?}", db_return);
             }
-            StateCommand::ReadQuery { query_name, file_name } => {
-                let _ = event_bus.realtime_tx.send(AppEvent::System(SystemEvent::ReadQuery {
-                    query_name: query_name.clone(), 
-                    file_name: file_name.clone()
-                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
-                let _ = event_bus.background_tx.send(AppEvent::System(SystemEvent::ReadQuery {
-                    query_name, 
-                    file_name
-                })).inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+            StateCommand::ReadQuery {
+                query_name,
+                file_name,
+            } => {
+                let _ = event_bus
+                    .realtime_tx
+                    .send(AppEvent::System(SystemEvent::ReadQuery {
+                        query_name: query_name.clone(),
+                        file_name: file_name.clone(),
+                    }))
+                    .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+                let _ = event_bus
+                    .background_tx
+                    .send(AppEvent::System(SystemEvent::ReadQuery {
+                        query_name,
+                        file_name,
+                    }))
+                    .inspect_err(|e| tracing::warn!("Error forwarding event: {e:?}"));
+            }
+            StateCommand::SaveDb => {
+                // TODO: This error handling feels really cumbersome, should rework.
+                let default_dir = if let Ok(dir) = dirs::config_local_dir().ok_or_else(|| {
+                    ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir {
+                        msg: "Could not locate default config directory on system",
+                    })
+                    .emit_warning()
+                }) {
+                    dir.join("ploke").join("data")
+                } else {
+                    continue;
+                };
+
+                // make sure directory exists, otherwise report error
+                if let Err(e) = tokio::fs::create_dir_all(&default_dir).await {
+                    let msg = format!(
+                        "Error:\nCould not create directory at default location: {}\nEncountered error while finding or creating directory: {}",
+                        default_dir.display(),
+                        e
+                    );
+                    tracing::error!(msg);
+                    event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                        file_dir: format!("{}", default_dir.display()),
+                        is_success: false,
+                        error: Some(msg),
+                    }));
+                }
+
+                let system_guard = state.system.read().await;
+                // Using crate focus here, which we set when we perform indexing.
+                // TODO: Revisit this design. Consider how to best allow for potential switches in
+                // focus of the user's target crate within the same session.
+                // - Explicit command?
+                // - Model-allowed tool calling?
+                if let Some(crate_focus) = system_guard
+                    .crate_focus.clone()
+                    .iter()
+                    .filter_map(|cr| cr.file_name())
+                    .filter_map(|cr| cr.to_str())
+                    .next()
+                {
+                    // let crate_focus_str = crate_focus.to_string_lossy();
+                    let crate_name_version = if let Ok(db_result) = state
+                        .db
+                        .get_crate_name_id(crate_focus)
+                        .map_err(ploke_error::Error::from)
+                        .inspect_err(|e| {
+                            e.emit_warning();
+                        }) {
+                        db_result
+                    } else {
+                        continue;
+                    };
+
+                    let file_dir = default_dir.join(crate_name_version);
+                    // TODO: Clones are bad. This is bad code. Fix it.
+                    // - Wish I could blame the AI but its all me :( in a rush
+                    match state.db.backup_db(file_dir.clone()) {
+                        Ok(()) => {
+                            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                                file_dir: format!("{}", file_dir.display()),
+                                is_success: true,
+                                error: None,
+                            }));
+                        }
+                        Err(e) => {
+                            event_bus.send(AppEvent::System(SystemEvent::BackupDb {
+                                file_dir: format!("{}", file_dir.display()),
+                                is_success: false,
+                                error: Some(e.to_string()),
+                            }));
+                        }
+                    };
+                }
+            }
+            StateCommand::LoadDb { crate_name } => {
+                // TODO: Refactor this to be a function, and change the `continue` to handling the
+                // result with `?`
+                if let Err(e) = load_db(&state, &event_bus, crate_name).await {
+                    match e {
+                        ploke_error::Error::Fatal(_) => e.emit_fatal(),
+                        ploke_error::Error::Warning(_) | ploke_error::Error::Internal(_) => {
+                            e.emit_warning()
+                        }
+                        _ => {
+                            todo!("These should never happen.")
+                        }
+                    }
+                }
+                // TODO: run hnsw indexer again here using cozo command.
+            }
+
+            StateCommand::ScanForChange { scan_tx } => {
+                let _ = scan_for_change(&state, &event_bus, scan_tx).await.inspect_err(|e| {
+                    e.emit_error();
+                    tracing::error!("Error in ScanForChange:\n{e}");
+                });
             }
 
             // ... other commands
             // TODO: Fill out other fields
             _ => {}
         };
+    }
+}
+
+async fn scan_for_change(
+    state: &Arc<AppState>, 
+    event_bus: &Arc<EventBus>, 
+    scan_tx: oneshot::Sender<Option< Vec< std::path::PathBuf >>>
+) -> Result<(), ploke_error::Error> {
+    use ploke_error::Error as PlokeError;
+    let guard = state.system.read().await;
+    // TODO: Make a wrapper type for this and make it a method to get just the crate
+    // name.
+    // 1. Get the currently focused crate name, checking for errors.
+    let crate_path = guard.crate_focus.as_ref().ok_or_else(|| {
+        tracing::error!("Missing crate focus, cannot scan unspecified target crate");
+        let e = PlokeError::from(StateError::MissingCrateFocus {msg: "Missing crate focus is None, cannot scan unspecified target crate"});
+        e.emit_warning();
+        e
+    })?;
+    let crate_name = crate_path.file_name().and_then(|os_str| os_str.to_str()).ok_or_else(|| { 
+        tracing::error!("Crate name is empty, cannot scan empty crate name");
+        let e = PlokeError::from(StateError::MissingCrateFocus {msg: "Missing crate focus is empty or non-utf8 string, cannot scan unspecified target crate"});
+        e.emit_warning();
+        e
+    })?;
+
+    tracing::info!("scan_for_change in crate_name: {}", crate_name);
+    // 2. get the files in the target project from the db, with hashes
+    let file_data = state.db.get_crate_files(crate_name)?;
+    tracing::info!("file_data: {:#?}", file_data);
+
+    // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
+    //    changed.
+    //  - Note that this does not do anything for those files which may have been added, which will
+    //  be handled in parsing during the IndexFiles event process mentioned in step 5 below.
+    let result = state.io_handle.scan_changes_batch(file_data).await?;
+    let vec_ok = result?;
+
+    if !vec_ok.iter().any(|f| f.is_some()) {
+        // 4. if no changes, send complete in oneshot
+        match scan_tx.send(None) {
+            Ok(()) => {
+                tracing::info!("No file changes detected");
+            },
+            Err(e) => {
+                tracing::error!("Error sending parse oneshot from ScanForChange");
+            }
+        };
+    } else {
+        // 5. if changes, send IndexFiles event (not yet made) or handle here.
+        //  Let's see how far we get handling it here first.
+        //  - Since we are parsing the whole target in any case, we might as well do it
+        //  concurrently. Test sequential appraoch first, then move to be parallel earlier.
+
+        // TODO: Move this into `syn_parser` probably
+        // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
+        // on I'll do something more efficient.
+        let ParserOutput { mut merged, tree } = run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
+
+        // get the filenames to send through the oneshot
+        let changed_filenames = vec_ok.iter().filter_map(
+            |opt| opt.as_ref().map(|f| f.file_path.clone())
+        ).collect_vec();
+        for file in changed_filenames.iter() {
+            let filename = format!("{}", file.display());
+            tracing::info!(target:"file_hashes", "Checking for details on {}", filename);
+            let query_res = state.db.get_path_info(&filename)?;
+            tracing::info!(target:"file_hashes", "headers:\n{}", query_res.headers.iter().join(", ") );
+            let rows = query_res.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+            tracing::info!(target:"file_hashes", "rows:\n {}", rows);
+        }
+        // WARN: Half-assed implementation, this should be a recurisve function instead of simple
+        // collection.
+        //  - coercing into ModuleNodeId with the test method escape hatch, do properly
+        let module_uuids = vec_ok.into_iter().filter_map(|f| f.map(|i| i.id));
+        let module_ids = module_uuids.clone().map(|uid| 
+            ModuleNodeId::new_test(NodeId::Synthetic(uid)));
+        // let module_ids = vec_ok.into_iter().filter_map(|f| f.map(|id| 
+        //     ModuleNodeId::new_test(NodeId::Synthetic(id.id))));
+        let module_set: HashSet<ModuleNodeId> = module_ids.collect();
+
+        let any_node_mod_set: Vec<AnyNodeId> = module_set.iter().map(|m_id| m_id.as_any()).collect();
+        let printable_union_items = printable_nodes(&merged, any_node_mod_set.iter());
+        tracing::info!("Nodes in file set has count: {}\nitems:\n{}", module_set.len(),
+            printable_union_items);
+
+        print_module_set(&merged, &tree, &module_set);
+
+        // NOTE: Better implementation to get all nodes in the target files that is recursive
+        let mut full_mod_set: HashSet<AnyNodeId> = HashSet::new();
+        for mod_id in module_set.iter() {
+            full_mod_set = mods_in_file(*mod_id, full_mod_set, &tree);
+            // full_mod_set.insert(mod_id.as_any());
+            let printable_nodes = printable_nodes(&merged, full_mod_set.iter());
+            tracing::info!("recursive printable nodes for module_id:\n{}\n{}", mod_id, printable_nodes);
+        }
+        fn mods_in_file(current: ModuleNodeId, mut mods: HashSet<AnyNodeId>, tree: &ModuleTree) -> HashSet<AnyNodeId> {
+            let start_len = mods.len();
+            if let Some(tree_rels) = tree.get_iter_relations_from(&current.as_any()).map(|it| it.filter(|r| r.rel().is_contains())) {
+                for tree_rel in tree_rels {
+                    let maybe_next = tree_rel.rel().target();
+                    mods.insert(maybe_next);
+                if tree.get_iter_relations_from(&maybe_next).is_some_and(|mut trels| trels.any(|tr| tr.rel().is_contains())) {
+                        let next_mod: ModuleNodeId = maybe_next.try_into()
+                            .expect("Invariant Violated: Contains should only be from ModuleNode -> PrimaryNode, found other");
+                        mods = mods_in_file(next_mod, mods, tree);
+                    }
+                }
+            }
+            mods
+        }
+
+        // Gets all items that are contained by the modules.
+        //  - May be missing some of the secondary node types like params, etc
+        let item_set: HashSet<AnyNodeId> = module_set.iter()
+            .filter_map(|id| tree.modules().get(id))
+            .filter_map(|m| m.items())
+            .flat_map(|items| items.iter().copied().map(|id| id.as_any()))
+            .collect();
+        let union = full_mod_set.iter().copied().map(|m_id| m_id.as_any())
+            .chain(module_set.iter().copied().map(|m_id| m_id.as_any()))
+            .collect::<HashSet<AnyNodeId>>()
+            // let union = module_set.iter().copied().map(|m_id| m_id.as_any()).collect::<HashSet<AnyNodeId>>()
+            .union(&item_set).copied().collect::<HashSet<AnyNodeId>>();
+            // for now filter out anything that isn't one of the PrimaryNode types
+        let filtered_union = union.into_iter().filter(|&id| PrimaryNodeId::try_from(id).is_ok())
+            // .filter(|&id| !matches!(id, AnyNodeId::Import(_)) || !matches!(id, AnyNodeId::Impl(_)))
+            .collect::<HashSet<AnyNodeId>>();
+
+        tracing::info!("Nodes in union set:");
+        let printable_union_items = printable_nodes(&merged, filtered_union.iter());
+        tracing::info!("prinable_union_items:\n{}", printable_union_items);
+        // filter relations
+        merged.graph.relations.retain(|r| filtered_union.contains(&r.source()) || filtered_union.contains(&r.target()));
+        // filter nodes
+        merged.retain_all(filtered_union);
+        // merged.graph.modules.retain(|m| m.is_file_based() || m.is_inline());
+
+        transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
+            tracing::error!("Error transforming partial graph into database:\n{e}");
+        })?;
+
+        for file_id in module_uuids {
+            for node_ty in NodeType::primary_nodes() {
+                tracing::info!("Retracting type: {}", node_ty.relation_str());
+                let query_res = state.db.retract_embedded_files(file_id, node_ty)
+                    .inspect_err(|e| tracing::error!("Error in retract_embed_files: {e}"))?;
+                tracing::info!("Raw return of retract_embedded_files:\n{:?}", query_res);
+                let to_print = query_res.rows.iter().map(|r| r.iter().join(" | ")).join("\n");
+                tracing::info!("Return of retract_embedded_files:\n{}", to_print);
+            }
+        }
+
+        tracing::info!("Finishing scanning, sending message to reindex workspace");
+        event_bus.send(AppEvent::System(SystemEvent::ReIndex { workspace: crate_name.to_string() }));
+        let _ = scan_tx.send(Some( changed_filenames ));
+        // TODO: Add validation step here.
+    }
+    //
+
+    Ok(())
+}
+
+fn print_module_set(merged: &syn_parser::ParsedCodeGraph, tree: &ModuleTree, module_set: &HashSet<ModuleNodeId>) {
+    let item_map_printable = module_set.iter()
+        .filter_map(|id| tree.modules().get(id)
+            .filter(|m| m.items().is_some())
+            .map(|m| { 
+                let module = format!("name: {} | is_file: {} | id: {}", m.name, m.id.as_any(), m.is_file_based());
+                let items = m.items().unwrap()
+                    .iter().filter_map(|item_id| merged.find_any_node(item_id.as_any()).map(|n| {
+                        format!("\tname: {} | id: {}", n.name(), n.any_id())
+                } )).join("\n");
+                format!("{}\n{}", module, items)
+            })
+        ).join("\n");
+    tracing::info!("--- items by module ---\n{}", item_map_printable);
+}
+
+fn printable_nodes<'a>(merged: &syn_parser::ParsedCodeGraph, union: impl Iterator<Item = &'a AnyNodeId>) -> String {
+    let mut printable_union_items = String::new();
+    for id in union.into_iter() {
+        if let Some( node ) = merged.find_any_node(*id) {
+            let printable_node = format!("name: {} | id: {}\n", node.name(), id);
+            printable_union_items.push_str(&printable_node);
+        }
+    }
+    printable_union_items
+}
+
+async fn wait_on_oneshot<T>(
+    new_msg_id: Uuid,
+    completion_rx: oneshot::Receiver<T>,
+) -> ControlFlow<()> {
+    match completion_rx.await {
+        Ok(_) => {
+            tracing::trace!("UserMessage received new_msg_id: {}", new_msg_id)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "SendUserMessage dropped before EmbedMessage process received it for new_msg_id: {}",
+                new_msg_id
+            );
+            return ControlFlow::Break(());
+        }
+    }
+    ControlFlow::Continue(())
+}
+
+/// Loads a previously saved database backup into the application.
+///
+/// This function searches the default configuration directory for a database backup file
+/// created by the `SaveDb` command. The backup file follows a naming convention where it
+/// begins with the human-readable crate name, followed by an underscore and a v5 UUID hash
+/// obtained from `state.db.get_crate_name_id`.
+///
+/// # Process
+/// 1. Locates the backup file in the default configuration directory
+/// 2. Imports the backup into the current database using CozoDB's restore functionality
+/// 3. Validates the restored database has content
+/// 4. Updates application state to reflect the loaded crate
+/// 5. Emits appropriate success/failure events
+///
+/// # Arguments
+/// * `state` - Reference to the application state containing the database
+/// * `event_bus` - Event bus for sending status updates
+/// * `crate_name` - Name of the crate to load from backup
+///
+/// # Returns
+/// Returns `Ok(())` if the database was successfully loaded, or an appropriate error
+/// if the backup file was not found or the restore operation failed.
+///
+/// # Notes
+/// The CozoDB restore operation must be performed on an empty database. If the current
+/// database contains data, it will be replaced by the backup. The function handles
+/// the full lifecycle of locating, validating, and restoring the database state.
+async fn load_db(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    crate_name: String,
+) -> Result<(), ploke_error::Error> {
+    let mut default_dir = dirs::config_local_dir().ok_or_else(|| {
+        let err_msg = "Could not locate default config directory on system";
+        let e =
+            ploke_error::Error::Fatal(ploke_error::FatalError::DefaultConfigDir { msg: err_msg });
+        e.emit_warning();
+        event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+            crate_name: crate_name.clone(),
+            file_dir: None,
+            is_success: false,
+            error: Some(err_msg),
+        }));
+        e
+    })?;
+    default_dir.push("ploke/data");
+    let valid_file = match find_file_by_prefix(default_dir.as_path(), &crate_name).await {
+        Ok(Some(path_buf)) => Ok(path_buf),
+        Ok(None) => {
+            let err_msg = "No backup file detected at default configuration location";
+            let error = ploke_error::WarningError::PlokeDb(err_msg.to_string());
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name: crate_name.clone(),
+                file_dir: Some(Arc::new(default_dir)),
+                is_success: false,
+                error: Some(err_msg),
+            }));
+            Err(error)
+        }
+        Err(e) => {
+            // TODO: Improve this error message
+            tracing::error!("Failed to load file: {}", e);
+            let err_msg = "Could not find saved file, io error";
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name: crate_name.clone(),
+                file_dir: Some(Arc::new(default_dir)),
+                is_success: false,
+                error: Some(err_msg),
+            }));
+            Err(ploke_error::FatalError::DefaultConfigDir { msg: err_msg })?
+        }
+    }?;
+
+    let prior_rels_vec = state.db.relations_vec()?;
+    tracing::debug!("prior rels for import: {:#?}", prior_rels_vec);
+    state
+        .db
+        .import_from_backup(&valid_file, &prior_rels_vec)
+        .map_err(ploke_db::DbError::from)
+        .map_err(ploke_error::Error::from)?;
+    // .inspect_err(|e| e.emit_error())?;
+
+    // get count for sanity and user feedback
+    match state.db.count_relations().await {
+        Ok(count) if count > 0 => {
+            {
+                let mut system_guard = state.system.write().await;
+                let target_dir = std::env::current_dir().inspect_err(|e| tracing::error!("Error finding current dir: {e}")).ok();
+                
+                system_guard.crate_focus = target_dir.map(|cd| cd.join(&crate_name));
+            }
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name,
+                file_dir: Some(Arc::new(valid_file)),
+                is_success: true,
+                error: None,
+            }));
+            Ok(())
+        }
+        Ok(count) => {
+            event_bus.send(AppEvent::System(SystemEvent::LoadDb {
+                crate_name,
+                file_dir: Some(Arc::new(valid_file)),
+                is_success: false,
+                error: Some("Database backed up from file, but 0 relations found."),
+            }));
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }
 
@@ -878,7 +1380,14 @@ async fn add_msg_immediate(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Index;
+
+    use cozo::DataValue;
+    use ploke_db::QueryResult;
     use ploke_embed::local::EmbeddingConfig;
+    use syn_parser::parser::nodes::ToCozoUuid;
+
+    use crate::tracing_setup::init_tracing;
 
     use super::*;
     use ploke_embed::{
@@ -896,9 +1405,8 @@ mod tests {
         fn mock() -> Self {
             // Simple mock that does nothing
             Self::new(EmbeddingSource::Local(
-                LocalEmbedder::new(EmbeddingConfig::default()).expect(
-                    "LocalEmbedder failed to construct within test - should not happen",
-                ),
+                LocalEmbedder::new(EmbeddingConfig::default())
+                    .expect("LocalEmbedder failed to construct within test - should not happen"),
             ))
         }
     }
@@ -908,6 +1416,377 @@ mod tests {
             // Simple mock that does nothing
             IoManagerHandle::new()
         }
+    }
+
+    use ploke_test_utils::{init_test_tracing, setup_db_full, setup_db_full_crate, workspace_root};
+    use color_eyre::Result;
+    use thiserror::Error;
+    use error::{ErrorExt, ErrorSeverity, ResultExt};
+    use futures::{FutureExt, StreamExt};
+
+    #[tokio::test]
+    async fn test_update_embed() -> color_eyre::Result<()> {
+        init_test_tracing(Level::INFO);
+        let workspace_root = workspace_root();
+        let target_crate = "fixture_update_embed";
+        let workspace = "tests/fixture_crates/fixture_update_embed";
+
+        // ensure file begins in same state by using backup
+        let backup_file = PathBuf::from(format!("{}/{}/src/backup_main.bak", workspace_root.display(), workspace));
+        tracing::info!("reading from backup files: {}", backup_file.display());
+        let backup_contents = std::fs::read(&backup_file)?;
+        let target_main = backup_file.with_file_name("main.rs");
+        std::fs::write(&target_main, backup_contents)?;
+
+        let cozo_db = if target_crate.starts_with("fixture") { 
+            setup_db_full(target_crate)
+        } else if target_crate.starts_with("crates") {
+            let crate_name = target_crate.trim_start_matches("crates/");
+            setup_db_full_crate(crate_name)
+        } else { 
+            panic!("Incorrect usage of the test db setup");
+        }?;
+
+        dotenvy::dotenv().ok();
+
+        let mut config = config::Config::builder()
+            .add_source(
+                config::File::with_name(
+                    &dirs::config_dir()
+                        .unwrap() // TODO: add error handling
+                        .join("ploke/config.toml")
+                        .to_string_lossy(),
+                )
+                .required(false),
+            )
+            .add_source(config::Environment::default().separator("_"))
+            .build()?
+            .try_deserialize::<crate::user_config::Config>()
+            .unwrap_or_else(|_| crate::user_config::Config::default());
+
+        // Merge curated defaults with user overrides
+        config.registry = config.registry.with_defaults();
+
+        // Apply API keys from environment variables to all providers
+        // config.registry.load_api_keys();
+        tracing::debug!("Registry after merge: {:#?}", config.registry);
+        let new_db = ploke_db::Database::new(cozo_db);
+        let db_handle = Arc::new(new_db);
+
+        // Initial parse is now optional - user can run indexing on demand
+        // run_parse(Arc::clone(&db_handle), Some(TARGET_DIR_FIXTURE.into()))?;
+
+        // TODO: Change IoManagerHandle so it doesn't spawn its own thread, then use similar pattern to
+        // spawning state meager below.
+        let io_handle = ploke_io::IoManagerHandle::new();
+
+        // TODO: These numbers should be tested for performance under different circumstances.
+        let event_bus_caps = EventBusCaps {
+            realtime_cap: 100,
+            background_cap: 1000,
+            error_cap: 100,
+            index_cap: 1000,
+        };
+        let event_bus = Arc::new(EventBus::new(event_bus_caps));
+
+        let processor = config.load_embedding_processor()?;
+        let proc_arc = Arc::new(processor);
+
+        // TODO:
+        // 1 Implement the cancellation token propagation in IndexerTask
+        // 2 Add error handling for embedder initialization failures
+        let indexer_task = IndexerTask::new(
+            db_handle.clone(),
+            io_handle.clone(),
+            Arc::clone(&proc_arc), // Use configured processor
+            CancellationToken::new().0,
+            8,
+        );
+
+        let state = Arc::new(AppState {
+            chat: ChatState::new(ChatHistory::new()),
+            config: ConfigState::default(),
+            system: SystemState::default(),
+            indexing_state: RwLock::new(None), // Initialize as None
+            indexer_task: Some(Arc::new(indexer_task)),
+            indexing_control: Arc::new(Mutex::new(None)),
+            db: db_handle.clone(),
+            embedder: Arc::clone(&proc_arc),
+            io_handle: io_handle.clone(),
+        });
+        {
+            let mut system_guard = state.system.write().await;
+            let path = workspace_root.join(workspace);
+            system_guard.crate_focus = Some(path);
+            tracing::info!("system_guard.crate_focus: {:?}", system_guard.crate_focus);
+        }
+
+        // Create command channel with backpressure
+        let (cmd_tx, cmd_rx) = mpsc::channel::<StateCommand>(1024);
+
+        let (rag_event_tx, rag_event_rx) = mpsc::channel(10);
+        let context_manager = ContextManager::new(rag_event_rx, Arc::clone(&event_bus));
+        tokio::spawn(context_manager.run());
+
+        let (cancellation_token, cancel_handle) = CancellationToken::new();
+        let (filemgr_tx, filemgr_rx) = mpsc::channel::<AppEvent>(256);
+        let file_manager = FileManager::new(
+            io_handle.clone(),
+            event_bus.subscribe(EventPriority::Background),
+            event_bus.background_tx.clone(),
+            rag_event_tx.clone(),
+            event_bus.realtime_tx.clone(),
+        );
+
+        tokio::spawn(file_manager.run());
+
+        // Spawn state manager first
+        tokio::spawn(state_manager(
+            state.clone(),
+            cmd_rx,
+            event_bus.clone(),
+            rag_event_tx,
+        ));
+
+        // Set global event bus for error handling
+        set_global_event_bus(event_bus.clone()).await;
+
+        // let script = r#"?[name, id, embedding] := *function{name, id, embedding @ 'NOW' }"#;
+        let script = r#"?[name, time, is_assert, maybe_null, id] := *function{ id, at, name, embedding }
+                                or *struct{ id, at, name, embedding } 
+                                or *module{ id, at, name, embedding } 
+                                or *static{ id, at, name, embedding } 
+                                or *const{ id, at, name, embedding }, 
+                                  time = format_timestamp(at),
+                                  is_assert = to_bool(at),
+                                  maybe_null = !is_null(embedding)
+        "#;
+        let query_result = db_handle.raw_query(script)?;
+        let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+        tracing::info!("rows from db:\n{printable_rows}");
+
+
+        // Spawn subsystems with backpressure-aware command sender
+        let command_style = config.command_style;
+        tokio::spawn(llm_manager(
+            event_bus.subscribe(EventPriority::Background),
+            state.clone(),
+            cmd_tx.clone(), // Clone for each subsystem
+        ));
+        tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
+
+        // setup target file:
+
+        cmd_tx.send(StateCommand::IndexWorkspace { workspace: workspace.to_string(), needs_parse: false }).await?;
+        let mut app_rx = event_bus.index_subscriber();
+        while let Ok(event) = app_rx.recv().await {
+            match event {
+                IndexingStatus { status: IndexStatus::Running, ..} => {
+                    tracing::info!("IndexStatus Running");
+                },
+                IndexingStatus { status: IndexStatus::Completed, ..} => {
+                    tracing::info!("IndexStatus Completed, breaking loop");
+                    break;
+                },
+                _ => {}
+            }
+        }
+
+        // print database output after indexing
+        // or *struct{name, id, embedding & 'NOW'}
+        let query_result = db_handle.raw_query(script)?;
+        let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+        tracing::info!("rows from db:\n{printable_rows}");
+
+        fn iter_col<'a>(query_result: &'a QueryResult, col_title: &str) -> Option< impl Iterator<Item = &'a DataValue> > {
+            let col_idx = query_result.headers.iter().enumerate().find(|(idx, col)| col.as_str() == col_title)
+                .map(|(idx, col)| idx)?;
+            Some( query_result.rows.iter().map(move |r| r.index(col_idx)  ) )
+        }
+        fn is_id_embed_null(db_handle: &Database, ty: NodeType, id: AnyNodeId) -> Result< bool > {
+            let rel_name = ty.relation_str();
+            let cozo_id = id.to_cozo_uuid();
+            let one_script = format!(
+                "?[name, item_id, is_embedding_null] := *{rel_name}{{ name, id: item_id, embedding @ 'NOW' }},
+                    is_embedding_null = is_null(embedding),
+                    item_id = {cozo_id}"
+            );
+            let query = db_handle.raw_query(&one_script)?;
+            let is_embedding_null_now = iter_col(&query, "is_embedding_null").expect("column not found")
+                .next().expect("row not found")
+                .get_bool().expect("cell not expected datatype (bool)");
+            Ok(is_embedding_null_now)
+        }
+        fn is_name_embed_null(db_handle: &Database, ty: NodeType, name: &str) -> Result< bool > {
+            let rel_name = ty.relation_str();
+            let one_script = format!(
+                "?[item_name, id, is_embedding_null] := *{rel_name}{{ name: item_name, id, embedding @ 'NOW' }},
+                    is_embedding_null = is_null(embedding),
+                    item_name = {name:?}"
+            );
+            let query = db_handle.raw_query(&one_script)?;
+            let is_embedding_null_now = iter_col(&query, "is_embedding_null").expect("column not found")
+                .next().expect("row not found")
+                .get_bool().expect("cell not expected datatype (bool)");
+            Ok(is_embedding_null_now)
+        }
+        let one_script = r#"
+            ?[name, id, is_embedding_null] := *const{ name, id, embedding @ 'NOW' },
+                is_embedding_null = is_null(embedding)
+        "#;
+        let query_one = db_handle.raw_query(one_script)?;
+        let is_const_embedding_null_now = iter_col(&query_one, "is_embedding_null").expect("column not found")
+            .next().expect("row not found")
+            .get_bool().expect("cell not expected datatype (bool)");
+        assert!(!is_const_embedding_null_now);
+
+        // items in as-yet unchanged file, expect to be embedded initially (before scan sets them to null
+        // again)
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
+        let mut target_file = PathBuf::new();
+        {
+            let mut system_guard = state.system.write().await;
+            system_guard.crate_focus = Some( workspace_root.join(workspace) );
+            target_file = system_guard.crate_focus.clone().expect("Crate focus not set");
+        }
+        tracing::info!("target_file before pushes:\n{}", target_file.display());
+        target_file.push("src");
+        target_file.push("main.rs");
+        tracing::info!("target_file after pushes:\n{}", target_file.display());
+
+        // ----- start test function ------
+        let (scan_tx, scan_rx) = oneshot::channel();
+        let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
+        tracing::info!("result of scan_for_change: {:?}", result);
+        // ----- end test start test ------
+
+
+        
+        tracing::info!("waiting for scan_rx");
+
+        // ----- await on end of test function `scan_for_change` -----
+        match scan_rx.await {
+            Ok(_) => tracing::info!("scan_rx received for end of scan_for_change"),
+            Err(_) => tracing::info!("error in scan_rx awaiting on end of scan_for_change")
+        };
+
+        
+        // print database output after scan
+        let query_result = db_handle.raw_query(script)?;
+        let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+        tracing::info!("rows from db:\n{printable_rows}");
+
+        // Nothing should have changed after running scan on the target when the target has not
+        // changed.
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // Same here
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
+        // ----- make change to target file -----
+        let contents = std::fs::read_to_string(&target_file)?;
+        tracing::info!("reading file:\n{}", &contents);
+        let changed = contents.lines().map(|l| {
+            if l.contains("pub struct TestStruct(pub i32)") {
+                "struct TestStruct(pub i32);"
+            } else {
+                l
+            }
+        }).join("\n");
+        tracing::info!("writing changed file:\n{}", &changed);
+        std::fs::write(&target_file, changed)?;
+
+        // ----- start second scan -----
+        let (scan_tx, scan_rx) = oneshot::channel();
+        let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
+        tracing::info!("result of after second scan_for_change: {:?}", result);
+        // ----- end second scan -----
+
+        // print database output after second scan
+        let query_result = db_handle.raw_query(script)?;
+        let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+        tracing::info!("rows from db:\n{printable_rows}");
+
+        // items in changed file, expect to have null embeddings after scan
+        assert!(is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
+
+        // -- simulating sending response from app back to index --
+        // At the end of `scan_for_change`, an `AppEvent` is sent, which is processed inside the
+        // app event loop (not running here), which should print a message and then send another
+        // message to index the unembedded items in the database, which should currently only be
+        // the items detected as having changed through `scan_for_change`.
+        
+        cmd_tx.send(StateCommand::IndexWorkspace { workspace: workspace.to_string(), needs_parse: false }).await?;
+        let mut app_rx = event_bus.index_subscriber();
+        while let Ok(event) = app_rx.recv().await {
+            match event {
+                IndexingStatus { status: IndexStatus::Running, ..} => {
+                    tracing::info!("IndexStatus Running");
+                },
+                IndexingStatus { status: IndexStatus::Completed, ..} => {
+                    tracing::info!("IndexStatus Completed, breaking loop");
+                    break;
+                },
+                _ => {}
+            }
+        }
+
+        // print database output after reindex following the second scan
+        let query_result = db_handle.raw_query(script)?;
+        let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+        tracing::info!("rows from db:\n{printable_rows}");
+
+        // items in changed file, expect to have embeddings again after scan
+        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
+        // items not in changed file, expect to be remain embedded
+        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
+        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
+        tracing::info!("changing back:\n{}", target_file.display());
+        let contents = std::fs::read_to_string(&target_file)?;
+        tracing::info!("reading file:\n{}", &contents);
+        let changed = contents.lines().map(|l| {
+            if l.contains("struct TestStruct(pub i32)") {
+                "pub struct TestStruct(pub i32);"
+            } else {
+                l
+            }
+        }).join("\n");
+        tracing::info!("writing changed file:\n{}", &changed);
+        std::fs::write(&target_file, changed)?;
+        Ok(())
     }
 
     #[tokio::test]
@@ -951,6 +1830,7 @@ mod tests {
                 tx2.send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: oneshot::channel().1, // dummy
+                    scan_rx: oneshot::channel().1,      // dummy
                 })
                 .await
                 .unwrap();
@@ -962,7 +1842,10 @@ mod tests {
         // Check if the embed message read the user message or not
         let chat = state.chat.0.read().await;
         let last_user_msg = chat.last_user_msg();
-        assert!(last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())), "User message should be present");
+        assert!(
+            last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
+            "User message should be present"
+        );
     }
 
     #[tokio::test]
@@ -1003,6 +1886,8 @@ mod tests {
             .send(StateCommand::EmbedMessage {
                 new_msg_id: embed_msg_id,
                 completion_rx: rx,
+                // TODO: revisit this test
+                scan_rx: oneshot::channel().1, // dummy
             })
             .await
             .unwrap();
@@ -1061,6 +1946,8 @@ mod tests {
                 .send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: rx,
+                    // TODO: Revisit and update this test
+                    scan_rx: oneshot::channel().1, // dummy
                 })
                 .await
                 .unwrap();

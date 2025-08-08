@@ -211,6 +211,8 @@ impl std::fmt::Display for UiError {
 }
 
 pub mod system {
+    use std::{borrow::Cow, sync::Arc};
+
     use ploke_db::TypedEmbedData;
 
     use crate::UiError;
@@ -223,8 +225,28 @@ pub mod system {
         ReadSnippet(TypedEmbedData),
         CompleteReadSnip(Vec<String>),
         ModelSwitched(String),
-        ReadQuery{ file_name: String, query_name: String },
-        LoadQuery{ query_name: String, query_content: String },
+        ReadQuery {
+            file_name: String,
+            query_name: String,
+        },
+        LoadQuery {
+            query_name: String,
+            query_content: String,
+        },
+        BackupDb {
+            file_dir: String,
+            is_success: bool,
+            error: Option<String>,
+        },
+        LoadDb {
+            crate_name: String,
+            file_dir: Option<Arc<std::path::PathBuf>>,
+            is_success: bool,
+            error: Option<&'static str>,
+        },
+        ReIndex {
+            workspace: String
+        }
     }
 }
 
@@ -282,6 +304,9 @@ impl AppEvent {
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
             AppEvent::System(_) => EventPriority::Background,
             AppEvent::MessageUpdated(_) => EventPriority::Realtime,
             AppEvent::UpdateFailed(_) => EventPriority::Background,

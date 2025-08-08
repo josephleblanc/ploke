@@ -4,6 +4,8 @@ use cozo::{DataValue, Num, ScriptMutability};
 use itertools::Itertools;
 use tracing::instrument;
 
+use crate::database::HNSW_SUFFIX;
+
 use super::*;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
@@ -44,7 +46,7 @@ pub fn hnsw_all_types(
                 },
                 ~"#,
             rel,
-            r#":hnsw_idx{id, name| 
+            HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $"#,
             k_for_ty.as_str(),
@@ -125,7 +127,7 @@ pub fn hnsw_of_type(
                 },
                 ~"#,
         rel,
-        r#":hnsw_idx{id, name| 
+        HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
@@ -196,7 +198,7 @@ pub fn search_similar(
 
     let mut script = String::new();
     let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
@@ -204,31 +206,32 @@ pub fn search_similar(
     has_embedding[id, name, hash, span] := *"#;
     let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, !is_null(embedding)
 
-    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+    is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
 
     batch[id, name, file_path, file_hash, hash, span, namespace] := 
         has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
+        *module{id: mod_id, tracking_hash: file_hash @ 'NOW'},
+        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW'},
 
     ?[id, name, file_path, file_hash, hash, span, namespace] := 
         batch[id, name, file_path, file_hash, hash, span, namespace]
      "#;
-    let hnsw_script = r#"
+    let hnsw_script = [r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
                     name, 
+                    @ 'NOW'
                 },
-                ~function:hnsw_idx{id, name| 
+                ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 },
-            "#;
+            "#];
     let limit_param = ":limit $limit";
 
     let rel = ty.relation_str();
@@ -276,22 +279,26 @@ pub fn search_similar_test(
     params.insert("k".to_string(), DataValue::from(k as i64));
     params.insert("ef".to_string(), DataValue::from(ef as i64));
 
-    let result = db
-        .run_script(
+    let hnsw_script = [
             r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
                     name, 
                     embedding: v
+                    @ 'NOW'
                 },
-                ~function:hnsw_idx{id, name| 
+                ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 }
             "#,
+    ].concat();
+    let result = db
+        .run_script(
+            &hnsw_script,
             params,
             ScriptMutability::Immutable,
         )
@@ -320,7 +327,7 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -347,7 +354,7 @@ pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error:
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -374,7 +381,7 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
         r#"
             ::hnsw replace "#,
         ty.relation_str(),
-        r#":hnsw_idx {
+        HNSW_SUFFIX, r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,

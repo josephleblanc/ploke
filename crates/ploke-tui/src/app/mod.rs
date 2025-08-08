@@ -123,7 +123,7 @@ impl App {
     fn send_cmd(&self, cmd: StateCommand) {
         // Use try_send to prevent the UI from blocking
         if let Err(e) = self.cmd_tx.try_send(cmd) {
-            eprintln!("Failed to send command: {}", e);
+            tracing::warn!("Failed to send command: {}", e);
         }
     }
 
@@ -218,6 +218,8 @@ impl App {
                         })
                     },
                     // AppEvent::System(system_event) => {},
+                    // NOTE: This system event handling is a bad pattern. This should probably be
+                    // managed by the event_bus system instead.
                     AppEvent::System(system_event) => {
                         match system_event {
                             system::SystemEvent::ModelSwitched(new_model)=>{
@@ -252,6 +254,58 @@ impl App {
                                     query_content,
                                 });
                             },
+                            SystemEvent::BackupDb {file_dir, is_success, .. } if is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives BackupDb successful db save to file: {}", &file_dir);
+                                    self.send_cmd(StateCommand::AddMessageImmediate {
+                                        msg: format!("Success: Cozo data for code graph saved successfully to {file_dir}"),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    });
+
+                            },
+                            SystemEvent::BackupDb {file_dir, is_success, error } if !is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives BackupDb unsuccessful event: {}\nwith error: {:?}", &file_dir, &error);
+                                    if let Some(error_str) = error {
+                                        self.send_cmd(StateCommand::AddMessageImmediate {
+                                            msg: format!("Error: Cozo data for code graph not saved to {file_dir}\n\tFailed with error: {}", &error_str),
+                                            kind: MessageKind::SysInfo,
+                                            new_msg_id: Uuid::new_v4(),
+                                        });
+                                    }
+                            },
+                            SystemEvent::LoadDb {crate_name, file_dir, is_success, .. } if is_success => {
+                                tracing::debug!("App receives LoadDb successful db save to file: {:?}", 
+                                    display_file_info(file_dir.as_ref()), 
+                                );
+                                self.send_cmd(StateCommand::AddMessageImmediate {
+                                    msg: format!("Success: Cozo data for code graph loaded successfully for {crate_name} from {}", 
+                                        display_file_info(file_dir.as_ref()), 
+                                    ),
+                                    kind: MessageKind::SysInfo,
+                                    new_msg_id: Uuid::new_v4(),
+                                });
+                            },
+                            SystemEvent::LoadDb {crate_name, file_dir, is_success, error } if !is_success => {
+                                // TODO: Add crate name to data type and require in command
+                                tracing::debug!("App receives LoadDb unsuccessful event: {}\nwith error: {:?}", 
+                                    display_file_info(file_dir.as_ref()), 
+                                    &error
+                                );
+                                if let Some(error_str) = error {
+                                    self.send_cmd(StateCommand::AddMessageImmediate {
+                                        msg: format!("Error: Cozo data for code graph of {crate_name} not loaded from {}\n\tFailed with error: {}", 
+                                            display_file_info(file_dir.as_ref()), 
+                                            &error_str),
+                                        kind: MessageKind::SysInfo,
+                                        new_msg_id: Uuid::new_v4(),
+                                    });
+                                }
+                            },
+                            SystemEvent::ReIndex { workspace } => {
+                                    self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: false });
+                                }
                             other => {tracing::warn!("Unused system event in main app loop: {:?}", other)}
                         }
                     }
@@ -262,6 +316,10 @@ impl App {
             }
 
             }
+        }
+
+        fn display_file_info(file: Option<&Arc<std::path::PathBuf>>) -> String {
+            file.map(|f| f.display().to_string()).unwrap_or("File not found.".to_string())
         }
         Ok(())
     }
@@ -494,7 +552,20 @@ impl App {
             // 2. Shared State Change: Send a command
             KeyCode::Enter => {
                 if !self.input_buffer.is_empty() && !self.input_buffer.starts_with('\n') {
+                    // Somewhat complex implementation here, could use some work.
+                    // - Basically, we first start adding the user message, which is then updated
+                    // after we have embedded the user message.
+                    // - The currently selected crate is then parsed, checking to see if we need to
+                    // update the database or not. Currently this is quite coarse, such that we
+                    // reparse the entire directory if any file changes are noticed. However, we
+                    // only update the embeddings of the changed files.
+                    // - Concurrently with the parsing, the user's message is embedded, then once
+                    // the oneshot is sent to signify that the parsing has finished and database
+                    // has been updated (if needed), then the user's message is used with semantic
+                    // search to query the database, and continues into context building and
+                    // finally sending the message to the LLM.
                     let (completion_tx, completion_rx) = oneshot::channel();
+                    let (scan_tx, scan_rx) = oneshot::channel();
                     let new_msg_id = Uuid::new_v4();
                     self.send_cmd(StateCommand::AddUserMessage {
                         // TODO: `input_buffer` doesn't need to be cloned, try to `move` it or something
@@ -503,10 +574,12 @@ impl App {
                         new_msg_id,
                         completion_tx,
                     });
+                    self.send_cmd(StateCommand::ScanForChange { scan_tx });
                     // TODO: Expand EmbedMessage to include other types of message
                     self.send_cmd(StateCommand::EmbedMessage {
                         new_msg_id,
                         completion_rx,
+                        scan_rx
                     });
                     self.send_cmd(StateCommand::AddMessage {
                         kind: MessageKind::SysInfo,
@@ -605,7 +678,7 @@ impl App {
                 // Validate the directory exists
                 match std::fs::metadata(&workspace) {
                     Ok(metadata) if metadata.is_dir() => {
-                        self.send_cmd(StateCommand::IndexWorkspace { workspace });
+                        self.send_cmd(StateCommand::IndexWorkspace { workspace, needs_parse: true });
                     }
                     Ok(_) => {
                         self.send_cmd(StateCommand::AddMessageImmediate {
@@ -638,7 +711,7 @@ impl App {
                         alias_or_id: alias.to_string(),
                     });
                 }
-            },
+            }
             "save history" => {
                 self.send_cmd(StateCommand::AddMessageImmediate {
                     msg: "Saving conversation history...".to_string(),
@@ -646,18 +719,47 @@ impl App {
                     new_msg_id: Uuid::new_v4(),
                 });
                 self.send_cmd(StateCommand::SaveState);
-            },
+            }
+            // Loads a single target backup database from the default config dir into cozo,
+            // overwriting any currently loaded db.
+            // Expects a the command `/load crate`
+            cmd if cmd.starts_with("load crate") => {
+                match cmd.trim_start_matches("load crate").trim() {
+                    crate_name if !crate_name.contains(' ') => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Attempting to load code graph for {crate_name}..."),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                        self.send_cmd(StateCommand::LoadDb {
+                            crate_name: crate_name.to_string(),
+                        });
+                    }
+                    _ => {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Please enter the name of the crate you wish to load.\nThe crates with db backups are located in your default config directory.".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                        });
+                    }
+                }
+            }
             "query load" | "ql" => {
                 self.send_cmd(StateCommand::ReadQuery {
                     query_name: "default".to_string(),
                     file_name: "default.dl".to_string(),
                 });
-            },
+            }
+            "save db" | "sd" => {
+                self.send_cmd(StateCommand::SaveDb);
+            }
             cmd if cmd.starts_with("query load ") => {
-                if let Some(( query_name, file_name )) = cmd.trim_start_matches("query load ").trim().split_once(' ') {
+                if let Some((query_name, file_name)) =
+                    cmd.trim_start_matches("query load ").trim().split_once(' ')
+                {
                     tracing::debug!("Reading Query {} from file {}", query_name, file_name);
                     self.send_cmd(StateCommand::ReadQuery {
-                        query_name: query_name.to_string(), 
+                        query_name: query_name.to_string(),
                         file_name: file_name.to_string(),
                     });
                 }
@@ -667,7 +769,7 @@ impl App {
                 // Placeholder for command error handling
                 // Add more helpful message here
                 self.show_command_help();
-                eprintln!("Unknown command: {}", cmd);
+                tracing::warn!("Unknown command: {}", cmd);
             }
         }
     }

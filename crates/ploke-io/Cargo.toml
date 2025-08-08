@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { workspace = true }
+tokio-stream = "0.1"
 thiserror = "1.0"
 futures = "0.3"
 rlimit = "0.10"
@@ -20,6 +21,7 @@ tracing-error = "0.2"
 
 ploke-common = { path = "../common" }
 syn_parser = { path = "../ingest/syn_parser" }
+itertools = { workspace = true }
 
 
 [dev-dependencies]

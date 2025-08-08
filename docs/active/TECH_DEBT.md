@@ -45,6 +45,12 @@ This is a list of known fixes that I will want to make but are not terribly urge
 * [ ] Change the Uuid type in the cozo database to be Bytes instead.
   * This is because the Uuid type within cozo is basically useless (e.g. can't sort by Uuid).
 
+## Tests
+
+### Test Database
+* [ ] Tests for loading database from config file
+  * [ ] Graceful failures
+
 ## Longer term/larger refactor
 * [ ] Expand tracked types to handle the following potentially missing types
   Missing Rust types:

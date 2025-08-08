@@ -572,6 +572,18 @@ Remaining ids to prune: {}",
         // find_module_by_file_path_checked already returns Result<&ModuleNode, SynParserError>
         self.find_module_by_file_path_checked(root_path)
     }
+
+    // TODO: This is kind of a hack job, be more thorough.
+    pub fn retain_all(&mut self, set: HashSet<AnyNodeId>) {
+        self.graph.use_statements.retain(|n| set.contains(&n.any_id()));
+        self.graph.impls.retain(|n| set.contains(&n.any_id()));
+        self.graph.traits.retain(|n| set.contains(&n.any_id()));
+        self.graph.defined_types.retain(|n| set.contains(&n.any_id()));
+        self.graph.functions.retain(|n| set.contains(&n.any_id()));
+        self.graph.consts.retain(|n| set.contains(&n.any_id()));
+        self.graph.modules.retain(|n| set.contains(&n.any_id()));
+        self.graph.statics.retain(|n| set.contains(&n.any_id()));
+    }
 }
 
 impl GraphAccess for ParsedCodeGraph {

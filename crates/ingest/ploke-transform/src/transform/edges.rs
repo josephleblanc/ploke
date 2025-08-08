@@ -107,12 +107,16 @@ mod tests {
 
     use super::transform_relations;
 
+    use ploke_test_utils::init_test_tracing;
+    use tracing::Level;
+
     #[test]
     fn test_transform_edges() -> Result<(), Box<TransformError>> {
-        let _ = env_logger::builder()
-            .is_test(true)
-            .format_timestamp(None) // Disable timestamps
-            .try_init();
+        // init_test_tracing(Level::TRACE);
+        // let _ = env_logger::builder()
+        //     .is_test(true)
+        //     .format_timestamp(None) // Disable timestamps
+        //     .try_init();
 
         // Setup printable nodes
         let successful_graphs = test_run_phases_and_collect("fixture_nodes");
@@ -122,7 +126,9 @@ mod tests {
         db.initialize().expect("Failed to initialize database");
 
         let rel_schema = &SyntacticRelationSchema::SCHEMA;
-        rel_schema.create_and_insert(&db)?;
+        tracing::info!("create schema:\n{}", rel_schema.script_create());
+        tracing::info!("script_identity:\n{}", rel_schema.script_identity());
+        rel_schema.create_and_insert(&db).inspect_err(|e| tracing::error!("{e}"))?;
 
         // transform and insert impls into cozo
         transform_relations(&db, merged.graph.relations)?;
