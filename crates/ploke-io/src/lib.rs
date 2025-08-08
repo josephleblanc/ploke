@@ -416,6 +416,8 @@ impl IoManager {
             }
         };
 
+        // TODO: separate checking file hash into its own function, apart from checking for the has
+        // or contents of each other node
         let mut results = Vec::new();
 
         // Read the entire file content once
@@ -488,9 +490,10 @@ impl IoManager {
         if actual_tracking_hash != requests[0].request.file_tracking_hash {
             for req in requests {
                 tracing::error!(
-                    "file: {}, database: {}",
+                    "file: {}, database: {}\nfull request dump:\n{:#?}",
                     actual_tracking_hash.0,
-                    req.request.file_tracking_hash.0
+                    req.request.file_tracking_hash.0,
+                    req
                 );
                 results.push((
                     // TODO: Replace req.idx with the actual node id

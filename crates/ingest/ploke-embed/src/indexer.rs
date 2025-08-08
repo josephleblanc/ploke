@@ -295,7 +295,11 @@ impl IndexerTask {
                         break;
                     } else {
                         tracing::warn!("Sending shutdown signal to CallbackManager.");
-                        shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        // shutdown.send(()).expect("Failed to shutdown CallbackManager via shutdown send");
+                        match shutdown.send(()) {
+                            Ok(_) => tracing::info!("Sending shutdown message"),
+                            Err(e) => tracing::error!("Cannot send shutdown message, other side dropped"),
+                        };
                         // break;
                     }
                     let task_result = res.expect("Task panicked");
@@ -365,7 +369,7 @@ impl IndexerTask {
             .enumerate()
             .map(|(i, r)| (i, r[0].clone(), r[1].clone(), r[2].clone()))
         {
-            tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} {: >30}", i, name, idx);
+            tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);

@@ -320,7 +320,7 @@ pub enum StateCommand {
     EmbedMessage {
         new_msg_id: Uuid,
         completion_rx: oneshot::Receiver<()>,
-        scan_rx: oneshot::Receiver<()>,
+        scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
     },
     SwitchModel {
         alias_or_id: String,
@@ -338,7 +338,7 @@ pub enum StateCommand {
         crate_name: String,
     },
     ScanForChange {
-        scan_tx: oneshot::Sender<()>,
+        scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
 }
 
@@ -517,26 +517,32 @@ pub async fn state_manager(
             }
             StateCommand::IndexWorkspace { workspace, needs_parse } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
+                let mut target_dir = PathBuf::new();
                 // Extract task from mutex (consumes guard)
                 {
                     let mut write_guard = state.system.write().await;
                     let crate_focus = match std::env::current_dir() {
-                        Ok(crate_focus) => crate_focus,
+                        Ok(current_dir) => { 
+                            let mut pwd = current_dir;
+                            pwd.push(&workspace);
+                            pwd
+                        },
                         Err(e) => {
                             tracing::error!("Error resolving current dir: {e}");
                             continue;
                         }
                     };
-                    tracing::debug!("Setting crate_focus to {}", workspace);
-                    write_guard.crate_focus = Some(crate_focus);
+                    tracing::debug!("Setting crate_focus to {}", crate_focus.display());
+                    write_guard.crate_focus = Some(crate_focus.clone());
+                    target_dir = crate_focus;
                 }
 
                 // TODO: maybe run_parse should be returning the name of the crate it parsed, as
                 // defined in the `Cargo.toml`? For now we are just going to use the directory name
                 // as the name of the crate.
                 if needs_parse {
-                    match run_parse(Arc::clone(&state.db), Some(workspace.clone().into())) {
-                        Ok(_) => tracing::info!("Parse of target workspace {} successful", &workspace),
+                    match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
+                        Ok(_) => tracing::info!("Parse of target workspace {} successful", &target_dir.display()),
                         Err(e) => {
                             tracing::info!(
                                 "Failure parsing directory from IndexWorkspace event: {}",
@@ -691,7 +697,7 @@ pub async fn state_manager(
                 scan_rx,
             } => {
                 if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, completion_rx).await {
-                    return;
+                    continue;
                 }
                 let chat_guard = state.chat.0.read().await;
                 match chat_guard.last_user_msg() {
@@ -710,9 +716,11 @@ pub async fn state_manager(
                             .expect("No results from user message embedding generation");
                         tracing::info!("Finish embedding user message");
 
-                        tracing::info!("Waiting to finish parsing target crate");
+                        tracing::info!("Waiting to finish processing updates to files, if any");
+                        // Wait on the oneshot from `scan_for_change`, letting us know that the database
+                        // has been updated with the embeddings from any recent changes, if there were any.
                         if let ControlFlow::Break(_) = wait_on_oneshot(new_msg_id, scan_rx).await {
-                            return;
+                            continue;
                         }
                         tracing::info!("Finished waiting on parsing target crate");
 
@@ -770,7 +778,7 @@ pub async fn state_manager(
                             }
                             Err(e) => {
                                 tracing::error!(
-                                    "The at tempt to create the index at the database failed
+                                    "The attempt to create the index at the database failed
                                     error message: {:?}",
                                     e
                                 );
@@ -984,6 +992,7 @@ pub async fn state_manager(
 
             StateCommand::ScanForChange { scan_tx } => {
                 let _ = scan_for_change(&state, &event_bus, scan_tx).await.inspect_err(|e| {
+                    e.emit_error();
                     tracing::error!("Error in ScanForChange:\n{e}");
                 });
             }
@@ -995,7 +1004,11 @@ pub async fn state_manager(
     }
 }
 
-async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_tx: oneshot::Sender<()>) -> Result<(), ploke_error::Error> {
+async fn scan_for_change(
+    state: &Arc<AppState>, 
+    event_bus: &Arc<EventBus>, 
+    scan_tx: oneshot::Sender<Option< Vec< std::path::PathBuf >>>
+) -> Result<(), ploke_error::Error> {
     use ploke_error::Error as PlokeError;
     let guard = state.system.read().await;
     // TODO: Make a wrapper type for this and make it a method to get just the crate
@@ -1014,8 +1027,10 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
         e
     })?;
 
+    tracing::info!("scan_for_change in crate_name: {}", crate_name);
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(crate_name)?;
+    tracing::info!("file_data: {:#?}", file_data);
 
     // 3. scan the files, returning a Vec<Option<FileData>>, where None indicates the file has not
     //    changed.
@@ -1026,8 +1041,10 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
 
     if !vec_ok.iter().any(|f| f.is_some()) {
         // 4. if no changes, send complete in oneshot
-        match scan_tx.send(()) {
-            Ok(()) => {},
+        match scan_tx.send(None) {
+            Ok(()) => {
+                tracing::info!("No file changes detected");
+            },
             Err(e) => {
                 tracing::error!("Error sending parse oneshot from ScanForChange");
             }
@@ -1042,6 +1059,19 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
         // WARN: Just going to use a quick and dirty approach for now to get proof of concept, then later
         // on I'll do something more efficient.
         let ParserOutput { mut merged, tree } = run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()))?;
+
+        // get the filenames to send through the oneshot
+        let changed_filenames = vec_ok.iter().filter_map(
+            |opt| opt.as_ref().map(|f| f.file_path.clone())
+        ).collect_vec();
+        for file in changed_filenames.iter() {
+            let filename = format!("{}", file.display());
+            tracing::info!(target:"file_hashes", "Checking for details on {}", filename);
+            let query_res = state.db.get_path_info(&filename)?;
+            tracing::info!(target:"file_hashes", "headers:\n{}", query_res.headers.iter().join(", ") );
+            let rows = query_res.rows.iter().map(|r| r.iter().join(", ")).join("\n");
+            tracing::info!(target:"file_hashes", "rows:\n {}", rows);
+        }
         // WARN: Half-assed implementation, this should be a recurisve function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
@@ -1126,7 +1156,7 @@ async fn scan_for_change(state: &Arc<AppState>, event_bus: &Arc<EventBus>, scan_
 
         tracing::info!("Finishing scanning, sending message to reindex workspace");
         event_bus.send(AppEvent::System(SystemEvent::ReIndex { workspace: crate_name.to_string() }));
-        let _ = scan_tx.send(());
+        let _ = scan_tx.send(Some( changed_filenames ));
         // TODO: Add validation step here.
     }
     //
@@ -1161,9 +1191,9 @@ fn printable_nodes<'a>(merged: &syn_parser::ParsedCodeGraph, union: impl Iterato
     printable_union_items
 }
 
-async fn wait_on_oneshot(
+async fn wait_on_oneshot<T>(
     new_msg_id: Uuid,
-    completion_rx: oneshot::Receiver<()>,
+    completion_rx: oneshot::Receiver<T>,
 ) -> ControlFlow<()> {
     match completion_rx.await {
         Ok(_) => {
@@ -1400,6 +1430,14 @@ mod tests {
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";
         let workspace = "tests/fixture_crates/fixture_update_embed";
+
+        // ensure file begins in same state by using backup
+        let backup_file = PathBuf::from(format!("{}/{}/src/backup_main.bak", workspace_root.display(), workspace));
+        tracing::info!("reading from backup files: {}", backup_file.display());
+        let backup_contents = std::fs::read(&backup_file)?;
+        let target_main = backup_file.with_file_name("main.rs");
+        std::fs::write(&target_main, backup_contents)?;
+
         let cozo_db = if target_crate.starts_with("fixture") { 
             setup_db_full(target_crate)
         } else if target_crate.starts_with("crates") {
@@ -1479,7 +1517,8 @@ mod tests {
         {
             let mut system_guard = state.system.write().await;
             let path = workspace_root.join(workspace);
-            system_guard.crate_focus = Some(path)
+            system_guard.crate_focus = Some(path);
+            tracing::info!("system_guard.crate_focus: {:?}", system_guard.crate_focus);
         }
 
         // Create command channel with backpressure
@@ -1536,6 +1575,8 @@ mod tests {
         ));
         tokio::spawn(run_event_bus(Arc::clone(&event_bus)));
 
+        // setup target file:
+
         cmd_tx.send(StateCommand::IndexWorkspace { workspace: workspace.to_string(), needs_parse: false }).await?;
         let mut app_rx = event_bus.index_subscriber();
         while let Ok(event) = app_rx.recv().await {
@@ -1550,19 +1591,6 @@ mod tests {
                 _ => {}
             }
         }
-
-        // items in changed file, expect to be embedded initially (before scan sets them to null
-        // again)
-        assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
-        // items not in changed file, expect to be remain embedded
-        assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
         // print database output after indexing
         // or *struct{name, id, embedding & 'NOW'}
@@ -1612,18 +1640,29 @@ mod tests {
             .get_bool().expect("cell not expected datatype (bool)");
         assert!(!is_const_embedding_null_now);
 
-        // items in changed file, expect to be embedded initially (before scan sets them to null
+        // items in as-yet unchanged file, expect to be embedded initially (before scan sets them to null
         // again)
+        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
-        assert!(!is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Function, "main")?);
         // items not in changed file, expect to be remain embedded
         assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
+
+        let mut target_file = PathBuf::new();
+        {
+            let mut system_guard = state.system.write().await;
+            system_guard.crate_focus = Some( workspace_root.join(workspace) );
+            target_file = system_guard.crate_focus.clone().expect("Crate focus not set");
+        }
+        tracing::info!("target_file before pushes:\n{}", target_file.display());
+        target_file.push("src");
+        target_file.push("main.rs");
+        tracing::info!("target_file after pushes:\n{}", target_file.display());
 
         // ----- start test function ------
         let (scan_tx, scan_rx) = oneshot::channel();
@@ -1661,20 +1700,10 @@ mod tests {
         assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
         // ----- make change to target file -----
-        let mut target_file = PathBuf::new();
-        {
-            let mut system_guard = state.system.write().await;
-            system_guard.crate_focus = Some( workspace_root.join(workspace) );
-            target_file = system_guard.crate_focus.clone().expect("Crate focus not set");
-        }
-        tracing::info!("target_file before pushes:\n{}", target_file.display());
-        target_file.push("src");
-        target_file.push("main.rs");
-        tracing::info!("target_file after pushes:\n{}", target_file.display());
         let contents = std::fs::read_to_string(&target_file)?;
         tracing::info!("reading file:\n{}", &contents);
         let changed = contents.lines().map(|l| {
-            if l.contains("pub struct") {
+            if l.contains("pub struct TestStruct(pub i32)") {
                 "struct TestStruct(pub i32);"
             } else {
                 l
@@ -1695,10 +1724,10 @@ mod tests {
         tracing::info!("rows from db:\n{printable_rows}");
 
         // items in changed file, expect to have null embeddings after scan
+        assert!(is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Static, "STR_TWO")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Struct, "TestStruct")?);
-        assert!(is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Module, "inner_test_mod")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Function, "func_with_params")?);
         assert!(is_name_embed_null(&db_handle, NodeType::Function, "main")?);

@@ -128,13 +128,14 @@ impl Database {
         let script = format!(
             "{} \"{}\"",
             r#"?[id, tracking_hash, namespace, file_path] := 
-    *module { id, tracking_hash },
-    *file_mod { file_path, namespace, owner_id: id},
-    *crate_context { name: crate_name, namespace },
+    *module { id, tracking_hash @ 'NOW' },
+    *file_mod { file_path, namespace, owner_id: id @ 'NOW' },
+    *crate_context { name: crate_name, namespace @ 'NOW' },
     crate_name = "#,
             crate_name
         );
         let ret = self.raw_query(&script)?;
+        tracing::info!("get_crate_files output: {:#?}", ret);
         ret.try_into_file_data()
     }
 
@@ -464,6 +465,32 @@ impl Database {
         // Build the filename
         let name_id = format!("{}_{}", name, id);
         Ok(name_id)
+    }
+    pub fn get_path_info(&self, path: &str) -> Result<QueryResult, ploke_error::Error> {
+        let ty = NodeType::Module;
+        let rel = ty.relation_str();
+        let keys: String = ty.keys().join(", ");
+        let vals: String = ty.vals().join(", ");
+        let script = format!("?[target_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path: target_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        target_path = \"{path}\",
+                        is_embedding_null = is_null(embedding)
+        ");
+        tracing::info!(target: "file_hashes", "using script\n{}", &script);
+        let res = self.raw_query(&script)?;
+        Ok(res)
+    }
+    pub fn get_mod_info(&self, mod_id: Uuid) -> Result<QueryResult, ploke_error::Error> {
+        let ty = NodeType::Module;
+        let rel = ty.relation_str();
+        let keys: String = ty.keys().filter(|s| *s != "id").join(", ");
+        let vals: String = ty.vals().join(", ");
+        let script = format!("?[file_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path, @ 'NOW' }},
+                        *module{{ {keys}, {vals} @ 'NOW' }},
+                        is_embedding_null = is_null(embedding)
+        ");
+        let res = self.raw_query(&script)?;
+        Ok(res)
     }
 
     pub async fn index_embeddings(
@@ -1022,13 +1049,13 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     pub fn get_pending_test(&self) -> Result<NamedRows, DbError> {
-        let lhs = r#"?[ id, name ] := 
+        let lhs = r#"?[ at, name, id] := 
         "#;
         let mut query2: String = String::new();
         query2.push_str(lhs);
         for (i, primary_node) in NodeType::primary_nodes().iter().enumerate() {
             query2.push_str(&format!(
-                "*{} {{ id, embedding: null, tracking_hash, span, name }}",
+                "*{} {{ id, at, embedding: null, tracking_hash, span, name @ 'NOW' }}",
                 primary_node.relation_str()
             ));
             if i + 1 < NodeType::primary_nodes().len() {

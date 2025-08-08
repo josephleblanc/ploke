@@ -198,7 +198,7 @@ pub fn search_similar(
 
     let mut script = String::new();
     let base_script_start = r#"
-    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}
 
     ancestor[desc, asc] := parent_of[desc, asc]
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
@@ -206,14 +206,14 @@ pub fn search_similar(
     has_embedding[id, name, hash, span] := *"#;
     let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, !is_null(embedding)
 
-    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+    is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
 
     batch[id, name, file_path, file_hash, hash, span, namespace] := 
         has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
-        *module{id: mod_id, tracking_hash: file_hash},
-        *file_mod { owner_id: mod_id, file_path, namespace },
+        *module{id: mod_id, tracking_hash: file_hash @ 'NOW'},
+        *file_mod { owner_id: mod_id, file_path, namespace @ 'NOW'},
 
     ?[id, name, file_path, file_hash, hash, span, namespace] := 
         batch[id, name, file_path, file_hash, hash, span, namespace]
@@ -223,6 +223,7 @@ pub fn search_similar(
                 *function{
                     id, 
                     name, 
+                    @ 'NOW'
                 },
                 ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: vec($vector_query), 
@@ -285,6 +286,7 @@ pub fn search_similar_test(
                     id, 
                     name, 
                     embedding: v
+                    @ 'NOW'
                 },
                 ~function"#, HNSW_SUFFIX, r#"{id, name| 
                     query: v, 

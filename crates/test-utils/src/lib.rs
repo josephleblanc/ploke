@@ -194,7 +194,7 @@ pub fn init_test_tracing(level: tracing::Level) {
         .with_target("ploke_tui::app_state", Level::INFO)
         .with_target("ploke_embed", Level::TRACE)
         .with_target("specific_target", Level::TRACE)
-        .with_target("", Level::INFO)
+        .with_target("file_hashes", Level::INFO)
         // .with_target("ploke", level)
         // .with_target("ploke-db", level)
         // .with_target("ploke-embed", level)
