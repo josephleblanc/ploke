@@ -242,8 +242,8 @@
  ## Status update (post auto-follow exit fix)
 
  - What changed in this step:
-   - Implemented rule to exit auto-follow whenever the selected message is not the last one.
-   - Now, when navigating selection upward, the viewport minimally adjusts to reveal the selected message for the current frame (measure -> decide -> render).
+   - Fixed selection index out-of-bounds panic by clamping the selected index against the current path length each frame (commit f898df7).
+   - Reconfirmed the measure -> decide -> render pipeline and minimal-reveal behavior when selection changes.
 
  - Where we are in the plan:
    - Completed:
@@ -251,9 +251,13 @@
      - 2) Add App UI state: convo_offset_y, convo_content_height, convo_item_heights.
      - 3) Draw path using external offset; clamp offset to [0, total_height - viewport_height] each frame.
      - 6) Selection and scrolling interplay (initial): minimal reveal active; exit auto-follow on non-last selection.
-   - Not started:
-     - 4) Mouse wheel free-scrolling.
-     - 5) Keyboard scrolling (Ctrl+n/Ctrl+p for line scroll, J/K for page scroll, gg/G for top/bottom).
+     - Safety: selection index clamp to prevent OOB panics.
+   - Next to implement:
+     - 4) Mouse wheel free-scrolling (adjust convo_offset_y by 3 lines per tick; clamp; do not change selection).
+     - 5) Keyboard scrolling with agreed bindings in Normal mode:
+       - Ctrl+n / Ctrl+p for line down/up
+       - J / K for page down/up
+       - gg / G to go to the beginning/end of the conversation history (offset to 0 / bottom), without changing selection
      - 7) Optional polish (scrollbar, refined auto-follow behavior).
 
  - Expected current behavior:
@@ -264,10 +268,10 @@
  - Known limitations:
    - Auto-follow may be set true at the end of a frame when the viewport is at the bottom; it is cleared on the next frame if selection remains non-last. This should not visibly affect behavior.
 
- - What to test now:
-   - Select the last message: view sticks to bottom.
-   - Move selection upward until it would go off-screen: view adjusts to bring it into view.
-   - Move selection within the visible region: view does not jump.
+ - What to work on next (immediate):
+   - Handle Event::Mouse ScrollUp/ScrollDown in App::run to adjust convo_offset_y by ±3 and clamp to [0, max_offset].
+   - Add Normal-mode keybindings: Ctrl+n/Ctrl+p for line scroll; J/K for page scroll; gg/G to jump to top/bottom without changing selection.
+   - Update existing J/K top/bottom selection navigation to avoid conflicts with the new page-scrolling behavior.
 
  ## Feedback log (to fill during implementation)
 
