@@ -8,7 +8,7 @@ use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use message_item::render_messages;
+use message_item::{measure_messages, render_messages};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 use tokio::sync::oneshot;
@@ -373,45 +373,70 @@ impl App {
 
         let status_line_area = layout_statusline(5, status_area);
 
-        // ---------- Scroll State -------------
-        // let convo_length = convo.height;
-        // self.convo_scrollstate = self.convo_scrollstate.content_length(convo_length as usize);
-
         // ---------- Prepare Widgets ----------
         // Render message tree
         let conversation_width = chat_area.width.saturating_sub(6);
         let viewport_height = chat_area.height;
 
-        // Pre-adjust scroll to keep the most recent message fully visible when appropriate.
-        // This restores the previous "autoscroll to bottom" behavior when the last message is selected,
-        // or when we were already at/near the bottom (auto-follow).
-        if let Some(selected_index) = self.list.selected() {
-            let is_last = selected_index + 1 == path.len();
-            if is_last {
-                // If we were already at or near the bottom previously, snap to bottom for this frame.
-                let prev_total = self.convo_content_height;
-                let prev_max_offset = prev_total.saturating_sub(viewport_height);
-                if self.convo_auto_follow || self.convo_offset_y >= prev_max_offset.saturating_sub(1) {
-                    self.convo_offset_y = prev_max_offset;
-                    self.convo_auto_follow = true;
-                }
-            }
-        } else if path.is_empty() {
+        // 1) Measure current frame (no rendering)
+        let selected_index_opt = self.list.selected();
+        let (total_height, heights) = measure_messages(path, conversation_width, selected_index_opt);
+
+        // 2) Decide/adjust offset using current metrics
+        let max_offset = total_height.saturating_sub(viewport_height);
+
+        if path.is_empty() {
             // Nothing to render; keep viewport at top and mark as following.
             self.convo_offset_y = 0;
             self.convo_auto_follow = true;
+        } else if let Some(selected_index) = selected_index_opt {
+            if selected_index + 1 == path.len() || self.convo_auto_follow {
+                // Follow bottom when last is selected or we were already following
+                self.convo_offset_y = max_offset;
+            } else {
+                // Minimally reveal selection within current viewport
+                let mut prefix_sum = 0u16;
+                for (i, h) in heights.iter().enumerate() {
+                    if i == selected_index {
+                        break;
+                    }
+                    prefix_sum = prefix_sum.saturating_add(*h);
+                }
+                let selected_top = prefix_sum;
+                let selected_bottom = prefix_sum.saturating_add(heights[selected_index]);
+                let viewport_bottom = self.convo_offset_y.saturating_add(viewport_height);
+
+                if selected_top < self.convo_offset_y {
+                    self.convo_offset_y = selected_top;
+                } else if selected_bottom > viewport_bottom {
+                    self.convo_offset_y = selected_bottom.saturating_sub(viewport_height);
+                }
+            }
+        } else {
+            // No explicit selection; keep existing offset (will clamp below)
         }
 
-        let (total_height, heights) =
-            render_messages(self, frame, path, conversation_width, chat_area, self.convo_offset_y);
-        self.convo_content_height = total_height;
-        self.convo_item_heights = heights;
-        let max_offset = total_height.saturating_sub(viewport_height);
+        // Clamp offset to valid range
         if self.convo_offset_y > max_offset {
             self.convo_offset_y = max_offset;
         }
-        // Update auto-follow flag: we are "following" when the viewport is at the bottom.
+
+        // 3) Persist metrics and auto-follow status
+        self.convo_content_height = total_height;
+        self.convo_item_heights = heights;
         self.convo_auto_follow = self.convo_offset_y >= max_offset;
+
+        // 4) Render with final offset
+        render_messages(
+            frame,
+            path,
+            conversation_width,
+            chat_area,
+            self.convo_offset_y,
+            &self.convo_item_heights,
+            selected_index_opt,
+        );
+
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",

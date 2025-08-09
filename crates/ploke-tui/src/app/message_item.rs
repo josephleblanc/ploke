@@ -49,48 +49,47 @@ fn render_one_message<'a>(
 
     (lines.len() as u16, lines)
 }
-// ---------- main replacement -------------------------------------------------
-#[instrument(skip(app, frame, renderable_msg), level = "trace")]
+ // ---------- main replacement -------------------------------------------------
+#[instrument(skip(renderable_msg), level = "trace")]
+pub fn measure_messages(
+    renderable_msg: &[RenderableMessage],
+    conversation_width: u16,
+    selected_index: Option<usize>,
+) -> (u16, Vec<u16>) {
+    // Compute per-message heights and total height for the current frame.
+    let mut heights: Vec<u16> = Vec::with_capacity(renderable_msg.len());
+    let mut total_height = 0u16;
+    for (idx, msg) in renderable_msg.iter().enumerate() {
+        let eff_w = conversation_width.saturating_sub(if selected_index == Some(idx) { 1 } else { 0 });
+        let h = calc_height(&msg.content, eff_w);
+        heights.push(h);
+        total_height = total_height.saturating_add(h);
+    }
+    (total_height, heights)
+}
+
+#[instrument(skip(frame, renderable_msg, heights), level = "trace")]
 pub fn render_messages(
-    app: &mut App,
     frame: &mut Frame,
     renderable_msg: &[RenderableMessage],
     conversation_width: u16,
     conversation_area: Rect,
     offset_y: u16,
-) -> (u16, Vec<u16>) {
-    // ------------------------------------------------------------------
-    // 1. Compute per-message height and total virtual height
-    // ------------------------------------------------------------------
+    heights: &[u16],
+    selected_index: Option<usize>,
+) {
+    // 1) Clamp offset
     let viewport_height = conversation_area.height;
-    let selected_index = app
-        .list
-        .selected()
-        .unwrap_or_else(|| renderable_msg.len().saturating_sub(1));
-
-    let mut heights: Vec<u16> = Vec::with_capacity(renderable_msg.len());
-    let mut total_height = 0u16;
-    for (idx, msg) in renderable_msg.iter().enumerate() {
-        let eff_w = conversation_width.saturating_sub(if idx == selected_index { 1 } else { 0 });
-        let h = calc_height(&msg.content, eff_w);
-        heights.push(h);
-        total_height = total_height.saturating_add(h);
-    }
-
-    // ------------------------------------------------------------------
-    // 2. Use external scroll offset (clamped to content)
-    // ------------------------------------------------------------------
+    let total_height: u16 = heights.iter().copied().fold(0u16, |acc, h| acc.saturating_add(h));
     let clamped_offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
 
-    // ------------------------------------------------------------------
-    // 3. Render visible slice directly
-    // ------------------------------------------------------------------
+    // 2) Render visible slice
     let mut y_screen = 0u16;
     let mut y_virtual = 0u16;
 
     for (idx, msg) in renderable_msg.iter().enumerate() {
         let height = heights[idx];
-        let is_selected = idx == selected_index;
+        let is_selected = selected_index == Some(idx);
         let base_style = match msg.kind {
             MessageKind::User => Style::new().blue(),
             MessageKind::Assistant => Style::new().green(),
@@ -100,7 +99,7 @@ pub fn render_messages(
         };
 
         if y_virtual + height <= clamped_offset_y {
-            y_virtual += height;
+            y_virtual = y_virtual.saturating_add(height);
             continue;
         }
 
@@ -108,12 +107,13 @@ pub fn render_messages(
         let eff_w = conversation_width.saturating_sub(if is_selected { 1 } else { 0 });
         let wrapped = textwrap::wrap(&msg.content, eff_w as usize);
         let bar = Span::styled("│", base_style.fg(Color::White));
+
         // If offset lands inside this message, skip top lines so we don’t waste space
         let mut start_line = 0usize;
         if clamped_offset_y > y_virtual {
             start_line = (clamped_offset_y - y_virtual) as usize;
         }
-        for (line_idx, line) in wrapped.iter().enumerate().skip(start_line) {
+        for line in wrapped.iter().skip(start_line) {
             let mut spans = Vec::with_capacity(2);
             if is_selected {
                 spans.push(bar.clone());
@@ -128,12 +128,11 @@ pub fn render_messages(
                 1,
             );
             frame.render_widget(para, area);
-            y_screen += 1;
+            y_screen = y_screen.saturating_add(1);
             if y_screen >= viewport_height {
-                return (total_height, heights);
+                return;
             }
         }
-        y_virtual += height;
+        y_virtual = y_virtual.saturating_add(height);
     }
-    (total_height, heights)
 }
