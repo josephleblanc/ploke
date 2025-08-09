@@ -225,7 +225,7 @@ impl std::fmt::Display for MessageKind {
             MessageKind::User => write!(f, "user"),
             MessageKind::Assistant => write!(f, "assistant"),
             MessageKind::System => write!(f, "system"),
-            MessageKind::Tool => todo!(),
+            MessageKind::Tool => write!(f, "tool"),
             MessageKind::SysInfo => write!(f, "sysInfo"),
         }
     }
@@ -450,9 +450,10 @@ impl ChatHistory {
 
         let parent_id = sibling.parent.ok_or(ChatError::RootHasNoSiblings)?;
 
-        // Reuse add_child but with the sibling's parent
+        // Reuse add_child but with the sibling's parent, and generate a new message id
         // NOTE: Assumes the same kind (safe for sibling of message)
-        self.add_child(parent_id, sibling_id, content, status, sibling.kind)
+        let new_id = Uuid::new_v4();
+        self.add_child(parent_id, new_id, content, status, sibling.kind)
     }
 
     /// Gets the index position of a message within its parent's children list
