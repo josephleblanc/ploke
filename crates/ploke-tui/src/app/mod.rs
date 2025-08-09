@@ -390,10 +390,15 @@ impl App {
             self.convo_offset_y = 0;
             self.convo_auto_follow = true;
         } else if let Some(selected_index) = selected_index_opt {
-            if selected_index + 1 == path.len() || self.convo_auto_follow {
-                // Follow bottom when last is selected or we were already following
+            let is_last = selected_index + 1 == path.len();
+            if is_last {
+                // Follow bottom when last is selected
                 self.convo_offset_y = max_offset;
+                self.convo_auto_follow = true;
             } else {
+                // Exit auto-follow when navigating to a non-last message and minimally reveal selection
+                self.convo_auto_follow = false;
+
                 // Minimally reveal selection within current viewport
                 let mut prefix_sum = 0u16;
                 for (i, h) in heights.iter().enumerate() {
@@ -424,7 +429,12 @@ impl App {
         // 3) Persist metrics and auto-follow status
         self.convo_content_height = total_height;
         self.convo_item_heights = heights;
-        self.convo_auto_follow = self.convo_offset_y >= max_offset;
+        if let Some(selected_index) = selected_index_opt {
+            let is_last = selected_index + 1 == path.len();
+            self.convo_auto_follow = is_last || self.convo_offset_y >= max_offset;
+        } else {
+            self.convo_auto_follow = self.convo_offset_y >= max_offset;
+        }
 
         // 4) Render with final offset
         render_messages(
