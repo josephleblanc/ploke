@@ -239,6 +239,54 @@
  - [ ] Tests: Manual verification scenarios described above.
  - [ ] Feedback: Capture UX notes and iterate.
 
+ ## Status update (as of commit fc638a3)
+
+ - Where we are in the plan:
+   - Completed:
+     - 1) Refactor renderer to accept external offset and return (total_height, heights) via measure_messages/render_messages split.
+     - 2) Add App UI state: convo_offset_y, convo_content_height, convo_item_heights.
+     - 3) Draw path using external offset; clamp offset to [0, total_height - viewport_height] each frame.
+   - In progress:
+     - 6) Selection and scrolling interplay: minimal “reveal selected” logic exists, but it is currently bypassed due to sticky auto-follow.
+   - Not started:
+     - 4) Mouse wheel free-scrolling.
+     - 5) Keyboard scrolling (Ctrl+n/p for line scroll, J/K for page scroll, gg/G for top/bottom).
+     - 7) Optional polish (scrollbar, refined auto-follow behavior).
+
+ - Expected current behavior (with the above code):
+   - When the selected message is the last message or when auto-follow is active, the viewport snaps to and stays at the bottom (shows the most recent message).
+   - When the selection moves away from the last message, the viewport should minimally adjust to reveal the selected message within the viewport.
+   - Known deviation right now: the viewport often stays clamped to the bottom even when selection moves to earlier messages.
+
+ - Why the deviation happens:
+   - auto_follow is set true when we’re at the bottom and is never cleared on selection changes or user actions.
+   - In App::draw, the condition “if selected is last OR convo_auto_follow” forces offset_y = bottom, which overrides the minimal-reveal logic for any other selection.
+   - Result: selection can change, but the viewport remains pinned to the bottom (the most recent message appears; earlier selected items go off-screen).
+
+ - Is this expected?
+   - This is unintended per the plan. It’s a bug stemming from doing step 6 only partially. We split measure/render and added minimal reveal, but we did not add the rules to exit auto-follow on selection/navigation, so auto-follow remains sticky and dominates.
+
+ - Next steps to align with the plan:
+   1) Exit auto-follow when the user navigates selection to a non-last message (ListNavigation Up/Down/Top), and on any future free-scrolling (mouse/keys).
+      - Implementation note: In the “Decide/adjust offset” pass, if selected_index exists and selected_index + 1 < path.len(), set convo_auto_follow = false before applying reveal logic.
+   2) Only re-enter auto-follow when:
+      - The selected message is the last message, or
+      - The viewport is at the bottom after rendering (offset == max_offset).
+   3) Then implement step 4 (mouse wheel) and step 5 (keyboard scroll) using the bindings we agreed:
+      - Ctrl+n/Ctrl+p for line scroll.
+      - J/K for page scroll (page = min(5 lines, 10% of viewport height)).
+      - gg to go to top, G to go to bottom.
+      - Mouse wheel active in both Normal and Insert modes; entering a new message should snap to bottom.
+
+ - What to test right now:
+   - With multiple long messages, select the last message: viewport should be at bottom.
+   - Move selection up: currently, viewport likely stays at bottom (known bug). After next step, it should minimally reveal the selected item.
+
+ - Clarifications (confirm we proceed as planned):
+   - Exit auto-follow on any selection navigation that results in a non-last selection, and on any free-scrolling action.
+   - Re-enter auto-follow when selection is last or when the viewport is snapped to bottom by the user (offset == max_offset).
+   - Keep mouse wheel active in Insert mode; submitting a message should snap to bottom.
+
  ## Feedback log (to fill during implementation)
 
  - Notes on unexpected behavior:
