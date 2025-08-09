@@ -10,8 +10,8 @@ use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
 use crossterm::event::{
     DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
-    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
-    MouseEventKind,
+    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton,
+    MouseEvent, MouseEventKind,
 };
 use message_item::{measure_messages, render_messages};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -104,6 +104,7 @@ pub struct App {
     convo_free_scrolling: bool,
     pending_char: Option<char>,
     last_viewport_height: u16,
+    last_chat_area: ratatui::layout::Rect,
 }
 
 impl App {
@@ -143,6 +144,7 @@ impl App {
             convo_free_scrolling: false,
             pending_char: None,
             last_viewport_height: 0,
+            last_chat_area: ratatui::layout::Rect::default(),
         }
     }
 
@@ -220,6 +222,82 @@ impl App {
                                     self.convo_offset_y = new_offset.min(max_offset);
                                     self.convo_free_scrolling = true;
                                     self.pending_char = None;
+                                }
+                                MouseEventKind::Down(MouseButton::Left) => {
+                                    // Hit-test inside chat area to select message on click
+                                    let area = self.last_chat_area;
+                                    let x = mouse_event.column;
+                                    let y = mouse_event.row;
+                                    if x >= area.x
+                                        && x < area.x.saturating_add(area.width)
+                                        && y >= area.y
+                                        && y < area.y.saturating_add(area.height)
+                                    {
+                                        let rel_y = y.saturating_sub(area.y);
+                                        let virtual_line = self.convo_offset_y.saturating_add(rel_y);
+
+                                        let mut acc = 0u16;
+                                        let mut target_idx_opt: Option<usize> = None;
+                                        for (i, h) in self.convo_item_heights.iter().enumerate() {
+                                            let next_acc = acc.saturating_add(*h);
+                                            if virtual_line < next_acc {
+                                                target_idx_opt = Some(i);
+                                                break;
+                                            }
+                                            acc = next_acc;
+                                        }
+                                        let len = self.convo_item_heights.len();
+                                        if len > 0 {
+                                            let target_idx = target_idx_opt.unwrap_or_else(|| len.saturating_sub(1));
+
+                                            // Update UI selection immediately
+                                            let prev_sel = self.list.selected();
+                                            self.list.select(Some(target_idx));
+                                            self.convo_free_scrolling = false;
+                                            self.pending_char = None;
+
+                                            // Sync AppState selection using existing navigation commands
+                                            match prev_sel {
+                                                Some(prev) => {
+                                                    if target_idx > prev {
+                                                        for _ in 0..(target_idx - prev) {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Down,
+                                                            });
+                                                        }
+                                                    } else if prev > target_idx {
+                                                        for _ in 0..(prev - target_idx) {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Up,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                None => {
+                                                    // Choose shortest path via Top/Bottom
+                                                    if target_idx < len / 2 {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Top,
+                                                        });
+                                                        for _ in 0..target_idx {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Down,
+                                                            });
+                                                        }
+                                                    } else {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Bottom,
+                                                        });
+                                                        for _ in 0..(len.saturating_sub(1).saturating_sub(target_idx)) {
+                                                            self.send_cmd(StateCommand::NavigateList {
+                                                                direction: ListNavigation::Up,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 _ => {}
                             }
@@ -422,6 +500,8 @@ impl App {
         let chat_area = main_layout[1];
         let input_area = main_layout[2];
         let status_area = main_layout[3];
+        // Remember chat area for mouse hit-testing
+        self.last_chat_area = chat_area;
 
         let status_line_area = layout_statusline(5, status_area);
 
