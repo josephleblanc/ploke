@@ -35,8 +35,8 @@ static HELP_COMMANDS: &str = r#"Available commands:
     k/↑ - Navigate up (selection)
     J - Page down (scroll)
     K - Page up (scroll)
-    gg - Go to top (scroll)
-    G - Go to bottom (scroll)
+    gg - Go to bottom (scroll)
+    G - Go to top (scroll)
     h/← - Navigate branch previous
     l/→ - Navigate branch next
     Ctrl+n - Scroll down one line
@@ -97,7 +97,7 @@ pub struct App {
     is_trailing_whitespace: bool,
     // Scrolling/UI helpers
     convo_free_scrolling: bool,
-    pending_g: bool,
+    pending_char: Option<char>,
     last_viewport_height: u16,
 }
 
@@ -136,7 +136,7 @@ impl App {
             input_cursor_col: 0,
             is_trailing_whitespace: false,
             convo_free_scrolling: false,
-            pending_g: false,
+            pending_char: None,
             last_viewport_height: 0,
         }
     }
@@ -195,10 +195,12 @@ impl App {
                                 MouseEventKind::ScrollUp => {
                                     self.convo_offset_y = self.convo_offset_y.saturating_sub(3);
                                     self.convo_free_scrolling = true;
+                                    self.pending_char = None;
                                 }
                                 MouseEventKind::ScrollDown => {
                                     self.convo_offset_y = self.convo_offset_y.saturating_add(3);
                                     self.convo_free_scrolling = true;
+                                    self.pending_char = None;
                                 }
                                 _ => {}
                             }
@@ -945,13 +947,13 @@ impl App {
                     // Line down
                     self.convo_offset_y = self.convo_offset_y.saturating_add(1);
                     self.convo_free_scrolling = true;
-                    self.pending_g = false;
+                    self.pending_char = None;
                 }
                 KeyCode::Char('p') => {
                     // Line up
                     self.convo_offset_y = self.convo_offset_y.saturating_sub(1);
                     self.convo_free_scrolling = true;
-                    self.pending_g = false;
+                    self.pending_char = None;
                 }
                 _ => {}
             }
@@ -966,14 +968,14 @@ impl App {
             // Send commands instead of calling local methods
             KeyCode::Char('k') | KeyCode::Up => {
                 self.convo_free_scrolling = false;
-                self.pending_g = false;
+                self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Up,
                 });
             }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.convo_free_scrolling = false;
-                self.pending_g = false;
+                self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateList {
                     direction: ListNavigation::Down,
                 });
@@ -984,75 +986,81 @@ impl App {
                 let page_step: u16 = (vh / 10).max(1).min(5);
                 self.convo_offset_y = self.convo_offset_y.saturating_add(page_step);
                 self.convo_free_scrolling = true;
-                self.pending_g = false;
+                self.pending_char = None;
             }
             KeyCode::Char('K') => {
                 let vh = self.last_viewport_height.max(1);
                 let page_step: u16 = (vh / 10).max(1).min(5);
                 self.convo_offset_y = self.convo_offset_y.saturating_sub(page_step);
                 self.convo_free_scrolling = true;
-                self.pending_g = false;
+                self.pending_char = None;
             }
             // Branch navigation clears free-scrolling to allow reveal
             KeyCode::Char('h') | KeyCode::Left => {
                 self.convo_free_scrolling = false;
-                self.pending_g = false;
+                self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch {
                     direction: Previous,
                 });
             }
             KeyCode::Char('l') | KeyCode::Right => {
                 self.convo_free_scrolling = false;
-                self.pending_g = false;
+                self.pending_char = None;
                 self.send_cmd(StateCommand::NavigateBranch { direction: Next });
             }
 
-            // Jump to top/bottom without changing selection
+            // Jump to bottom/top and select message
             KeyCode::Char('g') => {
-                if self.pending_g {
-                    // gg -> top
-                    self.convo_offset_y = 0;
-                    self.convo_free_scrolling = true;
-                    self.pending_g = false;
+                if matches!(self.pending_char, Some('g')) {
+                    // gg -> bottom: select last message and scroll to bottom
+                    self.send_cmd(StateCommand::NavigateList {
+                        direction: ListNavigation::Bottom,
+                    });
+                    self.convo_offset_y = u16::MAX; // will clamp to bottom on draw
+                    self.convo_free_scrolling = false;
+                    self.pending_char = None;
                 } else {
                     // wait for second 'g'
-                    self.pending_g = true;
+                    self.pending_char = Some('g');
                 }
             }
             KeyCode::Char('G') => {
-                // Bottom (will clamp on draw)
-                self.convo_offset_y = u16::MAX;
-                self.convo_free_scrolling = true;
-                self.pending_g = false;
+                // Top: select first message and scroll to top
+                self.send_cmd(StateCommand::NavigateList {
+                    direction: ListNavigation::Top,
+                });
+                self.convo_offset_y = 0;
+                self.convo_free_scrolling = false;
+                self.pending_char = None;
             }
 
             // --- COMMANDS ---
             KeyCode::Char(':') if self.command_style == CommandStyle::NeoVim => {
-                self.pending_g = false;
+                self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = ":".to_string();
             }
             KeyCode::Char('m') => {
-                self.pending_g = false;
+                self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/model ".to_string();
             }
             KeyCode::Char('?') => {
-                self.pending_g = false;
+                self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/help".to_string();
             }
             KeyCode::Char('q') => {
-                self.pending_g = false;
+                self.pending_char = None;
                 self.quit();
             }
             KeyCode::Char('i') => {
-                self.pending_g = false;
+                self.pending_char = None;
                 self.mode = Mode::Insert;
             }
             _ => {
-                // Clear any pending 'g' if another key was pressed
-                self.pending_g = false;
+                // Clear any pending multi-key sequence
+                self.pending_char = None;
             }
         }
     }

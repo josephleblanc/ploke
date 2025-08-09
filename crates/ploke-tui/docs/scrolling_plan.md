@@ -182,9 +182,7 @@
     - For now let's add auto-follow as a field in the app state, then set it to true whenever the
     bottom of the most recent message is at the end of the viewport.
  - Preferred default keybindings for line/page scroll if Ctrl+e/y conflict with your workflow?
-    - D o not use Ctrl+e/y, instead use Ctrl+n/p, and add the keybind gg to go to the beginning fo
-    the conversation history, and G to go to the end of the conversation history. For page
-    scrolling, use J/K
+    - Do not use Ctrl+e/y, instead use Ctrl+n/p, and add the keybind gg to go to the end of the conversation history, and G to go to the beginning of the conversation history. For page scrolling, use J/K
 
  ## Files we plan to modify
 
@@ -257,7 +255,7 @@
      - 5) Keyboard scrolling with agreed bindings in Normal mode:
        - Ctrl+n / Ctrl+p for line down/up
        - J / K for page down/up
-       - gg / G to go to the beginning/end of the conversation history (offset to 0 / bottom), without changing selection
+       - gg selects last message and scrolls to bottom; G selects first message and scrolls to top
      - 7) Optional polish (scrollbar, refined auto-follow behavior).
 
  - Expected current behavior:
