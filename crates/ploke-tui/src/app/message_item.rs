@@ -61,29 +61,43 @@ pub fn render_messages(
     // ------------------------------------------------------------------
     // 1. Compute per-message height and total virtual height
     // ------------------------------------------------------------------
+    let viewport_height = conversation_area.height;
+    let selected_index = app
+        .list
+        .selected()
+        .unwrap_or_else(|| renderable_msg.len().saturating_sub(1));
+
     let mut heights: Vec<u16> = Vec::with_capacity(renderable_msg.len());
     let mut total_height = 0u16;
-    for msg in renderable_msg {
-        let h = calc_height(&msg.content, conversation_width);
+    for (idx, msg) in renderable_msg.iter().enumerate() {
+        let eff_w = conversation_width.saturating_sub(if idx == selected_index { 1 } else { 0 });
+        let h = calc_height(&msg.content, eff_w);
         heights.push(h);
-        total_height += h;
+        total_height = total_height.saturating_add(h);
     }
-    let viewport_height = conversation_area.height;
 
     // ------------------------------------------------------------------
     // 2. Scroll so the selected message is in view
     // ------------------------------------------------------------------
-    let selected_index = app.list.selected().unwrap_or(0);
-
+    let selected_top = heights
+        .iter()
+        .take(selected_index)
+        .fold(0, |h, acc| acc + h);
+    let selected_height = *heights.get(selected_index).unwrap_or(&0);
+    let selected_bottom = selected_top.saturating_add(selected_height);
+    // Ensure the selected item is fully visible; prefer bottom alignment when needed.
     let mut offset_y = 0u16;
-    for (idx, &h) in heights.iter().enumerate() {
-        if idx == selected_index {
-            let half = viewport_height / 2;
-            offset_y = offset_y.saturating_sub(half);
-            break;
-        }
-        offset_y += h;
+    if selected_bottom > offset_y.saturating_add(viewport_height) {
+        offset_y = selected_bottom.saturating_sub(viewport_height);
     }
+    if selected_top < offset_y {
+        offset_y = selected_top;
+    }
+    // Stick to bottom when the last message is selected
+    if selected_index + 1 == renderable_msg.len() {
+        offset_y = total_height.saturating_sub(viewport_height);
+    }
+    // Final clamp
     offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
 
     // ------------------------------------------------------------------
@@ -108,10 +122,16 @@ pub fn render_messages(
             continue;
         }
 
-        let wrapped = textwrap::wrap(&msg.content, conversation_width as usize);
+        // Use the same effective width as in height calc (subtract 1 for bar when selected)
+        let eff_w = conversation_width.saturating_sub(if is_selected { 1 } else { 0 });
+        let wrapped = textwrap::wrap(&msg.content, eff_w as usize);
         let bar = Span::styled("│", base_style.fg(Color::White));
-
-        for (line_idx, line) in wrapped.iter().enumerate() {
+        // If offset lands inside this message, skip top lines so we don’t waste space
+        let mut start_line = 0usize;
+        if offset_y > y_virtual {
+            start_line = (offset_y - y_virtual) as usize;
+        }
+        for (line_idx, line) in wrapped.iter().enumerate().skip(start_line) {
             let mut spans = Vec::with_capacity(2);
             if is_selected {
                 spans.push(bar.clone());

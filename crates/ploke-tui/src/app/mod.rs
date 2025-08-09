@@ -369,7 +369,7 @@ impl App {
 
         // ---------- Prepare Widgets ----------
         // Render message tree
-        let conversation_width = main_layout[0].width.saturating_sub(6);
+        let conversation_width = chat_area.width.saturating_sub(6);
 
         render_messages(self, frame, path, conversation_width, chat_area);
         // Render input area with dynamic title

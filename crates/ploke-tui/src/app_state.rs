@@ -1297,9 +1297,19 @@ async fn load_db(
         Ok(count) if count > 0 => {
             {
                 let mut system_guard = state.system.write().await;
+                let script = format!( 
+                    "?[root_path] := *crate_context {{name: crate_name, root_path @ 'NOW' }}, crate_name = \"{crate_name}\""
+                );
+                let db_res = state.db.raw_query(&script)?;
+                let crate_root_path = db_res.rows.first().and_then(|c| c.first())
+                    .ok_or_else(|| {
+                        let msg = "Incorrect retrieval of crate context, no first row/column";
+                        tracing::error!(msg);
+                        ploke_error::Error::Warning(ploke_error::WarningError::PlokeDb(msg.to_string()))
+                    }).map(|v| v.get_str().expect("Crate must always be a string"))?;
                 let target_dir = std::env::current_dir().inspect_err(|e| tracing::error!("Error finding current dir: {e}")).ok();
                 
-                system_guard.crate_focus = target_dir.map(|cd| cd.join(&crate_name));
+                system_guard.crate_focus = target_dir.map(|cd| cd.join(crate_root_path));
             }
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
