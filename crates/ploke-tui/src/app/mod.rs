@@ -380,15 +380,38 @@ impl App {
         // ---------- Prepare Widgets ----------
         // Render message tree
         let conversation_width = chat_area.width.saturating_sub(6);
+        let viewport_height = chat_area.height;
+
+        // Pre-adjust scroll to keep the most recent message fully visible when appropriate.
+        // This restores the previous "autoscroll to bottom" behavior when the last message is selected,
+        // or when we were already at/near the bottom (auto-follow).
+        if let Some(selected_index) = self.list.selected() {
+            let is_last = selected_index + 1 == path.len();
+            if is_last {
+                // If we were already at or near the bottom previously, snap to bottom for this frame.
+                let prev_total = self.convo_content_height;
+                let prev_max_offset = prev_total.saturating_sub(viewport_height);
+                if self.convo_auto_follow || self.convo_offset_y >= prev_max_offset.saturating_sub(1) {
+                    self.convo_offset_y = prev_max_offset;
+                    self.convo_auto_follow = true;
+                }
+            }
+        } else if path.is_empty() {
+            // Nothing to render; keep viewport at top and mark as following.
+            self.convo_offset_y = 0;
+            self.convo_auto_follow = true;
+        }
 
         let (total_height, heights) =
             render_messages(self, frame, path, conversation_width, chat_area, self.convo_offset_y);
         self.convo_content_height = total_height;
         self.convo_item_heights = heights;
-        let max_offset = total_height.saturating_sub(chat_area.height);
+        let max_offset = total_height.saturating_sub(viewport_height);
         if self.convo_offset_y > max_offset {
             self.convo_offset_y = max_offset;
         }
+        // Update auto-follow flag: we are "following" when the viewport is at the bottom.
+        self.convo_auto_follow = self.convo_offset_y >= max_offset;
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",
