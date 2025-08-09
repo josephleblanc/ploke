@@ -193,12 +193,18 @@ impl App {
                         Event::Mouse(mouse_event) => {
                             match mouse_event.kind {
                                 MouseEventKind::ScrollUp => {
+                                    // Free scroll up by 3 lines, clamp at 0
                                     self.convo_offset_y = self.convo_offset_y.saturating_sub(3);
                                     self.convo_free_scrolling = true;
                                     self.pending_char = None;
                                 }
                                 MouseEventKind::ScrollDown => {
-                                    self.convo_offset_y = self.convo_offset_y.saturating_add(3);
+                                    // Free scroll down by 3 lines, clamp to max offset
+                                    let max_offset = self
+                                        .convo_content_height
+                                        .saturating_sub(self.last_viewport_height);
+                                    let new_offset = self.convo_offset_y.saturating_add(3);
+                                    self.convo_offset_y = new_offset.min(max_offset);
                                     self.convo_free_scrolling = true;
                                     self.pending_char = None;
                                 }
