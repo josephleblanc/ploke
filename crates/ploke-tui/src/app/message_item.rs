@@ -60,7 +60,8 @@ pub fn measure_messages(
     let mut heights: Vec<u16> = Vec::with_capacity(renderable_msg.len());
     let mut total_height = 0u16;
     for (idx, msg) in renderable_msg.iter().enumerate() {
-        let eff_w = conversation_width.saturating_sub(if selected_index == Some(idx) { 1 } else { 0 });
+        // Always reserve a 1-column gutter for the selection bar to keep heights stable.
+        let eff_w = conversation_width.saturating_sub(1);
         let h = calc_height(&msg.content, eff_w);
         heights.push(h);
         total_height = total_height.saturating_add(h);
@@ -103,8 +104,8 @@ pub fn render_messages(
             continue;
         }
 
-        // Use the same effective width as in height calc (subtract 1 for bar when selected)
-        let eff_w = conversation_width.saturating_sub(if is_selected { 1 } else { 0 });
+        // Use the same effective width as in height calc: always reserve 1-column gutter.
+        let eff_w = conversation_width.saturating_sub(1);
         let wrapped = textwrap::wrap(&msg.content, eff_w as usize);
         let bar = Span::styled("│", base_style.fg(Color::White));
 
