@@ -105,6 +105,7 @@ pub struct App {
     pending_char: Option<char>,
     last_viewport_height: u16,
     last_chat_area: ratatui::layout::Rect,
+    needs_redraw: bool,
 }
 
 impl App {
@@ -145,6 +146,7 @@ impl App {
             pending_char: None,
             last_viewport_height: 0,
             last_chat_area: ratatui::layout::Rect::default(),
+            needs_redraw: true,
         }
     }
 
@@ -173,27 +175,30 @@ impl App {
 
         // let mut frame_counter = 0;
         while self.running {
-            // 1. Prepare data for this frame by reading from AppState.
-            let history_guard = self.state.chat.0.read().await;
-            let current_path = history_guard.get_full_path();
-            let current_id = history_guard.current;
+            if self.needs_redraw {
+                // Prepare data for this frame by reading from AppState.
+                let history_guard = self.state.chat.0.read().await;
+                let current_path = history_guard.get_full_path();
+                let current_id = history_guard.current;
 
-            // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
-            // Could it be made to?
-            let renderable_messages = current_path
-                .iter()
-                .map(|m| RenderableMessage {
-                    id: m.id,
-                    kind: m.kind,
-                    content: m.content.clone(),
-                })
-                .collect::<Vec<RenderableMessage>>();
-            drop(history_guard);
+                // TODO: See if we can avoid this `collect` somehow. Does `self.draw` take an Iterator?
+                // Could it be made to?
+                let renderable_messages = current_path
+                    .iter()
+                    .map(|m| RenderableMessage {
+                        id: m.id,
+                        kind: m.kind,
+                        content: m.content.clone(),
+                    })
+                    .collect::<Vec<RenderableMessage>>();
+                drop(history_guard);
 
-            // 2. Draw the UI with the prepared data.
-            terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
+                // Draw the UI with the prepared data.
+                terminal.draw(|frame| self.draw(frame, &renderable_messages, current_id))?;
+                self.needs_redraw = false;
+            }
 
-            // 3. Handle all incoming events (user input, state changes).
+            // Handle all incoming events (user input, state changes).
             tokio::select! {
             // Prioritize Ui responsiveness
             biased;
@@ -202,7 +207,7 @@ impl App {
             maybe_event = crossterm_events.next().fuse() => {
                 if let Some(Ok(event)) = maybe_event {
                     match event {
-                        Event::Key(key_event) =>{ self.on_key_event(key_event); }
+                        Event::Key(key_event) =>{ self.on_key_event(key_event); self.needs_redraw = true; }
                         Event::FocusGained => {},
                         Event::FocusLost => {},
                         Event::Mouse(mouse_event) => {
@@ -212,6 +217,7 @@ impl App {
                                     self.convo_offset_y = self.convo_offset_y.saturating_sub(3);
                                     self.convo_free_scrolling = true;
                                     self.pending_char = None;
+                                    self.needs_redraw = true;
                                 }
                                 MouseEventKind::ScrollDown => {
                                     // Free scroll down by 3 lines, clamp to max offset
@@ -222,6 +228,7 @@ impl App {
                                     self.convo_offset_y = new_offset.min(max_offset);
                                     self.convo_free_scrolling = true;
                                     self.pending_char = None;
+                                    self.needs_redraw = true;
                                 }
                                 MouseEventKind::Down(MouseButton::Left) => {
                                     // Hit-test inside chat area to select message on click
@@ -298,12 +305,13 @@ impl App {
                                             }
                                         }
                                     }
+                                    self.needs_redraw = true;
                                 }
                                 _ => {}
                             }
                         },
                         Event::Paste(_) => {},
-                        Event::Resize(_, _) => {},
+                        Event::Resize(_, _) => { self.needs_redraw = true; },
                     }
                 }
             }
@@ -445,6 +453,7 @@ impl App {
                         // self.send_cmd( StateCommand::)
                     }
                 }
+                self.needs_redraw = true;
             }
 
             }
