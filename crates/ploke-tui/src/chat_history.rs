@@ -25,7 +25,7 @@ impl fmt::Display for ChatError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             ChatError::ParentNotFound(id) => write!(f, "Parent message not found: {}", id),
-            ChatError::SiblingNotFound(id) => write!(f, "Sibling messa not found: {}", id),
+            ChatError::SiblingNotFound(id) => write!(f, "Sibling message not found: {}", id),
             ChatError::RootHasNoSiblings => write!(f, "Root messages cannot have siblings"),
         }
     }
