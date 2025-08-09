@@ -7,7 +7,12 @@ use std::time::{Duration, Instant};
 use app_state::{AppState, StateCommand};
 use color_eyre::Result;
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::execute;
+use crossterm::event::{
+    DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+    EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
+    MouseEventKind,
+};
 use message_item::{measure_messages, render_messages};
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
@@ -152,6 +157,14 @@ impl App {
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
         self.running = true;
         let mut crossterm_events = crossterm::event::EventStream::new();
+        if let Err(e) = execute!(
+            std::io::stdout(),
+            EnableBracketedPaste,
+            EnableFocusChange,
+            EnableMouseCapture
+        ) {
+            tracing::warn!("Failed to enable terminal modes: {}", e);
+        }
 
         // Initialize the UI selection base on the initial state.
         self.sync_list_selection().await;
@@ -361,6 +374,14 @@ impl App {
 
         fn display_file_info(file: Option<&Arc<std::path::PathBuf>>) -> String {
             file.map(|f| f.display().to_string()).unwrap_or("File not found.".to_string())
+        }
+        if let Err(e) = execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableFocusChange,
+            DisableMouseCapture
+        ) {
+            tracing::warn!("Failed to disable terminal modes: {}", e);
         }
         Ok(())
     }
