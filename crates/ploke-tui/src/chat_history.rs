@@ -1,10 +1,10 @@
 use crate::AppEvent;
-use crate::app_state::{ListNavigation, StateError};
+use crate::app_state::ListNavigation;
 use crate::llm::LLMMetadata;
 
 use std::collections::HashMap;
 use std::io::Write as _;
-use std::{fmt, path::Path};
+use std::fmt;
 
 use color_eyre::Result;
 
@@ -48,10 +48,6 @@ use ratatui::widgets::ScrollbarState;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
-use tokio::{
-    fs::{self, File},
-    io::AsyncWriteExt,
-};
 use uuid::Uuid;
 
 /// Represents the possible states of a message during its lifecycle.
@@ -714,8 +710,13 @@ pub(crate) async fn atomic_write(
     path: &std::path::Path,
     content: String,
 ) -> Result<(), std::io::Error> {
-    let mut temp = NamedTempFile::new_in(path.parent().unwrap_or(path))?;
+    let dir = path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let mut temp = NamedTempFile::new_in(dir)?;
     temp.write_all(content.as_bytes())?;
-    temp.persist(path)?;
+    // Map PersistError into a plain io::Error to satisfy the return type
+    temp.persist(path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     Ok(())
 }
