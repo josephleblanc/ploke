@@ -204,7 +204,7 @@ pub fn search_similar(
     ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
     has_embedding[id, name, hash, span] := *"#;
-    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding}, !is_null(embedding)
+    let base_script_end = r#" {id, name, tracking_hash: hash, span, embedding @ 'NOW' }, !is_null(embedding)
 
     is_root_module[id] := *module{id @ 'NOW' }, *file_mod {owner_id: id @ 'NOW'}
 
