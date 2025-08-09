@@ -231,8 +231,8 @@
  - [ ] Refactor renderer to accept external `offset_y` and return `(total_height, heights)`.
  - [ ] Add `convo_offset_y`, `convo_content_height`, `convo_item_heights` to `App`.
  - [ ] Clamp `convo_offset_y` each frame based on content height and viewport.
- - [ ] Handle mouse wheel for free scrolling.
- - [ ] Add Normal-mode keybindings for line and page scrolling.
+ - [x] Handle mouse wheel for free scrolling.
+ - [x] Add Normal-mode keybindings for line and page scrolling.
  - [ ] Adjust offset when selection changes to reveal the selected item.
  - [ ] Optional: Add scrollbar widget for the conversation area.
  - [ ] Optional: Auto-follow when at bottom or selection last.
