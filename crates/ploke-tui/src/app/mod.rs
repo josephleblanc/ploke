@@ -81,6 +81,11 @@ pub struct App {
     input_scrollstate: ScrollbarState,
     convo_vscroll: u16,
     convo_scrollstate: ScrollbarState,
+    // Conversation viewport scrolling state
+    convo_offset_y: u16,
+    convo_content_height: u16,
+    convo_item_heights: Vec<u16>,
+    convo_auto_follow: bool,
     active_model_indicator: Option<(String, Instant)>,
     active_model_id: String,
     input_cursor_row: u16,
@@ -112,6 +117,11 @@ impl App {
             input_scrollstate: ScrollbarState::default(),
             convo_vscroll: 0,
             convo_scrollstate: ScrollbarState::default(),
+            // Conversation viewport scrolling init
+            convo_offset_y: 0,
+            convo_content_height: 0,
+            convo_item_heights: Vec::new(),
+            convo_auto_follow: false,
             active_model_indicator: None,
             active_model_id,
             input_cursor_row: 0,
@@ -371,7 +381,14 @@ impl App {
         // Render message tree
         let conversation_width = chat_area.width.saturating_sub(6);
 
-        render_messages(self, frame, path, conversation_width, chat_area);
+        let (total_height, heights) =
+            render_messages(self, frame, path, conversation_width, chat_area, self.convo_offset_y);
+        self.convo_content_height = total_height;
+        self.convo_item_heights = heights;
+        let max_offset = total_height.saturating_sub(chat_area.height);
+        if self.convo_offset_y > max_offset {
+            self.convo_offset_y = max_offset;
+        }
         // Render input area with dynamic title
         let input_title = match (self.mode, self.command_style) {
             (Mode::Command, CommandStyle::NeoVim) => "Command Mode",

@@ -57,7 +57,8 @@ pub fn render_messages(
     renderable_msg: &[RenderableMessage],
     conversation_width: u16,
     conversation_area: Rect,
-) {
+    offset_y: u16,
+) -> (u16, Vec<u16>) {
     // ------------------------------------------------------------------
     // 1. Compute per-message height and total virtual height
     // ------------------------------------------------------------------
@@ -77,28 +78,9 @@ pub fn render_messages(
     }
 
     // ------------------------------------------------------------------
-    // 2. Scroll so the selected message is in view
+    // 2. Use external scroll offset (clamped to content)
     // ------------------------------------------------------------------
-    let selected_top = heights
-        .iter()
-        .take(selected_index)
-        .fold(0, |h, acc| acc + h);
-    let selected_height = *heights.get(selected_index).unwrap_or(&0);
-    let selected_bottom = selected_top.saturating_add(selected_height);
-    // Ensure the selected item is fully visible; prefer bottom alignment when needed.
-    let mut offset_y = 0u16;
-    if selected_bottom > offset_y.saturating_add(viewport_height) {
-        offset_y = selected_bottom.saturating_sub(viewport_height);
-    }
-    if selected_top < offset_y {
-        offset_y = selected_top;
-    }
-    // Stick to bottom when the last message is selected
-    if selected_index + 1 == renderable_msg.len() {
-        offset_y = total_height.saturating_sub(viewport_height);
-    }
-    // Final clamp
-    offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
+    let clamped_offset_y = offset_y.min(total_height.saturating_sub(viewport_height));
 
     // ------------------------------------------------------------------
     // 3. Render visible slice directly
@@ -117,7 +99,7 @@ pub fn render_messages(
             _ => Style::new().white(),
         };
 
-        if y_virtual + height <= offset_y {
+        if y_virtual + height <= clamped_offset_y {
             y_virtual += height;
             continue;
         }
@@ -128,8 +110,8 @@ pub fn render_messages(
         let bar = Span::styled("│", base_style.fg(Color::White));
         // If offset lands inside this message, skip top lines so we don’t waste space
         let mut start_line = 0usize;
-        if offset_y > y_virtual {
-            start_line = (offset_y - y_virtual) as usize;
+        if clamped_offset_y > y_virtual {
+            start_line = (clamped_offset_y - y_virtual) as usize;
         }
         for (line_idx, line) in wrapped.iter().enumerate().skip(start_line) {
             let mut spans = Vec::with_capacity(2);
@@ -148,9 +130,10 @@ pub fn render_messages(
             frame.render_widget(para, area);
             y_screen += 1;
             if y_screen >= viewport_height {
-                return;
+                return (total_height, heights);
             }
         }
         y_virtual += height;
     }
+    (total_height, heights)
 }
