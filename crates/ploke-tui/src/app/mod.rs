@@ -379,7 +379,11 @@ impl App {
         let viewport_height = chat_area.height;
 
         // 1) Measure current frame (no rendering)
-        let selected_index_opt = self.list.selected();
+        // Clamp selected index to valid range to avoid OOB when the path shrinks between frames.
+        let selected_index_opt = self
+            .list
+            .selected()
+            .map(|i| i.min(path.len().saturating_sub(1)));
         let (total_height, heights) = measure_messages(path, conversation_width, selected_index_opt);
 
         // 2) Decide/adjust offset using current metrics
