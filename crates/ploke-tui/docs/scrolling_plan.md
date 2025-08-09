@@ -169,12 +169,22 @@
  ## Clarifying questions
 
  - Should mouse wheel scrolling be active in Insert mode as well, or only in Normal mode?
+    - Mouse wheel scrolling should be active in Insert mode as well. Entering a new message should make the viewport snap to the bottom.
  - Do we want page-scrolling to be exactly viewport height, or viewport height minus one line (to provide
  context)?
+    - Not exactly viewport height, we want either 5 lines or 10% of the viewport height, whichever is smaller.
  - When selection changes via h/l (branch navigation, soon), should we center the selected item or just
  minimally reveal it?
+    - I'm not sure exactly what you mean here, but the overall design principle is for the
+    navigation via h/l to be as minimally disruptive as possible while still conveying feedback to
+    the user that they have switched to a new conversation branch.
  - Should we support an “auto-follow” toggle in the UI?
+    - For now let's add auto-follow as a field in the app state, then set it to true whenever the
+    bottom of the most recent message is at the end of the viewport.
  - Preferred default keybindings for line/page scroll if Ctrl+e/y conflict with your workflow?
+    - D o not use Ctrl+e/y, instead use Ctrl+n/p, and add the keybind gg to go to the beginning fo
+    the conversation history, and G to go to the end of the conversation history. For page
+    scrolling, use J/K
 
  ## Files we plan to modify
 
