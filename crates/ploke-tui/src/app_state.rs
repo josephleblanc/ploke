@@ -711,8 +711,7 @@ pub async fn state_manager(
                         // drop guard after we are done with last_usr_message, which is consumed by
                         // generate_embeddings
                         drop(chat_guard);
-                        let embeddings = temp_embed
-                            .first()
+                        let embeddings = temp_embed.into_iter().next()
                             .expect("No results from user message embedding generation");
                         tracing::info!("Finish embedding user message");
 
@@ -724,65 +723,8 @@ pub async fn state_manager(
                         }
                         tracing::info!("Finished waiting on parsing target crate");
 
-                        match search_similar(
-                            &state.db,
-                            embeddings.clone(),
-                            100,
-                            200,
-                            NodeType::Function,
-                        ) {
-                            Ok(ty_emb_data) => {
-                                tracing::info!(
-                                    "search_similar Success! with result {:?}",
-                                    ty_emb_data
-                                );
-
-                                // CHANGE: Instead of ReadSnippet, directly send snippets to RAG
-                                let snippets = state
-                                    .io_handle
-                                    .get_snippets_batch(ty_emb_data.v)
-                                    .await
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .filter_map(|r| r.ok())
-                                    .collect::<Vec<String>>();
-
-                                // Send snippets directly to context manager
-                                if let Err(e) = context_tx
-                                    .send(RagEvent::ContextSnippets(new_msg_id, snippets))
-                                    .await
-                                {
-                                    tracing::error!(
-                                        "Error sending snippets to context manager: {e}"
-                                    );
-                                };
-
-                                // Then trigger context construction with the correct parent ID
-                                let messages: Vec<Message> =
-                                    state.chat.0.read().await.clone_current_path_conv();
-
-                                if let Err(e) = context_tx
-                                    .send(RagEvent::UserMessages(new_msg_id, messages))
-                                    .await
-                                {
-                                    tracing::error!("Error with channel sending UserMessages: {e}")
-                                };
-                                if let Err(e) = context_tx
-                                    .send(RagEvent::ConstructContext(new_msg_id))
-                                    .await
-                                {
-                                    tracing::error!(
-                                        "Error with channel sending ConstructContext: {e}"
-                                    )
-                                };
-                            }
-                            Err(e) => {
-                                tracing::error!(
-                                    "The attempt to create the index at the database failed
-                                    error message: {:?}",
-                                    e
-                                );
-                            }
+                        if let Err(e) = embedding_search_similar(&state, &context_tx, new_msg_id, embeddings).await {
+                            tracing::error!("error during embedding search: {}", e);
                         };
                     }
                     Ok(None) => {
@@ -791,7 +733,7 @@ pub async fn state_manager(
                         );
                     }
                     Err(e) => {
-                        tracing::error!("{:#}", e);
+                        tracing::error!("Error accessing last user message: {:#}", e);
                     }
                 }
             }
@@ -1002,6 +944,52 @@ pub async fn state_manager(
             _ => {}
         };
     }
+}
+
+async fn embedding_search_similar(
+    state: &Arc<AppState>, 
+    context_tx: &mpsc::Sender<RagEvent>, 
+    new_msg_id: Uuid, 
+    embeddings: Vec<f32>
+) -> color_eyre::Result<()> {
+    let ty_embed_data = search_similar(
+        &state.db,
+        embeddings.clone(),
+        100,
+        200,
+        NodeType::Function,
+    ).emit_error()?; 
+            tracing::info!(
+                "search_similar Success! with result {:?}",
+                ty_embed_data
+            );
+
+            // Directly send snippets to RAG
+            let snippets = state
+                .io_handle
+                .get_snippets_batch(ty_embed_data.v)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|r| r.ok())
+                .collect::<Vec<String>>();
+
+            // Send snippets directly to context manager
+            context_tx
+                .send(RagEvent::ContextSnippets(new_msg_id, snippets))
+                .await?;
+
+            // Then trigger context construction with the correct parent ID
+            let messages: Vec<Message> =
+                state.chat.0.read().await.clone_current_path_conv();
+
+            context_tx
+                .send(RagEvent::UserMessages(new_msg_id, messages))
+                .await?;
+            context_tx
+                .send(RagEvent::ConstructContext(new_msg_id))
+                .await?;
+    Ok(())
 }
 
 async fn scan_for_change(
