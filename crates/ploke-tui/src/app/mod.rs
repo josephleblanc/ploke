@@ -40,8 +40,8 @@ static HELP_COMMANDS: &str = r#"Available commands:
     k/↑ - Navigate up (selection)
     J - Page down (scroll)
     K - Page up (scroll)
-    gg - Go to bottom (scroll)
-    G - Go to top (scroll)
+    G - Go to bottom (scroll)
+    gg - Go to top (scroll)
     h/← - Navigate branch previous
     l/→ - Navigate branch next
     Ctrl+n - Scroll down one line
@@ -265,21 +265,22 @@ impl App {
 
                                             // Sync AppState selection using existing navigation commands
                                             match prev_sel {
-                                                Some(prev) => {
-                                                    if target_idx > prev {
-                                                        for _ in 0..(target_idx - prev) {
-                                                            self.send_cmd(StateCommand::NavigateList {
-                                                                direction: ListNavigation::Down,
-                                                            });
-                                                        }
-                                                    } else if prev > target_idx {
-                                                        for _ in 0..(prev - target_idx) {
-                                                            self.send_cmd(StateCommand::NavigateList {
-                                                                direction: ListNavigation::Up,
-                                                            });
-                                                        }
+                                                Some(prev) if target_idx > prev => {
+                                                    for _ in 0..(target_idx - prev) {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Down,
+                                                        });
                                                     }
                                                 }
+                                                 Some(prev) if prev > target_idx => {
+                                                    for _ in 0..(prev - target_idx) {
+                                                        self.send_cmd(StateCommand::NavigateList {
+                                                            direction: ListNavigation::Up,
+                                                        });
+                                                    }
+                                                }
+                                                // do nothing if selecting the current item.
+                                                Some(_) => {},
                                                 None => {
                                                     // Choose shortest path via Top/Bottom
                                                     if target_idx < len / 2 {
@@ -1078,7 +1079,6 @@ impl App {
 
         match key.code {
             KeyCode::Char('q') => self.quit(),
-            KeyCode::Char('i') => self.mode = Mode::Insert,
 
             // --- NAVIGATION ---
             // Send commands instead of calling local methods
@@ -1099,14 +1099,14 @@ impl App {
             // Page scrolling with Shift-J / Shift-K
             KeyCode::Char('J') => {
                 let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).max(1).min(5);
+                let page_step: u16 = (vh / 10).clamp(1, 5);
                 self.convo_offset_y = self.convo_offset_y.saturating_add(page_step);
                 self.convo_free_scrolling = true;
                 self.pending_char = None;
             }
             KeyCode::Char('K') => {
                 let vh = self.last_viewport_height.max(1);
-                let page_step: u16 = (vh / 10).max(1).min(5);
+                let page_step: u16 = (vh / 10).clamp(1, 5);
                 self.convo_offset_y = self.convo_offset_y.saturating_sub(page_step);
                 self.convo_free_scrolling = true;
                 self.pending_char = None;
@@ -1130,7 +1130,7 @@ impl App {
                 if matches!(self.pending_char, Some('g')) {
                     // gg -> bottom: select last message and scroll to bottom
                     self.send_cmd(StateCommand::NavigateList {
-                        direction: ListNavigation::Bottom,
+                        direction: ListNavigation::Top,
                     });
                     self.convo_offset_y = u16::MAX; // will clamp to bottom on draw
                     self.convo_free_scrolling = false;
@@ -1143,7 +1143,7 @@ impl App {
             KeyCode::Char('G') => {
                 // Top: select first message and scroll to top
                 self.send_cmd(StateCommand::NavigateList {
-                    direction: ListNavigation::Top,
+                    direction: ListNavigation::Bottom,
                 });
                 self.convo_offset_y = 0;
                 self.convo_free_scrolling = false;
@@ -1165,10 +1165,6 @@ impl App {
                 self.pending_char = None;
                 self.mode = Mode::Command;
                 self.input_buffer = "/help".to_string();
-            }
-            KeyCode::Char('q') => {
-                self.pending_char = None;
-                self.quit();
             }
             KeyCode::Char('i') => {
                 self.pending_char = None;
