@@ -12,6 +12,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 itertools = { workspace = true }
 uuid = { workspace = true }
+clap = { version = "4.5.17", features = ["derive"] }
 
 # error handling
 ploke-error = { path = "../ploke-error" }
