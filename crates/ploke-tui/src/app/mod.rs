@@ -14,6 +14,7 @@ use crossterm::event::{
     MouseEvent, MouseEventKind,
 };
 use message_item::{measure_messages, render_messages};
+use ploke_db::search_similar;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use textwrap::wrap;
 use tokio::sync::oneshot;
@@ -455,6 +456,8 @@ impl App {
                     }
                 }
 
+                // AI: This function shouldn't be here, follow the pattern in the rest of the
+                // events and instead have this processed in StateCommand instead AI!
                 async fn batch_prompt_search(
                     state: &Arc<AppState>,
                     event_bus: &Arc<EventBus>,
@@ -497,6 +500,7 @@ impl App {
                             .filter_map(|r| r.ok())
                             .collect::<Vec<_>>();
 
+                        // AI: You need to write BatchResult AI!
                         results.push(BatchResult {
                             prompt_idx: idx + 1,
                             prompt: prompt.to_string(),
