@@ -408,6 +408,13 @@ pub enum StateCommand {
         query_name: String,
         file_name: String,
     },
+    /// Batch-embeds prompts from a file and writes similarity results to another file.
+    BatchPromptSearch {
+        prompt_file: String,
+        out_file: String,
+        max_hits: Option<usize>,
+        threshold: Option<f32>,
+    },
     /// Saves the current database state to disk.
     SaveDb,
     /// Loads a database for the specified crate into memory.
@@ -852,6 +859,25 @@ pub async fn state_manager(
                     continue;
                 }
             }
+            StateCommand::BatchPromptSearch {
+                prompt_file,
+                out_file,
+                max_hits,
+                threshold,
+            } => {
+                if let Err(e) = batch_prompt_search(
+                    &state,
+                    &event_bus,
+                    prompt_file,
+                    out_file,
+                    max_hits,
+                    threshold,
+                )
+                .await
+                {
+                    e.emit_warning();
+                }
+            }
             StateCommand::LoadDb { crate_name } => {
                 // TODO: Refactor this to be a function, and change the `continue` to handling the
                 // result with `?`
@@ -1052,6 +1078,13 @@ async fn add_msg_immediate(
     } else {
         tracing::error!("Failed to add message of kind: {}", kind);
     }
+}
+
+#[derive(Serialize)]
+struct BatchResult {
+    prompt_idx: usize,
+    prompt: String,
+    snippets: Vec<String>,
 }
 
 #[cfg(test)]

@@ -454,6 +454,70 @@ impl App {
                         // self.send_cmd( StateCommand::)
                     }
                 }
+
+                async fn batch_prompt_search(
+                    state: &Arc<AppState>,
+                    event_bus: &Arc<EventBus>,
+                    prompt_file: String,
+                    out_file: String,
+                    max_hits: Option<usize>,
+                    threshold: Option<f32>,
+                ) -> color_eyre::Result<()> {
+                    let prompts = tokio::fs::read_to_string(&prompt_file)
+                        .await?
+                        .lines()
+                        .map(|l| l.trim())
+                        .filter(|l| !l.is_empty())
+                        .collect::<Vec<_>>();
+
+                    let mut results = Vec::new();
+                    for (idx, prompt) in prompts.iter().enumerate() {
+                        let emb = state
+                            .embedder
+                            .generate_embeddings(vec![prompt.to_string()])
+                            .await?
+                            .into_iter()
+                            .next()
+                            .unwrap();
+
+                        let hits = search_similar(
+                            &state.db,
+                            emb,
+                            max_hits.unwrap_or(20),
+                            threshold.unwrap_or(0.7),
+                            NodeType::Function,
+                        )
+                        .emit_error()?;
+
+                        let snippets = state
+                            .io_handle
+                            .get_snippets_batch(hits.v)
+                            .await
+                            .into_iter()
+                            .filter_map(|r| r.ok())
+                            .collect::<Vec<_>>();
+
+                        results.push(BatchResult {
+                            prompt_idx: idx + 1,
+                            prompt: prompt.to_string(),
+                            snippets,
+                        });
+                    }
+
+                    let pretty = serde_json::to_string_pretty(&results)?;
+                    tokio::fs::write(&out_file, pretty).await?;
+
+                    add_msg_immediate(
+                        state,
+                        event_bus,
+                        Uuid::new_v4(),
+                        format!("Batch search done: {} queries → {}", results.len(), out_file),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+
+                    Ok(())
+                }
                 self.needs_redraw = true;
             }
 
