@@ -893,11 +893,18 @@ pub async fn state_manager(
                 if let Err(e) =
                     batch_prompt_search(&state, prompt_file, out_file, max_hits, threshold).await
                 {
-                    // I've changed the error type to a `color_eyre::Result`, how can we best
-                    // handle this to add it to logging with a `tracing` and a trace? I'm not used
-                    // to using color_eyre and I'm not familiar with the more advanced features of
-                    // `tracing`, but I want to explore a new approach here AI!
-                    e;
+                    // Log the full error with context using tracing's error macro
+                    // color_eyre::Report provides rich context including backtrace
+                    tracing::error!(
+                        error = %e,
+                        error_chain = ?e.chain().collect::<Vec<_>>(),
+                        "Batch prompt search failed"
+                    );
+                    
+                    // Also emit as a warning event to the UI
+                    event_bus.send(AppEvent::System(SystemEvent::Error(
+                        format!("Batch prompt search failed: {}", e)
+                    ))).ok();
                 }
             }
             StateCommand::LoadDb { crate_name } => {
