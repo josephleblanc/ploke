@@ -991,8 +991,6 @@ impl App {
                     });
                 }
             }
-            // Add short documentation here on the location of the default queries.txt and
-            // results.json files AI!
             cmd if cmd.starts_with("batch") => {
                 let mut parts = cmd.split_whitespace();
                 parts.next(); // skip "batch"
@@ -1001,6 +999,16 @@ impl App {
                 let err_str = "Must enter a number for max_hits";
                 let max_hits = parts.next().and_then(|item| item.parse::<usize>().ok());
                 let threshold = parts.next().and_then(|item| item.parse::<f32>().ok());
+                
+                // Show documentation about default file locations
+                if prompt_file == "queries.txt" && out_file == "results.json" {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Running batch search with defaults:\n  Input: queries.txt (in current directory)\n  Output: results.json (in current directory)"),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                }
+                
                 self.send_cmd(StateCommand::BatchPromptSearch {
                     prompt_file: prompt_file.to_string(),
                     out_file: out_file.to_string(),
