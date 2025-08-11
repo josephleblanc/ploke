@@ -1000,20 +1000,32 @@ impl App {
                 let max_hits = parts.next().and_then(|item| item.parse::<usize>().ok());
                 let threshold = parts.next().and_then(|item| item.parse::<f32>().ok());
                 
-                // Let's change the location of these default files to be in `ploke-tui/data/`
-                // instead. Also update batch_prompt_search to reflect this change AI!
-                // Show documentation about default file locations
+                let data_dir = "ploke-tui/data";
+                let default_prompt_file = format!("{}/queries.txt", data_dir);
+                let default_out_file = format!("{}/results.json", data_dir);
+                
+                let prompt_file_path = if prompt_file == "queries.txt" {
+                    &default_prompt_file
+                } else {
+                    prompt_file
+                };
+                let out_file_path = if out_file == "results.json" {
+                    &default_out_file
+                } else {
+                    out_file
+                };
+                
                 if prompt_file == "queries.txt" && out_file == "results.json" {
                     self.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Running batch search with defaults:\n  Input: queries.txt (in current directory)\n  Output: results.json (in current directory)"),
+                        msg: format!("Running batch search with defaults:\n  Input: {}/queries.txt\n  Output: {}/results.json", data_dir, data_dir),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });
                 }
                 
                 self.send_cmd(StateCommand::BatchPromptSearch {
-                    prompt_file: prompt_file.to_string(),
-                    out_file: out_file.to_string(),
+                    prompt_file: prompt_file_path.to_string(),
+                    out_file: out_file_path.to_string(),
                     max_hits,
                     threshold
                 });
