@@ -73,7 +73,7 @@ pub struct AppState {
     pub io_handle: IoManagerHandle,
 }
 
-// TODO: Implement Deref for all three *State items below
+// AI: Implement Deref for all three *State items below AI!
 
 #[derive(Debug, Default)]
 pub struct ChatState(pub RwLock<ChatHistory>);
