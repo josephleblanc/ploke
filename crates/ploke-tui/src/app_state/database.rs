@@ -420,8 +420,8 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
 ///
 /// # Arguments
 ///
-/// * `db` - Database instance for performing semantic search
-/// * `prompt_file` - Path to file containing prompts (one per line)
+/// * `state` - Shared application state containing database and embedder
+/// * `prompt_file` - Path to file containing prompts (separated by "---")
 /// * `out_file` - Path to output file for results (JSON format)
 /// * `max_hits` - Maximum number of similar snippets to return per prompt
 /// * `threshold` - Optional similarity threshold for filtering results
@@ -430,8 +430,7 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
 ///
 /// Returns a vector of batch results containing prompt indices, original prompts,
 /// and their corresponding code snippets found through semantic search.
-// I've made some changes to the implementation of `batch_prompt_search` below, update the
-// documentation to reflect the changes AI!
+/// Results are automatically written to the specified output file as JSON.
 pub(super) async fn batch_prompt_search(
     state: &Arc< AppState >,
     prompt_file: String,
