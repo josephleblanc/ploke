@@ -37,8 +37,7 @@ use super::*;
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
-// TODO: Define the `RagContext` struct
-// pub rag_context: RwLock<RagContext>,
+// AI: expand documentation here AI!
 #[derive(Debug)]
 pub struct AppState {
     pub chat: ChatState,     // High-write frequency
