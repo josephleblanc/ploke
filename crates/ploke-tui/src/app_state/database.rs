@@ -412,6 +412,101 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
     }
 }
 
+/// Performs batch semantic search on prompts from a file and returns results
+///
+/// This function reads prompts from a file, generates embeddings for each prompt,
+/// performs semantic search against the database, and returns the results in a
+/// structured format suitable for serialization.
+///
+/// # Arguments
+///
+/// * `db` - Database instance for performing semantic search
+/// * `prompt_file` - Path to file containing prompts (one per line)
+/// * `out_file` - Path to output file for results (JSON format)
+/// * `max_hits` - Maximum number of similar snippets to return per prompt
+/// * `threshold` - Optional similarity threshold for filtering results
+///
+/// # Returns
+///
+/// Returns a vector of batch results containing prompt indices, original prompts,
+/// and their corresponding code snippets found through semantic search.
+// I've made some changes to the implementation of `batch_prompt_search` below, update the
+// documentation to reflect the changes AI!
+pub(super) async fn batch_prompt_search(
+    state: &Arc< AppState >,
+    prompt_file: String,
+    out_file: String,
+    max_hits: Option<usize>,
+    threshold: Option<f32>,
+) -> color_eyre::Result<Vec<BatchResult>> {
+    use std::fs;
+    use ploke_embed::indexer::EmbeddingProcessor;
+    
+    let prompts = fs::read_to_string(&prompt_file)?;
+    
+    // I'd rather split by double newlines or something.
+    let prompts: Vec<String> = prompts
+        .split("---")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    
+    if prompts.is_empty() {
+        return Ok(Vec::new());
+    }
+    
+    let max_hits = max_hits.unwrap_or(10);
+    let _threshold = threshold.unwrap_or(0.0);
+    
+    let mut results = Vec::new();
+    
+    for (prompt_idx, prompt) in prompts.iter().enumerate() {
+        tracing::info!("Processing prompt {}: {}", prompt_idx, prompt);
+        
+        let embeddings = state.embedder
+            .generate_embeddings(vec![prompt.clone()])
+            .await?;
+        
+        if let Some(embedding) = embeddings.into_iter().next() {
+            let ty_embed_data = search_similar(
+                &state.db,
+                embedding,
+                max_hits,
+                200,
+                NodeType::Function,
+            )?;
+            
+            let snippets = ty_embed_data
+                .v
+                .into_iter()
+                .map(|data| data.name)
+                .collect::<Vec<String>>();
+            
+            results.push(BatchResult {
+                prompt_idx,
+                prompt: prompt.clone(),
+                snippets,
+            });
+        }
+    }
+    
+    // Write results to file
+    let json_content = serde_json::to_string_pretty(&results)?;
+    
+    fs::write(&out_file, json_content)?;
+    
+    Ok(results)
+}
+
+/// Result structure for batch prompt search operations
+#[derive(Serialize, Deserialize)]
+pub struct BatchResult {
+    pub prompt_idx: usize,
+    pub prompt: String,
+    pub snippets: Vec<String>,
+}
+
 #[cfg(test)]
 mod test {
 
