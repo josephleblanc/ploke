@@ -380,31 +380,41 @@ pub enum StateCommand {
         workspace: String,
         needs_parse: bool
     },
-    // Add short documentation like the above doc comments AI!
+    /// Pauses the currently running indexing task.
     PauseIndexing,
+    /// Resumes a paused indexing task.
     ResumeIndexing,
+    /// Cancels the currently running indexing task.
     CancelIndexing,
+    /// Updates the database indexes for improved query performance.
     UpdateDatabase,
+    /// Embeds the last user message and searches for similar code snippets.
     EmbedMessage {
         new_msg_id: Uuid,
         completion_rx: oneshot::Receiver<()>,
         scan_rx: oneshot::Receiver<Option<Vec<PathBuf>>>,
     },
+    /// Switches the active LLM model to the specified alias or ID.
     SwitchModel {
         alias_or_id: String,
     },
+    /// Loads a named query into the database for execution.
     LoadQuery {
         query_name: String,
         query_content: String,
     },
+    /// Reads a saved query from a file and prepares it for execution.
     ReadQuery {
         query_name: String,
         file_name: String,
     },
+    /// Saves the current database state to disk.
     SaveDb,
+    /// Loads a database for the specified crate into memory.
     LoadDb {
         crate_name: String,
     },
+    /// Scans the workspace for file changes and updates the database.
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
