@@ -37,7 +37,26 @@ use super::*;
 
 /// AppState holds all shared application data.
 /// It is designed for concurrent reads and synchronized writes.
-// AI: expand documentation here AI!
+///
+/// This struct serves as the central hub for all application state, following a
+/// Command-Query Responsibility Segregation (CQRS) pattern. State is divided into
+/// distinct areas based on access patterns:
+///
+/// - **ChatState**: High-frequency writes for message updates and chat history
+/// - **ConfigState**: Read-heavy configuration that changes infrequently
+/// - **SystemState**: Medium-write system status and workspace information
+///
+/// External system integrations are managed through:
+/// - **Database**: CozoDB instance for persistent storage and queries
+/// - **IndexerTask**: Background indexing of source code and embeddings
+/// - **EmbeddingProcessor**: Vector embedding generation for semantic search
+/// - **IoManagerHandle**: File system operations and snippet retrieval
+///
+/// Thread safety is achieved through:
+/// - `RwLock` for read-heavy data (allows multiple concurrent readers)
+/// - `Mutex` for write-heavy operations (ensures exclusive access)
+/// - `Arc` for shared ownership across async tasks
+/// - Message passing via channels for inter-task communication
 #[derive(Debug)]
 pub struct AppState {
     pub chat: ChatState,     // High-write frequency
