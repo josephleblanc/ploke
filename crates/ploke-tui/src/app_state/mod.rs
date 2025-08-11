@@ -147,7 +147,7 @@ pub struct Config {
     // ... other config fields
 }
 
-// State access API (read-only)
+// Add documentation AI!
 impl AppState {
     pub fn new(
         db: Arc<Database>,
