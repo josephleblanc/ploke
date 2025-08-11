@@ -1,14 +1,21 @@
 mod database;
 mod models;
 
-use std::{collections::{BTreeMap, HashSet}, env::current_dir, ops::ControlFlow, path::PathBuf, str::FromStr};
+use std::{
+    collections::{BTreeMap, HashSet},
+    env::current_dir,
+    ops::ControlFlow,
+    path::PathBuf,
+    str::FromStr,
+};
 
 use crate::{
     chat_history::{Message, MessageKind},
-    parser::{resolve_target_dir, run_parse_no_transform, ParserOutput},
+    parser::{ParserOutput, resolve_target_dir, run_parse_no_transform},
     user_config::ProviderRegistry,
     utils::helper::find_file_by_prefix,
 };
+use database::batch_prompt_search;
 use itertools::Itertools;
 use ploke_core::NodeId;
 use ploke_db::{
@@ -18,12 +25,19 @@ use ploke_embed::indexer::{EmbeddingProcessor, IndexStatus, IndexerCommand, Inde
 use ploke_io::IoManagerHandle;
 use ploke_transform::{macro_traits::HasAnyNodeId, transform::transform_parsed_graph};
 use serde::{Deserialize, Serialize};
-use syn_parser::{parser::{nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId}, types::TypeNode}, resolve::RelationIndexer, GraphAccess, ModuleTree, TestIds};
+use syn_parser::{
+    GraphAccess, ModuleTree, TestIds,
+    parser::{
+        nodes::{AnyNodeId, AsAnyNodeId, GraphNode, ModuleNodeId, PrimaryNodeId},
+        types::TypeNode,
+    },
+    resolve::RelationIndexer,
+};
 use tokio::{
     sync::{Mutex, RwLock, mpsc, oneshot},
     time,
 };
-use tracing::{Level, debug_span, instrument};
+use tracing::{Level, Value, debug_span, instrument};
 use uuid::Uuid;
 
 use crate::{
@@ -235,13 +249,13 @@ impl SystemStatus {
 #[derive(thiserror::Error, Clone, Debug)]
 pub enum StateError {
     #[error("The app state does not have a currently set crate focus")]
-    MissingCrateFocus{ msg: &'static str }
+    MissingCrateFocus { msg: &'static str },
 }
 
 impl From<StateError> for ploke_error::Error {
     fn from(value: StateError) -> Self {
         match value {
-            StateError::MissingCrateFocus{msg} => ploke_error::Error::UiError(msg.to_string())
+            StateError::MissingCrateFocus { msg } => ploke_error::Error::UiError(msg.to_string()),
         }
     }
 }
@@ -378,7 +392,7 @@ pub enum StateCommand {
     /// Triggers a background task to index the entire workspace.
     IndexWorkspace {
         workspace: String,
-        needs_parse: bool
+        needs_parse: bool,
     },
     /// Pauses the currently running indexing task.
     PauseIndexing,
@@ -464,7 +478,6 @@ impl StateCommand {
         }
     }
 }
-
 
 /// Event fired when a message is successfully updated.
 ///
@@ -601,16 +614,19 @@ pub async fn state_manager(
                 // TODO: Consider if this is proper error handling or not.
                 // If add_child fails, the responder is dropped, signaling an error to the awaiter.
             }
-            StateCommand::IndexWorkspace { workspace, needs_parse } => {
+            StateCommand::IndexWorkspace {
+                workspace,
+                needs_parse,
+            } => {
                 let (control_tx, control_rx) = tokio::sync::mpsc::channel(4);
                 let target_dir = {
                     let mut write_guard = state.system.write().await;
                     let crate_focus = match std::env::current_dir() {
-                        Ok(current_dir) => { 
+                        Ok(current_dir) => {
                             let mut pwd = current_dir;
                             pwd.push(&workspace);
                             pwd
-                        },
+                        }
                         Err(e) => {
                             tracing::error!("Error resolving current dir: {e}");
                             continue;
@@ -626,7 +642,10 @@ pub async fn state_manager(
                 // as the name of the crate.
                 if needs_parse {
                     match run_parse(Arc::clone(&state.db), Some(target_dir.clone())) {
-                        Ok(_) => tracing::info!("Parse of target workspace {} successful", &target_dir.display()),
+                        Ok(_) => tracing::info!(
+                            "Parse of target workspace {} successful",
+                            &target_dir.display()
+                        ),
                         Err(e) => {
                             tracing::info!(
                                 "Failure parsing directory from IndexWorkspace event: {}",
@@ -795,7 +814,9 @@ pub async fn state_manager(
                         // drop guard after we are done with last_usr_message, which is consumed by
                         // generate_embeddings
                         drop(chat_guard);
-                        let embeddings = temp_embed.into_iter().next()
+                        let embeddings = temp_embed
+                            .into_iter()
+                            .next()
                             .expect("No results from user message embedding generation");
                         tracing::info!("Finish embedding user message");
 
@@ -807,7 +828,10 @@ pub async fn state_manager(
                         }
                         tracing::info!("Finished waiting on parsing target crate");
 
-                        if let Err(e) = embedding_search_similar(&state, &context_tx, new_msg_id, embeddings).await {
+                        if let Err(e) =
+                            embedding_search_similar(&state, &context_tx, new_msg_id, embeddings)
+                                .await
+                        {
                             tracing::error!("error during embedding search: {}", e);
                         };
                     }
@@ -866,17 +890,14 @@ pub async fn state_manager(
                 max_hits,
                 threshold,
             } => {
-                if let Err(e) = batch_prompt_search(
-                    &state,
-                    &event_bus,
-                    prompt_file,
-                    out_file,
-                    max_hits,
-                    threshold,
-                )
-                .await
+                if let Err(e) =
+                    batch_prompt_search(&state, prompt_file, out_file, max_hits, threshold).await
                 {
-                    e.emit_warning();
+                    // I've changed the error type to a `color_eyre::Result`, how can we best
+                    // handle this to add it to logging with a `tracing` and a trace? I'm not used
+                    // to using color_eyre and I'm not familiar with the more advanced features of
+                    // `tracing`, but I want to explore a new approach here AI!
+                    e;
                 }
             }
             StateCommand::LoadDb { crate_name } => {
@@ -897,10 +918,12 @@ pub async fn state_manager(
             }
 
             StateCommand::ScanForChange { scan_tx } => {
-                let _ = database::scan_for_change(&state, &event_bus, scan_tx).await.inspect_err(|e| {
-                    e.emit_error();
-                    tracing::error!("Error in ScanForChange:\n{e}");
-                });
+                let _ = database::scan_for_change(&state, &event_bus, scan_tx)
+                    .await
+                    .inspect_err(|e| {
+                        e.emit_error();
+                        tracing::error!("Error in ScanForChange:\n{e}");
+                    });
             }
 
             // ... other commands
@@ -934,71 +957,84 @@ pub async fn state_manager(
 ///
 /// Returns `Ok(())` on success, or an error if any step fails
 async fn embedding_search_similar(
-    state: &Arc<AppState>, 
-    context_tx: &mpsc::Sender<RagEvent>, 
-    new_msg_id: Uuid, 
-    embeddings: Vec<f32>
+    state: &Arc<AppState>,
+    context_tx: &mpsc::Sender<RagEvent>,
+    new_msg_id: Uuid,
+    embeddings: Vec<f32>,
 ) -> color_eyre::Result<()> {
-    let ty_embed_data = search_similar(
-        &state.db,
-        embeddings.clone(),
-        100,
-        200,
-        NodeType::Function,
-    ).emit_error()?; 
-            tracing::info!(
-                "search_similar Success! with result {:?}",
-                ty_embed_data
-            );
+    let ty_embed_data =
+        search_similar(&state.db, embeddings.clone(), 100, 200, NodeType::Function).emit_error()?;
+    tracing::info!("search_similar Success! with result {:?}", ty_embed_data);
 
-            // Directly send snippets to RAG
-            let snippets = state
-                .io_handle
-                .get_snippets_batch(ty_embed_data.v)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|r| r.ok())
-                .collect::<Vec<String>>();
+    // Directly send snippets to RAG
+    let snippets = state
+        .io_handle
+        .get_snippets_batch(ty_embed_data.v)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|r| r.ok())
+        .collect::<Vec<String>>();
 
-            // Send snippets directly to context manager
-            context_tx
-                .send(RagEvent::ContextSnippets(new_msg_id, snippets))
-                .await?;
+    // Send snippets directly to context manager
+    context_tx
+        .send(RagEvent::ContextSnippets(new_msg_id, snippets))
+        .await?;
 
-            // Then trigger context construction with the correct parent ID
-            let messages: Vec<Message> =
-                state.chat.0.read().await.clone_current_path_conv();
+    // Then trigger context construction with the correct parent ID
+    let messages: Vec<Message> = state.chat.0.read().await.clone_current_path_conv();
 
-            context_tx
-                .send(RagEvent::UserMessages(new_msg_id, messages))
-                .await?;
-            context_tx
-                .send(RagEvent::ConstructContext(new_msg_id))
-                .await?;
+    context_tx
+        .send(RagEvent::UserMessages(new_msg_id, messages))
+        .await?;
+    context_tx
+        .send(RagEvent::ConstructContext(new_msg_id))
+        .await?;
     Ok(())
 }
 
-fn print_module_set(merged: &syn_parser::ParsedCodeGraph, tree: &ModuleTree, module_set: &HashSet<ModuleNodeId>) {
-    let item_map_printable = module_set.iter()
-        .filter_map(|id| tree.modules().get(id)
-            .filter(|m| m.items().is_some())
-            .map(|m| { 
-                let module = format!("name: {} | is_file: {} | id: {}", m.name, m.id.as_any(), m.is_file_based());
-                let items = m.items().unwrap()
-                    .iter().filter_map(|item_id| merged.find_any_node(item_id.as_any()).map(|n| {
-                        format!("\tname: {} | id: {}", n.name(), n.any_id())
-                } )).join("\n");
-                format!("{}\n{}", module, items)
-            })
-        ).join("\n");
+fn print_module_set(
+    merged: &syn_parser::ParsedCodeGraph,
+    tree: &ModuleTree,
+    module_set: &HashSet<ModuleNodeId>,
+) {
+    let item_map_printable = module_set
+        .iter()
+        .filter_map(|id| {
+            tree.modules()
+                .get(id)
+                .filter(|m| m.items().is_some())
+                .map(|m| {
+                    let module = format!(
+                        "name: {} | is_file: {} | id: {}",
+                        m.name,
+                        m.id.as_any(),
+                        m.is_file_based()
+                    );
+                    let items = m
+                        .items()
+                        .unwrap()
+                        .iter()
+                        .filter_map(|item_id| {
+                            merged
+                                .find_any_node(item_id.as_any())
+                                .map(|n| format!("\tname: {} | id: {}", n.name(), n.any_id()))
+                        })
+                        .join("\n");
+                    format!("{}\n{}", module, items)
+                })
+        })
+        .join("\n");
     tracing::info!("--- items by module ---\n{}", item_map_printable);
 }
 
-fn printable_nodes<'a>(merged: &syn_parser::ParsedCodeGraph, union: impl Iterator<Item = &'a AnyNodeId>) -> String {
+fn printable_nodes<'a>(
+    merged: &syn_parser::ParsedCodeGraph,
+    union: impl Iterator<Item = &'a AnyNodeId>,
+) -> String {
     let mut printable_union_items = String::new();
     for id in union.into_iter() {
-        if let Some( node ) = merged.find_any_node(*id) {
+        if let Some(node) = merged.find_any_node(*id) {
             let printable_node = format!("name: {} | id: {}\n", node.name(), id);
             printable_union_items.push_str(&printable_node);
         }
@@ -1128,12 +1164,11 @@ mod tests {
         }
     }
 
-    use ploke_test_utils::{init_test_tracing, setup_db_full, setup_db_full_crate, workspace_root};
     use color_eyre::Result;
-    use thiserror::Error;
     use error::{ErrorExt, ErrorSeverity, ResultExt};
     use futures::{FutureExt, StreamExt};
-
+    use ploke_test_utils::{init_test_tracing, setup_db_full, setup_db_full_crate, workspace_root};
+    use thiserror::Error;
 
     #[tokio::test]
     async fn test_race_condition_without_oneshot() {
@@ -1176,7 +1211,7 @@ mod tests {
                 tx2.send(StateCommand::EmbedMessage {
                     new_msg_id: embed_msg_id,
                     completion_rx: oneshot::channel().1, // dummy
-                    scan_rx: oneshot::channel().1,      // dummy
+                    scan_rx: oneshot::channel().1,       // dummy
                 })
                 .await
                 .unwrap();
