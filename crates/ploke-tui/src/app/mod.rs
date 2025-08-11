@@ -1000,6 +1000,8 @@ impl App {
                 let max_hits = parts.next().and_then(|item| item.parse::<usize>().ok());
                 let threshold = parts.next().and_then(|item| item.parse::<f32>().ok());
                 
+                // Let's change the location of these default files to be in `ploke-tui/data/`
+                // instead. Also update batch_prompt_search to reflect this change AI!
                 // Show documentation about default file locations
                 if prompt_file == "queries.txt" && out_file == "results.json" {
                     self.send_cmd(StateCommand::AddMessageImmediate {
