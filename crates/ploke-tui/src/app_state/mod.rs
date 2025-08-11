@@ -883,6 +883,7 @@ pub async fn state_manager(
     }
 }
 
+// Add documentation AI!
 async fn embedding_search_similar(
     state: &Arc<AppState>, 
     context_tx: &mpsc::Sender<RagEvent>, 
