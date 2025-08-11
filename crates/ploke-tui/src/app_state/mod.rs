@@ -222,7 +222,6 @@ impl AppState {
     }
 }
 
-// Placeholder
 #[derive(Debug, Default)]
 pub struct SystemStatus {
     crate_focus: Option<PathBuf>,
@@ -233,11 +232,6 @@ impl SystemStatus {
     }
 }
 
-// impl Default for SystemStatus {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
 #[derive(thiserror::Error, Clone, Debug)]
 pub enum StateError {
     #[error("The app state does not have a currently set crate focus")]
@@ -386,6 +380,7 @@ pub enum StateCommand {
         workspace: String,
         needs_parse: bool
     },
+    // Add short documentation like the above doc comments AI!
     PauseIndexing,
     ResumeIndexing,
     CancelIndexing,
