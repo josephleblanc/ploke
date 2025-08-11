@@ -253,21 +253,6 @@ pub fn search_similar(
     let v = QueryResult::from(query_result).to_embedding_nodes()?;
     let ty_embed = TypedEmbedData { v, ty };
     Ok(ty_embed)
-
-    // let mut results = Vec::new();
-    // for row in result.rows {
-    //     tracing::info!("{:?}", row);
-    //     let id = if let DataValue::Uuid(cozo::UuidWrapper(id)) = row[0] {
-    //         tracing::info!("{:?}", id);
-    //         id
-    //     } else {
-    //         uuid::Uuid::max()
-    //     };
-    //     let content = row[1].get_str().unwrap().to_string();
-    //     results.push((id, content, row[2].clone()));
-    // }
-    //
-    // Ok(results)
 }
 
 pub fn search_similar_test(
