@@ -459,6 +459,7 @@ impl StateCommand {
             SaveDb => "SaveDb",
             #[allow(non_snake_case)]
             LoadDb => "LoadDb",
+            StateCommand::BatchPromptSearch { .. } => "BatchPromptSearch",
             // ... other variants
         }
     }

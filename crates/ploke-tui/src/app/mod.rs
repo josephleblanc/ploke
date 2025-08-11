@@ -1054,6 +1054,18 @@ impl App {
                     });
                 }
             }
+            cmd if cmd.starts_with("batch") => {
+                let mut parts = cmd.split_whitespace();
+                parts.next(); // skip "batch"
+                let prompt_file = parts.next().unwrap_or("queries.txt");
+                let out_file = parts.next().unwrap_or("results.json");
+                self.send_cmd(StateCommand::BatchPromptSearch {
+                    prompt_file: prompt_file.to_string(),
+                    out_file: out_file.to_string(),
+                    max_hits: None,
+                    threshold: None,
+                });
+            }
             cmd => {
                 // TODO: Implement `tracing` crate import
                 // Placeholder for command error handling
