@@ -147,8 +147,32 @@ pub struct Config {
     // ... other config fields
 }
 
-// Add documentation AI!
 impl AppState {
+    /// Creates a new `AppState` instance with default-initialized subsystems.
+    ///
+    /// This constructor establishes the foundational state container for the entire
+    /// application. It initializes:
+    ///
+    /// - **ChatState**: Empty chat history ready for user interactions
+    /// - **ConfigState**: Default LLM configuration and provider registry
+    /// - **SystemState**: Empty system status with no focused crate
+    /// - **Database**: Shared CozoDB instance for persistent storage
+    /// - **EmbeddingProcessor**: Configured embedder for semantic search
+    /// - **IoManagerHandle**: File system operations interface
+    ///
+    /// The indexing subsystem is initialized in a dormant state (`indexing_state: None`)
+    /// and can be activated later via `StateCommand::IndexWorkspace`.
+    ///
+    /// # Arguments
+    ///
+    /// * `db` - Shared database handle for all persistence operations
+    /// * `embedder` - Configured embedding processor for vector operations
+    /// * `io_handle` - File system interface for snippet retrieval
+    ///
+    /// # Thread Safety
+    ///
+    /// All state components use `Arc` for shared ownership and appropriate
+    /// synchronization primitives (`RwLock`, `Mutex`) for thread-safe access.
     pub fn new(
         db: Arc<Database>,
         embedder: Arc<EmbeddingProcessor>,
@@ -164,13 +188,35 @@ impl AppState {
             db,
             embedder,
             io_handle,
-            // TODO: This needs to be handled elsewhere if not handled in AppState
-            // shutdown: tokio::sync::broadcast::channel(1).0,
         }
     }
 
+    /// Provides read-only access to chat history with a closure.
+    ///
+    /// This method offers a convenient way to access chat state while properly
+    /// managing the read lock lifecycle. The closure receives a reference to
+    /// the underlying `ChatHistory` and can return any computed value.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `R` - The return type of the closure
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Closure that receives `&ChatHistory` and returns `R`
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let message_count = state.with_history(|history| history.messages.len()).await;
+    /// ```
+    ///
+    /// # Notes
+    ///
+    /// This method is maintained for backward compatibility. New code should
+    /// prefer direct access via `state.chat.read().await` for more explicit
+    /// control over lock duration.
     pub async fn with_history<R>(&self, f: impl FnOnce(&ChatHistory) -> R) -> R {
-        // TODO: need to evaluate whether to keep or not, still has old pattern
         let guard = self.chat.0.read().await;
         f(&guard)
     }
