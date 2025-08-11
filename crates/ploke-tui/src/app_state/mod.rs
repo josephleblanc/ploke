@@ -883,7 +883,29 @@ pub async fn state_manager(
     }
 }
 
-// Add documentation AI!
+/// Performs semantic search using the provided message embedding and sends results to the context manager.
+///
+/// This function takes a vector embedding of a user message and searches the database for similar
+/// code snippets based on semantic similarity. The search results are processed into human-readable
+/// snippets and sent to the context manager for inclusion in the conversation context.
+///
+/// # Arguments
+///
+/// * `state` - Shared application state containing database and I/O handles
+/// * `context_tx` - Channel sender for communicating with the context manager
+/// * `new_msg_id` - UUID of the message being processed (used for correlation)
+/// * `embeddings` - Vector embedding of the user's message for similarity search
+///
+/// # Process
+///
+/// 1. Searches the database for similar function nodes using the provided embedding
+/// 2. Retrieves actual code snippets for the matching nodes via I/O manager
+/// 3. Sends snippets to context manager via `RagEvent::ContextSnippets`
+/// 4. Retrieves conversation history and triggers context construction
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an error if any step fails
 async fn embedding_search_similar(
     state: &Arc<AppState>, 
     context_tx: &mpsc::Sender<RagEvent>, 
