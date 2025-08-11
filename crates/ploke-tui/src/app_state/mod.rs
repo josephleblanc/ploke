@@ -73,8 +73,6 @@ pub struct AppState {
     pub io_handle: IoManagerHandle,
 }
 
-// AI: Implement Deref for all three *State items below AI!
-
 #[derive(Debug, Default)]
 pub struct ChatState(pub RwLock<ChatHistory>);
 
@@ -83,6 +81,14 @@ impl ChatState {
         ChatState(RwLock::new(history))
     }
 }
+
+impl std::ops::Deref for ChatState {
+    type Target = RwLock<ChatHistory>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 // TODO: Need to handle `Config`, either create struct or
 // use `config` crate
 
@@ -95,6 +101,13 @@ impl ConfigState {
     }
 }
 
+impl std::ops::Deref for ConfigState {
+    type Target = RwLock<Config>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct SystemState(RwLock<SystemStatus>);
 
@@ -104,26 +117,19 @@ impl SystemState {
     }
 }
 
+impl std::ops::Deref for SystemState {
+    type Target = RwLock<SystemStatus>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Debug)]
 pub struct IndexingState(Arc<Mutex<IndexingStatus>>);
 
 impl IndexingState {
     pub fn new(status: IndexingStatus) -> Self {
         IndexingState(Arc::new(Mutex::new(status)))
-    }
-}
-
-impl std::ops::Deref for ConfigState {
-    type Target = RwLock<Config>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for SystemState {
-    type Target = RwLock<SystemStatus>;
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
