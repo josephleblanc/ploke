@@ -498,42 +498,43 @@ pub(super) async fn batch_prompt_search(
 
         
         if let Some(embedding) = embeddings.into_iter().next() {
-            let k_range = 1..=101;
+            for ty in NodeType::primary_nodes() {
+                let ef_range = 1..=101;
 
-            for k_val in k_range.step_by(5) {
-                let args = SimilarArgs {
-                    db: &state.db,
-                    vector_query: &embedding,
-                    k: k_val,
-                    ef: *ef,
-                    ty: NodeType::Function,
-                    max_hits: *max_hits,
-                    radius: *radius
-                };
-                let EmbedDataVerbose {typed_data, dist}= search_similar_args(args)?;
-                // let first_five = typed_data.v.into_iter().take(5).collect_vec();
-                let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
-
-                let code_snippets = state.io_handle
-                    .get_snippets_batch(typed_data.v).await?;
-                    // .get_snippets_batch(first_five).await?;
-                let mut ok_snippets: Vec<SnippetInfo> = Vec::new();
-                for ( ( snippet_result, name ), dist ) in code_snippets.into_iter().zip(snippets).zip(dist) {
-                    let unformatted = snippet_result?;
-                    let snippet = unformatted.split("\\n").join("\n");
-                    let snippet_info = SnippetInfo {
-                        name,
-                        dist,
-                        snippet
+                for ef_val in ef_range.step_by(4) {
+                    let args = SimilarArgs {
+                        db: &state.db,
+                        vector_query: &embedding,
+                        k: *k,
+                        ef: ef_val,
+                        ty,
+                        max_hits: *max_hits,
+                        radius: *radius
                     };
-                    ok_snippets.push(snippet_info);
-                }
+                    let EmbedDataVerbose {typed_data, dist}= search_similar_args(args)?;
+                    let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
 
-                results.push(BatchResult {
-                    prompt_idx,
-                    prompt: prompt.clone(),
-                    snippet_info: ok_snippets,
-                });
+                    let code_snippets = state.io_handle
+                        .get_snippets_batch(typed_data.v).await?;
+
+                    let mut ok_snippets: Vec<SnippetInfo> = Vec::new();
+                    for ((snippet_result, name), dist) in code_snippets.into_iter().zip(snippets).zip(dist) {
+                        let unformatted = snippet_result?;
+                        let snippet = unformatted.split("\\n").join("\n");
+                        let snippet_info = SnippetInfo {
+                            name,
+                            dist,
+                            snippet
+                        };
+                        ok_snippets.push(snippet_info);
+                    }
+
+                    results.push(BatchResult {
+                        prompt_idx,
+                        prompt: prompt.clone(),
+                        snippet_info: ok_snippets,
+                    });
+                }
             }
         }
     }
