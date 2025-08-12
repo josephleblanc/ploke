@@ -68,7 +68,6 @@ pub async fn emit_error_event(message: String, severity: ErrorSeverity) {
         event_bus.send(AppEvent::Error(ErrorEvent { message, severity }));
     }
 }
-
 pub async fn try_main() -> color_eyre::Result<()> {
     dotenvy::dotenv().ok();
 

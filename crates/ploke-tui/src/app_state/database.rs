@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use ploke_core::EmbeddingData;
+
 use super::*;
 
 // NOTE: Consider refactoring to avoid using explicit control flow and use error handling to
@@ -57,6 +61,17 @@ pub(super) async fn save_db(state: &Arc<AppState>, event_bus: &Arc<EventBus>) ->
         };
 
         let file_dir = default_dir.join(crate_name_version);
+        tracing::info!("Checking for previous database file {}", file_dir.display());
+        if let Ok(mut read_dir) = std::fs::read_dir(&default_dir) {
+            tracing::info!("reading dir result\n{:?}", read_dir);
+            while let Some(Ok(file)) = read_dir.next() {
+                if file.path() == file_dir {
+                    let _ = std::fs::remove_file(&file_dir).inspect_err(|e| {
+                        tracing::error!("Error removing previous database file {}", file_dir.display());
+                    });
+                }
+            }
+        }
         // TODO: Clones are bad. This is bad code. Fix it.
         // - Wish I could blame the AI but its all me :( in a rush
         match state.db.backup_db(file_dir.clone()) {
@@ -475,17 +490,18 @@ pub(super) async fn batch_prompt_search(
                 200,
                 NodeType::Function,
             )?;
-            
-            let snippets = ty_embed_data
-                .v
-                .into_iter()
-                .map(|data| data.name)
-                .collect::<Vec<String>>();
-            
+
+            let snippets = state.io_handle
+                .get_snippets_batch(ty_embed_data.v).await?;
+            let mut ok_snippets = Vec::new();
+            for snippet in snippets {
+                ok_snippets.push(snippet?);
+            }
+
             results.push(BatchResult {
                 prompt_idx,
                 prompt: prompt.clone(),
-                snippets,
+                snippets: ok_snippets,
             });
         }
     }
@@ -503,7 +519,7 @@ pub(super) async fn batch_prompt_search(
 pub struct BatchResult {
     pub prompt_idx: usize,
     pub prompt: String,
-    pub snippets: Vec<String>,
+    pub snippets: Vec< String >,
 }
 
 #[cfg(test)]

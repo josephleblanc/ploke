@@ -473,7 +473,7 @@ impl StateCommand {
             SaveDb => "SaveDb",
             #[allow(non_snake_case)]
             LoadDb => "LoadDb",
-            StateCommand::BatchPromptSearch { .. } => "BatchPromptSearch",
+            BatchPromptSearch { .. } => "BatchPromptSearch",
             // ... other variants
         }
     }
@@ -890,21 +890,27 @@ pub async fn state_manager(
                 max_hits,
                 threshold,
             } => {
-                if let Err(e) =
-                    batch_prompt_search(&state, prompt_file, out_file, max_hits, threshold).await
-                {
-                    // Log the full error with context using tracing's error macro
-                    // color_eyre::Report provides rich context including backtrace
-                    tracing::error!(
-                        error = %e,
-                        error_chain = ?e.chain().collect::<Vec<_>>(),
-                        "Batch prompt search failed"
-                    );
-                    
-                    // Also emit as a warning event to the UI
-                    event_bus.send(AppEvent::System(SystemEvent::Error(
-                        format!("Batch prompt search failed: {}", e)
-                    ))).ok();
+                match batch_prompt_search(&state, prompt_file, out_file, max_hits, threshold).await {
+                    Ok(embed_data) => {
+                        tracing::info!("Batch prompt search succeeded with {} results.", embed_data.len());
+                    },
+                    Err(e) =>{
+                        // Log the full error with context using tracing's error macro
+                        // color_eyre::Report provides rich context including backtrace
+                        tracing::error!(
+                            error = %e,
+                            error_chain = ?e.chain().collect::<Vec<_>>(),
+                            "Batch prompt search failed"
+                        );
+
+                        // TODO: Once I'm sure the rest of this works I'll add this, but for now I
+                        // don't want to make too many changes, especially to the event and messaging
+                        // loop, before testing.
+                        // Also emit as a warning event to the UI
+                        // event_bus.send(AppEvent::System(SystemEvent::Error(
+                        //     format!("Batch prompt search failed: {}", e)
+                        // )));
+                    }
                 }
             }
             StateCommand::LoadDb { crate_name } => {

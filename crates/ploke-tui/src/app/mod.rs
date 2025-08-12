@@ -13,6 +13,7 @@ use crossterm::event::{
     EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers, MouseButton,
     MouseEvent, MouseEventKind,
 };
+use itertools::Itertools;
 use message_item::{measure_messages, render_messages};
 use ploke_db::search_similar;
 use ratatui::widgets::{Gauge, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
@@ -20,6 +21,10 @@ use textwrap::wrap;
 use tokio::sync::oneshot;
 use toml::to_string;
 use tracing::instrument;
+
+static DATA_DIR: &str = "crates/ploke-tui/data";
+static TEST_QUERY_FILE: &str = "queries.txt";
+static TEST_QUERY_RESULTS: &str = "results.json";
 
 static HELP_COMMANDS: &str = r#"Available commands:
     index start [directory] - Run workspace indexing on specified directory
@@ -980,6 +985,27 @@ impl App {
             "save db" | "sd" => {
                 self.send_cmd(StateCommand::SaveDb);
             }
+            "update" => {
+                let cmd_tx = self.cmd_tx.clone();
+                tokio::task::spawn(async move {
+                    let (scan_tx, scan_rx) = oneshot::channel();
+                    let _ = cmd_tx.send(StateCommand::ScanForChange { scan_tx }).await;
+
+                    let files = match scan_rx.await {
+                        // TODO: Change the returned file to have the prefix of the current
+                        // directory stripped.
+                        Ok(files) => files.map(|v| v.into_iter().map(|f| format!("{}", f.display())).join("\n")),
+                        Err(_) => todo!(),
+                    };
+                    let mut msg = String::from("Updating database with files:\n  ");
+                    msg.push_str(&files.unwrap_or_else(|| "No updates needed".to_string()));
+                    let _ = cmd_tx.send(StateCommand::AddMessageImmediate {
+                        msg,
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    }).await;
+                });
+            }
             cmd if cmd.starts_with("query load ") => {
                 if let Some((query_name, file_name)) =
                     cmd.trim_start_matches("query load ").trim().split_once(' ')
@@ -994,30 +1020,29 @@ impl App {
             cmd if cmd.starts_with("batch") => {
                 let mut parts = cmd.split_whitespace();
                 parts.next(); // skip "batch"
-                let prompt_file = parts.next().unwrap_or("queries.txt");
-                let out_file = parts.next().unwrap_or("results.json");
+                let prompt_file = parts.next().unwrap_or(TEST_QUERY_FILE);
+                let out_file = parts.next().unwrap_or(TEST_QUERY_RESULTS);
                 let err_str = "Must enter a number for max_hits";
                 let max_hits = parts.next().and_then(|item| item.parse::<usize>().ok());
                 let threshold = parts.next().and_then(|item| item.parse::<f32>().ok());
                 
-                let data_dir = "ploke-tui/data";
-                let default_prompt_file = format!("{}/queries.txt", data_dir);
-                let default_out_file = format!("{}/results.json", data_dir);
+                let default_prompt_file = format!("{}/{}", DATA_DIR, TEST_QUERY_FILE);
+                let default_out_file = format!("{}/{}", DATA_DIR, TEST_QUERY_RESULTS);
                 
-                let prompt_file_path = if prompt_file == "queries.txt" {
+                let prompt_file_path = if prompt_file == TEST_QUERY_FILE {
                     &default_prompt_file
                 } else {
                     prompt_file
                 };
-                let out_file_path = if out_file == "results.json" {
+                let out_file_path = if out_file == TEST_QUERY_RESULTS {
                     &default_out_file
                 } else {
                     out_file
                 };
                 
-                if prompt_file == "queries.txt" && out_file == "results.json" {
+                if prompt_file == TEST_QUERY_FILE && out_file == TEST_QUERY_RESULTS {
                     self.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Running batch search with defaults:\n  Input: {}/queries.txt\n  Output: {}/results.json", data_dir, data_dir),
+                        msg: format!("Running batch search with defaults:\n  Input: {DATA_DIR}/{TEST_QUERY_FILE}\n  Output: {DATA_DIR}/{TEST_QUERY_RESULTS}"),
                         kind: MessageKind::SysInfo,
                         new_msg_id: Uuid::new_v4(),
                     });

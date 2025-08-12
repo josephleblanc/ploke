@@ -1,0 +1,1 @@
+I would like you to add documentation to the draw process in our main event loop for user input in the tui.
