@@ -44,6 +44,7 @@ A comprehensive Rust code parser and analyzer built on the `syn` crate.
 
 ## Features
 
+- **Discovery Phase**: Single-threaded walk of crate directories, parsing `Cargo.toml`, collecting `.rs` files, and producing a deterministic `CrateContext` per crate.
 - **Complete Rust Syntax Support**: Parses all Rust language constructs including functions, structs, enums, traits, implementations, and modules
 - **Type System Analysis**: Tracks complex type relationships, generics, and type bounds
 - **Visibility Tracking**: Preserves public/private visibility information
@@ -64,40 +65,37 @@ The parser uses a visitor pattern to traverse the Rust AST (Abstract Syntax Tree
 
 ## Usage
 
-### Basic Parsing
+### 1. Discovery Phase (single-threaded setup)
 
 ```rust
-use syn_parser::parser::visitor::analyze_code;
-use std::path::Path;
+use syn_parser::discovery::run_discovery_phase;
+use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file_path = Path::new("src/main.rs");
-    let code_graph = analyze_code(file_path)?;
-    
-    // Access parsed information
-    println!("Found {} functions", code_graph.functions.len());
-    println!("Found {} types", code_graph.defined_types.len());
-    
+    let project_root = PathBuf::from("/absolute/path/to/project");
+    let target_crates = vec![PathBuf::from("/absolute/path/to/crate")];
+
+    let discovery = run_discovery_phase(&project_root, &target_crates)?;
+
+    for (_, ctx) in discovery.iter_crate_contexts() {
+        println!("Crate: {} v{}  ({} .rs files)",
+                 ctx.name, ctx.version, ctx.files.len());
+    }
     Ok(())
 }
 ```
 
-### Parallel Processing
+### 2. Parallel Parsing (after discovery)
 
 ```rust
 use syn_parser::parser::visitor::analyze_files_parallel;
-use std::path::PathBuf;
+use syn_parser::discovery::DiscoveryOutput;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let file_paths = vec![
-        PathBuf::from("src/main.rs"),
-        PathBuf::from("src/lib.rs"),
-    ];
-    
-    // Process files in parallel with 4 worker threads
-    let code_graphs = analyze_files_parallel(file_paths, 4)?;
-    
-    println!("Processed {} files", code_graphs.len());
+fn continue_after_discovery(discovery: DiscoveryOutput)
+        -> Result<(), Box<dyn std::error::Error>> {
+    // Process all discovered files concurrently
+    let graphs = analyze_files_parallel(&discovery, 0)?; // 0 = Rayon default pool
+    println!("Produced {} partial graphs", graphs.len());
     Ok(())
 }
 ```
