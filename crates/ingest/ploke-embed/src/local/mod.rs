@@ -410,6 +410,10 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         let sum_embeddings = (&outputs * &weights)?.sum_keepdim(1)?;
         let sum_weights = weights.sum_keepdim(1)?.clamp(1e-9, f32::MAX)?;
         let embeddings = (sum_embeddings / sum_weights)?;
+        // AI: I'm getting an issue where the output embeddings are all either -1.0, 0.0, or 1.0,
+        // or -INF or +INF. I'm not familiar with the `candle` crate or its functions and methods,
+        // and I would like you to help me understand how I might be able to fix the issue. I
+        // suspect the issue is somewhere within this file AI?
 
         // Normalize embeddings
         let embeddings = embeddings.broadcast_div(
