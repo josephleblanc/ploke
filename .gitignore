@@ -22,6 +22,9 @@ router/
 # Test ouput file
 tests/data/code_graph.ron
 
+# Data input/output
+crates/ploke-tui/data/
+
 # Ignore temp file for random stuff
 temp.md
 .temp/
