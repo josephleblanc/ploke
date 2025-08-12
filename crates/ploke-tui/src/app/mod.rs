@@ -23,7 +23,7 @@ use toml::to_string;
 use tracing::instrument;
 
 static DATA_DIR: &str = "crates/ploke-tui/data";
-static TEST_QUERY_FILE: &str = "queries.txt";
+static TEST_QUERY_FILE: &str = "queries.json";
 static TEST_QUERY_RESULTS: &str = "results.json";
 
 static HELP_COMMANDS: &str = r#"Available commands:
@@ -34,6 +34,7 @@ static HELP_COMMANDS: &str = r#"Available commands:
     index cancel - Cancel indexing
     check api - Check API key configuration
     model list - List available models
+    model <name> - Switch model
     help - Show this help
 
     Keyboard shortcuts (Normal mode):

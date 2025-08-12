@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use ploke_core::EmbeddingData;
+use ploke_db::{search_similar_args, EmbedDataVerbose, SimilarArgs};
 
 use super::*;
 
@@ -427,6 +428,15 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
     }
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct PromptData {
+    prompt: String,
+    k: usize,
+    ef: usize,
+    max_hits: usize,
+    radius: f64
+}
+
 /// Performs batch semantic search on prompts from a file and returns results
 ///
 /// This function reads prompts from a file, generates embeddings for each prompt,
@@ -456,53 +466,75 @@ pub(super) async fn batch_prompt_search(
     use std::fs;
     use ploke_embed::indexer::EmbeddingProcessor;
     
-    let prompts = fs::read_to_string(&prompt_file)?;
+    let raw_prompts = fs::read_to_string(&prompt_file)?;
+    let prompt_json = serde_json::from_str(&raw_prompts)?;
+    let prompt_data: Vec< PromptData > = serde_json::from_value(prompt_json)?;
+
     
     // I'd rather split by double newlines or something.
-    let prompts: Vec<String> = prompts
-        .split("---")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
+    // let prompts: Vec<String> = prompts
+    //     .split("---")
+    //     .map(|s| s.trim())
+    //     .filter(|s| !s.is_empty())
+    //     .map(|s| s.to_string())
+    //     .collect();
     
-    if prompts.is_empty() {
+    if prompt_data.is_empty() {
         return Ok(Vec::new());
     }
     
-    let max_hits = max_hits.unwrap_or(10);
+    // let max_hits: usize = max_hits.unwrap_or(10);
     let _threshold = threshold.unwrap_or(0.0);
     
     let mut results = Vec::new();
     
-    for (prompt_idx, prompt) in prompts.iter().enumerate() {
+    for (prompt_idx, prompt_item) in prompt_data.iter().enumerate() {
+        let PromptData {prompt, k, ef, max_hits, radius} = prompt_item;
         tracing::info!("Processing prompt {}: {}", prompt_idx, prompt);
         
         let embeddings = state.embedder
             .generate_embeddings(vec![prompt.clone()])
             .await?;
+
         
         if let Some(embedding) = embeddings.into_iter().next() {
-            let ty_embed_data = search_similar(
-                &state.db,
-                embedding,
-                max_hits,
-                200,
-                NodeType::Function,
-            )?;
+            let k_range = 1..=101;
 
-            let snippets = state.io_handle
-                .get_snippets_batch(ty_embed_data.v).await?;
-            let mut ok_snippets = Vec::new();
-            for snippet in snippets {
-                ok_snippets.push(snippet?);
+            for k_val in k_range.step_by(5) {
+                let args = SimilarArgs {
+                    db: &state.db,
+                    vector_query: &embedding,
+                    k: k_val,
+                    ef: *ef,
+                    ty: NodeType::Function,
+                    max_hits: *max_hits,
+                    radius: *radius
+                };
+                let EmbedDataVerbose {typed_data, dist}= search_similar_args(args)?;
+                // let first_five = typed_data.v.into_iter().take(5).collect_vec();
+                let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
+
+                let code_snippets = state.io_handle
+                    .get_snippets_batch(typed_data.v).await?;
+                    // .get_snippets_batch(first_five).await?;
+                let mut ok_snippets: Vec<SnippetInfo> = Vec::new();
+                for ( ( snippet_result, name ), dist ) in code_snippets.into_iter().zip(snippets).zip(dist) {
+                    let unformatted = snippet_result?;
+                    let snippet = unformatted.split("\\n").join("\n");
+                    let snippet_info = SnippetInfo {
+                        name,
+                        dist,
+                        snippet
+                    };
+                    ok_snippets.push(snippet_info);
+                }
+
+                results.push(BatchResult {
+                    prompt_idx,
+                    prompt: prompt.clone(),
+                    snippet_info: ok_snippets,
+                });
             }
-
-            results.push(BatchResult {
-                prompt_idx,
-                prompt: prompt.clone(),
-                snippets: ok_snippets,
-            });
         }
     }
     
@@ -514,12 +546,19 @@ pub(super) async fn batch_prompt_search(
     Ok(results)
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SnippetInfo {
+    name: String,
+    dist: f64,
+    snippet: String
+}
+
 /// Result structure for batch prompt search operations
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BatchResult {
     pub prompt_idx: usize,
     pub prompt: String,
-    pub snippets: Vec< String >,
+    pub snippet_info: Vec<SnippetInfo>
 }
 
 #[cfg(test)]
