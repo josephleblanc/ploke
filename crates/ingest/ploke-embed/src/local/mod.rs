@@ -321,10 +321,20 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         let sum_weights = weights.sum_keepdim(1)?.clamp(1e-9, f32::MAX)?;
         let embeddings = (sum_embeddings / sum_weights)?;
 
-        // Normalize embeddings
-        let embeddings = embeddings.broadcast_div(
-            &embeddings.sqr()?.sum_keepdim(1)?.sqrt()?
-        )?;
+        // Normalize embeddings across the hidden dimension to avoid {-1,0,1,±inf}
+        let norms = embeddings
+            .sqr()?
+            .sum_keepdim(candle_core::D::Minus1)?
+            .sqrt()?
+            .clamp(1e-12, f32::MAX)?;
+        let embeddings = embeddings.broadcast_div(&norms)?;
+        tracing::debug!(
+            "shapes: outputs={:?}, weights={:?}, sum_embeddings={:?}, norms={:?}",
+            outputs.shape(),
+            weights.shape(),
+            sum_embeddings.shape(),
+            norms.shape()
+        );
 
         // Convert to Vec<Vec<f32>> with proper error handling
         let mut results = Vec::with_capacity(texts.len());
@@ -363,7 +373,7 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
     #[instrument(
         skip(self, texts),
         fields(model_batch_size, cursor),
-        level = "INFO"  // Demote to debug level
+        level = "DEBUG"  // Demote to debug level
     )]
     fn process_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
         tracing::info!("Starting process_batch for texts {:?}", texts);
@@ -415,10 +425,20 @@ fn validate_file_size(path: &PathBuf, min_size: u64) -> Result<(), EmbeddingErro
         // and I would like you to help me understand how I might be able to fix the issue. I
         // suspect the issue is somewhere within this file AI?
 
-        // Normalize embeddings
-        let embeddings = embeddings.broadcast_div(
-            &embeddings.sqr()?.sum_keepdim(1)?.sqrt()?
-        )?;
+        // Normalize embeddings across the hidden dimension to avoid {-1,0,1,±inf}
+        let norms = embeddings
+            .sqr()?
+            .sum_keepdim(candle_core::D::Minus1)?
+            .sqrt()?
+            .clamp(1e-12, f32::MAX)?;
+        let embeddings = embeddings.broadcast_div(&norms)?;
+        tracing::debug!(
+            "shapes: outputs={:?}, weights={:?}, sum_embeddings={:?}, norms={:?}",
+            outputs.shape(),
+            weights.shape(),
+            sum_embeddings.shape(),
+            norms.shape()
+        );
 
         // Convert to Vec<Vec<f32>> with proper error handling
         let mut results = Vec::with_capacity(texts.len());
