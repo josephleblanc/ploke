@@ -429,9 +429,54 @@ mod tests {
     #[test]
     fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
         let db = &TEST_DB;
-        // AI: Write the rest of the test AI!
+
+        // Ensure a clean slate (ignore errors if not present)
+        let _ = drop_fts_indexes(db);
+        let _ = drop_fts_relation(db);
+
+        // Create relation and indexes
+        create_fts_relation(db).unwrap();
+        create_fts_indexes(db, true).unwrap();
+
+        // Upsert two sample nodes
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+
+        upsert_node_fts(
+            db,
+            id1,
+            Some("HashMap capacity".to_string()),
+            Some("A hash map grows capacity".to_string()),
+        )
+        .unwrap();
+
+        upsert_node_fts(
+            db,
+            id2,
+            Some("Vec push pop".to_string()),
+            Some("A growable vector".to_string()),
+        )
+        .unwrap();
+
+        // Search symbols: should find id1 for "hashmap"
+        let sym_results = search_symbols(db, "hashmap", 10).unwrap();
+        assert!(sym_results.iter().any(|(_, id, _)| *id == id1));
+
+        // Search body: should find id1 for "capacity"
+        let body_results = search_body(db, "capacity", 10).unwrap();
+        assert!(body_results.iter().any(|(_, id, _)| *id == id1));
+
+        // Replace indexes with different config and ensure search still works
+        replace_fts_indexes(db, false).unwrap();
+
+        let sym_results_2 = search_symbols(db, "vec", 10).unwrap();
+        assert!(sym_results_2.iter().any(|(_, id, _)| *id == id2));
+
+        // Cleanup
+        drop_fts_indexes(db).unwrap();
+        drop_fts_relation(db).unwrap();
+
         Ok(())
     }
 
-    // AI: Write the remaining tests AI!
 }
