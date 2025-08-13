@@ -21,7 +21,7 @@ Where to integrate in code (high level)
   - Add a BM25 service/actor that wraps Bm25Indexer and holds an Arc<Database> and an IoManagerHandle.
   - Provide a channel-based API so IndexerTask can send IndexBatch/Remove/Rebuild requests.
   - At startup, rebuild BM25 from active primary nodes using two passes.
-  - In IndexerTask::process_batch, send the same snippets to the BM25 service (at the // AI: marker).
+  - In IndexerTask::process_batch, send the same snippets to the BM25 service (at the // marker).
 - ploke-transform
   - Add a bm25_doc_meta relation with columns: id, tracking_hash, token_length, tokenizer_version, span @ 'NOW'.
 - ploke-db
