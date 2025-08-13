@@ -411,8 +411,9 @@ mod tests {
     }
 
     // Best-effort cleanup that still asserts only-not-found errors.
+    // Drop the relation first; if it does not exist, indexes are irrelevant.
+    // This avoids parser errors from ::fts drop when the relation is absent.
     fn clean_fts(db: &Database) {
-        assert_ok_or_not_found(drop_fts_indexes(db));
         assert_ok_or_not_found(drop_fts_relation(db));
     }
 
@@ -451,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
-        let _g = TEST_GUARD.lock().unwrap();
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let db = &TEST_DB;
 
         // Ensure a clean slate with explicit checks
@@ -503,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_drop_fts_indexes() {
-        let _g = TEST_GUARD.lock().unwrap();
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let db = &TEST_DB;
 
         clean_fts(db);
@@ -537,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_drop_fts_relation() {
-        let _g = TEST_GUARD.lock().unwrap();
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let db = &TEST_DB;
 
         clean_fts(db);
@@ -568,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_replace_requires_relation() {
-        let _g = TEST_GUARD.lock().unwrap();
+        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
         let db = &TEST_DB;
 
         clean_fts(db);
