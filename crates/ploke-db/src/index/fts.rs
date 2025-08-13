@@ -25,9 +25,8 @@ pub fn create_fts_relation(db: &Database) -> Result<(), DbError> {
 
 /// Drop the FTS backing relation
 pub fn drop_fts_relation(db: &Database) -> Result<(), DbError> {
-    // Cozo drop relation command can be ':erase <relation>'
-    // Using ':erase' avoids parser issues seen with ':drop' in some environments/versions.
-    let script = format!(":erase {}", FTS_RELATION);
+    // Drop relation; ':drop' is the correct directive to remove a relation definition.
+    let script = format!(":drop {}", FTS_RELATION);
     db.run_script(
         &script,
         std::collections::BTreeMap::new(),
@@ -45,7 +44,7 @@ pub fn create_fts_indexes(db: &Database, body_use_stopwords: bool) -> Result<(),
     } else {
         "[Lowercase]"
     };
-    let script = [
+    let cmds = [
         format!(
             "::fts create {}:{} {{ extractor: symbol_text, extract_filter: !is_null(symbol_text), tokenizer: Simple, filters: [Lowercase] }}",
             FTS_RELATION, SYMBOLS_IDX
@@ -54,13 +53,14 @@ pub fn create_fts_indexes(db: &Database, body_use_stopwords: bool) -> Result<(),
             "::fts create {}:{} {{ extractor: body_text, extract_filter: !is_null(body_text), tokenizer: Simple, filters: {} }}",
             FTS_RELATION, BODY_IDX, body_filters
         ),
-    ]
-    .join("\n");
-    db.run_script(
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
+    ];
+    for cmd in cmds {
+        db.run_script(
+            &cmd,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
+    }
     Ok(())
 }
 
@@ -71,7 +71,7 @@ pub fn replace_fts_indexes(db: &Database, body_use_stopwords: bool) -> Result<()
     } else {
         "[Lowercase]"
     };
-    let script = [
+    let cmds = [
         format!(
             "::fts replace {}:{} {{ extractor: symbol_text, extract_filter: !is_null(symbol_text), tokenizer: Simple, filters: [Lowercase] }}",
             FTS_RELATION, SYMBOLS_IDX
@@ -80,28 +80,30 @@ pub fn replace_fts_indexes(db: &Database, body_use_stopwords: bool) -> Result<()
             "::fts replace {}:{} {{ extractor: body_text, extract_filter: !is_null(body_text), tokenizer: Simple, filters: {} }}",
             FTS_RELATION, BODY_IDX, body_filters
         ),
-    ]
-    .join("\n");
-    db.run_script(
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
+    ];
+    for cmd in cmds {
+        db.run_script(
+            &cmd,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
+    }
     Ok(())
 }
 
 /// Drop both FTS indexes
 pub fn drop_fts_indexes(db: &Database) -> Result<(), DbError> {
-    let script = [
+    let cmds = [
         format!("::fts drop {}:{}", FTS_RELATION, SYMBOLS_IDX),
         format!("::fts drop {}:{}", FTS_RELATION, BODY_IDX),
-    ]
-    .join("\n");
-    db.run_script(
-        &script,
-        std::collections::BTreeMap::new(),
-        ScriptMutability::Mutable,
-    )?;
+    ];
+    for cmd in cmds {
+        db.run_script(
+            &cmd,
+            std::collections::BTreeMap::new(),
+            ScriptMutability::Mutable,
+        )?;
+    }
     Ok(())
 }
 
@@ -405,11 +407,7 @@ mod tests {
                 msg.contains("not found")
                     || msg.contains("does not exist")
                     || msg.contains("no such")
-                    || msg.contains("not exist")
-                    // Some Cozo versions return a parser-level message when the target is absent.
-                    || msg.contains("unexpected input")
-                    || msg.contains("end of input")
-                    || msg.contains("parser"),
+                    || msg.contains("not exist"),
                 "Unexpected error: {}",
                 e
             );
@@ -420,6 +418,7 @@ mod tests {
     // Drop the relation first; if it does not exist, indexes are irrelevant.
     // This avoids parser errors from ::fts drop when the relation is absent.
     fn clean_fts(db: &Database) {
+        assert_ok_or_not_found(drop_fts_indexes(db));
         assert_ok_or_not_found(drop_fts_relation(db));
     }
 
