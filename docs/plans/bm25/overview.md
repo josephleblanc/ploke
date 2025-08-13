@@ -42,7 +42,7 @@ Immediate next steps (dev-ready)
 
 2) Wire IndexerTask to BM25 service in crates/ingest/ploke-embed/src/indexer/mod.rs
    - Add a new field to IndexerTask: bm25_tx: Option<mpsc::Sender<Bm25Cmd>>.
-   - In process_batch, right after valid_snippets are built (at the // AI: comment), send docs to BM25:
+   - In process_batch, right after valid_snippets are built (at the // comment), send docs to BM25:
      - Build docs: Vec<(Uuid, String)> by pairing valid_data ids and valid_snippets.
      - Clone snippets for BM25; keep dense path unchanged.
      - Log and non-fatal on send failure.
