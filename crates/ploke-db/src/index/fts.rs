@@ -381,6 +381,7 @@ fn split_camel(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use lazy_static::lazy_static;
+    use std::sync::Mutex;
 
     // ploke_test_utils::setup_db_full_crate("ploke-tui")
     //     .map(|d| Database::new(d))
@@ -390,7 +391,33 @@ mod tests {
                 .expect("Invariant: setup_db_full_crate must successfully run on target.");
             Database::new(cozo_db)
         };
+        // Serialize FTS tests to avoid races on the shared DB and FTS objects.
+        pub static ref TEST_GUARD: Mutex<()> = Mutex::new(());
+    }
 
+    // Accept only benign "not found" errors, fail otherwise.
+    fn assert_ok_or_not_found<T>(res: Result<T, DbError>) {
+        if let Err(e) = res {
+            let msg = e.to_string().to_lowercase();
+            assert!(
+                msg.contains("not found")
+                    || msg.contains("does not exist")
+                    || msg.contains("no such")
+                    || msg.contains("not exist"),
+                "Unexpected error: {}",
+                e
+            );
+        }
+    }
+
+    // Best-effort cleanup that still asserts only-not-found errors.
+    fn clean_fts(db: &Database) {
+        assert_ok_or_not_found(drop_fts_indexes(db));
+        assert_ok_or_not_found(drop_fts_relation(db));
+    }
+
+    fn mk_id() -> Uuid {
+        Uuid::new_v4()
     }
 
     #[test]
@@ -428,19 +455,19 @@ mod tests {
 
     #[test]
     fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
+        let _g = TEST_GUARD.lock().unwrap();
         let db = &TEST_DB;
 
-        // Ensure a clean slate (ignore errors if not present)
-        let _ = drop_fts_indexes(db);
-        let _ = drop_fts_relation(db);
+        // Ensure a clean slate with explicit checks
+        clean_fts(db);
 
         // Create relation and indexes
         create_fts_relation(db).unwrap();
         create_fts_indexes(db, true).unwrap();
 
         // Upsert two sample nodes
-        let id1 = Uuid::new_v4();
-        let id2 = Uuid::new_v4();
+        let id1 = mk_id();
+        let id2 = mk_id();
 
         upsert_node_fts(
             db,
@@ -472,11 +499,92 @@ mod tests {
         let sym_results_2 = search_symbols(db, "vec", 10).unwrap();
         assert!(sym_results_2.iter().any(|(_, id, _)| *id == id2));
 
-        // Cleanup
-        drop_fts_indexes(db).unwrap();
-        drop_fts_relation(db).unwrap();
+        // Cleanup with explicit checks
+        clean_fts(db);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_drop_fts_indexes() {
+        let _g = TEST_GUARD.lock().unwrap();
+        let db = &TEST_DB;
+
+        clean_fts(db);
+
+        create_fts_relation(db).unwrap();
+        create_fts_indexes(db, true).unwrap();
+
+        let id = mk_id();
+        upsert_node_fts(
+            db,
+            id,
+            Some("AlphaBeta".to_string()),
+            Some("Body text about alpha".to_string()),
+        )
+        .unwrap();
+
+        // Drop only indexes; relation remains
+        drop_fts_indexes(db).unwrap();
+
+        // Searches should now error due to missing indexes
+        assert!(search_symbols(db, "alpha", 5).is_err());
+        assert!(search_body(db, "body", 5).is_err());
+
+        // Recreate indexes and verify searches work again
+        create_fts_indexes(db, false).unwrap();
+        let sym_ok = search_symbols(db, "alpha", 5).unwrap();
+        assert!(sym_ok.iter().any(|(_, i, _)| *i == id));
+
+        clean_fts(db);
+    }
+
+    #[test]
+    fn test_drop_fts_relation() {
+        let _g = TEST_GUARD.lock().unwrap();
+        let db = &TEST_DB;
+
+        clean_fts(db);
+
+        create_fts_relation(db).unwrap();
+        create_fts_indexes(db, false).unwrap();
+
+        let id = mk_id();
+        upsert_node_fts(db, id, Some("GammaDelta".into()), Some("Some body").into()).unwrap();
+
+        // Drop the relation; subsequent upserts and searches should fail
+        drop_fts_relation(db).unwrap();
+
+        assert!(upsert_node_fts(db, id, Some("x".into()), None).is_err());
+        assert!(search_symbols(db, "gamma", 5).is_err());
+        assert!(search_body(db, "body", 5).is_err());
+
+        // Recreate relation + indexes and verify end-to-end again
+        create_fts_relation(db).unwrap();
+        create_fts_indexes(db, true).unwrap();
+
+        upsert_node_fts(db, id, Some("Gamma".into()), Some("Body".into())).unwrap();
+        let sym_ok = search_symbols(db, "gamma", 5).unwrap();
+        assert!(sym_ok.iter().any(|(_, i, _)| *i == id));
+
+        clean_fts(db);
+    }
+
+    #[test]
+    fn test_replace_requires_relation() {
+        let _g = TEST_GUARD.lock().unwrap();
+        let db = &TEST_DB;
+
+        clean_fts(db);
+
+        // Without relation, replace should fail
+        assert!(replace_fts_indexes(db, true).is_err());
+
+        // After creating relation, replace should succeed
+        create_fts_relation(db).unwrap();
+        assert!(replace_fts_indexes(db, false).is_ok());
+
+        clean_fts(db);
     }
 
 }
