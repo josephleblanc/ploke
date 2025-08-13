@@ -93,7 +93,7 @@ Progress checklist (to be updated as we go)
 - [ ] ploke-transform: add bm25_doc_meta schema and migration hookup
 - [ ] ploke-db: upsert_bm25_doc_meta + avg length + stream active nodes
 - [ ] ploke-embed: BM25 actor with two-pass rebuild, IndexBatch/Remove/Search commands
-- [ ] ploke-embed: IndexerTask field bm25_tx + send IndexBatch at // AI: in process_batch
+- [ ] ploke-embed: IndexerTask field bm25_tx + send IndexBatch at // in process_batch
 - [ ] Replace DefaultHasher with TrackingHash or blake3 in BM25 metadata
 - [ ] ploke-rag: hybrid search (dense + BM25) with RRF
 - [ ] ploke-rag: graph expansion queries and hop decay
@@ -112,5 +112,5 @@ Open choices to confirm (defaults in parentheses)
 - Avgdl drift threshold to trigger rebuild? (2–5%)
 
 How to resume after context reset
-- Recreate the BM25 actor scaffolding and the IndexerTask send point at // AI: in process_batch.
+- Recreate the BM25 actor scaffolding and the IndexerTask send point at // in process_batch.
 - Follow the checklist top-down; I will keep it updated and call out any blocking questions or schema changes as they arise.
