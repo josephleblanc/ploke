@@ -437,6 +437,27 @@ struct PromptData {
     radius: f64
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct QueryParams {
+    k: usize,
+    ef: usize,
+    max_hits: usize,
+    radius: f64
+}
+
+impl From<PromptData> for QueryParams {
+    fn from(value: PromptData) -> Self {
+        let PromptData { prompt, k, ef, max_hits, radius } = value;
+        QueryParams { k, ef, max_hits, radius }
+    }
+}
+impl From<&PromptData> for QueryParams {
+    fn from(value: &PromptData) -> Self {
+        let PromptData { prompt, k, ef, max_hits, radius } = value;
+        QueryParams { k: *k, ef: *ef, max_hits: *max_hits, radius: *radius }
+    }
+}
+
 /// Performs batch semantic search on prompts from a file and returns results
 ///
 /// This function reads prompts from a file, generates embeddings for each prompt,
@@ -470,15 +491,6 @@ pub(super) async fn batch_prompt_search(
     let prompt_json = serde_json::from_str(&raw_prompts)?;
     let prompt_data: Vec< PromptData > = serde_json::from_value(prompt_json)?;
 
-    
-    // I'd rather split by double newlines or something.
-    // let prompts: Vec<String> = prompts
-    //     .split("---")
-    //     .map(|s| s.trim())
-    //     .filter(|s| !s.is_empty())
-    //     .map(|s| s.to_string())
-    //     .collect();
-    
     if prompt_data.is_empty() {
         return Ok(Vec::new());
     }
@@ -488,7 +500,8 @@ pub(super) async fn batch_prompt_search(
     
     let mut results = Vec::new();
     
-    for (prompt_idx, prompt_item) in prompt_data.iter().enumerate() {
+    for (prompt_idx, prompt_item) in prompt_data.into_iter().enumerate() {
+        let query_params: QueryParams = (&prompt_item).into();
         let PromptData {prompt, k, ef, max_hits, radius} = prompt_item;
         tracing::info!("Processing prompt {}: {}", prompt_idx, prompt);
         
@@ -501,40 +514,43 @@ pub(super) async fn batch_prompt_search(
             for ty in NodeType::primary_nodes() {
                 let ef_range = 1..=101;
 
-                for ef_val in ef_range.step_by(4) {
-                    let args = SimilarArgs {
-                        db: &state.db,
-                        vector_query: &embedding,
-                        k: *k,
-                        ef: ef_val,
-                        ty,
-                        max_hits: *max_hits,
-                        radius: *radius
+                let args = SimilarArgs {
+                    db: &state.db,
+                    vector_query: &embedding,
+                    k,
+                    ef,
+                    ty,
+                    max_hits,
+                    radius
+                };
+                let EmbedDataVerbose {typed_data, dist}= search_similar_args(args)?;
+                let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
+                let file_paths = typed_data.v.iter().map(|f| f.file_path.clone()).collect_vec();
+
+                let code_snippets = state.io_handle
+                    .get_snippets_batch(typed_data.v).await?;
+
+                let mut ok_snippets: Vec<SnippetInfo> = Vec::new();
+                for ( ((snippet_result, name), dist), file_path ) in code_snippets.into_iter()
+                    .zip(snippets).zip(dist).zip(file_paths) {
+                    let unformatted = snippet_result?;
+                    let snippet = unformatted.split("\\n").join("\n");
+                    let snippet_info = SnippetInfo {
+                        name,
+                        dist,
+                        file_path: format!("{}", file_path.display()),
+                        snippet
                     };
-                    let EmbedDataVerbose {typed_data, dist}= search_similar_args(args)?;
-                    let snippets = typed_data.v.iter().map(|i| i.name.clone()).collect_vec();
-
-                    let code_snippets = state.io_handle
-                        .get_snippets_batch(typed_data.v).await?;
-
-                    let mut ok_snippets: Vec<SnippetInfo> = Vec::new();
-                    for ((snippet_result, name), dist) in code_snippets.into_iter().zip(snippets).zip(dist) {
-                        let unformatted = snippet_result?;
-                        let snippet = unformatted.split("\\n").join("\n");
-                        let snippet_info = SnippetInfo {
-                            name,
-                            dist,
-                            snippet
-                        };
-                        ok_snippets.push(snippet_info);
-                    }
-
-                    results.push(BatchResult {
-                        prompt_idx,
-                        prompt: prompt.clone(),
-                        snippet_info: ok_snippets,
-                    });
+                    ok_snippets.push(snippet_info);
                 }
+
+                results.push(BatchResult {
+                    prompt_idx,
+                    node_type: ty.relation_str(),
+                    prompt: prompt.clone(),
+                    snippet_info: ok_snippets,
+                    query_params,
+                });
             }
         }
     }
@@ -551,6 +567,7 @@ pub(super) async fn batch_prompt_search(
 pub struct SnippetInfo {
     name: String,
     dist: f64,
+    file_path: String,
     snippet: String
 }
 
@@ -558,8 +575,10 @@ pub struct SnippetInfo {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BatchResult {
     pub prompt_idx: usize,
+    pub node_type: &'static str,
     pub prompt: String,
-    pub snippet_info: Vec<SnippetInfo>
+    pub snippet_info: Vec<SnippetInfo>,
+    pub query_params: QueryParams,
 }
 
 #[cfg(test)]

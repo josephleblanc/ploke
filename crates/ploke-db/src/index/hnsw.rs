@@ -1,3 +1,4 @@
+use crate::{Database, DbError, NodeType, QueryResult, TypedEmbedData};
 use std::collections::BTreeMap;
 
 use cozo::{DataValue, Num, ScriptMutability};
@@ -5,8 +6,6 @@ use itertools::Itertools;
 use tracing::instrument;
 
 use crate::database::HNSW_SUFFIX;
-
-use super::*;
 
 fn arr_to_float(arr: &[f32]) -> DataValue {
     DataValue::List(
@@ -46,7 +45,8 @@ pub fn hnsw_all_types(
                 },
                 ~"#,
             rel,
-            HNSW_SUFFIX, r#"{id, name| 
+            HNSW_SUFFIX,
+            r#"{id, name| 
                     query: v, 
                     k: $"#,
             k_for_ty.as_str(),
@@ -127,7 +127,8 @@ pub fn hnsw_of_type(
                 },
                 ~"#,
         rel,
-        HNSW_SUFFIX, r#"{id, name| 
+        HNSW_SUFFIX,
+        r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
@@ -218,20 +219,24 @@ pub fn search_similar(
     ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
         batch[id, name, file_path, file_hash, hash, span, namespace],
      "#;
-    let hnsw_script = [r#"
+    let hnsw_script = [
+        r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
                     name, 
                     @ 'NOW'
                 },
-                ~function"#, HNSW_SUFFIX, r#"{id, name| 
+                ~function"#,
+        HNSW_SUFFIX,
+        r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 }
-            "#];
+            "#,
+    ];
     let limit_param = ":limit $limit";
 
     let rel = ty.relation_str();
@@ -248,7 +253,10 @@ pub fn search_similar(
     let less_flat_row = query_result.rows.first();
     let count_less_flat = query_result.rows.len();
     if let Some(lfr) = less_flat_row {
-        tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n", rel);
+        tracing::info!(
+            "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
+            rel
+        );
     }
     let v = QueryResult::from(query_result).to_embedding_nodes()?;
     let ty_embed = TypedEmbedData { v, ty };
@@ -262,19 +270,20 @@ pub struct SimilarArgs<'a> {
     pub ef: usize,
     pub ty: NodeType,
     pub max_hits: usize,
-    pub radius: f64
+    pub radius: f64,
 }
 
 #[instrument(skip_all, fields(query_result))]
-pub fn search_similar_args(
-    args: SimilarArgs,
-) -> Result<EmbedDataVerbose, ploke_error::Error> {
-
-    let SimilarArgs { db,
-    vector_query,
-    k,
-    ef,
-    ty, max_hits, radius } = args;
+pub fn search_similar_args(args: SimilarArgs) -> Result<EmbedDataVerbose, ploke_error::Error> {
+    let SimilarArgs {
+        db,
+        vector_query,
+        k,
+        ef,
+        ty,
+        max_hits,
+        radius,
+    } = args;
     let mut params = std::collections::BTreeMap::new();
     params.insert("k".to_string(), DataValue::from(k as i64));
     params.insert("ef".to_string(), DataValue::from(ef as i64));
@@ -297,6 +306,7 @@ pub fn search_similar_args(
                 .collect_vec(),
         ),
     );
+    let rel = ty.relation_str();
 
     let mut script = String::new();
     let base_script_start = r#"
@@ -320,14 +330,20 @@ pub fn search_similar_args(
     ?[id, name, file_path, file_hash, hash, span, namespace, distance] := 
         batch[id, name, file_path, file_hash, hash, span, namespace],
      "#;
-    // ?[id, name, distance] := 
-    let hnsw_script = [r#"
-                *function{
+    // ?[id, name, distance] :=
+    let hnsw_script = [
+        r#"
+                *"#,
+        rel,
+        r#"{
                     id, 
                     name, 
                     @ 'NOW'
                 },
-                ~function"#, HNSW_SUFFIX, r#"{id, name| 
+                ~"#,
+        rel,
+        HNSW_SUFFIX,
+        r#"{id, name| 
                     query: vec($vector_query), 
                     k: $k, 
                     ef: $ef,
@@ -335,14 +351,15 @@ pub fn search_similar_args(
                     radius: $radius
                 },
                 :order distance
-            "#];
+            "#,
+    ];
     let limit_param = ":limit $limit";
 
-    let rel = ty.relation_str();
     script.push_str(base_script_start);
     script.push_str(rel);
     script.push_str(base_script_end);
     script.push_str(&hnsw_script.into_iter().collect::<String>());
+    script.push_str(limit_param);
 
     tracing::info!("script for similarity search is: {}", script);
     let query_result = db
@@ -353,20 +370,33 @@ pub fn search_similar_args(
     let less_flat_row = query_result.rows.first();
     let count_less_flat = query_result.rows.len();
     if let Some(lfr) = less_flat_row {
-        tracing::info!("\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n", rel);
+        tracing::info!(
+            "\n{:=^80}\n== less_flat: {count_less_flat} ==\n== less_flat: {less_flat_row:?} ==\n",
+            rel
+        );
     }
     let mut dist_vec = Vec::new();
     if !query_result.rows.is_empty() {
         tracing::info!("query_result.headers: {:?}", query_result.headers);
-        let dist_idx = query_result.headers.iter().enumerate().find(|(idx, s )| *s == "distance")
+        let dist_idx = query_result
+            .headers
+            .iter()
+            .enumerate()
+            .find(|(idx, s)| *s == "distance")
             .map(|(idx, _)| idx)
             .expect("Must return `distance` in database return values");
-        let dist_floats = query_result.rows.iter().filter_map(|r| r[dist_idx].get_float());
+        let dist_floats = query_result
+            .rows
+            .iter()
+            .filter_map(|r| r[dist_idx].get_float());
         dist_vec.extend(dist_floats);
     }
     let v = QueryResult::from(query_result).to_embedding_nodes()?;
     let ty_embed = TypedEmbedData { v, ty };
-    let verbose_embed = EmbedDataVerbose {typed_data: ty_embed, dist: dist_vec};
+    let verbose_embed = EmbedDataVerbose {
+        typed_data: ty_embed,
+        dist: dist_vec,
+    };
     Ok(verbose_embed)
 }
 
@@ -386,7 +416,7 @@ pub fn search_similar_test(
     params.insert("ef".to_string(), DataValue::from(ef as i64));
 
     let hnsw_script = [
-            r#"
+        r#"
             ?[id, name, distance] := 
                 *function{
                     id, 
@@ -394,20 +424,19 @@ pub fn search_similar_test(
                     embedding: v
                     @ 'NOW'
                 },
-                ~function"#, HNSW_SUFFIX, r#"{id, name| 
+                ~function"#,
+        HNSW_SUFFIX,
+        r#"{id, name| 
                     query: v, 
                     k: $k, 
                     ef: $ef,
                     bind_distance: distance
                 }
             "#,
-    ].concat();
+    ]
+    .concat();
     let result = db
-        .run_script(
-            &hnsw_script,
-            params,
-            ScriptMutability::Immutable,
-        )
+        .run_script(&hnsw_script, params, ScriptMutability::Immutable)
         .map_err(DbError::from)?;
 
     let mut results = Vec::new();
@@ -433,7 +462,8 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        HNSW_SUFFIX, r#" {
+        HNSW_SUFFIX,
+        r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -460,7 +490,8 @@ pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error:
         r#"
             ::hnsw create "#,
         ty.relation_str(),
-        HNSW_SUFFIX, r#" {
+        HNSW_SUFFIX,
+        r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
@@ -487,7 +518,8 @@ pub fn replace_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error
         r#"
             ::hnsw replace "#,
         ty.relation_str(),
-        HNSW_SUFFIX, r#" {
+        HNSW_SUFFIX,
+        r#" {
                 fields: [embedding],
                 dim: 384,
                 dtype: F32,
