@@ -28,6 +28,7 @@ crates/ploke-tui/data/
 # Ignore temp file for random stuff
 temp.md
 .temp/
+*.bak
 
 # entertainment
 .bored/
