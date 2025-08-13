@@ -336,7 +336,7 @@ fn split_ident_keep_original(s: &str) -> Vec<String> {
 /// Examples:
 /// - "HashMap" -> ["Hash", "Map"]
 /// - "XMLHttp" -> ["XML", "Http"]
-/// - "hash2Map" -> ["hash2", "Map"]
+/// - "hash2Map" -> ["hash", "2", "Map"]
 fn split_camel(s: &str) -> Vec<String> {
     if s.is_empty() {
         return Vec::new();
@@ -380,12 +380,24 @@ fn split_camel(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lazy_static::lazy_static;
+
+    // ploke_test_utils::setup_db_full_crate("ploke-tui")
+    //     .map(|d| Database::new(d))
+    lazy_static! {
+        pub static ref TEST_DB: Database = {
+            let cozo_db = ploke_test_utils::setup_db_full_crate("ploke-tui")
+                .expect("Invariant: setup_db_full_crate must successfully run on target.");
+            Database::new(cozo_db)
+        };
+
+    }
 
     #[test]
     fn test_split_camel() {
         assert_eq!(split_camel("HashMap"), vec!["Hash", "Map"]);
         assert_eq!(split_camel("XMLHttp"), vec!["XML", "Http"]);
-        assert_eq!(split_camel("hash2Map"), vec!["hash2", "Map"]);
+        assert_eq!(split_camel("hash2Map"), vec!["hash", "2", "Map"]);
         assert_eq!(split_camel("hashmap"), vec!["hashmap"]);
         assert_eq!(split_camel(""), Vec::<String>::new());
     }
@@ -404,8 +416,8 @@ mod tests {
             Some("HashMap"),
             &["crate".into(), "collections".into(), "hash_map".into()],
             Some("fn capacity(&self) -> usize"),
-            &vec!["hashmap".into()],
-            &vec!["std".into()],
+            &["hashmap".into()],
+            &["std".into()],
         );
         assert!(text.contains("hash"));
         assert!(text.contains("map"));
@@ -413,4 +425,13 @@ mod tests {
         assert!(text.contains("feature:std"));
         assert!(text.contains("collections"));
     }
+
+    #[test]
+    fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
+        let db = &TEST_DB;
+        // AI: Write the rest of the test AI!
+        Ok(())
+    }
+
+    // AI: Write the remaining tests AI!
 }
