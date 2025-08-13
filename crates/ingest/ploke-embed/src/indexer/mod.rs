@@ -153,6 +153,7 @@ pub struct IndexerTask {
     pub embedding_processor: Arc<EmbeddingProcessor>,
     pub cancellation_token: CancellationToken,
     pub batch_size: usize,
+    pub bm25_tx: Option<mpsc::Sender<bm25_service::Bm25Cmd>>,
     pub cursors: Mutex<HashMap<NodeType, Uuid>>,
     pub total_processed: AtomicUsize,
 }
@@ -171,9 +172,15 @@ impl IndexerTask {
             embedding_processor,
             cancellation_token,
             batch_size,
+            bm25_tx: None,
             cursors: Mutex::new(HashMap::new()),
             total_processed: AtomicUsize::new(0),
         }
+    }
+
+    pub fn with_bm25_tx(mut self, bm25_tx: mpsc::Sender<bm25_service::Bm25Cmd>) -> Self {
+        self.bm25_tx = Some(bm25_tx);
+        self
     }
 
     #[allow(unused_variables)]
@@ -642,6 +649,27 @@ impl IndexerTask {
         }
         // AI: Send a clone of the Vec<String> of snippets to the Bm25Indexer here, along witha
         // `tracing` logging statement and correct error handling.
+        if let Some(tx) = &self.bm25_tx {
+            let docs: Vec<(Uuid, String)> = valid_data
+                .iter()
+                .map(|d| d.id)
+                .zip(valid_snippets.clone().into_iter())
+                .collect();
+            tracing::debug!(
+                "Sending {} docs to BM25 service (tokenizer_version=code_tokenizer_v1)",
+                docs.len()
+            );
+            if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch {
+                docs,
+                tokenizer_version: "code_tokenizer_v1".into(),
+            }) {
+                tracing::warn!("BM25 IndexBatch try_send failed: {}", e);
+            }
+        } else {
+            tracing::trace!(
+                "BM25 service not configured; skipping sparse indexing for this batch"
+            );
+        }
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
