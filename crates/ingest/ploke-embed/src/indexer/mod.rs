@@ -197,7 +197,6 @@ impl IndexerTask {
     pub async fn index_workspace(
         task: Arc<Self>,
         workspace_dir: String,
-        // db_callback: crossbeam_channel::Receiver<Result<(CallbackOp, NamedRows, NamedRows), EmbedError>>
         progress_tx: Arc<broadcast::Sender<IndexingStatus>>,
         mut progress_rx: broadcast::Receiver<IndexingStatus>,
         control_rx: mpsc::Receiver<IndexerCommand>,
@@ -371,10 +370,6 @@ impl IndexerTask {
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");
 
-        // tracing::info!(
-        //     "Indexer completed? {}",
-        //     received_completed.load(std::sync::atomic::Ordering::SeqCst),
-        // );
         Ok(())
     }
 
@@ -645,6 +640,8 @@ impl IndexerTask {
             tracing::error!("Empty valid snippets detected.");
             // panic!("AAaaaaaaaah")
         }
+        // AI: Send a clone of the Vec<String> of snippets to the Bm25Indexer here, along witha
+        // `tracing` logging statement and correct error handling.
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)

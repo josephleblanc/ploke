@@ -30,6 +30,9 @@ crossbeam-channel = "0.5.15"
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# bm 25
+bm25 = "2.3.1"
+
 [dev-dependencies]
 ploke-test-utils = { path = "../test-utils" }
 tokio-test = "0.4.4"

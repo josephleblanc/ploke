@@ -269,7 +269,7 @@ impl CodeTokenizer {
                     let ch = chars[i];
                     let lower_to_upper = prev.is_lowercase() && ch.is_uppercase();
                     let upper_seq_then_lower =
-                        prev.is_uppercase() && ch.is_uppercase() && next.map_or(false, |n| n.is_lowercase());
+                        prev.is_uppercase() && ch.is_uppercase() && next.map_or_else(|| false, |n| n.is_lowercase());
                     let digit_boundary =
                         (prev.is_ascii_digit() && !ch.is_ascii_digit())
                             || (!prev.is_ascii_digit() && ch.is_ascii_digit());

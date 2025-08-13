@@ -8,7 +8,6 @@ pub mod local;
 pub mod cancel_token;
 pub mod config;
 pub mod partial;
-pub mod process_bm25;
 
 #[cfg(test)]
 mod tests {
