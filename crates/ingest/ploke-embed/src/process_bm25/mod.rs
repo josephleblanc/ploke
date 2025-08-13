@@ -56,61 +56,235 @@ impl CodeTokenizer {
     /// Extract tokens from a code string. Includes identifier subtokens, comment words, and symbols
     fn tokens_from_code(s: &str) -> Vec<String> {
         let mut out = Vec::new();
-        // A very simple block comment stripper + line-by-line tokenization
-        let (no_block, block_comments) = Self::strip_block_comments(s);
-        for c in block_comments.into_iter() {
-            // naively split comment text on non-alphanum boundaries
-            for tok in c.split(|ch: char| !ch.is_alphanumeric()) {
-                if !tok.is_empty() {
-                    out.push(tok.to_lowercase());
-                }
-            }
-        }
+        let bytes = s.as_bytes();
+        let mut i = 0usize;
+        let mut code_start = 0usize;
+        let len = bytes.len();
 
-        for line in no_block.lines() {
-            if let Some(idx) = line.find("//") {
-                let (code_part, comment_part) = line.split_at(idx);
-                Self::tokenize_code_part(code_part, &mut out);
-                for tok in comment_part
-                    .trim_start_matches('/')
-                    .split(|ch: char| !ch.is_alphanumeric())
-                {
-                    if !tok.is_empty() {
-                        out.push(tok.to_lowercase());
+        while i < len {
+            if bytes[i] == b'/' {
+                if i + 1 < len && bytes[i + 1] == b'/' {
+                    // Emit code before line comment
+                    if code_start < i {
+                        let code_part = &s[code_start..i];
+                        Self::tokenize_code_part(code_part, &mut out);
+                    }
+                    // Extract and tokenize the comment (skip the leading slashes, handle "///")
+                    let mut j = i + 2;
+                    while j < len && bytes[j] != b'\n' {
+                        j += 1;
+                    }
+                    let mut comment_slice = &s[i + 2..j];
+                    while comment_slice.starts_with('/') {
+                        comment_slice = &comment_slice[1..];
+                    }
+                    for tok in comment_slice.split(|ch: char| !ch.is_alphanumeric()) {
+                        if !tok.is_empty() {
+                            out.push(tok.to_lowercase());
+                        }
+                    }
+                    // Advance past newline if present
+                    if j < len && bytes[j] == b'\n' {
+                        i = j + 1;
+                        code_start = i;
+                        continue;
+                    } else {
+                        i = j;
+                        code_start = i;
+                        break;
+                    }
+                } else if i + 1 < len && bytes[i + 1] == b'*' {
+                    // Emit code before block comment
+                    if code_start < i {
+                        let code_part = &s[code_start..i];
+                        Self::tokenize_code_part(code_part, &mut out);
+                    }
+                    // Find end of block comment
+                    let mut j = i + 2;
+                    let mut found_end = false;
+                    while j + 1 < len {
+                        if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                            found_end = true;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let comment_end = if found_end { j } else { len };
+                    let comment_slice = &s[i + 2..comment_end];
+                    for tok in comment_slice.split(|ch: char| !ch.is_alphanumeric()) {
+                        if !tok.is_empty() {
+                            out.push(tok.to_lowercase());
+                        }
+                    }
+                    if found_end {
+                        i = j + 2;
+                        code_start = i;
+                        continue;
+                    } else {
+                        // Reached EOF inside block comment
+                        i = len;
+                        code_start = i;
+                        break;
                     }
                 }
-            } else {
-                Self::tokenize_code_part(line, &mut out);
             }
+            i += 1;
         }
+
+        // Emit any trailing code after the last comment
+        if code_start < len {
+            let code_part = &s[code_start..len];
+            Self::tokenize_code_part(code_part, &mut out);
+        }
+
         out
     }
 
-    fn strip_block_comments(src: &str) -> (String, Vec<String>) {
-        let mut out = String::with_capacity(src.len());
-        let mut comments = Vec::new();
-        let bytes = src.as_bytes();
+    /// Count tokens in the entire code string without allocating per-token Strings.
+    fn count_tokens_in_code(s: &str) -> usize {
+        let bytes = s.as_bytes();
         let mut i = 0usize;
-        while i < bytes.len() {
-            if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-                let start = i + 2;
-                i = start;
-                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                    i += 1;
+        let mut code_start = 0usize;
+        let len = bytes.len();
+        let mut count = 0usize;
+
+        while i < len {
+            if bytes[i] == b'/' {
+                if i + 1 < len && bytes[i + 1] == b'/' {
+                    // Count tokens in code before line comment
+                    if code_start < i {
+                        count += Self::token_count_in_code_part(&s[code_start..i]);
+                    }
+                    // Count comment tokens
+                    let mut j = i + 2;
+                    while j < len && bytes[j] != b'\n' {
+                        j += 1;
+                    }
+                    let mut comment_slice = &s[i + 2..j];
+                    while comment_slice.starts_with('/') {
+                        comment_slice = &comment_slice[1..];
+                    }
+                    count += comment_slice
+                        .split(|ch: char| !ch.is_alphanumeric())
+                        .filter(|t| !t.is_empty())
+                        .count();
+
+                    // Advance
+                    if j < len && bytes[j] == b'\n' {
+                        i = j + 1;
+                        code_start = i;
+                        continue;
+                    } else {
+                        i = j;
+                        code_start = i;
+                        break;
+                    }
+                } else if i + 1 < len && bytes[i + 1] == b'*' {
+                    // Count tokens in code before block comment
+                    if code_start < i {
+                        count += Self::token_count_in_code_part(&s[code_start..i]);
+                    }
+                    // Find end of block comment
+                    let mut j = i + 2;
+                    let mut found_end = false;
+                    while j + 1 < len {
+                        if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                            found_end = true;
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let comment_end = if found_end { j } else { len };
+                    let comment_slice = &s[i + 2..comment_end];
+                    count += comment_slice
+                        .split(|ch: char| !ch.is_alphanumeric())
+                        .filter(|t| !t.is_empty())
+                        .count();
+
+                    if found_end {
+                        i = j + 2;
+                        code_start = i;
+                        continue;
+                    } else {
+                        i = len;
+                        code_start = i;
+                        break;
+                    }
                 }
-                let end = if i + 1 < bytes.len() { i } else { bytes.len() };
-                let comment = String::from_utf8_lossy(&bytes[start..end]).to_string();
-                comments.push(comment);
-                if i + 1 < bytes.len() {
-                    i += 2;
+            }
+            i += 1;
+        }
+
+        if code_start < len {
+            count += Self::token_count_in_code_part(&s[code_start..len]);
+        }
+
+        count
+    }
+
+    /// Count tokens in a code segment (no comments), mirroring tokenize_code_part rules.
+    fn token_count_in_code_part(line: &str) -> usize {
+        let mut count = 0usize;
+        let mut id_start: Option<usize> = None;
+
+        for (i, ch) in line.char_indices() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                if id_start.is_none() {
+                    id_start = Some(i);
                 }
-                out.push(' ');
+            } else if ch.is_whitespace() {
+                if let Some(start) = id_start.take() {
+                    count += Self::split_identifier_count(&line[start..i]);
+                }
             } else {
-                out.push(bytes[i] as char);
-                i += 1;
+                if let Some(start) = id_start.take() {
+                    count += Self::split_identifier_count(&line[start..i]);
+                }
+                // symbol token
+                count += 1;
             }
         }
-        (out, comments)
+        if let Some(start) = id_start.take() {
+            count += Self::split_identifier_count(&line[start..]);
+        }
+        count
+    }
+
+    /// Count subtokens for an identifier (snake_case, camelCase, PascalCase, digits, acronyms)
+    fn split_identifier_count(ident: &str) -> usize {
+        let mut total = 0usize;
+        for chunk in ident.split('_') {
+            if chunk.is_empty() {
+                continue;
+            }
+            let chars: Vec<char> = chunk.chars().collect();
+            if chars.is_empty() {
+                continue;
+            }
+            let mut part_len = 0usize;
+            for i in 0..chars.len() {
+                if i > 0 {
+                    let prev = chars[i - 1];
+                    let next = chars.get(i + 1).copied();
+                    let ch = chars[i];
+                    let lower_to_upper = prev.is_lowercase() && ch.is_uppercase();
+                    let upper_seq_then_lower =
+                        prev.is_uppercase() && ch.is_uppercase() && next.map_or(false, |n| n.is_lowercase());
+                    let digit_boundary =
+                        (prev.is_ascii_digit() && !ch.is_ascii_digit())
+                            || (!prev.is_ascii_digit() && ch.is_ascii_digit());
+                    if (lower_to_upper || upper_seq_then_lower || digit_boundary) && part_len > 0 {
+                        total += 1;
+                        part_len = 0;
+                    }
+                }
+                part_len += 1;
+            }
+            if part_len > 0 {
+                total += 1;
+            }
+        }
+        total
     }
 
     fn tokenize_code_part(line: &str, out: &mut Vec<String>) {
@@ -200,8 +374,7 @@ impl Bm25Indexer {
         let mut total_tokens: usize = 0;
         let mut doc_token_counts: Vec<(Uuid, usize, String)> = Vec::with_capacity(corpus.len());
         for (id, snippet) in corpus.into_iter() {
-            let toks = CodeTokenizer::tokens_from_code(&snippet);
-            let len = toks.len();
+            let len = CodeTokenizer::count_tokens_in_code(&snippet);
             total_tokens += len;
             // store snippet string temporarily so we can re-embed after building embedder
             doc_token_counts.push((id, len, snippet));
@@ -248,7 +421,7 @@ impl Bm25Indexer {
             snippet.hash(&mut hasher);
             let hash = hasher.finish();
             // compute token length using tokenizer
-            let token_len = CodeTokenizer::tokens_from_code(&snippet).len();
+            let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
             // upsert to cozo
             cozo.upsert_doc_meta(
                 id,
