@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use cozo::MemStorage;
 pub use ploke_common::{fixtures_crates_dir, fixtures_dir, workspace_root};
-use ploke_core::NodeId;
+pub use ploke_core::NodeId;
 use syn_parser::discovery::run_discovery_phase;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::nodes::TypeDefNode;
@@ -77,6 +77,27 @@ pub fn parse_and_build_tree(crate_name: &str) -> Result<(ParsedCodeGraph, Module
 }
 
 #[cfg(feature = "test_setup")]
+// Available fixture crates may be selected by using the directory name as input to setup_db_full:
+//
+// tests/fixture_crates/duplicate_name_fixture_1
+// tests/fixture_crates/duplicate_name_fixture_2
+// tests/fixture_crates/example_crate
+// tests/fixture_crates/file_dir_detection
+// tests/fixture_crates/fixture_attributes
+// tests/fixture_crates/fixture_conflation
+// tests/fixture_crates/fixture_cyclic_types
+// tests/fixture_crates/fixture_edge_cases
+// tests/fixture_crates/fixture_generics
+// tests/fixture_crates/fixture_macros
+// tests/fixture_crates/fixture_nodes
+// tests/fixture_crates/fixture_path_resolution
+// tests/fixture_crates/fixture_spp_edge_cases
+// tests/fixture_crates/fixture_spp_edge_cases_no_cfg
+// tests/fixture_crates/fixture_tracking_hash
+// tests/fixture_crates/fixture_types
+// tests/fixture_crates/fixture_update_embed
+// tests/fixture_crates/simple_crate
+// tests/fixture_crates/subdir
 pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 
@@ -113,6 +134,9 @@ pub fn setup_db_full(fixture: &'static str) -> Result<cozo::Db<MemStorage>, plok
 }
 
 #[cfg(feature = "test_setup")]
+/// Uses the crates in the `ploke` workspace itself as the target.
+/// As such, cannot rely on stable inputs over time, but is a more robust example to test against
+/// than the fixtures, which usually have various examples but may not have many nodes in total.
 pub fn setup_db_full_crate(crate_name: &'static str) -> Result<cozo::Db<MemStorage>, ploke_error::Error> {
     use syn_parser::utils::LogStyle;
 

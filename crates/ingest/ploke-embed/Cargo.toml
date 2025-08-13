@@ -37,6 +37,9 @@ candle-nn = "0.9"
 hf-hub = { version = "0.4", features = ["tokio"] }
 tokenizers = "0.21"
 
+# bm 25
+bm25 = "2.3.1"
+
 [dev-dependencies]
 ploke-test-utils = { path = "../../test-utils" }
 tracing = { workspace = true }

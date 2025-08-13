@@ -1,2 +1,2 @@
-pub mod fts;
 pub mod hnsw;
+pub mod tokenizer;
