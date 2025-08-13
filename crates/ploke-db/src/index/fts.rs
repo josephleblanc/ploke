@@ -416,10 +416,6 @@ mod tests {
         assert_ok_or_not_found(drop_fts_relation(db));
     }
 
-    fn mk_id() -> Uuid {
-        Uuid::new_v4()
-    }
-
     #[test]
     fn test_split_camel() {
         assert_eq!(split_camel("HashMap"), vec!["Hash", "Map"]);
@@ -466,8 +462,8 @@ mod tests {
         create_fts_indexes(db, true).unwrap();
 
         // Upsert two sample nodes
-        let id1 = mk_id();
-        let id2 = mk_id();
+        let id1 = uuid::Uuid::new_v4();
+        let id2 = uuid::Uuid::new_v4();
 
         upsert_node_fts(
             db,
@@ -515,7 +511,7 @@ mod tests {
         create_fts_relation(db).unwrap();
         create_fts_indexes(db, true).unwrap();
 
-        let id = mk_id();
+        let id = uuid::Uuid::new_v4();
         upsert_node_fts(
             db,
             id,
@@ -549,8 +545,8 @@ mod tests {
         create_fts_relation(db).unwrap();
         create_fts_indexes(db, false).unwrap();
 
-        let id = mk_id();
-        upsert_node_fts(db, id, Some("GammaDelta".into()), Some("Some body").into()).unwrap();
+        let id = uuid::Uuid::new_v4();
+        upsert_node_fts(db, id, Some("GammaDelta".into()), Some("Some body".into())).unwrap();
 
         // Drop the relation; subsequent upserts and searches should fail
         drop_fts_relation(db).unwrap();
