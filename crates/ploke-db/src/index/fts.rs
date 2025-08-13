@@ -381,7 +381,7 @@ fn split_camel(s: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use lazy_static::lazy_static;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     // ploke_test_utils::setup_db_full_crate("ploke-tui")
     //     .map(|d| Database::new(d))
@@ -450,9 +450,9 @@ mod tests {
         assert!(text.contains("collections"));
     }
 
-    #[test]
-    fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    #[tokio::test]
+    async fn test_create_fts_indicies() -> Result<(), ploke_error::Error> {
+        let _g = TEST_GUARD.lock().await;
         let db = &TEST_DB;
 
         // Ensure a clean slate with explicit checks
@@ -502,9 +502,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_drop_fts_indexes() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    #[tokio::test]
+    async fn test_drop_fts_indexes() {
+        let _g = TEST_GUARD.lock().await;
         let db = &TEST_DB;
 
         clean_fts(db);
@@ -536,9 +536,9 @@ mod tests {
         clean_fts(db);
     }
 
-    #[test]
-    fn test_drop_fts_relation() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    #[tokio::test]
+    async fn test_drop_fts_relation() {
+        let _g = TEST_GUARD.lock().await;
         let db = &TEST_DB;
 
         clean_fts(db);
@@ -567,9 +567,9 @@ mod tests {
         clean_fts(db);
     }
 
-    #[test]
-    fn test_replace_requires_relation() {
-        let _g = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    #[tokio::test]
+    async fn test_replace_requires_relation() {
+        let _g = TEST_GUARD.lock().await;
         let db = &TEST_DB;
 
         clean_fts(db);
