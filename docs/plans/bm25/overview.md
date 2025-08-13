@@ -67,7 +67,8 @@ Immediate next steps (dev-ready)
 5) Database and schema
    - ploke-transform: define bm25_doc_meta schema and call create_and_insert in schema setup.
    - ploke-db: implement:
-     - upsert_bm25_doc_meta(id: Uuid, tracking_hash: Uuid, token_length: usize, tokenizer_version: &str) -> Result<(), DbError>
+     - upsert_bm25_doc_meta(id: Uuid, token_length: usize, tokenizer_version: &str) -> Result<(), DbError>
+     - previously tracking_hash was kept in upsert_bm25_doc_meta, but will instead remain as a field in the original nodes to avoid duplication issues.
      - avg_bm25_doc_length_now() -> Result<f32, DbError>
      - stream_active_primary_nodes_now(...) -> iterator/stream or paginated fetch returning ids + spans + file info.
      - prune hooks: when nodes are redacted/removed, emit Remove to BM25 service.
@@ -87,3 +88,29 @@ Immediate next steps (dev-ready)
      - retrieved context tokens
      - model outputs
    - Track per-call cost and log.
+
+Progress checklist (to be updated as we go)
+- [ ] ploke-transform: add bm25_doc_meta schema and migration hookup
+- [ ] ploke-db: upsert_bm25_doc_meta + avg length + stream active nodes
+- [ ] ploke-embed: BM25 actor with two-pass rebuild, IndexBatch/Remove/Search commands
+- [ ] ploke-embed: IndexerTask field bm25_tx + send IndexBatch at // AI: in process_batch
+- [ ] Replace DefaultHasher with TrackingHash or blake3 in BM25 metadata
+- [ ] ploke-rag: hybrid search (dense + BM25) with RRF
+- [ ] ploke-rag: graph expansion queries and hop decay
+- [ ] Reranker: cross-encoder hook (Candle or external), integrate on top 30–50
+- [ ] Token budget packer and pricing tracker
+- [ ] TUI: commands to rebuild BM25, run hybrid search, display costs
+- [ ] Periodic BM25 full rebuild trigger when avgdl drift exceeds threshold
+
+Notes and definitions
+- Upsert = “update if exists; insert if not.”
+- RRF (Reciprocal Rank Fusion): For each result list, an item at rank r contributes 1/(k+r), k≈60, summed across lists; sort by the sum.
+
+Open choices to confirm (defaults in parentheses)
+- Enrich BM25 text with names/paths/signatures/doc-comments now? (yes)
+- Reranker source: local Candle cross-encoder vs temporary external endpoint? (start external if easier, switch to local)
+- Avgdl drift threshold to trigger rebuild? (2–5%)
+
+How to resume after context reset
+- Recreate the BM25 actor scaffolding and the IndexerTask send point at // AI: in process_batch.
+- Follow the checklist top-down; I will keep it updated and call out any blocking questions or schema changes as they arise.
