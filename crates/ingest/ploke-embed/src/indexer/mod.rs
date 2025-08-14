@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::{self, Instant};
 use tracing::{info_span, instrument};
 use uuid::Uuid;
@@ -490,6 +490,38 @@ impl IndexerTask {
                 state.num_not_proc,
                 state.recent_processed,
             );
+
+            // If BM25 is configured, request FinalizeSeed and await ack before committing completion.
+            if let Some(tx) = &self.bm25_tx {
+                let (resp_tx, resp_rx) = oneshot::channel::<Result<(), String>>();
+                if let Err(e) = tx.send(bm25_service::Bm25Cmd::FinalizeSeed { resp: resp_tx }).await {
+                    let msg = format!("Failed to send BM25 FinalizeSeed: {}", e);
+                    tracing::error!("{}", &msg);
+                    state.status = IndexStatus::Failed(msg);
+                    progress_tx.send(state)?;
+                    return Err(EmbedError::NotImplemented("BM25 FinalizeSeed send failed".into()));
+                }
+                match resp_rx.await {
+                    Ok(Ok(())) => {
+                        tracing::info!("BM25 FinalizeSeed acknowledged");
+                    }
+                    Ok(Err(err_msg)) => {
+                        let msg = format!("BM25 FinalizeSeed failed: {}", err_msg);
+                        tracing::error!("{}", &msg);
+                        state.status = IndexStatus::Failed(msg);
+                        progress_tx.send(state)?;
+                        return Err(EmbedError::NotImplemented("BM25 FinalizeSeed failed".into()));
+                    }
+                    Err(recv_err) => {
+                        let msg = format!("BM25 FinalizeSeed channel closed: {}", recv_err);
+                        tracing::error!("{}", &msg);
+                        state.status = IndexStatus::Failed(msg);
+                        progress_tx.send(state)?;
+                        return Err(EmbedError::NotImplemented("BM25 FinalizeSeed channel closed".into()));
+                    }
+                }
+            }
+
             state.status = IndexStatus::Completed;
             self.reset_cursors().await;
             progress_tx.send(state)?;
@@ -771,6 +803,8 @@ pub mod bm25_service {
         Remove { ids: Vec<Uuid> },
         /// Rebuild the index from source of truth (placeholder; no-op for now).
         Rebuild,
+        /// Finalize the seed/build phase; commit metadata and return ack.
+        FinalizeSeed { resp: oneshot::Sender<Result<(), String>> },
         /// Search the index and respond via oneshot with (id, score) pairs.
         Search { query: String, top_k: usize, resp: oneshot::Sender<Vec<(Uuid, f32)>> },
     }
@@ -801,6 +835,11 @@ pub mod bm25_service {
                     Bm25Cmd::Rebuild => {
                         tracing::warn!("BM25 Rebuild requested but not implemented yet; ignoring");
                         // Placeholder: real rebuild will stream docs, compute avgdl, and re-index.
+                    }
+                    Bm25Cmd::FinalizeSeed { resp } => {
+                        // TODO: Persist bm25_doc_meta in a single atomic step and compute avgdl.
+                        // For now, acknowledge success to complete the pipeline.
+                        let _ = resp.send(Ok(()));
                     }
                     Bm25Cmd::Search { query, top_k, resp } => {
                         let scored = indexer.search(&query, top_k);

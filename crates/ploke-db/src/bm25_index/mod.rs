@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
+use ploke_core::TrackingHash;
 use uuid::Uuid;
 
 // ------------------------- Code-aware tokenizer -------------------------
@@ -340,7 +341,7 @@ impl Tokenizer for CodeTokenizer {
 /// synchronous trait keeps tests simple.
 pub struct DocMeta {
     pub token_length: usize,
-    pub tracking_hash: Uuid,
+    pub tracking_hash: TrackingHash,
 }
 
 pub trait CozoClient {
@@ -414,8 +415,10 @@ impl Bm25Indexer {
         for (id, snippet) in batch {
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
-            // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet
-            let tracking_hash = Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes());
+            // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet)
+            // NOTE: This wraps the UUID v5 into the project's TrackingHash newtype.
+            // In the future, prefer TrackingHash::generate(...) when token/context data is available.
+            let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
             // compute token length using tokenizer
             let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
             // upsert to cozo
@@ -541,7 +544,7 @@ fn hello() { println!(\"hi\"); }",
         let meta = cozo.store.get(&id).unwrap();
         assert!(meta.token_length > 0);
         // check the stored tracking hash matches the snippet
-        let expected = Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes());
+        let expected = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
         assert_eq!(meta.tracking_hash, expected);
     }
 

@@ -121,3 +121,12 @@ Immediate next steps (dev-ready)
  Next step
  - Add a FinalizeSeed command to bm25_service and call it from the orchestrator (or IndexerTask upon completion) and await ack; fail the run on error.
  - Implement ploke-db helpers for bm25_doc_meta batch upsert and average token length computation to support Finalize.
+
+ Progress update - 2025-08-13 (continued)
+ - bm25_service: Added FinalizeSeed command and actor handling that acks success (placeholder).
+ - IndexerTask: On successful dense indexing, now sends FinalizeSeed to BM25 and awaits ack before marking Completed; fails the run on any error.
+ - Hash type: bm25 DocMeta now uses TrackingHash newtype from ploke-core for tracking_hash; generation currently wraps UUID v5 into TrackingHash until full TrackingHash::generate inputs are available. Tests updated.
+
+ Next two steps
+ - ploke-db: Add atomic upsert_bm25_doc_meta_batch and avg token length helpers, and wire them into bm25_service::FinalizeSeed to perform a single atomic commit of bm25_doc_meta and persist avgdl.
+ - bm25_service: Replace placeholder FinalizeSeed with real implementation that computes avgdl (from buffered docs or DB stream), persists bm25_doc_meta via ploke-db helpers, and returns detailed errors on failure.
