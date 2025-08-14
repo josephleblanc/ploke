@@ -144,3 +144,16 @@ Progress update - 2025-08-14/5
    - Consolidate EventBus priority handling (field in AppEvent vs separate channels)
    - Add richer error propagation from RagService into UI via Error events
    - Provide thin facade for BM25 rebuild/search to decouple TUI from service protocol
+
+Actions performed (TUI -> StateCommand wiring)
+- The TUI now emits a lightweight immediate SysInfo message when the user requests BM25 rebuild/search or hybrid search, and then dispatches the corresponding StateCommand:
+  - BM25 rebuild: StateCommand::Bm25Rebuild
+  - BM25 search: StateCommand::Bm25Search { query, top_k }
+  - Hybrid search: StateCommand::HybridSearch { query, top_k }
+- This keeps the UI responsive while delegating actual retrieval work to the state manager / RagService which will post results back via the EventBus/AppEvent system.
+
+Next steps (short list)
+- Implement ploke-rag::hybrid_search to combine BM25 + dense HNSW results, apply fusion (RRF) and reranker, and return packed ranked results.
+- Add a TUI results pane (or richer rendering) to present search results instead of only SysInfo messages.
+- Verify bm25_service FinalizeSeed persists bm25_doc_meta in a single transactional upsert; if missing, implement Database::upsert_bm25_doc_meta_batch and call it from FinalizeSeed.
+- Add integration tests that exercise IndexerTask -> FinalizeSeed -> DB persistence and hybrid search end-to-end.

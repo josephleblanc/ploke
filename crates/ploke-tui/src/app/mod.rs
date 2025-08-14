@@ -1065,6 +1065,8 @@ impl App {
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 });
+                // Dispatch to state manager to trigger the BM25 rebuild.
+                self.send_cmd(StateCommand::Bm25Rebuild);
             }
             cmd if cmd.starts_with("bm25 search ") || cmd.starts_with("hybrid ") => {
                 let tail = if cmd.starts_with("bm25 search ") {
@@ -1083,12 +1085,26 @@ impl App {
                         new_msg_id: Uuid::new_v4(),
                     });
                 } else {
-                    self.send_cmd(StateCommand::AddMessageImmediate {
-                        msg: format!("Searching (hybrid planned) for \"{}\" with top_k={}...", query, top_k),
-                        kind: MessageKind::SysInfo,
-                        new_msg_id: Uuid::new_v4(),
-                    });
-                    // NOTE: Actual hybrid/BM25 search dispatch will be wired via RagService in a subsequent step.
+                    // Provide immediate lightweight feedback to the user
+                    let is_bm25 = cmd.starts_with("bm25 search ");
+                    if is_bm25 {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Searching (BM25) for \"{}\" with top_k={}...", query, top_k),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                        // Dispatch BM25 search to state manager / RagService
+                        self.send_cmd(StateCommand::Bm25Search { query, top_k });
+                    } else {
+                        self.send_cmd(StateCommand::AddMessageImmediate {
+                            msg: format!("Searching (hybrid) for \"{}\" with top_k={}...", query, top_k),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        });
+                        // Dispatch Hybrid search to state manager / RagService
+                        self.send_cmd(StateCommand::HybridSearch { query, top_k });
+                    }
+                    // NOTE: RagService/state_manager should emit results back to the UI via AppEvent or AddMessageImmediate.
                 }
             }
             cmd => {
