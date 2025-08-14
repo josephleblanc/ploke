@@ -21,6 +21,7 @@ pub enum Bm25Cmd {
 /// Start the BM25 actor with a given avgdl parameter.
 /// Returns an mpsc::Sender<Bm25Cmd> handle for issuing commands.
 pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
+    // AI: Change this function to accept an Option<f32>, and propogate those changes into the `bm25_index/mod.rs` file. AI!
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
 
