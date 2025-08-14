@@ -22,6 +22,7 @@ use tracing::{info_span, instrument};
 use uuid::Uuid;
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
+use ploke_db::bm25_index::DocMeta;
 
 #[derive(Debug)]
 pub struct EmbeddingProcessor {
@@ -679,16 +680,30 @@ impl IndexerTask {
             tracing::error!("Empty valid snippets detected.");
             // panic!("AAaaaaaaaah")
         }
+        
+        // Send DocMeta to BM25 service instead of full snippets
         if let Some(tx) = &self.bm25_tx {
-            let docs: Vec<(Uuid, String)> = valid_data
+            let docs: Vec<(Uuid, DocMeta)> = valid_data
                 .iter()
-                .map(|d| d.id)
-                .zip(valid_snippets.clone().into_iter())
+                .zip(valid_snippets.iter())
+                .map(|(emb_data, snippet)| {
+                    let token_length = ploke_db::bm25_index::CodeTokenizer::count_tokens_in_code(snippet);
+                    let tracking_hash = emb_data.node_tracking_hash; // Use node tracking hash from EmbeddingData
+                    (
+                        emb_data.id,
+                        DocMeta {
+                            token_length,
+                            tracking_hash,
+                        }
+                    )
+                })
                 .collect();
+            
             tracing::debug!(
                 "Sending {} docs to BM25 service (tokenizer_version=code_tokenizer_v1)",
                 docs.len()
             );
+            
             if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch {
                 docs,
                 tokenizer_version: "code_tokenizer_v1".into(),
@@ -700,6 +715,7 @@ impl IndexerTask {
                 "BM25 service not configured; skipping sparse indexing for this batch"
             );
         }
+        
         let embeddings = self
             .embedding_processor
             .generate_embeddings(valid_snippets)
@@ -791,14 +807,14 @@ pub(crate) fn log_stuff(call: CallbackOp, new: NamedRows, old: NamedRows, counte
 // -------------------- BM25 service/actor (Immediate Next Step 1) --------------------
 
 pub mod bm25_service {
-    use ploke_db::bm25_index::Bm25Indexer;
+    use ploke_db::bm25_index::{Bm25Indexer, DocMeta};
     use tokio::sync::{mpsc, oneshot};
     use uuid::Uuid;
 
     #[derive(Debug)]
     pub enum Bm25Cmd {
-        /// Index a batch of (Uuid, snippet) documents with a tokenizer version tag.
-        IndexBatch { docs: Vec<(Uuid, String)>, tokenizer_version: String },
+        /// Index a batch of (Uuid, DocMeta) documents with a tokenizer version tag.
+        IndexBatch { docs: Vec<(Uuid, DocMeta)>, tokenizer_version: String },
         /// Remove documents from the sparse index by id.
         Remove { ids: Vec<Uuid> },
         /// Rebuild the index from source of truth (placeholder; no-op for now).
@@ -824,7 +840,10 @@ pub mod bm25_service {
                             docs.len(),
                             tokenizer_version
                         );
-                        indexer.index_batch(docs);
+                        // Stage metadata for later persistence during Finalize
+                        for (id, meta) in docs {
+                            indexer.stage_doc_meta(id, meta, tokenizer_version.clone());
+                        }
                     }
                     Bm25Cmd::Remove { ids } => {
                         tracing::debug!("BM25 Remove: {} docs", ids.len());

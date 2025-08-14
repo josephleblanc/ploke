@@ -3,7 +3,7 @@
 -->
 Condensed essentials and immediate plan for BM25 + hybrid retrieval
 
-What we’re building
+What we're building
 - Add an in-memory BM25 indexer to complement dense HNSW for hybrid retrieval.
 - Keep BM25 postings in memory; persist only small per-doc metadata (token_length, tracking_hash, tokenizer_version) in Cozo — importantly, persist those metadata rows only once during Finalize as a single atomic batch (no incremental per-doc upserts from the BM25 actor).
 - Integrate BM25 indexing alongside the existing dense embedding IndexerTask, driven by the same snippet batches.
@@ -26,8 +26,8 @@ Where to integrate in code (high level)
   - At startup, rebuild BM25 from active primary nodes using two passes.
   - In IndexerTask::process_batch, zip valid_data (Vec<EmbeddingData>) with valid_snippets (Vec<String>) and:
       - compute token_length in process_batch (using CodeTokenizer::count_tokens_in_code),
-      - send IndexBatch using borrowed &str snippets together with Uuid from EmbeddingData (avoid cloning snippet Strings),
-      - the BM25 actor will index using &str but will only stage metadata (tracking_hash, token_length, tokenizer_version).
+      - send IndexBatch using DocMeta containing metadata (tracking_hash, token_length) together with Uuid from EmbeddingData (avoid cloning snippet Strings),
+      - the BM25 actor will index using DocMeta but will only stage metadata (tracking_hash, token_length, tokenizer_version).
 - ploke-transform
   - Add a bm25_doc_meta relation with columns: id, tracking_hash, token_length, tokenizer_version, span @ 'NOW'.
 - ploke-db
@@ -41,7 +41,7 @@ Where to integrate in code (high level)
 Immediate next steps (dev-ready)
 1) BM25 service/actor in ploke-embed
    - Define enum Bm25Cmd:
-     - IndexBatch { docs: Vec<(Uuid, &str)>, tokenizer_version: String }  // note: &str to avoid cloning
+     - IndexBatch { docs: Vec<(Uuid, DocMeta)>, tokenizer_version: String }  // note: DocMeta to avoid cloning
      - Remove { ids: Vec<Uuid> }
      - Rebuild
      - FinalizeSeed { resp: oneshot::Sender<Result<(), String>> }
@@ -53,7 +53,7 @@ Immediate next steps (dev-ready)
    - Add bm25_tx: Option<mpsc::Sender<Bm25Cmd>> to IndexerTask (already present).
    - In process_batch:
      - Use valid_data (Vec<EmbeddingData>) zipped with valid_snippets (Vec<String>) to produce (EmbeddingData, &str) pairs.
-     - Compute token_length for each snippet in process_batch, and build a Vec<(Uuid, &str)> to send to IndexBatch.
+     - Compute token_length for each snippet in process_batch, and build a Vec<(Uuid, DocMeta)> to send to IndexBatch.
      - Also prepare per-doc metadata (Uuid, TrackingHash, tokenizer_version, token_length) where token_length is computed locally; the BM25 actor will stage these values.
    - After the complete, successful indexing run (all nodes processed), send FinalizeSeed and wait for the actor's ack. Only after an acknowledged Finalize should the system consider BM25 metadata committed.
    - If Finalize fails, the system must fail the entire run (atomic "all nodes or none") and require a full retry or fallback rebuild.
@@ -75,7 +75,7 @@ How to resume after context reset
 Progress update - 2025-08-13
  - Schema aligned: bm25_doc_meta now has fields {id, tracking_hash, tokenizer_version, token_length}, matching the design.
  - Stable hash: replaced DefaultHasher with a stable UUID v5–based tracking_hash derived from the snippet bytes; tests updated accordingly.
- - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch with tokenizer_version=code_tokenizer_v1. Note: IndexBatch now uses borrowed &str snippets to avoid allocations; process_batch computes token lengths before sending.
+ - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch with tokenizer_version=code_tokenizer_v1. Note: IndexBatch now uses DocMeta to avoid allocations; process_batch computes token lengths before sending.
 
 Next step
  - Implement ploke-db persistent helpers for bm25_doc_meta batch upsert and avg token length computation to support Finalize.

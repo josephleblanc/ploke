@@ -45,7 +45,7 @@ Performance tradeoff and flow change
 - Rather than cloning a String from valid_snippets to send owned Strings through IndexBatch, process_batch will:
   1) Zip valid_data (EmbeddingData) with valid_snippets (Vec<String>) to produce (EmbeddingData, &str) pairs.
   2) Compute token length for each snippet in process_batch (using CodeTokenizer::count_tokens_in_code).
-  3) Send IndexBatch using borrowed snippet slices (&str) where Bm25Indexer methods accept &str (i.e., index_batch(&mut self, batch: Vec<(Uuid, &str)>) and index_batch_with_cozo(&mut self, batch: Vec<(Uuid, &str)>, ...)). Because process_batch is already bottlenecked by dense embedding computation, the cost of token counting here is an acceptable tradeoff for removing allocations and copies.
+  3) Send IndexBatch using DocMeta containing only metadata (tracking_hash, token_length) where Bm25Indexer methods accept DocMeta. Because process_batch is already bottlenecked by dense embedding computation, the cost of token counting here is an acceptable tradeoff for removing allocations and copies.
 - The BM25 actor will continue staging metadata (tracking_hash, token_length, tokenizer_version), but will no longer attempt to persist snippets or metadata incrementally. FinalizeSeed will:
   - compute avgdl from staged metadata (or accept an avgdl computed upstream),
   - drain the staged metadata into a Vec<(Uuid, TrackingHash, String /*tokenizer_version*/, usize /*token_length*/)> (note tokenizer_version is a small String),
@@ -69,16 +69,16 @@ Next 2–3 steps with confidence and file needs
 
 3) IndexerTask/process_batch update and Bm25Indexer API change
    - In process_batch:
-     - Zip valid_data (Vec<EmbeddingData>) with valid_snippets (Vec<String>), compute token_length per snippet, and create a docs list prepared for the BM25 actor using borrowed &str references.
-     - Send IndexBatch with docs: Vec<(Uuid, &str)> and tokenizer_version: "code_tokenizer_v1".
-   - Update Bm25Indexer methods to accept &str instead of String, e.g.:
-     - pub fn index_batch(&mut self, batch: Vec<(Uuid, &str)>)
-     - pub fn index_batch_with_cozo(&mut self, batch: Vec<(Uuid, &str)>, cozo: &mut impl CozoClient)
+     - Zip valid_data (Vec<EmbeddingData>) with valid_snippets (Vec<String>), compute token_length per snippet, and create a docs list prepared for the BM25 actor using DocMeta.
+     - Send IndexBatch with docs: Vec<(Uuid, DocMeta)> and tokenizer_version: "code_tokenizer_v1".
+   - Update Bm25Indexer methods to accept DocMeta instead of &str for indexing, e.g.:
+     - pub fn index_batch(&mut self, batch: Vec<(Uuid, DocMeta)>)
+     - pub fn stage_doc_meta(&mut self, id: Uuid, meta: DocMeta, tokenizer_version: String)
    - Also ensure any tests and callers are updated to create owned Strings only where necessary (e.g., for persistence during Finalize the actor will own small tokenizer_version Strings; snippet text will be borrowed for indexing only).
    - Confidence: 0.8
    - Files to edit: crates/ingest/ploke-embed/src/indexer/mod.rs, crates/ingest/ploke-db/src/bm25_index/mod.rs (tests), and ploke-db persistence helpers.
 
 Notes
 - Tokenizer version is currently fixed to "code_tokenizer_v1" at the send site; when persisting, include this in the upsert batch.
-- The change to pass &str to Bm25Indexer avoids an allocation per snippet at the cost of computing token_length earlier; because embedding generation is the bottleneck, this is a good tradeoff.
+- The change to pass DocMeta to Bm25Indexer avoids an allocation per snippet at the cost of computing token_length earlier; because embedding generation is the bottleneck, this is a good tradeoff.
 - Finalize must be the single point where metadata is durably persisted so the system can reason about avgdl and consistent metadata snapshots.
