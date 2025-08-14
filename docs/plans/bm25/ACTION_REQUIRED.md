@@ -37,5 +37,5 @@ Status Update (2025-08-15):
 Next steps:
 - Add integration tests to verify end-to-end BM25 indexing and persistence
 - Implement BM25 search functionality in the RAG module
-- Add CLI commands for BM25 rebuild and hybrid search in TUI
+- Add TUI commands for BM25 rebuild and hybrid search in TUI
 - Implement avgdl recalculation triggered by user messages in TUI

@@ -12,6 +12,8 @@ use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use ploke_core::TrackingHash;
 use uuid::Uuid;
 
+pub mod bm25_service;
+
 pub const TOKENIZER_VERSION: &str = "code_version_v1";
 
 // ------------------------- Code-aware tokenizer -------------------------
