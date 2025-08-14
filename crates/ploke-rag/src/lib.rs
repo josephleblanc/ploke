@@ -67,6 +67,28 @@ impl RagService {
         Ok(())
     }
 
+    /// Perform a dense search using the HNSW index in the database.
+    /// Returns a Vec of (document_id, score) pairs sorted by relevance.
+    pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError> {
+        // Generate embedding for the query
+        let embeddings = self.dense_embedder.generate_embeddings(vec![query.to_string()]).await
+            .map_err(|e| RagError::Embed(format!("failed to generate embeddings: {:?}", e)))?;
+        
+        let query_embedding = embeddings.into_iter().next()
+            .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
+
+        // Perform semantic search in the database
+        let results = self.db.search_similar(&query_embedding, top_k)
+            .map_err(RagError::Db)?;
+        
+        // Convert to the expected format
+        let formatted_results = results.into_iter()
+            .map(|(id, score)| (id, score as f32))
+            .collect();
+        
+        Ok(formatted_results)
+    }
+
     /// Perform a hybrid search (BM25 + dense).
     ///
     /// Strict mode: if the dense search fails, propagate an error (do not silently fall back).
@@ -75,8 +97,7 @@ impl RagService {
     pub async fn hybrid_search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError> {
         // Kick off both searches concurrently.
         let bm25_fut = self.search_bm25(query, top_k);
-        // Assumed IndexerTask API: async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, E>
-        let dense_fut = self.dense_embedder.search(query, top_k);
+        let dense_fut = self.search(query, top_k);
 
         let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
 
