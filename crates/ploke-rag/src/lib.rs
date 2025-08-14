@@ -214,6 +214,7 @@ mod tests {
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::workspace_root;
+    use tracing::Level;
     use uuid::Uuid;
 
     use crate::RagService;
@@ -253,7 +254,7 @@ mod tests {
         use tracing::{debug, info};
 
         // Initialize tracing for the test
-        let _guard = ploke_tui::tracing_setup::init_tracing();
+        ploke_test_utils::init_test_tracing(Level::DEBUG);
 
         let search_term = "AttributedStruct";
         debug!("Starting search test with term: '{}'", search_term);
@@ -262,7 +263,7 @@ mod tests {
             .as_ref()
             .expect("Incorrect setup of TEST_DB_NODES")
             .clone();
-        debug!("Loaded test database with {} nodes", db.count_nodes()?);
+        debug!("Loaded test database with {} embedded nodes", db.count_pending_embeddings()?);
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
