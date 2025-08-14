@@ -6,9 +6,7 @@
 // - Adds Cozo client trait + an index_batch_with_cozo method that upserts doc metadata into Cozo
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use uuid::Uuid;
@@ -342,7 +340,7 @@ impl Tokenizer for CodeTokenizer {
 /// synchronous trait keeps tests simple.
 pub struct DocMeta {
     pub token_length: usize,
-    pub snippet_hash: u64,
+    pub tracking_hash: Uuid,
 }
 
 pub trait CozoClient {
@@ -416,10 +414,8 @@ impl Bm25Indexer {
         for (id, snippet) in batch {
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
-            // compute a simple deterministic hash of the snippet so Cozo can validate later
-            let mut hasher = DefaultHasher::new();
-            snippet.hash(&mut hasher);
-            let hash = hasher.finish();
+            // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet
+            let tracking_hash = Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes());
             // compute token length using tokenizer
             let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
             // upsert to cozo
@@ -427,7 +423,7 @@ impl Bm25Indexer {
                 id,
                 DocMeta {
                     token_length: token_len,
-                    snippet_hash: hash,
+                    tracking_hash,
                 },
             );
         }
@@ -544,11 +540,9 @@ fn hello() { println!(\"hi\"); }",
         assert!(cozo.store.contains_key(&id));
         let meta = cozo.store.get(&id).unwrap();
         assert!(meta.token_length > 0);
-        // check the stored hash matches the snippet
-        let mut hasher = DefaultHasher::new();
-        snippet.hash(&mut hasher);
-        let expected = hasher.finish();
-        assert_eq!(meta.snippet_hash, expected);
+        // check the stored tracking hash matches the snippet
+        let expected = Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes());
+        assert_eq!(meta.tracking_hash, expected);
     }
 
     #[test]

@@ -112,3 +112,12 @@ Immediate next steps (dev-ready)
  - Run the normal indexing pass; after successful completion, send FinalizeSeed
  and wait for its success ack. If Finalize fails, the run should be treated as
  failed and retried (ensures atomic "all nodes or none" persistence).
+
+ Progress update - 2025-08-13
+ - Schema aligned: bm25_doc_meta now has fields {id, tracking_hash, tokenizer_version, token_length}, matching the design.
+ - Stable hash: replaced DefaultHasher with a stable UUID v5–based tracking_hash derived from the snippet bytes; tests updated accordingly.
+ - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch with tokenizer_version=code_tokenizer_v1.
+
+ Next step
+ - Add a FinalizeSeed command to bm25_service and call it from the orchestrator (or IndexerTask upon completion) and await ack; fail the run on error.
+ - Implement ploke-db helpers for bm25_doc_meta batch upsert and average token length computation to support Finalize.
