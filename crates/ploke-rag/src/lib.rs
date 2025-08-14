@@ -1,7 +1,10 @@
 #![allow(unused_variables, unused_imports, dead_code)]
-use ploke_db::{Database, DbError};
+use std::sync::Arc;
+
+use ploke_db::{bm25_index::bm25_service::Bm25Cmd, Database, DbError};
 use ploke_embed::indexer::IndexerTask;
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 #[derive(Error, Debug)]
 pub enum RagError {
@@ -12,13 +15,14 @@ pub enum RagError {
 }
 
 pub struct RagService {
-    db: Database,
-    embedder: IndexerTask
+    db: Arc< Database >,
+    dense_embedder: IndexerTask,
+    bm_embedder: mpsc::Sender<Bm25Cmd>
 }
 
 impl RagService {
-    pub fn new(db: Database, embedder: IndexerTask) -> Self {
-        Self { db, embedder }
+    pub fn new(db: Arc< Database >, dense_embedder: IndexerTask) -> Self {
+        Self { db, dense_embedder: todo!(), bm_embedder: todo!() }
     }
 
     pub async fn query(&self, _question: &str) -> Result<Vec<ploke_db::CodeSnippet>, RagError> {

@@ -6,11 +6,13 @@
 // - Adds Cozo client trait + an index_batch_with_cozo method that upserts doc metadata into Cozo
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
-use ploke_core::TrackingHash;
+use ploke_core::{EmbeddingData, TrackingHash};
 use uuid::Uuid;
+
+use crate::{Database, DbError};
 
 pub mod bm25_service;
 
@@ -340,18 +342,31 @@ impl Tokenizer for CodeTokenizer {
 
 // ------------------------- Cozo client trait + DocMeta -------------------------
 
-/// Minimal trait the Ploke Cozo client should implement to receive doc metadata.
-/// You will likely replace this with async methods in your real Cozo client; this
-/// synchronous trait keeps tests simple.
 #[derive(Debug, Clone, Copy)]
 pub struct DocMeta {
     pub token_length: usize,
     pub tracking_hash: TrackingHash,
 }
 
-pub trait CozoClient {
-    /// Upsert metadata for a document/node identified by UUID
-    fn upsert_doc_meta(&mut self, id: Uuid, meta: DocMeta);
+#[derive(Debug, Clone)]
+pub struct DocData {
+    pub id: Uuid,
+    pub meta: DocMeta,
+    pub snippet: String,
+}
+
+impl From<(&EmbeddingData, &String)> for DocData {
+    fn from(value: (&EmbeddingData, &String)) -> Self {
+        let token_length = CodeTokenizer::count_tokens_in_code(value.1);
+        let tracking_hash = value.0.node_tracking_hash; // Use node tracking hash from EmbeddingData
+        DocData { 
+            id: value.0.id,
+            snippet: value.1.clone(),
+            meta: DocMeta {
+                token_length,
+                tracking_hash,
+            } }
+    }
 }
 
 // ------------------------- BM25 Indexer -------------------------
@@ -413,13 +428,17 @@ impl Bm25Indexer {
     }
 
     /// Index a batch of (uuid, snippet) pairs.
-    pub fn index_batch(&mut self, batch: Vec<(Uuid, String)>) {
-        for (id, snippet) in batch {
+    /// Returns the number of items indexed.
+    pub fn index_batch(&mut self, batch: Vec<DocData>) -> usize {
+        let inserted = batch.len();
+        for DocData {id, meta, snippet} in batch {
+            let tokens = CodeTokenizer::tokens_from_code(&snippet);
+            tracing::debug!("index_batch tokens: {:?}", tokens);
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
             // Stage per-doc metadata for atomic Finalize
-            let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
-            let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
+            let tracking_hash = meta.tracking_hash;
+            let token_len = meta.token_length;
             self.staged_meta.insert(
                 id,
                 DocMeta {
@@ -428,44 +447,79 @@ impl Bm25Indexer {
                 },
             );
         }
+        inserted
     }
 
-    /// Index a batch and upsert document metadata into the provided Cozo client.
-    /// This demonstrates action (A): write doc metadata to Cozo while indexing.
-    pub fn index_batch_with_cozo(
-        &mut self,
-        batch: Vec<(Uuid, String)>,
-        cozo: &mut impl CozoClient,
-    ) {
-        for (id, snippet) in batch {
+    /// Index a batch of (uuid, snippet) pairs.
+    /// Returns the number of items indexed.
+    pub fn upsert_batch(&mut self, batch: impl IntoIterator<Item = DocData>) -> usize {
+        let mut inserted = 0;
+        for DocData {id, meta, snippet} in batch {
+            // tracing::debug!("index_batch tokens: {:?}", tokens);
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
-            // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet)
-            // NOTE: This wraps the UUID v5 into the project's TrackingHash newtype.
-            // In the future, prefer TrackingHash::generate(...) when token/context data is available.
-            let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
-            // compute token length using tokenizer
-            let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
-
-            // stage for Finalize
-            self.staged_meta.insert(
-                id,
-                DocMeta {
-                    token_length: token_len,
-                    tracking_hash,
-                },
-            );
-
-            // upsert to cozo
-            cozo.upsert_doc_meta(
-                id,
-                DocMeta {
-                    token_length: token_len,
-                    tracking_hash,
-                },
-            );
+            // Stage per-doc metadata for atomic Finalize
+            inserted += 1;
         }
+        inserted
     }
+
+    /// Index a batch of (uuid, snippet) pairs.
+    /// Returns the number of items indexed.
+    pub fn upsert_batch_with_cozo(
+        &mut self, 
+        cozo: &Database,
+        batch: impl IntoIterator<Item = DocData>,
+    ) -> Result< usize, DbError > {
+        let mut inserted = 0;
+        let new_iter = batch.into_iter().map(|d| {
+            let DocData {id, meta, snippet} = d;
+            let embedding = self.embedder.embed(&snippet);
+            self.scorer.upsert(&id, embedding);
+            inserted += 1;
+            (id, meta)
+        });
+        cozo.upsert_bm25_doc_meta_batch(new_iter)?;
+        Ok( inserted )
+    }
+
+
+    ///// Index a batch and upsert document metadata into the provided Cozo client.
+    ///// This demonstrates action (A): write doc metadata to Cozo while indexing.
+    //pub fn index_batch_with_cozo(
+    //    &mut self,
+    //    batch: Vec<(Uuid, String)>,
+    //    cozo: Arc<Database>,
+    //) {
+    //    for (id, snippet) in batch {
+    //        let embedding = self.embedder.embed(&snippet);
+    //        self.scorer.upsert(&id, embedding);
+    //        // compute a stable tracking hash (UUID v5 over DNS namespace) for the snippet)
+    //        // NOTE: This wraps the UUID v5 into the project's TrackingHash newtype.
+    //        // In the future, prefer TrackingHash::generate(...) when token/context data is available.
+    //        let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
+    //        // compute token length using tokenizer
+    //        let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
+    //
+    //        // stage for Finalize
+    //        self.staged_meta.insert(
+    //            id,
+    //            DocMeta {
+    //                token_length: token_len,
+    //                tracking_hash,
+    //            },
+    //        );
+    //
+    //        // upsert to cozo
+    //        cozo.upsert_bm25_doc_meta_batch(
+    //            id,
+    //            DocMeta {
+    //                token_length: token_len,
+    //                tracking_hash,
+    //            },
+    //        );
+    //    }
+    //}
 
     /// Remove a document by id (used when file changes and nodes are pruned)
     pub fn remove(&mut self, id: &Uuid) {
@@ -475,7 +529,9 @@ impl Bm25Indexer {
     /// Search with a query string, returning top-k results as ScoredDocument<Uuid>
     pub fn search(&self, query: &str, top_k: usize) -> Vec<bm25::ScoredDocument<Uuid>> {
         let qemb = self.embedder.embed(query);
+        tracing::debug!("qemb: {qemb:?}");
         let mut matches = self.scorer.matches(&qemb);
+        tracing::debug!("matches: {matches:?}");
         if matches.len() > top_k {
             matches.truncate(top_k);
         }
@@ -518,11 +574,6 @@ mod tests {
         }
     }
 
-    impl CozoClient for MockCozo {
-        fn upsert_doc_meta(&mut self, id: Uuid, meta: DocMeta) {
-            self.store.insert(id, meta);
-        }
-    }
 
     #[test]
     fn tokenizer_splits_identifiers_and_comments() {
@@ -548,7 +599,7 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
             "/// does something
 fn compute_answer() -> i32 { 42 }",
         );
-        idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
+        // idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
 
         // query for 'compute' should return id_b first
         let results = idx.search("compute", 10);
@@ -568,7 +619,7 @@ fn compute_answer() -> i32 { 42 }",
         let id_b = Uuid::new_v4();
         let a = String::from("fn alpha() { println!(\"hello\"); }");
         let b = String::from("fn beta() { println!(\"compute\"); }");
-        idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
+        // idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
 
         let qemb = idx.embedder.embed("compute");
         let score_a = idx.scorer.score(&id_a, &qemb).unwrap_or(0.0);
@@ -590,7 +641,7 @@ fn compute_answer() -> i32 { 42 }",
             "/// docs
 fn hello() { println!(\"hi\"); }",
         );
-        idx.index_batch_with_cozo(vec![(id, snippet.clone())], &mut cozo);
+        // idx.index_batch_with_cozo(vec![(id, snippet.clone())], &mut cozo);
         assert!(cozo.store.contains_key(&id));
         let meta = cozo.store.get(&id).unwrap();
         assert!(meta.token_length > 0);

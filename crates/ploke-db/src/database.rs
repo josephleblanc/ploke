@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::Path;
 
+use crate::bm25_index::DocMeta;
+use crate::bm25_index::TOKENIZER_VERSION;
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
 use crate::NodeType;
@@ -1110,20 +1112,18 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     /// ```
     pub fn upsert_bm25_doc_meta_batch(
         &self,
-        docs: Vec<(Uuid, TrackingHash, String, usize)>,
+        docs: impl IntoIterator<Item = (Uuid, DocMeta)>,
     ) -> Result<(), DbError> {
-        if docs.is_empty() {
-            return Ok(());
-        }
 
         // Convert docs to DataValue format
         let docs_data: Vec<DataValue> = docs
             .into_iter()
-            .map(|(id, tracking_hash, tokenizer_version, token_length)| {
+            .map(|(id, doc_meta)| {
+                let DocMeta { token_length, tracking_hash } = doc_meta;
                 DataValue::List(vec![
                     DataValue::Uuid(UuidWrapper(id)),
                     DataValue::Uuid(UuidWrapper(tracking_hash.0)),
-                    DataValue::Str(tokenizer_version.into()),
+                    DataValue::Str(TOKENIZER_VERSION.into()),
                     DataValue::Num(cozo::Num::Int(token_length as i64)),
                 ])
             })
@@ -1153,6 +1153,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bm25_index::DocData;
     use crate::Database;
     use crate::DbError;
     use cozo::{Db, MemStorage, ScriptMutability};
@@ -1405,23 +1406,27 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_bm25_doc_meta_batch() -> Result<(), DbError> {
         let db = setup_db();
+        let docdata_one = DocMeta { 
+            token_length: 42, 
+            tracking_hash: TrackingHash(Uuid::new_v4()) 
+        };
+        let docdata_two = DocMeta { 
+            token_length: 128, 
+            tracking_hash: TrackingHash(Uuid::new_v4()) 
+        };
         
         let docs = vec![
             (
                 Uuid::new_v4(),
-                TrackingHash(Uuid::new_v4()),
-                "code_tokenizer_v1".to_string(),
-                42
+                docdata_one
             ),
             (
                 Uuid::new_v4(),
-                TrackingHash(Uuid::new_v4()),
-                "code_tokenizer_v1".to_string(),
-                128
+                docdata_two
             )
         ];
 
-        db.upsert_bm25_doc_meta_batch(docs).unwrap();
+        db.upsert_bm25_doc_meta_batch(docs.into_iter()).unwrap();
 
         // Verify data was inserted
         let result = db

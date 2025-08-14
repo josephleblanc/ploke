@@ -1,13 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use super::{Bm25Indexer, DocMeta};
+use crate::Database;
+
+use super::{Bm25Indexer, DocData, DocMeta};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Bm25Cmd {
     /// Index a batch of (Uuid, DocMeta) documents with a tokenizer version tag.
-    IndexBatch { docs: Vec<(Uuid, DocMeta)> },
+    IndexBatch { docs: Vec<DocData> },
     /// Remove documents from the sparse index by id.
     Remove { ids: Vec<Uuid> },
     /// Rebuild the index from source of truth (placeholder; no-op for now).
@@ -20,7 +22,7 @@ pub enum Bm25Cmd {
 
 /// Start the BM25 actor with a given avgdl parameter.
 /// Returns an mpsc::Sender<Bm25Cmd> handle for issuing commands.
-pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
+pub fn start(db: Arc<Database>, avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
 
@@ -32,7 +34,7 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                         "BM25 IndexBatch: {} docs",
                         docs.len(),
                     );
-                    indexer.extend_staged(docs.into_iter());
+                    indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter());
                 }
                 Bm25Cmd::Remove { ids } => {
                     tracing::debug!("BM25 Remove: {} docs", ids.len());
@@ -47,6 +49,7 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                 Bm25Cmd::FinalizeSeed { resp } => {
                     // Compute avgdl from staged metadata and drain it for persistence.
                     let avgdl = indexer.compute_avgdl_from_staged();
+                    // let staged = indexer.upsert_batch_with_cozo(db);
                     let staged = indexer.drain_staged_meta();
                     tracing::info!(
                         "BM25 FinalizeSeed: {} docs staged, computed avgdl={}",
@@ -56,10 +59,12 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                     let _ = resp.send(Ok(()));
                 }
                 Bm25Cmd::Search { query, top_k, resp } => {
+                    tracing::debug!("query: {query}, top_k: {top_k}, resp: {resp:?}");
                     let scored = indexer.search(&query, top_k);
+                    tracing::debug!("scored: {scored:?}");
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
-                    let _ = resp.send(results);
+                    let _ = resp.send(results).expect("expecting return val");
                 }
             }
         }
@@ -70,6 +75,6 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
 }
 
 /// Convenience starter with a reasonable default avgdl.
-pub fn start_default() -> mpsc::Sender<Bm25Cmd> {
-    start(10.0)
+pub fn start_default(db: Arc<Database>) -> mpsc::Sender<Bm25Cmd> {
+    start(db, 10.0)
 }

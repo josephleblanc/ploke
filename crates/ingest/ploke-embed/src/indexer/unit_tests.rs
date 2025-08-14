@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use cozo::{CallbackOp, DataValue, MemStorage, NamedRows};
+use cozo::{CallbackOp, DataValue, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
 use ploke_db::{bm25_index::{self, bm25_service::Bm25Cmd}, hnsw_all_types, CallbackManager, Database, DbError, NodeType};
 use ploke_error::Error;
@@ -129,7 +129,7 @@ async fn test_batch_spp_edge_cases_no_cfg() -> Result<(), Error> {
 #[tokio::test]
 // NOTE: passing
 async fn test_batch_tracking_hash() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::INFO);
+    let _guard = init_test_tracing(Level::DEBUG);
     test_next_batch("fixture_tracking_hash").await
 }
 #[tokio::test]
@@ -237,7 +237,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
     let counter = callback_manager.clone_counter();
 
-    let bm25_tx = bm25_index::bm25_service::start(0.0);
+    let bm25_tx = bm25_index::bm25_service::start(Arc::clone(&db), 0.0);
 
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
@@ -245,7 +245,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         Arc::new(embedding_processor),
         cancellation_token,
         batch_size,
-    ).with_bm25_tx(bm25_tx);
+    ).with_bm25_tx(bm25_tx.clone());
     let (progress_tx_nonarc, mut progress_rx) = broadcast::channel(1000);
     let progress_tx_arc = Arc::new(progress_tx_nonarc);
     let (control_tx, control_rx) = mpsc::channel(4);
@@ -359,11 +359,11 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         .into_iter()
         .flat_map(|nr| nr.rows)
         .enumerate()
-        .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+        .map(|(i, r)| (i, r[0].clone(), r[2].clone()))
         .for_each(|(i, idx, name)| {
             let is_found = all_pending_rows.rows.iter().any(|r| r[0] == idx);
-            tracing::trace!("row {: <2}: {} | {:?} {: >30}", i, is_found, name, idx);
-            let node_data = (i, name, idx);
+            tracing::trace!("row {: <2}: {} | {:?} {:?}", i, is_found, idx, name);
+            let node_data = (i, idx, name);
             if is_found {
                 found.push(node_data);
             } else {
@@ -377,7 +377,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         .rows
         .iter()
         .enumerate()
-        .map(|(i, r)| (i, r[0].clone(), r[1].clone()))
+        .map(|(i, r)| (i, r[0].clone(), r[2].clone()))
     {
         tracing::trace!(target: "dbg_rows","row found {: <2} | {:?} {: >30}", i, name, idx);
     }
@@ -385,6 +385,23 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         tracing::warn!("CallbackManager not closed?");
     }
     let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
+    for (i, idx, name) in not_found.iter() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let name_str = name.get_str().expect("name must be a string");
+        tracing::info!("using bm25 to find name: {name_str}");
+        bm25_tx.send(Bm25Cmd::Search { 
+            query: name_str.to_string(), 
+            top_k: 2, 
+            resp: tx 
+        }).await.expect("Channel should be open");
+        let ret = rx.await.expect("Must return result for correctly indexed item. This should always happen after the dense vector embedding.");
+        tracing::debug!("return of bm25 search: {:?}", ret);
+        if let DataValue::Uuid(UuidWrapper(uuid_id)) = idx {
+            let ret_id = ret.iter().find(|(bm_id, bm_score)| {bm_id == uuid_id});
+            assert!(ret_id.is_some());
+            tracing::debug!("found id: {ret_id:?}");
+        } else { panic!("The idx must be a uuid")}
+    }
     tracing::info!(
         "updated rows: {}, pending db callback: {}",
         not_found.len(),
@@ -686,7 +703,7 @@ async fn test_next_batch_ss(target_crate: &'static str) -> Result<(), ploke_erro
 
 #[tokio::test]
 async fn test_index_bm25() -> Result<(), Error> {
-    let _guard = init_test_tracing(Level::TRACE);
+    let _guard = init_test_tracing(Level::DEBUG);
     test_next_batch_ss("fixture_nodes").await?;
 
     Ok(())

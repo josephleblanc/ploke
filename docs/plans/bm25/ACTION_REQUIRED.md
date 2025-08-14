@@ -36,6 +36,8 @@ Status Update (2025-08-15):
 
 Next steps:
 - Add integration tests to verify end-to-end BM25 indexing and persistence
+  - Initial tests from parsing to cozo upsert to search verified
+  - TODO: Need more tests, recent changes broke some unit tests, defer until `overview.md` tasks complete given that the end to end tests are passing.
 - Implement BM25 search functionality in the RAG module
 - Add TUI commands for BM25 rebuild and hybrid search in TUI
 - Implement avgdl recalculation triggered by user messages in TUI

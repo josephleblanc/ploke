@@ -22,7 +22,7 @@ use tracing::{info_span, instrument};
 use uuid::Uuid;
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
-use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocMeta};
+use ploke_db::bm25_index::{bm25_service, CodeTokenizer, DocData, DocMeta};
 
 #[derive(Debug)]
 pub struct EmbeddingProcessor {
@@ -683,29 +683,19 @@ impl IndexerTask {
         
         // Send DocMeta to BM25 service instead of full snippets
         if let Some(tx) = &self.bm25_tx {
-            let docs: Vec<(Uuid, DocMeta)> = valid_data
+            let docs_data: Vec<DocData> = valid_data
                 .iter()
                 .zip(valid_snippets.iter())
-                .map(|(emb_data, snippet)| {
-                    let token_length = CodeTokenizer::count_tokens_in_code(snippet);
-                    let tracking_hash = emb_data.node_tracking_hash; // Use node tracking hash from EmbeddingData
-                    (
-                        emb_data.id,
-                        DocMeta {
-                            token_length,
-                            tracking_hash,
-                        }
-                    )
-                })
+                .map(DocData::from)
                 .collect();
             
             tracing::debug!(
                 "Sending {} processed snippets to BM25 service",
-                docs.len()
+                docs_data.len()
             );
             
             if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch {
-                docs,
+                docs: docs_data,
             }) {
                 tracing::warn!("BM25 IndexBatch try_send failed: {}", e);
             }
