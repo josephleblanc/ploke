@@ -20,7 +20,7 @@ pub enum Bm25Cmd {
 
 /// Start the BM25 actor with a given avgdl parameter.
 /// Returns an mpsc::Sender<Bm25Cmd> handle for issuing commands.
-pub fn start(avgdl: Option<f32>) -> mpsc::Sender<Bm25Cmd> {
+pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
 
@@ -71,5 +71,5 @@ pub fn start(avgdl: Option<f32>) -> mpsc::Sender<Bm25Cmd> {
 
 /// Convenience starter with a reasonable default avgdl.
 pub fn start_default() -> mpsc::Sender<Bm25Cmd> {
-    start(None)
+    start(10.0)
 }
