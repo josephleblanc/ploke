@@ -90,7 +90,7 @@ Immediate next steps (dev-ready)
    - Track per-call cost and log.
 
 Progress checklist (to be updated as we go)
-- [ ] ploke-transform: add bm25_doc_meta schema and migration hookup
+- [x] ploke-transform: add bm25_doc_meta schema and migration hookup
 - [ ] ploke-db: upsert_bm25_doc_meta + avg length + stream active nodes
 - [ ] ploke-embed: BM25 actor with two-pass rebuild, IndexBatch/Remove/Search commands
 - [ ] ploke-embed: IndexerTask field bm25_tx + send IndexBatch at // in process_batch
