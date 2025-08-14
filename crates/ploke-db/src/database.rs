@@ -752,6 +752,8 @@ impl Database {
     ///
     /// A result containing a vector of `EmbeddingData` structs in the same order as the input UUIDs,
     /// or an error if the query fails.
+    /// This is useful for retrieving the `EmbeddingData` required to retrieve code snippets from
+    /// files after finding the Ids via a search method (dense embedding search, bm25 search)
     pub fn get_nodes_ordered(
         &self,
         nodes: Vec<Uuid>,

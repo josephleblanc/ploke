@@ -483,6 +483,13 @@ pub fn create_index(db: &Database, ty: NodeType) -> Result<(), DbError> {
     Ok(())
 }
 
+pub fn create_index_primary(db: &Database) -> Result<(), DbError> {
+    for ty in NodeType::primary_nodes() {
+        create_index(db, ty)?;
+    }
+    Ok(())
+}
+
 pub fn create_index_warn(db: &Database, ty: NodeType) -> Result<(), ploke_error::Error> {
     // Create documents table
     // Create HNSW index on embeddings

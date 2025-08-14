@@ -8,7 +8,12 @@ ploke-db = { path = "../ploke-db" }
 ploke-embed = { path = "../ingest/ploke-embed" }
 ploke-error = { path = "../ploke-error" }
 ploke-core = { path = "../ploke-core" }
+ploke-io = { path = "../ploke-io" }
 
 thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+ploke-test-utils = { path = "../test-utils" }
+lazy_static = "1.5.0"

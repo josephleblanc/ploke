@@ -13,7 +13,7 @@ pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;
 pub use index::hnsw::{create_index, create_index_warn, 
     hnsw_all_types, hnsw_of_type, search_similar, replace_index_warn,
-    search_similar_args, SimilarArgs, EmbedDataVerbose
+    search_similar_args, SimilarArgs, EmbedDataVerbose, create_index_primary
 };
 pub use query::{
     builder::FieldValue,

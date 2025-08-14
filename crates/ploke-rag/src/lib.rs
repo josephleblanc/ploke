@@ -168,3 +168,59 @@ impl RagService {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use lazy_static::lazy_static;
+    use ploke_db::{create_index_primary, Database};
+    use ploke_embed::{indexer::{EmbeddingProcessor, EmbeddingSource}, local::{EmbeddingConfig, LocalEmbedder}};
+    use ploke_error::Error;
+    use ploke_io::IoManagerHandle;
+    use ploke_test_utils::workspace_root;
+
+    use crate::RagService;
+
+    lazy_static! {
+        pub static ref TEST_DB_NODES: Result<Arc< Database >, Error> = {
+            let db = Database::new_init()?;
+
+            let mut target_file = workspace_root();
+            target_file.push("tests/backup_db/fixture_nodes_bfc25988-15c1-5e58-9aa8-3d33b5e58b92");
+            let prior_rels_vec = db.relations_vec()?;
+            db.import_from_backup(&target_file, &prior_rels_vec)
+                .map_err(ploke_db::DbError::from)
+                .map_err(ploke_error::Error::from)?;
+            create_index_primary(&db)?;
+            Ok(Arc::new( db ))
+        };
+    }
+    
+    #[tokio::test]
+    async fn test_search() -> Result<(), Error> {
+        let search_term = "AttributedStruct";
+        let db = TEST_DB_NODES.as_ref().expect("Incorrect setup of TEST_DB_NODES").clone();
+        create_index_primary(&db)?;
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new( EmbeddingProcessor::new(source) );
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res = rag.search(search_term, 15).await?;
+        let ordered_node_ids = search_res.iter().map(|(id, _score)| *id).collect();
+        let node_info = db.get_nodes_ordered(ordered_node_ids)?;
+
+        let io_handle = IoManagerHandle::new();
+        let snippet_results = io_handle.get_snippets_batch(node_info).await.expect("Problem receiving");
+        let mut snippets = Vec::new();
+        for snip in snippet_results {
+            let snip_ok = snip?;
+            snippets.push(snip_ok);
+        }
+        let snippet_match = snippets.iter().find(|s| s.contains(search_term));
+        assert!(snippet_match.is_some());
+        Ok(())
+    }
+}

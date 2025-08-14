@@ -3662,10 +3662,13 @@ dependencies = [
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "ploke-core",
  "ploke-db",
  "ploke-embed",
  "ploke-error",
+ "ploke-io",
+ "ploke-test-utils",
  "thiserror 2.0.12",
  "tokio",
  "uuid",
