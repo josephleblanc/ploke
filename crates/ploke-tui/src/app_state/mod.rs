@@ -441,6 +441,21 @@ pub enum StateCommand {
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
+
+    /// Triggers a rebuild of the BM25 sparse index.
+    Bm25Rebuild,
+
+    /// Runs a BM25-only search with the given query and returns top_k results.
+    Bm25Search {
+        query: String,
+        top_k: usize,
+    },
+
+    /// Runs a hybrid search (dense + BM25) for the given query.
+    HybridSearch {
+        query: String,
+        top_k: usize,
+    },
 }
 
 impl StateCommand {
@@ -476,6 +491,9 @@ impl StateCommand {
             #[allow(non_snake_case)]
             LoadDb => "LoadDb",
             BatchPromptSearch { .. } => "BatchPromptSearch",
+            Bm25Rebuild => "Bm25Rebuild",
+            Bm25Search { .. } => "Bm25Search",
+            HybridSearch { .. } => "HybridSearch",
             // ... other variants
         }
     }
@@ -939,6 +957,132 @@ pub async fn state_manager(
                         e.emit_error();
                         tracing::error!("Error in ScanForChange:\n{e}");
                     });
+            }
+
+            StateCommand::Bm25Rebuild => {
+                if let Some(rag) = &state.rag {
+                    match rag.bm25_rebuild().await {
+                        Ok(()) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                "BM25 rebuild requested".to_string(),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 rebuild failed: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot rebuild BM25".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::Bm25Search { query, top_k } => {
+                if let Some(rag) = &state.rag {
+                    match rag.search_bm25(&query, top_k).await {
+                        Ok(results) => {
+                            let lines: Vec<String> = results
+                                .into_iter()
+                                .map(|(id, score)| format!("{}: {:.3}", id, score))
+                                .collect();
+                            let content = if lines.is_empty() {
+                                format!("BM25 results (top {}): <no hits>", top_k)
+                            } else {
+                                format!("BM25 results (top {}):\n{}", top_k, lines.join("\n"))
+                            };
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                content,
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("BM25 search failed: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot run BM25 search".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
+            }
+
+            StateCommand::HybridSearch { query, top_k } => {
+                if let Some(rag) = &state.rag {
+                    match rag.hybrid_search(&query, top_k).await {
+                        Ok(results) => {
+                            let lines: Vec<String> = results
+                                .into_iter()
+                                .map(|(id, score)| format!("{}: {:.3}", id, score))
+                                .collect();
+                            let content = if lines.is_empty() {
+                                format!("Hybrid results (top {}): <no hits>", top_k)
+                            } else {
+                                format!("Hybrid results (top {}):\n{}", top_k, lines.join("\n"))
+                            };
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                content,
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            add_msg_immediate(
+                                &state,
+                                &event_bus,
+                                Uuid::new_v4(),
+                                format!("Hybrid search failed: {}", e),
+                                MessageKind::SysInfo,
+                            )
+                            .await;
+                        }
+                    }
+                } else {
+                    add_msg_immediate(
+                        &state,
+                        &event_bus,
+                        Uuid::new_v4(),
+                        "RAG service unavailable; cannot run hybrid search".to_string(),
+                        MessageKind::SysInfo,
+                    )
+                    .await;
+                }
             }
 
             // ... other commands

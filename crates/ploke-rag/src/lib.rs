@@ -54,4 +54,21 @@ impl RagService {
         rx.await
             .map_err(|e| RagError::Channel(format!("BM25 search response channel closed: {}", e)))
     }
+
+    /// Trigger a rebuild of the BM25 sparse index.
+    /// For now, this is a fire-and-forget command to the BM25 service.
+    pub async fn bm25_rebuild(&self) -> Result<(), RagError> {
+        self.bm_embedder
+            .send(Bm25Cmd::Rebuild)
+            .await
+            .map_err(|e| RagError::Channel(format!("failed to send BM25 rebuild command: {}", e)))?;
+        Ok(())
+    }
+
+    /// Perform a hybrid search (BM25 + dense). Temporary implementation delegates to BM25 only.
+    /// Later, this will fuse BM25 with dense results via RRF and return a reranked list.
+    pub async fn hybrid_search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError> {
+        // Placeholder: use BM25 only until dense fusion is implemented.
+        self.search_bm25(query, top_k).await
+    }
 }
