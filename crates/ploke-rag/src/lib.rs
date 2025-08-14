@@ -23,6 +23,8 @@ pub enum RagError {
     Embed(String),
 }
 
+// AI: implement Into<ploke_error::Error> for RagError AI!
+
 /// RAG orchestration service.
 /// Holds handles to the database, dense embedder, and BM25 service actor.
 #[derive(Debug)]
@@ -67,8 +69,8 @@ impl RagService {
     }
 
     /// Perform a dense search using the HNSW index in the database.
-    /// Returns a Vec of (document_id, score) pairs sorted by relevance.
-    pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError> {
+    /// Returns a Vec of (snippet_id, score) pairs sorted by relevance.
+    pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, ploke_error::Error> {
         // Generate embedding for the query
         let embeddings = self.dense_embedder.generate_embeddings(vec![query.to_string()]).await
             .map_err(|e| RagError::Embed(format!("failed to generate embeddings: {:?}", e)))?;
