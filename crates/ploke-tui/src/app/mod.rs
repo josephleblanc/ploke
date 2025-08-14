@@ -35,6 +35,9 @@ static HELP_COMMANDS: &str = r#"Available commands:
     check api - Check API key configuration
     model list - List available models
     model <name> - Switch model
+    bm25 rebuild - Rebuild sparse BM25 index
+    bm25 search <query> [top_k] - Search with BM25 (hybrid wiring in progress)
+    hybrid <query> [top_k] - Hybrid (BM25 + dense) search
     help - Show this help
 
     Keyboard shortcuts (Normal mode):
@@ -1056,10 +1059,39 @@ impl App {
                     threshold
                 });
             }
+            cmd if cmd.starts_with("bm25 rebuild") => {
+                self.send_cmd(StateCommand::AddMessageImmediate {
+                    msg: "Requested BM25 rebuild. This will rebuild the sparse index from currently active primary nodes. (Wiring in progress)".to_string(),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                });
+            }
+            cmd if cmd.starts_with("bm25 search ") || cmd.starts_with("hybrid ") => {
+                let tail = if cmd.starts_with("bm25 search ") {
+                    &cmd["bm25 search ".len()..]
+                } else {
+                    &cmd["hybrid ".len()..]
+                };
+                let mut parts = tail.split_whitespace();
+                let query = parts.next().unwrap_or("").to_string();
+                let top_k = parts.next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(10);
+
+                if query.is_empty() {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: "Usage: 'bm25 search <query> [top_k]' or 'hybrid <query> [top_k]'".to_string(),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                } else {
+                    self.send_cmd(StateCommand::AddMessageImmediate {
+                        msg: format!("Searching (hybrid planned) for \"{}\" with top_k={}...", query, top_k),
+                        kind: MessageKind::SysInfo,
+                        new_msg_id: Uuid::new_v4(),
+                    });
+                    // NOTE: Actual hybrid/BM25 search dispatch will be wired via RagService in a subsequent step.
+                }
+            }
             cmd => {
-                // TODO: Implement `tracing` crate import
-                // Placeholder for command error handling
-                // Add more helpful message here
                 self.show_command_help();
                 tracing::warn!("Unknown command: {}", cmd);
             }

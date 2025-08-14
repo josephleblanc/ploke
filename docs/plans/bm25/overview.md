@@ -105,3 +105,48 @@ Next steps:
  - Implement BM25 search functionality in the RAG module
  - Add CLI commands for BM25 rebuild and hybrid search in TUI
  - Implement avgdl recalculation triggered by user messages in TUI
+
+Progress update - 2025-08-14/1
+ - TUI: Added CLI commands:
+   - bm25 rebuild
+   - bm25 search <query> [top_k]
+   - hybrid <query> [top_k]
+   These currently surface user feedback and validate inputs; wiring to the underlying actors/services will follow.
+
+Technical debt notes (triage)
+ - EventBus split (Realtime vs Background) is somewhat confusing but not blocking; defer refactor.
+ - TUI cannot dispatch BM25/hybrid work yet; we should prefer adding StateCommand variants rather than inventing side channels.
+ - No RagService handle exists in TUI; plan to initialize and store it in shared state.
+ - Help text now documents the new commands to guide users during the transitional phase.
+
+Immediate follow-ups (concrete steps)
+ 1) Wire TUI commands to a RAG orchestration service
+    - Add dependency: ploke-tui -> ploke-rag
+    - Initialize RagService in ploke-tui/src/lib.rs::try_main and store a handle in shared state (AppState) or via a dedicated RagHandle channel.
+    - Add new StateCommand variants: Bm25Rebuild and HybridSearch { query: String, top_k: usize }.
+    - On these commands, spawn tasks calling RagService::{search_bm25, hybrid_search} and forward results to UI via AppEvent::Rag or AddMessageImmediate.
+    Confidence: 0.6
+    Files likely needed: crates/ploke-tui/src/app_state/mod.rs, crates/ploke-tui/src/lib.rs, crates/ploke-tui/Cargo.toml, crates/ploke-rag/src/lib.rs
+    rg tips:
+      - rg -n "enum StateCommand" crates/ploke-tui
+      - rg -n "ContextManager" crates/ploke-tui/src
+
+ 2) Implement hybrid_search in ploke-rag
+    - Combine BM25 results from RagService::search_bm25 with dense results from Cozo/HNSW, fuse with RRF, and return ranked Uuids (optionally include snippet previews).
+    Confidence: 0.7
+    Files: crates/ploke-rag/src/lib.rs, and possibly ploke-db helpers.
+
+ 3) Display search results in TUI
+    - Render a lightweight results pane or inject results as SysInfo messages (filename and score).
+    Confidence: 0.9
+    Files: crates/ploke-tui/src/app/mod.rs
+
+ 4) Implement BM25 rebuild pathway
+    - In bm25_service, expose a Rebuild command; in RagService, call Rebuild; on ack, update UI.
+    Confidence: 0.6
+    Files: ploke-embed bm25_service (ask to add file), crates/ploke-rag/src/lib.rs, crates/ploke-tui/src/app_state/mod.rs
+
+ 5) Add integration tests
+    - Verify that 'bm25 rebuild' stages and persists metadata and that 'hybrid <query>' returns expected documents.
+    Confidence: 0.5
+    Files: tests across ploke-rag and ploke-db; may need new fixtures.
