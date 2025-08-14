@@ -376,6 +376,10 @@ impl Bm25Indexer {
         self.staged_meta.insert(id, meta);
     }
 
+    pub fn extend_staged(&mut self, docs: impl IntoIterator<Item = (Uuid, DocMeta)>) {
+        self.staged_meta.extend(docs);
+    }
+
     /// Construct a new Bm25Indexer from a corpus Vec<(Uuid, String)>.
     /// This computes average document length (avgdl) from the corpus tokens, builds an
     /// embedder with that avgdl, and indexes all documents. The corpus is consumed.

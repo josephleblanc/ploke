@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use super::{Bm25Indexer, DocMeta};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -30,10 +32,7 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                         "BM25 IndexBatch: {} docs",
                         docs.len(),
                     );
-                    // Stage metadata for later persistence during Finalize
-                    for (id, meta) in docs {
-                        indexer.stage_doc_meta(id, meta);
-                    }
+                    indexer.extend_staged(docs.into_iter());
                 }
                 Bm25Cmd::Remove { ids } => {
                     tracing::debug!("BM25 Remove: {} docs", ids.len());
@@ -54,7 +53,6 @@ pub fn start(avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                         staged.len(),
                         avgdl
                     );
-                    // TODO: Persist bm25_doc_meta via ploke-db helpers and store avgdl atomically.
                     let _ = resp.send(Ok(()));
                 }
                 Bm25Cmd::Search { query, top_k, resp } => {
