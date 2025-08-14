@@ -125,17 +125,28 @@ pub async fn try_main() -> color_eyre::Result<()> {
         8,
         // TODO: Add bm25_tx here
     );
+    let indexer_task = Arc::new(indexer_task);
+
+    // Initialize RAG orchestration service (BM25 + dense handles)
+    let rag = match ploke_rag::RagService::new(db_handle.clone(), Arc::clone(&indexer_task)) {
+        Ok(svc) => Some(Arc::new(svc)),
+        Err(e) => {
+            tracing::warn!("Failed to initialize RagService: {}", e);
+            None
+        }
+    };
 
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::default(),
         system: SystemState::default(),
         indexing_state: RwLock::new(None), // Initialize as None
-        indexer_task: Some(Arc::new(indexer_task)),
+        indexer_task: Some(Arc::clone(&indexer_task)),
         indexing_control: Arc::new(Mutex::new(None)),
         db: db_handle,
         embedder: Arc::clone(&proc_arc),
         io_handle: io_handle.clone(),
+        rag,
     });
 
     // Create command channel with backpressure

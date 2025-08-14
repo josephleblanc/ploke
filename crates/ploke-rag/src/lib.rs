@@ -26,13 +26,13 @@ pub enum RagError {
 /// Holds handles to the database, dense embedder, and BM25 service actor.
 pub struct RagService {
     db: Arc<Database>,
-    dense_embedder: IndexerTask,
+    dense_embedder: Arc<IndexerTask>,
     bm_embedder: mpsc::Sender<Bm25Cmd>,
 }
 
 impl RagService {
     /// Construct a new RAG service, starting the BM25 service actor.
-    pub fn new(db: Arc<Database>, dense_embedder: IndexerTask) -> Result<Self, RagError> {
+    pub fn new(db: Arc<Database>, dense_embedder: Arc<IndexerTask>) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self { db, dense_embedder, bm_embedder })
     }

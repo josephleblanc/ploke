@@ -150,3 +150,17 @@ Immediate follow-ups (concrete steps)
     - Verify that 'bm25 rebuild' stages and persists metadata and that 'hybrid <query>' returns expected documents.
     Confidence: 0.5
     Files: tests across ploke-rag and ploke-db; may need new fixtures.
+
+Progress update - 2025-08-14/5
+ - Partial step 1 implemented (safe wiring)
+   - Added dependency ploke-tui -> ploke-rag
+   - Introduced AppState.rag: Option<Arc<RagService>> to hold a shared handle to RAG orchestration
+   - Initialized RagService in ploke-tui/src/lib.rs::try_main using Arc<IndexerTask> and Database
+   - Updated RagService to accept Arc<IndexerTask> to avoid moving the task out of AppState
+ - Next wiring steps
+   - Add StateCommand variants: Bm25Rebuild, Bm25Search { query, top_k }, HybridSearch { query, top_k }
+   - In state_manager, on those commands, call RagService methods and forward results to UI via AppEvent::Rag or SysInfo messages
+ - Deferred improvements
+   - Consolidate EventBus priority handling (field in AppEvent vs separate channels)
+   - Add richer error propagation from RagService into UI via Error events
+   - Provide thin facade for BM25 rebuild/search to decouple TUI from service protocol

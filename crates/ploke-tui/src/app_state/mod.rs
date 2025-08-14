@@ -85,6 +85,7 @@ pub struct AppState {
     pub db: Arc<Database>,
     pub embedder: Arc<EmbeddingProcessor>,
     pub io_handle: IoManagerHandle,
+    pub rag: Option<Arc<ploke_rag::RagService>>,
 }
 
 #[derive(Debug, Default)]
@@ -202,6 +203,7 @@ impl AppState {
             db,
             embedder,
             io_handle,
+            rag: None,
         }
     }
 
