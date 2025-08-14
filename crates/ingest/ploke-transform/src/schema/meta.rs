@@ -1,7 +1,7 @@
 use super::*;
 use crate::define_schema;
 
-— BM25 document metadata stored per primary node.
+// BM25 document metadata stored per primary node.
 ///
 /// Fields:
 /// - id: UUID of the node/document.

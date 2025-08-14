@@ -837,8 +837,15 @@ pub mod bm25_service {
                         // Placeholder: real rebuild will stream docs, compute avgdl, and re-index.
                     }
                     Bm25Cmd::FinalizeSeed { resp } => {
-                        // TODO: Persist bm25_doc_meta in a single atomic step and compute avgdl.
-                        // For now, acknowledge success to complete the pipeline.
+                        // Compute avgdl from staged metadata and drain it for persistence.
+                        let avgdl = indexer.compute_avgdl_from_staged();
+                        let staged = indexer.drain_staged_meta();
+                        tracing::info!(
+                            "BM25 FinalizeSeed: {} docs staged, computed avgdl={}",
+                            staged.len(),
+                            avgdl
+                        );
+                        // TODO: Persist bm25_doc_meta via ploke-db helpers and store avgdl atomically.
                         let _ = resp.send(Ok(()));
                     }
                     Bm25Cmd::Search { query, top_k, resp } => {

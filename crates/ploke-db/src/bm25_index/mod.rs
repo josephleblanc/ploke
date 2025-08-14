@@ -355,6 +355,7 @@ pub trait CozoClient {
 pub struct Bm25Indexer {
     embedder: bm25::Embedder<u32, CodeTokenizer>,
     scorer: Scorer<Uuid, u32>,
+    staged_meta: HashMap<Uuid, DocMeta>,
 }
 
 impl Bm25Indexer {
@@ -362,7 +363,7 @@ impl Bm25Indexer {
     pub fn new(avgdl: f32) -> Self {
         let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
         let scorer = Scorer::<Uuid, u32>::new();
-        Self { embedder, scorer }
+        Self { embedder, scorer, staged_meta: HashMap::new() }
     }
 
     /// Construct a new Bm25Indexer from a corpus Vec<(Uuid, String)>.
@@ -394,7 +395,7 @@ impl Bm25Indexer {
             scorer.upsert(&id, embedding);
         }
 
-        Self { embedder, scorer }
+        Self { embedder, scorer, staged_meta: HashMap::new() }
     }
 
     /// Index a batch of (uuid, snippet) pairs.
@@ -402,6 +403,16 @@ impl Bm25Indexer {
         for (id, snippet) in batch {
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
+            // Stage per-doc metadata for atomic Finalize
+            let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
+            let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
+            self.staged_meta.insert(
+                id,
+                DocMeta {
+                    token_length: token_len,
+                    tracking_hash,
+                },
+            );
         }
     }
 
@@ -421,6 +432,16 @@ impl Bm25Indexer {
             let tracking_hash = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
             // compute token length using tokenizer
             let token_len = CodeTokenizer::count_tokens_in_code(&snippet);
+
+            // stage for Finalize
+            self.staged_meta.insert(
+                id,
+                DocMeta {
+                    token_length: token_len,
+                    tracking_hash,
+                },
+            );
+
             // upsert to cozo
             cozo.upsert_doc_meta(
                 id,
@@ -445,6 +466,22 @@ impl Bm25Indexer {
             matches.truncate(top_k);
         }
         matches
+    }
+
+    /// Compute average document length (avgdl) from staged metadata.
+    /// Returns 0.0 if no documents are staged.
+    pub fn compute_avgdl_from_staged(&self) -> f32 {
+        let n = self.staged_meta.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let total: usize = self.staged_meta.values().map(|m| m.token_length).sum();
+        (total as f32) / (n as f32)
+    }
+
+    /// Drain staged metadata for persistence during Finalize.
+    pub fn drain_staged_meta(&mut self) -> Vec<(Uuid, DocMeta)> {
+        self.staged_meta.drain().collect()
     }
 }
 
