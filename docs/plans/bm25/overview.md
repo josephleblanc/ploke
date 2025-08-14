@@ -1,6 +1,8 @@
-<!-- Reason: Reflect decision to stage changes and use borrowed &str snippets.
-     Also document EmbeddingData fields and consequences for Bm25Indexer and process_batch.
-     Updated to reflect new design where avgdl is stored in persistent system data file. -->
+<!-- Update: Document actual repository snapshot (commit 843d16d) and mark completed/partial steps.
+     Rationale: keep the planning doc in sync with verified code paths in ploke-rag and ploke-tui.
+     NOTE: This file summarizes what is observed in code added to the conversation; some components
+     (ploke-embed bm25 actor internals, ploke-db commits) must still be inspected directly to verify. -->
+
 Condensed essentials and immediate plan for BM25 + hybrid retrieval
 
 What we're building
@@ -9,115 +11,93 @@ What we're building
 - Integrate BM25 indexing alongside the existing dense embedding IndexerTask, driven by the same snippet batches.
 - Provide a hybrid search that fuses BM25 and dense results, expands via the code graph, reranks, and packs to a token budget.
 
-Key decisions
-- Index scope: Start with primary nodes only (modules, impls, functions, structs, enums…). Do not index methods/params yet to avoid duplication and noise. Revisit after baseline.
-- Tokenizer: Use the code-aware tokenizer (already implemented) and store tokenizer_version in metadata so we can detect when to rebuild. The tokenizer_version is now a constant field on Bm25Indexer.
-- Avgdl: Store avgdl in a persistent system data file outside the database rather than in the database. This allows us to keep the value accurate to the items in the database and avoid drift. Recalculate occasionally, triggered by user messages in the TUI before LLM response.
-- Hash stability: Stop using DefaultHasher for snippet hashes. Use existing TrackingHash (preferred) or blake3 so values are stable across runs.
-- Persistence: Rebuild BM25 index on startup from DB + filesystem; metadata in Cozo keeps it consistent with dense embeddings. Persisted metadata is written during Finalize.
-- Fusion: Start with RRF (Reciprocal Rank Fusion) to combine BM25 and dense lists. It is robust and parameter-light. Add weighted blending later if desired.
-- Reranker: Add a small cross-encoder reranker over the top 30–50 candidates after hybrid fusion. Use Candle for local inference or a simple external endpoint at first.
-- Packing: Greedy pack reranked snippets into a model-specific token budget, coalescing adjacent spans per file.
+High-level summary of recent repository changes (commit 843d16d)
+- ploke-rag:
+  - Added RagService that holds a handle (mpsc::Sender<Bm25Cmd>) to the BM25 actor started via bm25_service::start_default.
+  - Implemented search_bm25(query, top_k) that sends Bm25Cmd::Search and awaits a oneshot response.
+  - Implemented bm25_rebuild() that sends Bm25Cmd::Rebuild.
+  - Implemented hybrid_search(...) as a placeholder that currently delegates to BM25-only search.
+  Evidence: crates/ploke-rag/src/lib.rs
 
-Where to integrate in code (high level)
-- ploke-embed
-  - Add a BM25 service/actor that wraps Bm25Indexer.
-  - Provide a channel-based API so IndexerTask can send IndexBatch/Remove/Rebuild requests.
-  - At startup, rebuild BM25 from active primary nodes using two passes.
-  - In IndexerTask::process_batch, zip valid_data (Vec<EmbeddingData>) with valid_snippets (Vec<String>) and:
-      - compute token_length in process_batch (using CodeTokenizer::count_tokens_in_code),
-      - send IndexBatch using DocMeta containing metadata (tracking_hash, token_length) together with Uuid from EmbeddingData (avoid cloning snippet Strings),
-      - the BM25 actor will index using DocMeta but will only stage metadata (tracking_hash, token_length).
-- ploke-transform
-  - Add a bm25_doc_meta relation with columns: id, tracking_hash, token_length, tokenizer_version, span @ 'NOW'.
-- ploke-db
-  - Add upsert/get helpers for bm25_doc_meta and stream active primary nodes for BM25 build.
-  - Crucially, provide atomic helpers that accept the staged metadata (without full snippet texts) for a single transactional commit in Finalize.
-- ploke-rag
-  - Implement hybrid_search(query) orchestration: dense search via Cozo HNSW, BM25 via service, fuse with RRF, graph expansion in Cozo, rerank, pack to budget.
-- ploke-tui
-  - Add commands to trigger BM25 rebuild, run hybrid search, display costs. Add token counting and pricing tracking.
-  - Implement avgdl recalculation triggered by user messages before LLM response.
+- ploke-tui:
+  - Added ploke-rag as a dependency and initialize RagService in try_main; store Arc<RagService> in AppState.rag when available.
+  - Added StateCommand variants for Bm25Rebuild, Bm25Search { query, top_k }, and HybridSearch { query, top_k }.
+  - Updated state_manager to handle the new StateCommand variants by calling RagService APIs and forwarding results to the UI as SysInfo messages.
+  Evidence: crates/ploke-tui/src/lib.rs and crates/ploke-tui/src/app_state/mod.rs; Cargo.toml updated to depend on ploke-rag.
 
-Immediate next steps (dev-ready)
-1) BM25 service/actor in ploke-embed
-   - Define enum Bm25Cmd:
-     - IndexBatch { docs: Vec<(Uuid, DocMeta)> }  // note: DocMeta to avoid cloning, tokenizer_version is now a field on Bm25Indexer
-     - Remove { ids: Vec<Uuid> }
-     - Rebuild
-     - FinalizeSeed { resp: oneshot::Sender<Result<(), String>> }
-     - Search { query: String, top_k: usize, resp: oneshot::Sender<Vec<(Uuid, f32)>> }
-   - Start the actor on app init; keep an mpsc::Sender<Bm25Cmd> handle.
-   - The actor stages per-doc metadata (tracking_hash, token_length) but does not persist them incrementally.
+Status summary (what is verified from the code provided)
+- Completed / Verified:
+  - RagService construction and BM25 command senders (search_bm25, bm25_rebuild) — implemented and wired.
+  - TUI wiring:
+    - RagService is created in try_main and stored in AppState.rag when initialization succeeds.
+    - StateCommand includes BM25 and Hybrid variants.
+    - state_manager executes RagService methods and posts human-readable SysInfo messages with results or errors.
+  - TUI dependency: ploke-tui/Cargo.toml references ploke-rag.
 
-2) Wire IndexerTask to BM25 service
-   - Add bm25_tx: Option<mpsc::Sender<Bm25Cmd>> to IndexerTask (already present).
-   - In process_batch:
-     - Use valid_data (Vec<EmbeddingData>) zipped with valid_snippets (Vec<String>) to produce (EmbeddingData, &str) pairs.
-     - Compute token_length for each snippet in process_batch, and build a Vec<(Uuid, DocMeta)> to send to IndexBatch.
-     - Also prepare per-doc metadata (Uuid, TrackingHash, tokenizer_version, token_length) where token_length is computed locally; the BM25 actor will stage these values.
-   - After the complete, successful indexing run (all nodes processed), send FinalizeSeed and wait for the actor's ack. Only after an acknowledged Finalize should the system consider BM25 metadata committed.
-   - If Finalize fails, the system must fail the entire run (atomic "all nodes or none") and require a full retry or fallback rebuild.
+- Partially completed / Needs verification:
+  - hybrid_search orchestration inside ploke-rag:
+    - Present as a placeholder that calls BM25-only search. Dense search (HNSW via ploke-db), RRF fusion, graph expansion, and reranking are not implemented yet.
+  - BM25 actor internals (ploke-embed/bm25_service):
+    - RagService assumes existence of bm25_service::start_default and Bm25Cmd variants (Search/Rebuild), but the actor's persistence semantics (FinalizeSeed behavior, transactional upsert of bm25_doc_meta) were not present in the files inspected here. The planning doc previously stated FinalizeSeed & DB helpers exist; that must be verified by inspecting ploke-embed and ploke-db source.
+  - IndexerTask → BM25 wiring:
+    - The plan expects IndexerTask::process_batch to compute token lengths, prepare DocMeta, send IndexBatch commands, and await FinalizeSeed on completion. The presence and correctness of that wiring must be confirmed by reviewing ploke-embed's indexer code.
 
-3) ploke-db: atomic upsert for doc metadata
-   - Implement Database::upsert_bm25_doc_meta_batch(docs: Vec<(Uuid, TrackingHash, String /*tokenizer_version*/, usize /*token_length*/)>)
-   - Confidence: 0.85
+- Not started / Missing (from inspected files)
+  - Dense + sparse fusion (RRF) and reranker implementation (ploke-rag).
+  - End-to-end integration tests that validate FinalizeSeed atomic persistence and hybrid_search correctness.
+  - Rich TUI results pane (currently results surfaced as SysInfo messages only).
 
-Rebuild, drift detection, and recovery
-- Add Rebuild logic to stream active primary nodes and enforce a bounded staging buffer or spill-to-disk policy.
-- For very large repos prefer spill-to-disk during staging so memory usage stays bounded; ensure Finalize still composes a single transactional upsert from the staging artifact.
-- Confidence: 0.6
+Concrete mapping of "Immediate follow-ups" to current status
+1) Wire TUI commands to a RAG orchestration service
+   - Status: Completed (ploke-tui now depends on ploke-rag, RagService is initialized in try_main, StateCommand variants and state_manager wiring done).
+   - Remaining: polish UI presentation and error events.
 
-How to resume after context reset
- - Recreate the BM25 actor scaffolding and the IndexerTask send point at // in process_batch.
- - Run the normal indexing pass; after successful completion, send FinalizeSeed and wait for its success ack. If Finalize fails, the run should be treated as failed and retried (ensures atomic "all nodes or none" persistence).
+2) Implement hybrid_search in ploke-rag
+   - Status: Partially implemented (placeholder delegating to BM25-only).
+   - Remaining: call dense search (ploke-db HNSW helpers), collect BM25 results, fuse with RRF, apply optional reranker, return packed/ranked Vec<(Uuid, score)>.
 
-Progress update - 2025-08-13/1
- - Schema aligned: bm25_doc_meta now has fields {id, tracking_hash, tokenizer_version, token_length}, matching the design.
- - Stable hash: replaced DefaultHasher with a stable UUID v5–based tracking_hash derived from the snippet bytes; tests updated accordingly.
- - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch. Note: IndexBatch now uses DocMeta to avoid allocations; process_batch computes token lengths before sending.
- - Design update: tokenizer_version is now a constant field on Bm25Indexer rather than being passed with each IndexBatch command.
+3) BM25 service/actor (ploke-embed) and FinalizeSeed persistence
+   - Status: Unverified in this snapshot — planning notes claim FinalizeSeed and Database::upsert_bm25_doc_meta_batch exist, but those modules were not provided here for inspection.
+   - Action required: inspect ploke-embed's bm25_service implementation and ploke-db persistence helpers to confirm they:
+     - Stage per-doc metadata during IndexBatch.
+     - On FinalizeSeed, perform an atomic upsert of bm25_doc_meta using the Database helper and return detailed errors on failure.
 
-Next step
- - Implement ploke-db persistent helpers for bm25_doc_meta batch upsert to support Finalize.
- - Wire bm25_service::FinalizeSeed to call those helpers inside a single DB transaction and only acknowledge after commit.
+4) Wire IndexerTask to BM25 for commit semantics
+   - Status: Unverified — ensure process_batch computes token_length, sends DocMeta, and that IndexerTask awaits FinalizeSeed before marking indexing as completed.
 
-Progress update - 2025-08-13/2
- - bm25_service: Added FinalizeSeed command and actor handling that acks success (placeholder). Update required to perform real DB commits on Finalize.
- - IndexerTask: On successful dense indexing, now sends FinalizeSeed to BM25 and awaits ack before marking Completed; fails the run on any error.
- - Hash type: bm25 DocMeta now uses TrackingHash newtype from ploke-core for tracking_hash; generation currently wraps UUID v5 into TrackingHash until full TrackingHash::generate inputs are available. Tests updated.
+5) Integration tests and CI
+   - Status: Not implemented. Add e2e tests to assert persistence and retrieval behavior.
 
-Progress update - 2025-08-13/3
- - ploke-db: Implemented atomic persistence helpers:
-   - Database::upsert_bm25_doc_meta_batch for batch upsert of document metadata
- - bm25_service: Updated BM25 actor to perform real persistence on FinalizeSeed
- - IndexerTask: Now sends DocData (tracking_hash, token_length) to BM25 service along with of full snippets
+Recommended next steps (developer-ready)
+- Immediate verification tasks
+  1. Provide the following files so I can inspect/modify as needed:
+     - crates/ploke-embed/src/bm25_service.rs (or the bm25_index/bm25_service module)
+     - crates/ploke-embed/src/indexer.rs or the file containing IndexerTask::process_batch
+     - crates/ploke-db/src/index/bm25_doc_meta.rs or the Database helper implementations (Database::upsert_bm25_doc_meta_batch)
+     Please drop crates/ploke-tui/src/app_state/mod.rs from the conversation to free context if you need to (you previously indicated willingness to do so).
+  2. If the BM25 actor FinalizeSeed is not performing a single transactional DB upsert, implement Database::upsert_bm25_doc_meta_batch and call it inside FinalizeSeed; return detailed errors so IndexerTask can fail the whole run on persist errors.
 
-Next step
- - Update bm25_service::FinalizeSeed to use the new Database helpers for real persistence and return detailed errors on failure.
+- Medium-term development
+  - Implement dense+BM25 fusion (RRF), reranker, and packing logic in ploke-rag.
+  - Add integration tests that run a small index, call FinalizeSeed, and assert DB state and hybrid search outputs.
 
-Progress update - 2025-08-13/4
- - bm25_service: Updated FinalizeSeed implementation to drain staged metadata and persist using new Database helpers in one atomic transaction.
- - IndexerTask now properly integrates with BM25 service by sending DocMeta during process_batch and awaiting FinalizeSeed acknowledgment.
+Change rationale
+- The file now reflects verified repository state and clearly separates "verified by reading code" from "planning notes that must be validated by inspecting other modules".
+- Asking for the specific files next will let me complete the "Immediate follow-ups" by either finishing the actor persistence wiring or adjusting the TUI and RagService facades.
 
-Next steps:
- - Add integration tests to verify end-to-end BM25 indexing and persistence
- - Implement BM25 search functionality in the RAG module
- - Add CLI commands for BM25 rebuild and hybrid search in TUI
- - Implement avgdl recalculation triggered by user messages in TUI
+Suggested shell commands
+```bash
+git add docs/plans/bm25/overview.md && git commit -m "docs(bm25): update status after wiring Rag/TUI"
+```
 
-Progress update - 2025-08-14/1
- - TUI: Added CLI commands:
-   - bm25 rebuild
-   - bm25 search <query> [top_k]
-   - hybrid <query> [top_k]
-   These currently surface user feedback and validate inputs; wiring to the underlying actors/services will follow.
-
-Technical debt notes (triage)
- - EventBus split (Realtime vs Background) is somewhat confusing but not blocking; defer refactor.
- - TUI cannot dispatch BM25/hybrid work yet; we should prefer adding StateCommand variants rather than inventing side channels.
- - No RagService handle exists in TUI; plan to initialize and store it in shared state.
- - Help text now documents the new commands to guide users during the transitional phase.
+Request for next access
+- Please add the following files to the chat (or confirm dropping crates/ploke-tui/src/app_state/mod.rs to free context):
+  - crates/ploke-embed/src/bm25_service.rs
+  - crates/ploke-embed/src/indexer.rs
+  - crates/ploke-db/src/index/mod.rs
+  Once provided I will:
+  - Verify FinalizeSeed behavior and implement DB transactional upsert if needed.
+  - Complete hybrid_search by integrating dense HNSW calls and RRF fusion or provide a precise plan + patch.
 
 Immediate follow-ups (concrete steps)
  1) Wire TUI commands to a RAG orchestration service
