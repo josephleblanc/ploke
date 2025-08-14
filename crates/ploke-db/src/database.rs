@@ -1071,6 +1071,42 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     /// Upsert BM25 document metadata in a batch transaction
+    /// 
+    /// This method inserts or updates BM25 document metadata for multiple documents in a single
+    /// database transaction. Each document is identified by its UUID and contains metadata needed
+    /// for BM25 scoring including a tracking hash, tokenizer version, and token length.
+    /// 
+    /// # Arguments
+    /// * `docs` - A vector of tuples containing:
+    ///   - `Uuid`: The document/node identifier
+    ///   - `TrackingHash`: Stable content hash for the document
+    ///   - `String`: Tokenizer version used (e.g., "code_tokenizer_v1")
+    ///   - `usize`: Token length of the document
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// # use ploke_db::Database;
+    /// # use ploke_core::TrackingHash;
+    /// # use uuid::Uuid;
+    /// # let db = Database::new(cozo::new_cozo_mem().unwrap());
+    /// let docs = vec![
+    ///     (
+    ///         Uuid::new_v4(),
+    ///         TrackingHash(Uuid::new_v4()),
+    ///         "code_tokenizer_v1".to_string(),
+    ///         42
+    ///     ),
+    ///     (
+    ///         Uuid::new_v4(),
+    ///         TrackingHash(Uuid::new_v4()),
+    ///         "code_tokenizer_v1".to_string(),
+    ///         128
+    ///     )
+    /// ];
+    /// 
+    /// db.upsert_bm25_doc_meta_batch(docs).unwrap();
+    /// ```
     pub fn upsert_bm25_doc_meta_batch(
         &self,
         docs: Vec<(Uuid, TrackingHash, String, usize)>,
@@ -1107,6 +1143,21 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     /// Set the average document length for BM25
+    /// 
+    /// This method sets the average document length (avgdl) parameter used in BM25 scoring.
+    /// The avgdl value should be computed from the corpus and represents the average number
+    /// of tokens per document.
+    /// 
+    /// # Arguments
+    /// * `avgdl` - The average document length as a floating point number
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// # use ploke_db::Database;
+    /// # let db = Database::new(cozo::new_cozo_mem().unwrap());
+    /// db.set_bm25_avgdl(15.5).unwrap();
+    /// ```
     pub fn set_bm25_avgdl(&self, avgdl: f32) -> Result<(), DbError> {
         let mut params = BTreeMap::new();
         params.insert(
@@ -1126,6 +1177,33 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     /// Atomically upsert BM25 document metadata and set average document length
+    /// 
+    /// This method performs both upserting document metadata and setting the average document
+    /// length in a single atomic database transaction. This ensures consistency between the
+    /// document metadata and the BM25 parameters.
+    /// 
+    /// # Arguments
+    /// * `docs` - A vector of tuples containing document metadata (same as upsert_bm25_doc_meta_batch)
+    /// * `avgdl` - The average document length for BM25 scoring
+    /// 
+    /// # Examples
+    /// 
+    /// ```
+    /// # use ploke_db::Database;
+    /// # use ploke_core::TrackingHash;
+    /// # use uuid::Uuid;
+    /// # let db = Database::new(cozo::new_cozo_mem().unwrap());
+    /// let docs = vec![
+    ///     (
+    ///         Uuid::new_v4(),
+    ///         TrackingHash(Uuid::new_v4()),
+    ///         "code_tokenizer_v1".to_string(),
+    ///         42
+    ///     )
+    /// ];
+    /// 
+    /// db.upsert_bm25_data_atomic(docs, 20.0).unwrap();
+    /// ```
     pub fn upsert_bm25_data_atomic(
         &self,
         docs: Vec<(Uuid, TrackingHash, String, usize)>,
@@ -1456,6 +1534,27 @@ mod tests {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         assert_eq!(result.rows.len(), 2);
+        
+        // Verify the first document
+        if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {
+            // ID is correct
+        } else {
+            panic!("Expected Uuid DataValue for id");
+        }
+        
+        if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[0][3] {
+            assert_eq!(token_length, 42);
+        } else {
+            panic!("Expected Int DataValue for token_length");
+        }
+        
+        // Verify the second document
+        if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[1][3] {
+            assert_eq!(token_length, 128);
+        } else {
+            panic!("Expected Int DataValue for token_length");
+        }
+        
         Ok(())
     }
 
@@ -1504,13 +1603,18 @@ mod tests {
         let doc_result = db
             .db
             .run_script(
-                "?[id] := *bm25_doc_meta{id}",
+                "?[id, token_length] := *bm25_doc_meta{id, token_length}",
                 BTreeMap::new(),
                 ScriptMutability::Immutable,
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         assert_eq!(doc_result.rows.len(), 1);
+        if let DataValue::Num(cozo::Num::Int(token_length)) = doc_result.rows[0][1] {
+            assert_eq!(token_length, 42);
+        } else {
+            panic!("Expected Int DataValue for token_length");
+        }
 
         // Verify avgdl was set
         let avgdl_result = db
@@ -1528,6 +1632,45 @@ mod tests {
         } else {
             panic!("Expected Float DataValue");
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_upsert_bm25_data_atomic_empty_docs() -> Result<(), DbError> {
+        let db = setup_db();
+        
+        // Test with empty docs vector - should still set avgdl
+        db.upsert_bm25_data_atomic(vec![], 25.0).unwrap();
+
+        // Verify avgdl was set even with empty docs
+        let avgdl_result = db
+            .db
+            .run_script(
+                "?[avgdl] := *bm25_avgdl{avgdl}",
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        assert_eq!(avgdl_result.rows.len(), 1);
+        if let DataValue::Num(cozo::Num::Float(f)) = avgdl_result.rows[0][0] {
+            assert_eq!(f, 25.0);
+        } else {
+            panic!("Expected Float DataValue");
+        }
+
+        // Verify no document metadata was inserted
+        let doc_result = db
+            .db
+            .run_script(
+                "?[id] := *bm25_doc_meta{id}",
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+
+        assert_eq!(doc_result.rows.len(), 0);
 
         Ok(())
     }
