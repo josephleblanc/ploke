@@ -36,6 +36,9 @@ temp.md
 # backups of old implementations
 *.back
 
+# backups of test fixtures for unit tests
+tests/backup_dbs/
+
 CARGO_TEST_OUTPUT.txt
 
 # deprecated files
