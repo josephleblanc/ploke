@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use crate::Database;
+use crate::{Database, DbError};
 
 use super::{Bm25Indexer, DocData, DocMeta};
 use tokio::sync::{mpsc, oneshot};
@@ -22,7 +22,7 @@ pub enum Bm25Cmd {
 
 /// Start the BM25 actor with a given avgdl parameter.
 /// Returns an mpsc::Sender<Bm25Cmd> handle for issuing commands.
-pub fn start(db: Arc<Database>, avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
+pub fn start(db: Arc<Database>, avgdl: f32) -> Result< mpsc::Sender<Bm25Cmd> , DbError> {
     let (tx, mut rx) = mpsc::channel::<Bm25Cmd>(128);
     let mut indexer = Bm25Indexer::new(avgdl);
 
@@ -34,7 +34,9 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                         "BM25 IndexBatch: {} docs",
                         docs.len(),
                     );
-                    indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter());
+                    if let Err(e) = indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
+                        tracing::error!("Error upserting batch with cozo: {e}");
+                    };
                 }
                 Bm25Cmd::Remove { ids } => {
                     tracing::debug!("BM25 Remove: {} docs", ids.len());
@@ -64,17 +66,17 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> mpsc::Sender<Bm25Cmd> {
                     tracing::debug!("scored: {scored:?}");
                     let results: Vec<(Uuid, f32)> =
                         scored.into_iter().map(|d| (d.id, d.score)).collect();
-                    let _ = resp.send(results).expect("expecting return val");
+                    resp.send(results).expect("expecting return val");
                 }
             }
         }
         tracing::info!("BM25 service actor loop ended");
     });
 
-    tx
+    Ok( tx )
 }
 
 /// Convenience starter with a reasonable default avgdl.
-pub fn start_default(db: Arc<Database>) -> mpsc::Sender<Bm25Cmd> {
+pub fn start_default(db: Arc<Database>) -> Result< mpsc::Sender<Bm25Cmd>, DbError > {
     start(db, 10.0)
 }

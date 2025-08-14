@@ -1078,38 +1078,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     /// This method inserts or updates BM25 document metadata for multiple documents in a single
     /// database transaction. Each document is identified by its UUID and contains metadata needed
     /// for BM25 scoring including a tracking hash, tokenizer version, and token length.
-    /// 
-    /// # Arguments
-    /// * `docs` - A vector of tuples containing:
-    ///   - `Uuid`: The document/node identifier
-    ///   - `TrackingHash`: Stable content hash for the document
-    ///   - `String`: Tokenizer version used (e.g., "code_tokenizer_v1")
-    ///   - `usize`: Token length of the document
-    /// 
-    /// # Examples
-    /// 
-    /// ```
-    /// # use ploke_db::Database;
-    /// # use ploke_core::TrackingHash;
-    /// # use uuid::Uuid;
-    /// # let db = Database::new(cozo::new_cozo_mem().unwrap());
-    /// let docs = vec![
-    ///     (
-    ///         Uuid::new_v4(),
-    ///         TrackingHash(Uuid::new_v4()),
-    ///         "code_tokenizer_v1".to_string(),
-    ///         42
-    ///     ),
-    ///     (
-    ///         Uuid::new_v4(),
-    ///         TrackingHash(Uuid::new_v4()),
-    ///         "code_tokenizer_v1".to_string(),
-    ///         128
-    ///     )
-    /// ];
-    /// 
-    /// db.upsert_bm25_doc_meta_batch(docs).unwrap();
-    /// ```
     pub fn upsert_bm25_doc_meta_batch(
         &self,
         docs: impl IntoIterator<Item = (Uuid, DocMeta)>,

@@ -237,7 +237,7 @@ async fn test_next_batch(fixture: &'static str) -> Result<(), ploke_error::Error
         CallbackManager::new_bounded(Arc::clone(&db), 1000)?;
     let counter = callback_manager.clone_counter();
 
-    let bm25_tx = bm25_index::bm25_service::start(Arc::clone(&db), 0.0);
+    let bm25_tx = bm25_index::bm25_service::start(Arc::clone(&db), 0.0)?;
 
     let idx_tag = IndexerTask::new(
         Arc::clone(&db),
