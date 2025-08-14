@@ -24,6 +24,7 @@ pub enum RagError {
 
 /// RAG orchestration service.
 /// Holds handles to the database, dense embedder, and BM25 service actor.
+#[derive(Debug)]
 pub struct RagService {
     db: Arc<Database>,
     dense_embedder: Arc<IndexerTask>,
