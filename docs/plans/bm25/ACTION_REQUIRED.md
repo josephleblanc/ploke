@@ -26,7 +26,18 @@ Please add to chat
 - crates/ploke-db/src/database.rs
 - (Optional) The file that starts the BM25 actor (call site of bm25_service::start or start_default)
 
-Once added, I will:
-- Implement the Database helpers with proper Cozo upsert logic and atomic transaction for bm25_doc_meta + avgdl.
-- Update bm25_service::FinalizeSeed to perform real persistence and return rich errors on failure.
-- Update planning docs to mark these steps as implemented.
+Status Update (2025-08-15):
+- ✅ Step 1 completed: ploke-db Database helpers implemented
+  - Added upsert_bm25_doc_meta_batch, set_bm25_avgdl, and upsert_bm25_data_atomic
+- ✅ Step 2 completed: bm25_service updated with real persistence
+  - BM25 actor now optionally holds Arc<Database>
+  - FinalizeSeed computes avgdl and persists metadata atomically
+  - Added start_with_db constructor for database-enabled BM25 service
+- ✅ Integration completed: IndexerTask properly wired to BM25 service
+  - Sends DocMeta during process_batch
+  - Awaits FinalizeSeed acknowledgment before marking completion
+
+Next steps:
+- Add integration tests to verify end-to-end BM25 indexing and persistence
+- Implement BM25 search functionality in the RAG module
+- Add CLI commands for BM25 rebuild and hybrid search in TUI

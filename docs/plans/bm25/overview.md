@@ -87,6 +87,19 @@ Progress update - 2025-08-13 (continued)
  - IndexerTask: On successful dense indexing, now sends FinalizeSeed to BM25 and awaits ack before marking Completed; fails the run on any error.
  - Hash type: bm25 DocMeta now uses TrackingHash newtype from ploke-core for tracking_hash; generation currently wraps UUID v5 into TrackingHash until full TrackingHash::generate inputs are available. Tests updated.
 
-Next two steps
- - ploke-db: Add atomic upsert_bm25_doc_meta_batch and avg token length helpers, and wire them into bm25_service::FinalizeSeed to perform a single atomic commit of bm25_doc_meta and persist avgdl.
- - bm25_service: Replace placeholder FinalizeSeed with real implementation that computes avgdl (from buffered docs or DB stream), persists bm25_doc_meta via ploke-db helpers, and returns detailed errors on failure.
+Progress update - 2025-08-14
+ - ploke-db: Implemented atomic persistence helpers:
+   - Database::upsert_bm25_doc_meta_batch for batch upsert of document metadata
+   - Database::set_bm25_avgdl for setting average document length
+   - Database::upsert_bm25_data_atomic for atomic transaction committing both doc meta and avgdl
+ - bm25_service: Updated BM25 actor to optionally hold Arc<Database> and perform real persistence on FinalizeSeed
+ - IndexerTask: Now sends DocMeta (tracking_hash, token_length) to BM25 service instead of full snippets
+
+Next step
+ - Update bm25_service::FinalizeSeed to use the new Database helpers for real persistence and return detailed errors on failure.
+ - Add start_with_db constructor to bm25_service for backward compatibility.
+
+Progress update - 2025-08-15
+ - bm25_service: Updated FinalizeSeed implementation to compute avgdl from staged metadata, drain staged metadata, and persist using new Database helpers in one atomic transaction.
+ - Added start_with_db constructor to bm25_service while maintaining backward compatibility with existing start/start_default functions.
+ - IndexerTask now properly integrates with BM25 service by sending DocMeta during process_batch and awaiting FinalizeSeed acknowledgment.
