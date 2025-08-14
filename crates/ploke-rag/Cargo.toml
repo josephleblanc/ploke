@@ -10,3 +10,4 @@ ploke-error = { path = "../ploke-error" }
 
 thiserror = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
