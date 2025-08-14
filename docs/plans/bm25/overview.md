@@ -72,7 +72,7 @@ How to resume after context reset
  - Recreate the BM25 actor scaffolding and the IndexerTask send point at // in process_batch.
  - Run the normal indexing pass; after successful completion, send FinalizeSeed and wait for its success ack. If Finalize fails, the run should be treated as failed and retried (ensures atomic "all nodes or none" persistence).
 
-Progress update - 2025-08-13
+Progress update - 2025-08-13/1
  - Schema aligned: bm25_doc_meta now has fields {id, tracking_hash, tokenizer_version, token_length}, matching the design.
  - Stable hash: replaced DefaultHasher with a stable UUID v5–based tracking_hash derived from the snippet bytes; tests updated accordingly.
  - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch. Note: IndexBatch now uses DocMeta to avoid allocations; process_batch computes token lengths before sending.
@@ -82,21 +82,21 @@ Next step
  - Implement ploke-db persistent helpers for bm25_doc_meta batch upsert to support Finalize.
  - Wire bm25_service::FinalizeSeed to call those helpers inside a single DB transaction and only acknowledge after commit.
 
-Progress update - 2025-08-13 (continued)
+Progress update - 2025-08-13/2
  - bm25_service: Added FinalizeSeed command and actor handling that acks success (placeholder). Update required to perform real DB commits on Finalize.
  - IndexerTask: On successful dense indexing, now sends FinalizeSeed to BM25 and awaits ack before marking Completed; fails the run on any error.
  - Hash type: bm25 DocMeta now uses TrackingHash newtype from ploke-core for tracking_hash; generation currently wraps UUID v5 into TrackingHash until full TrackingHash::generate inputs are available. Tests updated.
 
-Progress update - 2025-08-14
+Progress update - 2025-08-13/3
  - ploke-db: Implemented atomic persistence helpers:
    - Database::upsert_bm25_doc_meta_batch for batch upsert of document metadata
  - bm25_service: Updated BM25 actor to perform real persistence on FinalizeSeed
- - IndexerTask: Now sends DocMeta (tracking_hash, token_length) to BM25 service instead of full snippets
+ - IndexerTask: Now sends DocData (tracking_hash, token_length) to BM25 service along with of full snippets
 
 Next step
  - Update bm25_service::FinalizeSeed to use the new Database helpers for real persistence and return detailed errors on failure.
 
-Progress update - 2025-08-15
+Progress update - 2025-08-13/4
  - bm25_service: Updated FinalizeSeed implementation to drain staged metadata and persist using new Database helpers in one atomic transaction.
  - IndexerTask now properly integrates with BM25 service by sending DocMeta during process_batch and awaiting FinalizeSeed acknowledgment.
 

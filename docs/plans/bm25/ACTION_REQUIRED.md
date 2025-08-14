@@ -35,7 +35,7 @@ Status Update (2025-08-15):
   - Awaits FinalizeSeed acknowledgment before marking completion
 
 Next steps:
-- Add integration tests to verify end-to-end BM25 indexing and persistence
+- ✅ Add integration tests to verify end-to-end BM25 indexing and persistence
   - Initial tests from parsing to cozo upsert to search verified
   - TODO: Need more tests, recent changes broke some unit tests, defer until `overview.md` tasks complete given that the end to end tests are passing.
 - Implement BM25 search functionality in the RAG module

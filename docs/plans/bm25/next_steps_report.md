@@ -1,7 +1,3 @@
-<!-- Reason: Update plan to stage all BM25 doc changes and avoid incremental DB upserts.
-     - Explain the EmbeddingData fields and the new approach to avoid cloning snippet Strings.
-     - Note required API changes: IndexBatch will carry borrowed &str snippets; process_batch will compute token lengths.
--->
 System/subsystem: BM25 sparse indexing and hybrid retrieval pipeline (ploke-embed actor + ploke-db indexer)
 
 Rubric (6 categories)
