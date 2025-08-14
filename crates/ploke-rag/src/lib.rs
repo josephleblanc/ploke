@@ -250,13 +250,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
-        // AI: Add a tracing setup and logging here at DEBUG level, along with logging statements
-        // below. It seems we are failing the assert and I'm not sure where it is failing. AI!
+        use tracing::{debug, info};
+
+        // Initialize tracing for the test
+        let _guard = ploke_tui::tracing_setup::init_tracing();
+
         let search_term = "AttributedStruct";
+        debug!("Starting search test with term: '{}'", search_term);
+        
         let db = TEST_DB_NODES
             .as_ref()
             .expect("Incorrect setup of TEST_DB_NODES")
             .clone();
+        debug!("Loaded test database with {} nodes", db.count_nodes()?);
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
@@ -267,22 +273,34 @@ mod tests {
         // vector embedding process.
         // Tests for that are in `ploke-embed/src/indexer/tests.rs`
 
+        debug!("Initializing RAG service...");
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15).await?;
+        debug!("Search returned {} results", search_res.len());
+        
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        debug!("Fetching nodes for IDs: {:?}", ordered_node_ids);
+        
         let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
+        debug!("Retrieved {} nodes from database", node_info.len());
 
         let io_handle = IoManagerHandle::new();
         let snippet_results: Vec<Result<String, Error>> = io_handle
             .get_snippets_batch(node_info)
             .await
             .expect("Problem receiving");
+        
         let mut snippets: Vec<String> = Vec::new();
-        for snip in snippet_results {
+        for (i, snip) in snippet_results.into_iter().enumerate() {
             let snip_ok = snip?;
+            debug!("Snippet {}: {} chars", i + 1, snip_ok.len());
             snippets.push(snip_ok);
         }
+        
         let snippet_match = snippets.iter().find(|s| s.contains(search_term));
-        assert!(snippet_match.is_some());
+        debug!("Found matching snippet: {}", snippet_match.is_some());
+        
+        assert!(snippet_match.is_some(), "No snippet found containing '{}'", search_term);
+        info!("Test completed successfully - found matching snippet for '{}'", search_term);
         Ok(())
     }
 }
