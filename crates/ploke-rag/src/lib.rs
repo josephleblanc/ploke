@@ -5,9 +5,10 @@ use std::collections::HashMap;
 use ploke_db::{
     bm25_index::bm25_service,
     bm25_index::bm25_service::Bm25Cmd,
-    Database, DbError,
+    Database, DbError, EmbeddingData, TypedEmbedData, search_similar_args, SimilarArgs,
 };
 use ploke_embed::indexer::IndexerTask;
+use ploke_core::NodeType;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -77,16 +78,37 @@ impl RagService {
         let query_embedding = embeddings.into_iter().next()
             .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
 
-        // Perform semantic search in the database
-        let results = self.db.search_similar(&query_embedding, top_k)
-            .map_err(RagError::Db)?;
+        // Collect results from all node types
+        let mut all_results: Vec<(Uuid, f32)> = Vec::new();
         
-        // Convert to the expected format
-        let formatted_results = results.into_iter()
-            .map(|(id, score)| (id, score as f32))
-            .collect();
+        for node_type in NodeType::primary_nodes() {
+            let args = SimilarArgs {
+                db: &self.db,
+                vector_query: &query_embedding,
+                k: top_k,
+                ef: 10, // Default ef value
+                ty: node_type,
+                max_hits: top_k,
+                radius: 1.0, // Default radius value
+            };
+            
+            let result = search_similar_args(args)
+                .map_err(|e| RagError::Db(e))?;
+            
+            // Convert distance to similarity score (lower distance = higher similarity)
+            let typed_results: Vec<(Uuid, f32)> = result.typed_data.v.into_iter()
+                .zip(result.dist.into_iter())
+                .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32))
+                .collect();
+            
+            all_results.extend(typed_results);
+        }
+
+        // Sort by score (highest first) and take top_k
+        all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        all_results.truncate(top_k);
         
-        Ok(formatted_results)
+        Ok(all_results)
     }
 
     /// Perform a hybrid search (BM25 + dense).
