@@ -23,7 +23,21 @@ pub enum RagError {
     Embed(String),
 }
 
-// AI: implement Into<ploke_error::Error> for RagError AI!
+impl Into<ploke_error::Error> for RagError {
+    fn into(self) -> ploke_error::Error {
+        match self {
+            RagError::Db(db_err) => ploke_error::Error::Internal(
+                ploke_error::internal::InternalError::CompilerError(format!("DB error: {}", db_err))
+            ),
+            RagError::Channel(msg) => ploke_error::Error::Internal(
+                ploke_error::internal::InternalError::InvalidState("Channel communication error")
+            ),
+            RagError::Embed(msg) => ploke_error::Error::Internal(
+                ploke_error::internal::InternalError::NotImplemented(format!("Embedding error: {}", msg))
+            ),
+        }
+    }
+}
 
 /// RAG orchestration service.
 /// Holds handles to the database, dense embedder, and BM25 service actor.
