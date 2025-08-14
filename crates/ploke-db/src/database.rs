@@ -738,8 +738,20 @@ impl Database {
         Self::into_usize(result)
     }
 
-    /// Get the node data for the target nodes
-    // Add documentation AI!
+    /// Retrieves ordered embedding data for a list of target nodes.
+    ///
+    /// This method fetches the embedding data for a specific set of nodes identified by their UUIDs,
+    /// returning the results in the same order as the input IDs. It includes file path, namespace,
+    /// and other metadata needed for code understanding.
+    ///
+    /// # Arguments
+    ///
+    /// * `nodes` - A vector of UUIDs representing the nodes to retrieve
+    ///
+    /// # Returns
+    ///
+    /// A result containing a vector of `EmbeddingData` structs in the same order as the input UUIDs,
+    /// or an error if the query fails.
     pub fn get_nodes_ordered(
         &self,
         nodes: Vec<Uuid>,
