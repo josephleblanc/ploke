@@ -24,11 +24,4 @@ impl RagService {
     pub fn new(db: Arc< Database >, dense_embedder: IndexerTask) -> Self {
         Self { db, dense_embedder: todo!(), bm_embedder: todo!() }
     }
-
-    pub async fn query(&self, _question: &str) -> Result<Vec<ploke_db::CodeSnippet>, RagError> {
-        // 1. Embed the question
-        // 2. Query the database
-        // 3. Return the results
-        Ok(vec![])
-    }
 }
