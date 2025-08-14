@@ -3,12 +3,10 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use ploke_db::{
-    bm25_index::bm25_service,
-    bm25_index::bm25_service::Bm25Cmd,
-    Database, DbError, EmbeddingData, TypedEmbedData, search_similar_args, SimilarArgs,
+    bm25_index::bm25_service::{self, Bm25Cmd}, search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData
 };
 use ploke_embed::indexer::IndexerTask;
-use ploke_core::NodeType;
+use ploke_core::EmbeddingData;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
