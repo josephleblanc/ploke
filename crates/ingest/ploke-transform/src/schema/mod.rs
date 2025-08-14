@@ -21,6 +21,7 @@ pub mod secondary_nodes;
 pub mod subnode_variants;
 pub mod types;
 pub mod crate_node;
+pub mod meta;
 
 use crate::error::TransformError;
 use assoc_nodes::MethodNodeSchema;
@@ -28,6 +29,7 @@ use cozo::{Db, MemStorage};
 use crate_node::CrateContextSchema;
 use edges::SyntacticRelationSchema;
 use itertools::Itertools;
+use meta::Bm25MetaSchema;
 use primary_nodes::*;
 use secondary_nodes::*;
 use types::create_and_insert_types;
@@ -97,6 +99,9 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;
+
+    // -- bm25_doc_meta --
+    Bm25MetaSchema::create_and_insert_schema(db)?;
     Ok(())
 }
 

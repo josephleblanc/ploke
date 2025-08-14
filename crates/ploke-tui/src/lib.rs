@@ -123,6 +123,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
         Arc::clone(&proc_arc), // Use configured processor
         CancellationToken::new().0,
         8,
+        // TODO: Add bm25_tx here
     );
 
     let state = Arc::new(AppState {

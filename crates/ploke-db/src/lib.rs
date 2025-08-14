@@ -7,7 +7,7 @@ mod index;
 mod query;
 mod result;
 mod span;
-mod bm25_index;
+pub mod bm25_index;
 
 pub use database::{to_usize, Database, TypedEmbedData};
 pub use error::DbError;

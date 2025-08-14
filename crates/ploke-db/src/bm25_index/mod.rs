@@ -12,6 +12,8 @@ use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use ploke_core::TrackingHash;
 use uuid::Uuid;
 
+pub const TOKENIZER_VERSION: &str = "code_version_v1";
+
 // ------------------------- Code-aware tokenizer -------------------------
 // Implements bm25::Tokenizer by producing a Vec<String> of tokens from code.
 #[derive(Default, Clone)]
@@ -140,7 +142,7 @@ impl CodeTokenizer {
     }
 
     /// Count tokens in the entire code string without allocating per-token Strings.
-    fn count_tokens_in_code(s: &str) -> usize {
+    pub fn count_tokens_in_code(s: &str) -> usize {
         let bytes = s.as_bytes();
         let mut i = 0usize;
         let mut code_start = 0usize;
@@ -339,6 +341,7 @@ impl Tokenizer for CodeTokenizer {
 /// Minimal trait the Ploke Cozo client should implement to receive doc metadata.
 /// You will likely replace this with async methods in your real Cozo client; this
 /// synchronous trait keeps tests simple.
+#[derive(Debug, Clone, Copy)]
 pub struct DocMeta {
     pub token_length: usize,
     pub tracking_hash: TrackingHash,
@@ -356,6 +359,7 @@ pub struct Bm25Indexer {
     embedder: bm25::Embedder<u32, CodeTokenizer>,
     scorer: Scorer<Uuid, u32>,
     staged_meta: HashMap<Uuid, DocMeta>,
+    version: &'static str,
 }
 
 impl Bm25Indexer {
@@ -363,7 +367,11 @@ impl Bm25Indexer {
     pub fn new(avgdl: f32) -> Self {
         let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
         let scorer = Scorer::<Uuid, u32>::new();
-        Self { embedder, scorer, staged_meta: HashMap::new() }
+        Self { embedder, scorer, staged_meta: HashMap::new(), version: TOKENIZER_VERSION}
+    }
+
+    pub fn stage_doc_meta(&mut self, id: Uuid, meta: DocMeta) {
+        self.staged_meta.insert(id, meta);
     }
 
     /// Construct a new Bm25Indexer from a corpus Vec<(Uuid, String)>.
@@ -395,7 +403,7 @@ impl Bm25Indexer {
             scorer.upsert(&id, embedding);
         }
 
-        Self { embedder, scorer, staged_meta: HashMap::new() }
+        Self { embedder, scorer, staged_meta: HashMap::new(), version: TOKENIZER_VERSION}
     }
 
     /// Index a batch of (uuid, snippet) pairs.

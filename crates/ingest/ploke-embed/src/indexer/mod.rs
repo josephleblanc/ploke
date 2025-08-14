@@ -8,7 +8,7 @@ use crate::providers::openai::OpenAIBackend;
 use crate::{config::CozoConfig, error::truncate_string};
 use cozo::{CallbackOp, DataValue, NamedRows};
 use ploke_core::EmbeddingData;
-use ploke_db::{CallbackManager, Database, NodeType, TypedEmbedData};
+use ploke_db::{bm25_index, CallbackManager, Database, NodeType, TypedEmbedData};
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ use tracing::{info_span, instrument};
 use uuid::Uuid;
 
 use crate::{cancel_token::CancellationToken, error::EmbedError};
-use ploke_db::bm25_index::DocMeta;
+use ploke_db::bm25_index::{CodeTokenizer, DocMeta};
 
 #[derive(Debug)]
 pub struct EmbeddingProcessor {
@@ -687,7 +687,7 @@ impl IndexerTask {
                 .iter()
                 .zip(valid_snippets.iter())
                 .map(|(emb_data, snippet)| {
-                    let token_length = ploke_db::bm25_index::CodeTokenizer::count_tokens_in_code(snippet);
+                    let token_length = CodeTokenizer::count_tokens_in_code(snippet);
                     let tracking_hash = emb_data.node_tracking_hash; // Use node tracking hash from EmbeddingData
                     (
                         emb_data.id,
@@ -700,13 +700,12 @@ impl IndexerTask {
                 .collect();
             
             tracing::debug!(
-                "Sending {} docs to BM25 service (tokenizer_version=code_tokenizer_v1)",
+                "Sending {} processed snippets to BM25 service",
                 docs.len()
             );
             
             if let Err(e) = tx.try_send(bm25_service::Bm25Cmd::IndexBatch {
                 docs,
-                tokenizer_version: "code_tokenizer_v1".into(),
             }) {
                 tracing::warn!("BM25 IndexBatch try_send failed: {}", e);
             }
@@ -814,7 +813,7 @@ pub mod bm25_service {
     #[derive(Debug)]
     pub enum Bm25Cmd {
         /// Index a batch of (Uuid, DocMeta) documents with a tokenizer version tag.
-        IndexBatch { docs: Vec<(Uuid, DocMeta)>, tokenizer_version: String },
+        IndexBatch { docs: Vec<(Uuid, DocMeta)> },
         /// Remove documents from the sparse index by id.
         Remove { ids: Vec<Uuid> },
         /// Rebuild the index from source of truth (placeholder; no-op for now).
@@ -834,15 +833,14 @@ pub mod bm25_service {
         tokio::spawn(async move {
             while let Some(cmd) = rx.recv().await {
                 match cmd {
-                    Bm25Cmd::IndexBatch { docs, tokenizer_version } => {
+                    Bm25Cmd::IndexBatch { docs } => {
                         tracing::debug!(
-                            "BM25 IndexBatch: {} docs, tokenizer_version={}",
+                            "BM25 IndexBatch: {} docs",
                             docs.len(),
-                            tokenizer_version
                         );
                         // Stage metadata for later persistence during Finalize
                         for (id, meta) in docs {
-                            indexer.stage_doc_meta(id, meta, tokenizer_version.clone());
+                            indexer.stage_doc_meta(id, meta);
                         }
                     }
                     Bm25Cmd::Remove { ids } => {
