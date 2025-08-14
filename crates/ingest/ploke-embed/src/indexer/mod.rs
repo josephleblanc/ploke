@@ -647,8 +647,6 @@ impl IndexerTask {
             tracing::error!("Empty valid snippets detected.");
             // panic!("AAaaaaaaaah")
         }
-        // AI: Send a clone of the Vec<String> of snippets to the Bm25Indexer here, along witha
-        // `tracing` logging statement and correct error handling.
         if let Some(tx) = &self.bm25_tx {
             let docs: Vec<(Uuid, String)> = valid_data
                 .iter()
