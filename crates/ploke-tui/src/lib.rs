@@ -128,7 +128,7 @@ pub async fn try_main() -> color_eyre::Result<()> {
     let indexer_task = Arc::new(indexer_task);
 
     // Initialize RAG orchestration service (BM25 + dense handles)
-    let rag = match ploke_rag::RagService::new(db_handle.clone(), Arc::clone(&indexer_task)) {
+    let rag = match ploke_rag::RagService::new(db_handle.clone(), Arc::clone(&proc_arc)) {
         Ok(svc) => Some(Arc::new(svc)),
         Err(e) => {
             tracing::warn!("Failed to initialize RagService: {}", e);
@@ -256,26 +256,20 @@ pub mod system {
             error: Option<&'static str>,
         },
         ReIndex {
-            workspace: String
-        }
+            workspace: String,
+        },
     }
 }
 
 // Other domains: file, rag, agent, system, ...
 
-pub mod ploke_rag {
-    use crate::chat_history::Message;
-
-    use super::*;
-    #[derive(Clone, Debug)]
-    pub enum RagEvent {
-        ContextSnippets(Uuid, Vec<String>),
-        UserMessages(Uuid, Vec<Message>),
-        ConstructContext(Uuid),
-    }
+#[derive(Clone, Debug)]
+pub enum RagEvent {
+    ContextSnippets(Uuid, Vec<String>),
+    UserMessages(Uuid, Vec<chat_history::Message>),
+    ConstructContext(Uuid),
 }
 
-use ploke_rag::RagEvent;
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     Ui(UiEvent),

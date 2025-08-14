@@ -3662,6 +3662,7 @@ dependencies = [
 name = "ploke-rag"
 version = "0.1.0"
 dependencies = [
+ "ploke-core",
  "ploke-db",
  "ploke-embed",
  "ploke-error",
@@ -3755,6 +3756,7 @@ dependencies = [
  "ploke-embed",
  "ploke-error",
  "ploke-io",
+ "ploke-rag",
  "ploke-test-utils",
  "ploke-transform",
  "rand 0.9.1",

@@ -7,8 +7,7 @@ use tokio::{fs, sync::mpsc};
 use tracing::{error, info, warn};
 
 use crate::error::ErrorSeverity;
-use crate::ploke_rag::RagEvent;
-use crate::ErrorEvent;
+use crate::{ErrorEvent, RagEvent};
 use crate::{AppEvent, EventBus, system::SystemEvent};
 
 pub struct FileManager {

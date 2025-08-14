@@ -589,6 +589,7 @@ mod test {
     use cozo::DataValue;
     use ploke_db::QueryResult;
     use ploke_embed::local::EmbeddingConfig;
+    use ploke_rag::RagService;
     use syn_parser::parser::nodes::ToCozoUuid;
 
     use crate::tracing_setup::init_tracing;
@@ -686,16 +687,18 @@ mod test {
             8,
         );
 
+        let rag = RagService::new(Arc::clone( &db_handle ), Arc::clone( &proc_arc ))?;
         let state = Arc::new(AppState {
-            chat: ChatState::new(ChatHistory::new()),
-            config: ConfigState::default(),
-            system: SystemState::default(),
-            indexing_state: RwLock::new(None), // Initialize as None
-            indexer_task: Some(Arc::new(indexer_task)),
-            indexing_control: Arc::new(Mutex::new(None)),
-            db: db_handle.clone(),
-            embedder: Arc::clone(&proc_arc),
-            io_handle: io_handle.clone(),
+            chat:ChatState::new(ChatHistory::new()),
+            config:ConfigState::default(),
+            system:SystemState::default(),
+            indexing_state:RwLock::new(None),
+            indexer_task:Some(Arc::new(indexer_task)),
+            indexing_control:Arc::new(Mutex::new(None)),
+            db:db_handle.clone(),
+            embedder:Arc::clone(&proc_arc),
+            io_handle:io_handle.clone(), 
+            rag: Some(Arc::new( rag )) 
         });
         {
             let mut system_guard = state.system.write().await;

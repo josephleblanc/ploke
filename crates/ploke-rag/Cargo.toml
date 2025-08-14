@@ -7,6 +7,7 @@ edition = "2021"
 ploke-db = { path = "../ploke-db" }
 ploke-embed = { path = "../ingest/ploke-embed" }
 ploke-error = { path = "../ploke-error" }
+ploke-core = { path = "../ploke-core" }
 
 thiserror = { workspace = true }
 tokio = { workspace = true }

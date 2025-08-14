@@ -23,9 +23,9 @@ pub enum RagError {
     Embed(String),
 }
 
-impl Into<ploke_error::Error> for RagError {
-    fn into(self) -> ploke_error::Error {
-        match self {
+impl From<RagError> for ploke_error::Error {
+    fn from(value: RagError) -> ploke_error::Error {
+        match value {
             RagError::Db(db_err) => ploke_error::Error::Internal(
                 ploke_error::internal::InternalError::CompilerError(format!("DB error: {}", db_err))
             ),
@@ -86,8 +86,7 @@ impl RagService {
     /// Returns a Vec of (snippet_id, score) pairs sorted by relevance.
     pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, ploke_error::Error> {
         // Generate embedding for the query
-        let embeddings = self.dense_embedder.generate_embeddings(vec![query.to_string()]).await
-            .map_err(|e| RagError::Embed(format!("failed to generate embeddings: {:?}", e)))?;
+        let embeddings = self.dense_embedder.generate_embeddings(vec![query.to_string()]).await?;
         
         let query_embedding = embeddings.into_iter().next()
             .ok_or_else(|| RagError::Embed("failed to generate query embedding".to_string()))?;
@@ -106,8 +105,7 @@ impl RagService {
                 radius: 1.0, // Default radius value
             };
             
-            let result = search_similar_args(args)
-                .map_err(|e| RagError::Db(e))?;
+            let result = search_similar_args(args)?;
             
             // Convert distance to similarity score (lower distance = higher similarity)
             let typed_results: Vec<(Uuid, f32)> = result.typed_data.v.into_iter()
@@ -151,17 +149,15 @@ impl RagService {
         let mut fused: HashMap<Uuid, f32> = HashMap::new();
 
         for (i, (id, _score)) in bm25_list.iter().enumerate() {
-            let id = id.clone();
             let rank = (i + 1) as f32;
             let add = 1.0_f32 / (rrf_k + rank);
-            *fused.entry(id).or_insert(0.0) += add;
+            *fused.entry(*id).or_insert(0.0) += add;
         }
 
         for (i, (id, _score)) in dense_list.iter().enumerate() {
-            let id = id.clone();
             let rank = (i + 1) as f32;
             let add = 1.0_f32 / (rrf_k + rank);
-            *fused.entry(id).or_insert(0.0) += add;
+            *fused.entry(*id).or_insert(0.0) += add;
         }
 
         // Collect, sort by fused score descending, and take top_k
