@@ -251,13 +251,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
-        use tracing::{debug, info};
+        use tracing::{debug, info, instrument};
 
         // Initialize tracing for the test
         ploke_test_utils::init_test_tracing(Level::DEBUG);
 
         let search_term = "AttributedStruct";
-        debug!("Starting search test with term: '{}'", search_term);
+        let span = tracing::span!(Level::DEBUG, "test_search", search_term = %search_term);
+        let _enter = span.enter();
         
         let db = TEST_DB_NODES
             .as_ref()
@@ -281,24 +282,60 @@ mod tests {
         let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
         debug!("Fetching nodes for IDs: {:?}", ordered_node_ids);
         
-        let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
+        // Add detailed tracing for the database query
+        let span = tracing::span!(Level::DEBUG, "get_nodes_ordered", node_ids = ?ordered_node_ids);
+        let _enter = span.enter();
+        
+        let node_info: Vec<EmbeddingData> = {
+            debug!("Calling db.get_nodes_ordered with {} IDs", ordered_node_ids.len());
+            let result = db.get_nodes_ordered(ordered_node_ids.clone());
+            debug!("db.get_nodes_ordered returned: {:?}", result.as_ref().map(|v| v.len()));
+            result?
+        };
+        
         debug!("Retrieved {} nodes from database", node_info.len());
+        
+        // Log each node's details
+        for (i, node) in node_info.iter().enumerate() {
+            debug!("Node {}: id={}, name={}, file_path={}", 
+                   i, node.id, node.name, node.file_path.display());
+        }
 
         let io_handle = IoManagerHandle::new();
+        
+        // Add tracing for snippet retrieval
+        let span = tracing::span!(Level::DEBUG, "get_snippets_batch", node_count = node_info.len());
+        let _enter = span.enter();
+        
         let snippet_results: Vec<Result<String, Error>> = io_handle
             .get_snippets_batch(node_info)
             .await
             .expect("Problem receiving");
         
+        debug!("Received {} snippet results", snippet_results.len());
+        
         let mut snippets: Vec<String> = Vec::new();
         for (i, snip) in snippet_results.into_iter().enumerate() {
             let snip_ok = snip?;
-            debug!("Snippet {}: {} chars", i + 1, snip_ok.len());
+            debug!("Snippet {}: {} chars, preview: '{}...'", 
+                   i + 1, snip_ok.len(), &snip_ok.chars().take(50).collect::<String>());
             snippets.push(snip_ok);
         }
         
+        debug!("Total snippets collected: {}", snippets.len());
+        
         let snippet_match = snippets.iter().find(|s| s.contains(search_term));
         debug!("Found matching snippet: {}", snippet_match.is_some());
+        
+        if let Some(match_snippet) = snippet_match {
+            debug!("Matching snippet preview: '{}...'", 
+                   &match_snippet.chars().take(100).collect::<String>());
+        } else {
+            debug!("Available snippets:");
+            for (i, snippet) in snippets.iter().enumerate() {
+                debug!("Snippet {}: '{}...'", i, &snippet.chars().take(50).collect::<String>());
+            }
+        }
         
         assert!(snippet_match.is_some(), "No snippet found containing '{}'", search_term);
         info!("Test completed successfully - found matching snippet for '{}'", search_term);
