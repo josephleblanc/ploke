@@ -366,8 +366,11 @@ pub struct Bm25Indexer {
 
 impl Bm25Indexer {
     /// Create a new indexer. `avgdl` should be an estimate or a fitted value for your corpus.
-    pub fn new(avgdl: f32) -> Self {
-        let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
+    pub fn new(avgdl: Option<f32>) -> Self {
+        let embedder = match avgdl {
+            Some(avgdl) => EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build(),
+            None => EmbedderBuilder::<u32, CodeTokenizer>::new().build(),
+        };
         let scorer = Scorer::<Uuid, u32>::new();
         Self { embedder, scorer, staged_meta: HashMap::new(), version: TOKENIZER_VERSION}
     }
@@ -540,7 +543,7 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
 
     #[test]
     fn indexer_indexes_and_searches_basic() {
-        let mut idx = Bm25Indexer::new(10.0);
+        let mut idx = Bm25Indexer::new(Some(10.0));
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
@@ -563,7 +566,7 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn scorer_scores_higher_for_matching_document() {
-        let mut idx = Bm25Indexer::new(10.0);
+        let mut idx = Bm25Indexer::new(Some(10.0));
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn alpha() { println!(\"hello\"); }");
@@ -583,7 +586,7 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn index_batch_with_cozo_writes_doc_meta() {
-        let mut idx = Bm25Indexer::new(10.0);
+        let mut idx = Bm25Indexer::new(Some(10.0));
         let mut cozo = MockCozo::new();
         let id = Uuid::new_v4();
         let snippet = String::from(
