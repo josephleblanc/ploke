@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use ploke_db::{
     bm25_index::bm25_service::{self, Bm25Cmd}, search_similar_args, Database, DbError, NodeType, SimilarArgs, TypedEmbedData
 };
-use ploke_embed::indexer::IndexerTask;
+use ploke_embed::indexer::{IndexerTask, EmbeddingProcessor};
 use ploke_core::EmbeddingData;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -28,13 +28,13 @@ pub enum RagError {
 #[derive(Debug)]
 pub struct RagService {
     db: Arc<Database>,
-    dense_embedder: Arc<IndexerTask>,
+    dense_embedder: Arc<EmbeddingProcessor>,
     bm_embedder: mpsc::Sender<Bm25Cmd>,
 }
 
 impl RagService {
     /// Construct a new RAG service, starting the BM25 service actor.
-    pub fn new(db: Arc<Database>, dense_embedder: Arc<IndexerTask>) -> Result<Self, RagError> {
+    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingProcessor>) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self { db, dense_embedder, bm_embedder })
     }
