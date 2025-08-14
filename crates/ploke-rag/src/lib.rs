@@ -1,5 +1,6 @@
 #![allow(unused_variables, unused_imports, dead_code)]
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use ploke_db::{
     bm25_index::bm25_service,
@@ -18,8 +19,9 @@ pub enum RagError {
 
     #[error("Channel error: {0}")]
     Channel(String),
-    // #[error("Embedding error: {0}")]
-    // Embed(#[from] EmbeddingError),
+
+    #[error("Embedding error: {0}")]
+    Embed(String),
 }
 
 /// RAG orchestration service.
@@ -65,10 +67,51 @@ impl RagService {
         Ok(())
     }
 
-    /// Perform a hybrid search (BM25 + dense). Temporary implementation delegates to BM25 only.
-    /// Later, this will fuse BM25 with dense results via RRF and return a reranked list.
+    /// Perform a hybrid search (BM25 + dense).
+    ///
+    /// Strict mode: if the dense search fails, propagate an error (do not silently fall back).
+    /// Runs BM25 and dense searches concurrently, fuses results using Reciprocal Rank Fusion (RRF),
+    /// and returns the top_k results ordered by fused score (higher = better).
     pub async fn hybrid_search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, RagError> {
-        // Placeholder: use BM25 only until dense fusion is implemented.
-        self.search_bm25(query, top_k).await
+        // Kick off both searches concurrently.
+        let bm25_fut = self.search_bm25(query, top_k);
+        // Assumed IndexerTask API: async fn search(&self, query: &str, top_k: usize) -> Result<Vec<(Uuid, f32)>, E>
+        let dense_fut = self.dense_embedder.search(query, top_k);
+
+        let (bm25_res, dense_res) = tokio::join!(bm25_fut, dense_fut);
+
+        // Propagate BM25 errors as-is.
+        let bm25_list = bm25_res?;
+
+        // Dense errors are mapped to RagError::Embed since we're in strict mode.
+        let dense_list = dense_res
+            .map_err(|e| RagError::Embed(format!("dense search failed: {:?}", e)))?;
+
+        // RRF fusion parameters
+        let rrf_k: f32 = 60.0;
+
+        // Accumulate fused scores using ranks (1-based)
+        let mut fused: HashMap<Uuid, f32> = HashMap::new();
+
+        for (i, (id, _score)) in bm25_list.iter().enumerate() {
+            let id = id.clone();
+            let rank = (i + 1) as f32;
+            let add = 1.0_f32 / (rrf_k + rank);
+            *fused.entry(id).or_insert(0.0) += add;
+        }
+
+        for (i, (id, _score)) in dense_list.iter().enumerate() {
+            let id = id.clone();
+            let rank = (i + 1) as f32;
+            let add = 1.0_f32 / (rrf_k + rank);
+            *fused.entry(id).or_insert(0.0) += add;
+        }
+
+        // Collect, sort by fused score descending, and take top_k
+        let mut out: Vec<(Uuid, f32)> = fused.into_iter().collect();
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(top_k);
+
+        Ok(out)
     }
 }
