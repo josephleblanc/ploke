@@ -7,6 +7,7 @@ use crate::bm25_index::DocMeta;
 use crate::bm25_index::TOKENIZER_VERSION;
 use crate::error::DbError;
 use crate::query::builder::EMBEDDABLE_NODES;
+use crate::query::builder::EMBEDDABLE_NODES_NOW;
 use crate::NodeType;
 use crate::QueryResult;
 use cozo::DataValue;
@@ -105,6 +106,13 @@ pub struct FileInfo {
 }
 
 impl Database {
+    const ANCESTOR_RULES: &str = r#"
+    parent_of[child, parent] := *syntax_edge{source_id: parent, target_id: child, relation_kind: "Contains"}
+
+    ancestor[desc, asc] := parent_of[desc, asc]
+    ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
+    is_root_module[id] := *module{id}, *file_mod {owner_id: id}
+    "#;
     /// Create new database connection
     pub fn new(db: Db<MemStorage>) -> Self {
         Self { db }
@@ -143,7 +151,11 @@ impl Database {
         ret.try_into_file_data()
     }
 
-    pub fn retract_embedded_files(&self, file_mod: Uuid, ty: NodeType) -> Result<QueryResult, ploke_error::Error> {
+    pub fn retract_embedded_files(
+        &self,
+        file_mod: Uuid,
+        ty: NodeType,
+    ) -> Result<QueryResult, ploke_error::Error> {
         let rel_name = ty.relation_str();
         let keys = ty.keys().join(", ");
         let vals = ty.vals().join(", ");
@@ -169,9 +181,11 @@ impl Database {
                 :returning
             "
         );
-        self.raw_query_mut(&script).inspect_err(|_| {
-            tracing::error!("using script:\n {}", script);
-        }).map_err(ploke_error::Error::from)
+        self.raw_query_mut(&script)
+            .inspect_err(|_| {
+                tracing::error!("using script:\n {}", script);
+            })
+            .map_err(ploke_error::Error::from)
     }
 
     /// Clears all user-defined relations from the database.
@@ -489,10 +503,12 @@ impl Database {
         let rel = ty.relation_str();
         let keys: String = ty.keys().filter(|s| *s != "id").join(", ");
         let vals: String = ty.vals().join(", ");
-        let script = format!("?[file_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path, @ 'NOW' }},
+        let script = format!(
+            "?[file_path, {keys}, {vals}] := *file_mod{{owner_id: id, file_path, @ 'NOW' }},
                         *module{{ {keys}, {vals} @ 'NOW' }},
                         is_embedding_null = is_null(embedding)
-        ");
+        "
+        );
         let res = self.raw_query(&script)?;
         Ok(res)
     }
@@ -583,9 +599,9 @@ impl Database {
             //     :replace _new {new_id, new_embedding}
             // }
             // {
-            //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash, 
-            //              cfgs, return_type_id, body, module_id] 
-            //      := 
+            //     ?[at, embedding, id, name, docstring, vis_kind, vis_path, span, tracking_hash,
+            //              cfgs, return_type_id, body, module_id]
+            //      :=
             //         *_new{new_id: id, new_embedding: embedding},
             //         at = 'ASSERT',
             //         *function {id, name, docstring, vis_kind, vis_path, span, tracking_hash,
@@ -602,18 +618,18 @@ impl Database {
             let script2_second_block = [
                 r#"
 { 
-    ?[at, embedding, "#, &key_vals_string, r#"] := *_new{new_id: id, new_embedding: embedding}, 
+    ?[at, embedding, "#,
+                &key_vals_string,
+                r#"] := *_new{new_id: id, new_embedding: embedding}, 
         at = 'ASSERT',
-        *"#, rel_name, " { "
+        *"#,
+                rel_name,
+                " { ",
             ]
             .into_iter();
-            let mut script2 = String::from_iter(
-                script2_first_block
-                    .chain(script2_second_block)
-            );
+            let mut script2 = String::from_iter(script2_first_block.chain(script2_second_block));
             script2.push_str(&key_vals_string);
-            script2.push_str("}\n");
-            script2.push_str(":put ");
+            script2.push_str("}\n :put ");
             script2.push_str(&rel_identity);
             script2.push_str("\n}");
 
@@ -720,6 +736,66 @@ impl Database {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
         // Ok(named_rows.flatten().len())
         Self::into_usize(result)
+    }
+
+    /// Get the node data for the target nodes
+    // Add documentation AI!
+    pub fn get_nodes_ordered(
+        &self,
+        nodes: Vec<Uuid>,
+    ) -> Result<Vec<EmbeddingData>, ploke_error::Error> {
+        let ancestor_rules = Self::ANCESTOR_RULES;
+        let has_embedding_rule = NodeType::primary_nodes().iter().map(|ty| {
+            let rel = ty.relation_str();
+            format!(r#"
+            has_embedding[id, name, hash, span] := *{rel}{{id, name, tracking_hash: hash, span, embedding @ 'NOW' }}, !is_null(embedding)
+            "#)
+        }).join("\n");
+
+        let script = format!(
+            r#"
+        target_ids[node_id, ordering] <- $data
+
+        {ancestor_rules}
+
+        {has_embedding_rule}
+
+    batch[id, name, file_path, file_hash, hash, span, namespace, ordering] := 
+        has_embedding[id, name, hash, span],
+        ancestor[id, mod_id],
+        is_root_module[mod_id],
+        *module{{id: mod_id, tracking_hash: file_hash}},
+        *file_mod {{ owner_id: mod_id, file_path, namespace }},
+        target_ids[id, ordering]
+
+    ?[id, name, file_path, file_hash, hash, span, namespace, ordering] := 
+        batch[id, name, file_path, file_hash, hash, span, namespace, ordering]
+        :sort ordering
+     "#
+        );
+
+        let ids_data: Vec<DataValue> = nodes
+            .into_iter()
+            .enumerate()
+            .map(|(i, id)| {
+                DataValue::List(vec![
+                    DataValue::from(i as i64),
+                    DataValue::Uuid(UuidWrapper(id)),
+                ])
+            })
+            .collect();
+        let limit = ids_data.len();
+
+        // Create parameters map
+        let mut params = BTreeMap::new();
+        params.insert("data".into(), DataValue::List(ids_data));
+
+        let query_result = self
+            .db
+            .run_script(&script, params, cozo::ScriptMutability::Immutable)
+            .map_err(|e| DbError::Cozo(e.to_string()))?;
+        let embedding_data = QueryResult::from(query_result).to_embedding_nodes()?;
+        Ok(embedding_data)
     }
 
     pub fn get_unembed_rel(
@@ -1074,7 +1150,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
     }
 
     /// Upsert BM25 document metadata in a batch transaction
-    /// 
+    ///
     /// This method inserts or updates BM25 document metadata for multiple documents in a single
     /// database transaction. Each document is identified by its UUID and contains metadata needed
     /// for BM25 scoring including a tracking hash, tokenizer version, and token length.
@@ -1082,12 +1158,14 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         &self,
         docs: impl IntoIterator<Item = (Uuid, DocMeta)>,
     ) -> Result<(), DbError> {
-
         // Convert docs to DataValue format
         let docs_data: Vec<DataValue> = docs
             .into_iter()
             .map(|(id, doc_meta)| {
-                let DocMeta { token_length, tracking_hash } = doc_meta;
+                let DocMeta {
+                    token_length,
+                    tracking_hash,
+                } = doc_meta;
                 DataValue::List(vec![
                     DataValue::Uuid(UuidWrapper(id)),
                     DataValue::Uuid(UuidWrapper(tracking_hash.0)),
@@ -1115,7 +1193,6 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
@@ -1374,25 +1451,16 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_bm25_doc_meta_batch() -> Result<(), DbError> {
         let db = setup_db();
-        let docdata_one = DocMeta { 
-            token_length: 42, 
-            tracking_hash: TrackingHash(Uuid::new_v4()) 
+        let docdata_one = DocMeta {
+            token_length: 42,
+            tracking_hash: TrackingHash(Uuid::new_v4()),
         };
-        let docdata_two = DocMeta { 
-            token_length: 128, 
-            tracking_hash: TrackingHash(Uuid::new_v4()) 
+        let docdata_two = DocMeta {
+            token_length: 128,
+            tracking_hash: TrackingHash(Uuid::new_v4()),
         };
-        
-        let docs = vec![
-            (
-                Uuid::new_v4(),
-                docdata_one
-            ),
-            (
-                Uuid::new_v4(),
-                docdata_two
-            )
-        ];
+
+        let docs = vec![(Uuid::new_v4(), docdata_one), (Uuid::new_v4(), docdata_two)];
 
         db.upsert_bm25_doc_meta_batch(docs.into_iter()).unwrap();
 
@@ -1407,21 +1475,21 @@ mod tests {
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         assert_eq!(result.rows.len(), 2);
-        
+
         // Verify the first document
         if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {
             // ID is correct
         } else {
             panic!("Expected Uuid DataValue for id");
         }
-        
+
         eprintln!("{:?}", result.rows[0]);
         if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[0][3] {
             assert_eq!(token_length, 128);
         } else {
             panic!("Expected Int DataValue for token_length");
         }
-        
+
         // Verify the second document
         eprintln!("{:?}", result.rows[1]);
         if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[1][3] {
@@ -1429,8 +1497,7 @@ mod tests {
         } else {
             panic!("Expected Int DataValue for token_length");
         }
-        
+
         Ok(())
     }
-
 }
