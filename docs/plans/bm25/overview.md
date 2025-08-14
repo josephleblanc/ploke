@@ -11,7 +11,7 @@ What we're building
 
 Key decisions
 - Index scope: Start with primary nodes only (modules, impls, functions, structs, enums…). Do not index methods/params yet to avoid duplication and noise. Revisit after baseline.
-- Tokenizer: Use the code-aware tokenizer (already implemented) and store tokenizer_version in metadata so we can detect when to rebuild.
+- Tokenizer: Use the code-aware tokenizer (already implemented) and store tokenizer_version in metadata so we can detect when to rebuild. The tokenizer_version is now a constant field on Bm25Indexer.
 - Avgdl: Use a two-pass initial build (count tokens → compute avgdl → embed/index). For incremental updates, accept small drift and schedule periodic full rebuilds if avgdl shifts materially.
 - Hash stability: Stop using DefaultHasher for snippet hashes. Use existing TrackingHash (preferred) or blake3 so values are stable across runs.
 - Persistence: Rebuild BM25 index on startup from DB + filesystem; metadata in Cozo keeps it consistent with dense embeddings and supports avgdl recomputation. Persisted metadata is only written in one atomic Finalize operation to avoid partial commits.
@@ -27,7 +27,7 @@ Where to integrate in code (high level)
   - In IndexerTask::process_batch, zip valid_data (Vec<EmbeddingData>) with valid_snippets (Vec<String>) and:
       - compute token_length in process_batch (using CodeTokenizer::count_tokens_in_code),
       - send IndexBatch using DocMeta containing metadata (tracking_hash, token_length) together with Uuid from EmbeddingData (avoid cloning snippet Strings),
-      - the BM25 actor will index using DocMeta but will only stage metadata (tracking_hash, token_length, tokenizer_version).
+      - the BM25 actor will index using DocMeta but will only stage metadata (tracking_hash, token_length).
 - ploke-transform
   - Add a bm25_doc_meta relation with columns: id, tracking_hash, token_length, tokenizer_version, span @ 'NOW'.
 - ploke-db
@@ -41,13 +41,13 @@ Where to integrate in code (high level)
 Immediate next steps (dev-ready)
 1) BM25 service/actor in ploke-embed
    - Define enum Bm25Cmd:
-     - IndexBatch { docs: Vec<(Uuid, DocMeta)>, tokenizer_version: String }  // note: DocMeta to avoid cloning
+     - IndexBatch { docs: Vec<(Uuid, DocMeta)> }  // note: DocMeta to avoid cloning, tokenizer_version is now a field on Bm25Indexer
      - Remove { ids: Vec<Uuid> }
      - Rebuild
      - FinalizeSeed { resp: oneshot::Sender<Result<(), String>> }
      - Search { query: String, top_k: usize, resp: oneshot::Sender<Vec<(Uuid, f32)>> }
    - Start the actor on app init; keep an mpsc::Sender<Bm25Cmd> handle.
-   - The actor stages per-doc metadata (tracking_hash, token_length, tokenizer_version) but does not persist them incrementally.
+   - The actor stages per-doc metadata (tracking_hash, token_length) but does not persist them incrementally.
 
 2) Wire IndexerTask to BM25 service
    - Add bm25_tx: Option<mpsc::Sender<Bm25Cmd>> to IndexerTask (already present).
@@ -75,7 +75,8 @@ How to resume after context reset
 Progress update - 2025-08-13
  - Schema aligned: bm25_doc_meta now has fields {id, tracking_hash, tokenizer_version, token_length}, matching the design.
  - Stable hash: replaced DefaultHasher with a stable UUID v5–based tracking_hash derived from the snippet bytes; tests updated accordingly.
- - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch with tokenizer_version=code_tokenizer_v1. Note: IndexBatch now uses DocMeta to avoid allocations; process_batch computes token lengths before sending.
+ - Wiring status: BM25 actor scaffolding exists and IndexerTask sends IndexBatch. Note: IndexBatch now uses DocMeta to avoid allocations; process_batch computes token lengths before sending.
+ - Design update: tokenizer_version is now a constant field on Bm25Indexer rather than being passed with each IndexBatch command.
 
 Next step
  - Implement ploke-db persistent helpers for bm25_doc_meta batch upsert and avg token length computation to support Finalize.
