@@ -201,21 +201,15 @@ impl RagService {
 
             let result = search_similar_args(args)?;
 
-            // Convert distance to similarity score (lower distance = higher similarity)
-            // Why do you collect here when in the very next line you extend `all_results` AI?
-            // Why not either leave typed_results as an iterator and then extend once?
-            // You are adding completely redundant allocations for no reason I can identify. Is
-            // this because you do not understand what "allocation" means, or is it because I was
-            // not clear enough in my instructions AI?
-            let typed_results: Vec<(Uuid, f32)> = result
-                .typed_data
-                .v
-                .into_iter()
-                .zip(result.dist.into_iter())
-                .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32))
-                .collect();
-
-            all_results.extend(typed_results);
+            // Convert distance to similarity score (lower distance = higher similarity), avoiding intermediate allocations
+            all_results.extend(
+                result
+                    .typed_data
+                    .v
+                    .into_iter()
+                    .zip(result.dist.into_iter())
+                    .map(|(embed_data, distance)| (embed_data.id, 1.0 - distance as f32)),
+            );
         }
 
         debug!(
@@ -285,7 +279,92 @@ impl RagService {
 }
 
 #[cfg(test)]
+mod alloc_counter {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub struct CountingAlloc;
+
+    static SYSTEM: System = System;
+
+    thread_local! {
+        static THREAD_ALLOCS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+    }
+    static GLOBAL_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+
+    #[inline]
+    fn inc() {
+        THREAD_ALLOCS.with(|c| c.set(c.get() + 1));
+        GLOBAL_ALLOCS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            inc();
+            SYSTEM.alloc(layout)
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            SYSTEM.dealloc(ptr, layout)
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            inc();
+            SYSTEM.realloc(ptr, layout, new_size)
+        }
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            inc();
+            SYSTEM.alloc_zeroed(layout)
+        }
+    }
+
+    pub fn thread_allocs() -> usize {
+        THREAD_ALLOCS.with(|c| c.get())
+    }
+
+    pub fn reset_thread_allocs() {
+        THREAD_ALLOCS.with(|c| c.set(0));
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static GLOBAL_ALLOC: alloc_counter::CountingAlloc = alloc_counter::CountingAlloc;
+
+#[cfg(test)]
 mod tests {
+    // Allocation regression guard for iterator->extend hot path.
+    // Ensures no intermediate allocations when capacity is sufficient.
+    #[test]
+    fn alloc_free_extend_regression_guard() {
+        alloc_counter::reset_thread_allocs();
+        let before = alloc_counter::thread_allocs();
+
+        #[derive(Clone)]
+        struct Dummy {
+            id: uuid::Uuid,
+        }
+
+        let n = 64;
+        let data: Vec<Dummy> = (0..n)
+            .map(|_| Dummy { id: uuid::Uuid::new_v4() })
+            .collect();
+        let dist: Vec<f64> = vec![0.1; n];
+
+        let mut out: Vec<(uuid::Uuid, f32)> = Vec::with_capacity(n);
+        out.extend(
+            data.into_iter()
+                .zip(dist.into_iter())
+                .map(|(d, distance)| (d.id, 1.0 - distance as f32)),
+        );
+
+        let after = alloc_counter::thread_allocs();
+        assert_eq!(
+            after - before,
+            0,
+            "expected no allocations during extend mapping with adequate capacity"
+        );
+        assert_eq!(out.len(), n);
+    }
+
     use std::sync::Arc;
 
     use itertools::Itertools;

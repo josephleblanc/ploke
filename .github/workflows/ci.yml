@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-build-test:
+    name: Lint, collect-gate, build, and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: No gratuitous collect gate
+        run: bash scripts/no_gratuitous_collect.sh
+
+      - name: Build (all targets, all features)
+        run: cargo build --workspace --all-targets --all-features
+
+      - name: Clippy (aggressive)
+        run: cargo clippy --workspace --all-targets --all-features -- -W clippy::all -W clippy::pedantic -W clippy::nursery -W clippy::perf -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --all-features -- --nocapture
