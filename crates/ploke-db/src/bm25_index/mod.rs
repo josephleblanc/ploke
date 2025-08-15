@@ -487,6 +487,8 @@ impl Bm25Indexer {
             let DocData { id, meta, snippet } = d;
             let embedding = self.embedder.embed(&snippet);
             self.scorer.upsert(&id, embedding);
+            // Stage per-doc metadata (keeps parity with index_batch and supports avgdl/finalize)
+            self.staged_meta.insert(id, meta);
             inserted += 1;
             (id, meta)
         });
@@ -634,7 +636,6 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
 
     #[test]
     fn indexer_indexes_and_searches_basic() {
-        let idx = Bm25Indexer::new(10.0);
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn add_one(x: i32) -> i32 { x + 1 }");
@@ -642,7 +643,9 @@ fn FooBar_baz(x: i32) -> i32 { /* block comment */ x + 1 }"#;
             "/// does something
 fn compute_answer() -> i32 { 42 }",
         );
-        // idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
+
+        // Use corpus constructor to fit avgdl and index both docs
+        let idx = Bm25Indexer::new_from_corpus(vec![(id_a, a.clone()), (id_b, b.clone())]);
 
         // query for 'compute' should return id_b first
         let results = idx.search("compute", 10);
@@ -657,12 +660,32 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn scorer_scores_higher_for_matching_document() {
-        let idx = Bm25Indexer::new(10.0);
+        let mut idx = Bm25Indexer::new(10.0);
         let id_a = Uuid::new_v4();
         let id_b = Uuid::new_v4();
         let a = String::from("fn alpha() { println!(\"hello\"); }");
         let b = String::from("fn beta() { println!(\"compute\"); }");
-        // idx.index_batch(vec![(id_a, a.clone()), (id_b, b.clone())]);
+
+        // Index both docs into the scorer
+        let docs = vec![
+            DocData {
+                id: id_a,
+                meta: DocMeta {
+                    token_length: CodeTokenizer::count_tokens_in_code(&a),
+                    tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, a.as_bytes())),
+                },
+                snippet: a.clone(),
+            },
+            DocData {
+                id: id_b,
+                meta: DocMeta {
+                    token_length: CodeTokenizer::count_tokens_in_code(&b),
+                    tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, b.as_bytes())),
+                },
+                snippet: b.clone(),
+            },
+        ];
+        idx.index_batch(docs);
 
         let qemb = idx.embedder.embed("compute");
         let score_a = idx.scorer.score(&id_a, &qemb).unwrap_or(0.0);
@@ -677,20 +700,31 @@ fn compute_answer() -> i32 { 42 }",
 
     #[test]
     fn index_batch_with_cozo_writes_doc_meta() {
-        let idx = Bm25Indexer::new(10.0);
-        let cozo = MockCozo::new();
+        let mut idx = Bm25Indexer::new(10.0);
+        let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
         let id = Uuid::new_v4();
         let snippet = String::from(
             "/// docs
 fn hello() { println!(\"hi\"); }",
         );
-        // idx.index_batch_with_cozo(vec![(id, snippet.clone())], &mut cozo);
-        assert!(cozo.store.contains_key(&id));
-        let meta = cozo.store.get(&id).unwrap();
-        assert!(meta.token_length > 0);
-        // check the stored tracking hash matches the snippet
-        let expected = TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes()));
-        assert_eq!(meta.tracking_hash, expected);
+        let meta = DocMeta {
+            token_length: CodeTokenizer::count_tokens_in_code(&snippet),
+            tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+        };
+        let docs = vec![DocData {
+            id,
+            meta,
+            snippet: snippet.clone(),
+        }];
+        let inserted = idx
+            .upsert_batch_with_cozo(db.as_ref(), docs)
+            .expect("upsert to cozo");
+        assert_eq!(inserted, 1);
+
+        // Ensure the in-memory staged metadata captured what we sent
+        let staged = idx.staged_meta.get(&id).expect("staged meta missing");
+        assert_eq!(staged.token_length, meta.token_length);
+        assert_eq!(staged.tracking_hash, meta.tracking_hash);
     }
 
     #[test]
@@ -706,5 +740,80 @@ fn hello() { println!(\"hi\"); }",
         // ensure docs are indexed by searching
         let res = idx.search("a", 10);
         assert!(!res.is_empty());
+    }
+
+    #[test]
+    fn token_count_matches_tokenize_len_on_simple_input() {
+        let t = CodeTokenizer;
+        let s = "/// docs\nfn parseJSON_v2(x: i32) { x += 10; }";
+        let toks = t.tokenize(s);
+        let count = CodeTokenizer::count_tokens_in_code(s);
+        assert_eq!(toks.len(), count, "tokenize() and count_tokens_in_code() should agree");
+    }
+
+    #[test]
+    fn compute_avgdl_from_staged_meta() {
+        let mut idx = Bm25Indexer::new(10.0);
+        let s1 = "fn first_token() { let x = 1; }";
+        let s2 = "fn second_token_longer_name() { let y = 2; }";
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let m1 = DocMeta {
+            token_length: CodeTokenizer::count_tokens_in_code(s1),
+            tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s1.as_bytes())),
+        };
+        let m2 = DocMeta {
+            token_length: CodeTokenizer::count_tokens_in_code(s2),
+            tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s2.as_bytes())),
+        };
+        let docs = vec![
+            DocData { id: id1, meta: m1, snippet: s1.to_string() },
+            DocData { id: id2, meta: m2, snippet: s2.to_string() },
+        ];
+        idx.index_batch(docs);
+        let expected = (m1.token_length as f32 + m2.token_length as f32) / 2.0;
+        let got = idx.compute_avgdl_from_staged();
+        assert!((got - expected).abs() < f32::EPSILON, "avgdl mismatch: got {got}, expected {expected}");
+    }
+
+    #[tokio::test]
+    async fn bm25_service_index_search_finalize_roundtrip() {
+        let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
+        let tx = bm25_service::start_default(db).expect("start bm25 service");
+
+        // Prepare a document with a unique token to avoid accidental collisions
+        let id = Uuid::new_v4();
+        let snippet = String::from("fn unique_xylophone_token() { let compute = 1; }");
+        let meta = DocMeta {
+            token_length: CodeTokenizer::count_tokens_in_code(&snippet),
+            tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
+        };
+        let doc = DocData { id, meta, snippet: snippet.clone() };
+
+        // Index
+        tx.send(bm25_service::Bm25Cmd::IndexBatch { docs: vec![doc] })
+            .await
+            .expect("send index batch");
+
+        // Search
+        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+        tx.send(bm25_service::Bm25Cmd::Search {
+            query: "xylophone".to_string(),
+            top_k: 5,
+            resp: resp_tx,
+        })
+        .await
+        .expect("send search");
+        let results = resp_rx.await.expect("await search");
+        assert!(!results.is_empty(), "expected non-empty search results");
+        assert_eq!(results[0].0, id, "expected the indexed doc to rank first");
+
+        // Finalize
+        let (f_tx, f_rx) = tokio::sync::oneshot::channel();
+        tx.send(bm25_service::Bm25Cmd::FinalizeSeed { resp: f_tx })
+            .await
+            .expect("send finalize");
+        let ack = f_rx.await.expect("await finalize ack");
+        assert!(ack.is_ok(), "finalize ack should be Ok");
     }
 }
