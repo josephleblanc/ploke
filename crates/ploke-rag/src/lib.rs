@@ -496,4 +496,301 @@ mod tests {
         fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_search_structs() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "DocumentedStruct";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_enums() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "GenericEnum";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_traits() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "ComplexGenericTrait";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_unions() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "GenericUnion";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_macros() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "documented_macro";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_type_aliases() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "DisplayableContainer";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_constants() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "TOP_LEVEL_BOOL";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_statics() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "TOP_LEVEL_COUNTER";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_search_generic_trait() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "GenericSuperTrait";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        assert!(
+            !fused.is_empty(),
+            "Hybrid search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bm25_search_complex_enum() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "EnumWithMixedVariants";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // Ensure BM25 index is populated
+        rag.bm25_rebuild().await?;
+
+        let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
+        for _ in 0..10 {
+            bm25_res = rag.search_bm25(search_term, 15).await?;
+            if !bm25_res.is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        assert!(
+            !bm25_res.is_empty(),
+            "BM25 search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_function_definitions() -> Result<(), Error> {
+        init_tracing_once();
+        let db = TEST_DB_NODES
+            .as_ref()
+            .expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "use_all_const_static";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
 }
