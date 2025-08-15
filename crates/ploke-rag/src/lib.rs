@@ -11,6 +11,7 @@ use ploke_embed::indexer::{EmbeddingProcessor, IndexerTask};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
+use tracing::{debug, instrument};
 
 #[derive(Error, Debug)]
 pub enum RagError {
@@ -69,6 +70,7 @@ impl RagService {
 
     /// Execute a BM25 search against the in-memory sparse index.
     /// Returns a Vec of (document_id, score) pairs sorted by relevance.
+    #[instrument(skip(self, query), fields(query_len = %query.len(), top_k = top_k))]
     pub async fn search_bm25(
         &self,
         query: &str,
@@ -84,21 +86,27 @@ impl RagService {
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 search command: {}", e)))?;
 
-        rx.await
-            .map_err(|e| RagError::Channel(format!("BM25 search response channel closed: {}", e)))
+        let res = rx
+            .await
+            .map_err(|e| RagError::Channel(format!("BM25 search response channel closed: {}", e)))?;
+        debug!("BM25 search returned {} results", res.len());
+        Ok(res)
     }
 
     /// Trigger a rebuild of the BM25 sparse index.
     /// For now, this is a fire-and-forget command to the BM25 service.
+    #[instrument(skip(self))]
     pub async fn bm25_rebuild(&self) -> Result<(), RagError> {
         self.bm_embedder.send(Bm25Cmd::Rebuild).await.map_err(|e| {
             RagError::Channel(format!("failed to send BM25 rebuild command: {}", e))
         })?;
+        debug!("BM25 rebuild command sent");
         Ok(())
     }
 
     /// Perform a dense search using the HNSW index in the database.
     /// Returns a Vec of (snippet_id, score) pairs sorted by relevance.
+    #[instrument(skip(self, query), fields(query_len = %query.len(), top_k = top_k))]
     pub async fn search(
         &self,
         query: &str,
@@ -143,10 +151,17 @@ impl RagService {
             all_results.extend(typed_results);
         }
 
+        debug!(
+            "Dense search collected {} results across {} node types",
+            all_results.len(),
+            NodeType::primary_nodes().len()
+        );
+
         // Sort by score (highest first) and take top_k
         all_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(top_k);
 
+        debug!("Dense search returning {} results", all_results.len());
         Ok(all_results)
     }
 
@@ -155,6 +170,7 @@ impl RagService {
     /// Strict mode: if the dense search fails, propagate an error (do not silently fall back).
     /// Runs BM25 and dense searches concurrently, fuses results using Reciprocal Rank Fusion (RRF),
     /// and returns the top_k results ordered by fused score (higher = better).
+    #[instrument(skip(self, query), fields(query_len = %query.len(), top_k = top_k))]
     pub async fn hybrid_search(
         &self,
         query: &str,
@@ -196,6 +212,7 @@ impl RagService {
         out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         out.truncate(top_k);
 
+        debug!("Hybrid search returning {} fused results", out.len());
         Ok(out)
     }
 }
@@ -207,7 +224,7 @@ mod tests {
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::EmbeddingData;
-    use ploke_db::{create_index_primary, Database, NodeType};
+    use ploke_db::{create_index_primary, Database};
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
@@ -215,6 +232,7 @@ mod tests {
     use ploke_error::Error;
     use ploke_io::IoManagerHandle;
     use ploke_test_utils::workspace_root;
+    use tokio::time::{sleep, Duration};
     use tracing::Level;
     use uuid::Uuid;
 
@@ -250,94 +268,127 @@ mod tests {
         };
     }
 
+    async fn fetch_and_assert_snippet(
+        db: &Arc<Database>,
+        ordered_node_ids: Vec<Uuid>,
+        search_term: &str,
+    ) -> Result<(), Error> {
+        let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
+        let io_handle = IoManagerHandle::new();
+
+        let snippet_results: Vec<Result<String, Error>> =
+            io_handle.get_snippets_batch(node_info).await.expect("Problem receiving");
+
+        let mut snippets: Vec<String> = Vec::new();
+        for snip in snippet_results.into_iter() {
+            snippets.push(snip?);
+        }
+
+        let snippet_match = snippets.iter().find(|s| s.contains(search_term));
+        assert!(
+            snippet_match.is_some(),
+            "No snippet found containing '{}'",
+            search_term
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_search() -> Result<(), Error> {
-        use tracing::{debug, info, instrument};
-
         // Initialize tracing for the test
-        ploke_test_utils::init_test_tracing(Level::DEBUG);
+        ploke_test_utils::init_test_tracing(Level::INFO);
         let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
 
         let search_term = "use_all_const_static";
-        let span = tracing::span!(Level::DEBUG, "test_search", search_term = %search_term);
-        let _enter = span.enter();
-
 
         let model = LocalEmbedder::new(EmbeddingConfig::default())?;
         let source = EmbeddingSource::Local(model);
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db.clone(), embedding_processor)?;
 
-        // Shouldn't need to upsert the nodes here since it will have been done alongside the dense
-        // vector embedding process.
-        // Tests for that are in `ploke-embed/src/indexer/tests.rs`
-
-        debug!("Initializing RAG service...");
         let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 15).await?;
-        debug!("Search returned {} results", search_res.len());
-        
-        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
-        debug!("Fetching nodes for IDs: {:?}", ordered_node_ids);
-        
-        // Add detailed tracing for the database query
-        let span = tracing::span!(Level::DEBUG, "get_nodes_ordered", node_ids = ?ordered_node_ids);
-        let _enter = span.enter();
-        
-        let node_info: Vec<EmbeddingData> = {
-            debug!("Calling db.get_nodes_ordered with {} IDs", ordered_node_ids.len());
-            let result = db.get_nodes_ordered(ordered_node_ids.clone());
-            debug!("db.get_nodes_ordered returned: {:?}", result.as_ref().map(|v| v.len()));
-            result?
-        };
-        
-        debug!("Retrieved {} nodes from database", node_info.len());
-        
-        // Log each node's details
-        for (i, node) in node_info.iter().enumerate() {
-            debug!("Node {}: id={}, name={}, file_path={}", 
-                   i, node.id, node.name, node.file_path.display());
-        }
+        assert!(
+            !search_res.is_empty(),
+            "Dense search returned no results for '{}'",
+            search_term
+        );
 
-        let io_handle = IoManagerHandle::new();
-        
-        // Add tracing for snippet retrieval
-        let span = tracing::span!(Level::DEBUG, "get_snippets_batch", node_count = node_info.len());
-        let _enter = span.enter();
-        
-        let snippet_results: Vec<Result<String, Error>> = io_handle
-            .get_snippets_batch(node_info)
-            .await
-            .expect("Problem receiving");
-        
-        debug!("Received {} snippet results", snippet_results.len());
-        
-        let mut snippets: Vec<String> = Vec::new();
-        for (i, snip) in snippet_results.into_iter().enumerate() {
-            let snip_ok = snip?;
-            debug!("Snippet {}: {} chars, preview: '{}...'", 
-                   i + 1, snip_ok.len(), &snip_ok.chars().take(50).collect::<String>());
-            snippets.push(snip_ok);
-        }
-        
-        debug!("Total snippets collected: {}", snippets.len());
-        
-        let snippet_match = snippets.iter().find(|s| s.contains(search_term));
-        debug!("Found matching snippet: {}", snippet_match.is_some());
-        
-        if let Some(match_snippet) = snippet_match {
-            debug!("Matching snippet preview: '{}...'", 
-                   &match_snippet.chars().take(100).collect::<String>());
-        } else {
-            debug!("Available snippets:");
-            for (i, snippet) in snippets.iter().enumerate() {
-                debug!("Snippet {}: '{}...'", i, &snippet.chars().take(50).collect::<String>());
-            }
-        }
-        
-        debug!("Loaded test database with {} embedded nodes", db.count_pending_embeddings()?);
-        assert!(snippet_match.is_some(), "No snippet found containing '{}'", search_term);
-        info!("Test completed successfully - found matching snippet for '{}'", search_term);
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
         Ok(())
     }
-    //
+
+    #[tokio::test]
+    async fn test_bm25_rebuild() -> Result<(), Error> {
+        ploke_test_utils::init_test_tracing(Level::INFO);
+        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // Should not error
+        rag.bm25_rebuild().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bm25_search_basic() -> Result<(), Error> {
+        ploke_test_utils::init_test_tracing(Level::INFO);
+        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "use_all_const_static";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        // Trigger a rebuild to ensure index is fresh, then retry a few times in case it's async.
+        rag.bm25_rebuild().await?;
+
+        let mut bm25_res: Vec<(Uuid, f32)> = Vec::new();
+        for _ in 0..10 {
+            bm25_res = rag.search_bm25(search_term, 15).await?;
+            if !bm25_res.is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+
+        assert!(
+            !bm25_res.is_empty(),
+            "BM25 search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = bm25_res.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_search() -> Result<(), Error> {
+        ploke_test_utils::init_test_tracing(Level::INFO);
+        let db = TEST_DB_NODES.as_ref().expect("Must set up TEST_DB_NODES correctly.");
+
+        let search_term = "use_all_const_static";
+
+        let model = LocalEmbedder::new(EmbeddingConfig::default())?;
+        let source = EmbeddingSource::Local(model);
+        let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
+        let rag = RagService::new(db.clone(), embedding_processor)?;
+
+        let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
+        assert!(
+            !fused.is_empty(),
+            "Hybrid search returned no results for '{}'",
+            search_term
+        );
+
+        let ordered_node_ids: Vec<Uuid> = fused.iter().map(|(id, _score)| *id).collect();
+        fetch_and_assert_snippet(db, ordered_node_ids, search_term).await?;
+        Ok(())
+    }
 }
