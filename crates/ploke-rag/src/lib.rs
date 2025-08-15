@@ -309,7 +309,7 @@ mod tests {
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
         TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing(tracing::Level::INFO);
+            ploke_test_utils::init_test_tracing(tracing::Level::DEBUG);
         });
     }
 
@@ -351,16 +351,19 @@ mod tests {
         let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
         let io_handle = IoManagerHandle::new();
 
-         let snippet_find: Vec<String> = io_handle
+        let snippet_find: Vec<String> = io_handle
             .get_snippets_batch(node_info)
             .await
             .expect("Problem receiving")
             .into_iter()
             .try_collect()?;
 
-        snippet_find.into_iter()
+        snippet_find
+            .into_iter()
             .find(|snip| snip.contains(search_term))
-            .ok_or_else(|| RagError::Search(format!( "No snippet found for term {search_term}")).into())
+            .ok_or_else(|| {
+                RagError::Search(format!("No snippet found for term {search_term}")).into()
+            })
     }
 
     async fn fetch_and_assert_snippet(
@@ -371,12 +374,13 @@ mod tests {
         let node_info: Vec<EmbeddingData> = db.get_nodes_ordered(ordered_node_ids)?;
         let io_handle = IoManagerHandle::new();
 
-         let snippet = io_handle
+        let snippet = io_handle
             .get_snippets_batch(node_info)
             .await
             .expect("Problem receiving")
             .into_iter()
-            .find(|snip| snip.as_ref().is_ok_and(|s| s.contains(search_term) ));
+            .inspect(|snip| eprintln!("Search result: {:?}", snip))
+            .find(|snip| snip.as_ref().is_ok_and(|s| s.contains(search_term)));
 
         assert!(
             snippet.is_some(),
@@ -587,18 +591,18 @@ mod tests {
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db.clone(), embedding_processor)?;
 
-     let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
+        let search_res: Vec<(Uuid, f32)> = rag.search(search_term, 10).await?;
 
-     let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
-     let snippet_found = fetch_snippet_containing(db, ordered_node_ids, search_term).await;
+        let ordered_node_ids: Vec<Uuid> = search_res.iter().map(|(id, _)| *id).collect();
+        let snippet_found = fetch_snippet_containing(db, ordered_node_ids, search_term).await;
 
-     // This assertion documents that dense search *does not* reliably
-     // retrieve items whose identifier appears only once in the source.
-     assert!(
-         snippet_found.is_err(),
-         "Dense search unexpectedly found the trait '{search_term}'. \
+        // This assertion documents that dense search *does not* reliably
+        // retrieve items whose identifier appears only once in the source.
+        assert!(
+            snippet_found.is_err(),
+            "Dense search unexpectedly found the trait '{search_term}'. \
           This indicates either the test fixture or the model changed."
-     );
+        );
 
         let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
         assert!(
