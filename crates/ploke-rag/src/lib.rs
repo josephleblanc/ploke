@@ -309,7 +309,7 @@ mod tests {
     static TEST_TRACING: Once = Once::new();
     fn init_tracing_once() {
         TEST_TRACING.call_once(|| {
-            ploke_test_utils::init_test_tracing(tracing::Level::DEBUG);
+            ploke_test_utils::init_test_tracing(tracing::Level::INFO);
         });
     }
 
