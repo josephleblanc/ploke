@@ -1,28 +1,14 @@
 use std::collections::BTreeMap;
-use std::collections::HashMap;
-use std::ops::Deref;
-use std::path::Path;
+use std::{ops::Deref, path::Path};
 
-use crate::bm25_index::DocMeta;
-use crate::bm25_index::TOKENIZER_VERSION;
+use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
-use crate::query::builder::EMBEDDABLE_NODES;
-use crate::query::builder::EMBEDDABLE_NODES_NOW;
 use crate::NodeType;
 use crate::QueryResult;
-use cozo::DataValue;
-use cozo::Db;
-use cozo::MemStorage;
-use cozo::NamedRows;
-use cozo::UuidWrapper;
-use itertools::concat;
+use cozo::{DataValue, Db, MemStorage, NamedRows, UuidWrapper};
 use itertools::Itertools;
-use ploke_core::EmbeddingData;
-use ploke_core::FileData;
-use ploke_core::TrackingHash;
+use ploke_core::{EmbeddingData, FileData, TrackingHash};
 use ploke_transform::schema::meta::Bm25MetaSchema;
-use rayon::iter::ParallelBridge;
-use rayon::iter::ParallelIterator;
 use serde::Deserialize;
 use tracing::instrument;
 use uuid::Uuid;
@@ -1343,7 +1329,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unembedded_counts() -> Result<(), PlokeError> {
-        ploke_test_utils::init_test_tracing(Level::TRACE);
+        // ploke_test_utils::init_test_tracing(Level::TRACE);
         // Initialize the logger to see output from Cozo
         let db = Database::new(ploke_test_utils::setup_db_full("fixture_nodes")?);
         let all_pending = db.count_pending_embeddings()?;
@@ -1499,13 +1485,15 @@ mod tests {
         let result = db
             .db
             .run_script(
-                "?[id, tracking_hash, tokenizer_version, token_length] := *bm25_doc_meta{id, tracking_hash, tokenizer_version, token_length}",
+                "?[id, tracking_hash, tokenizer_version, token_length] := *bm25_doc_meta{id, tracking_hash, tokenizer_version, token_length}
+                    :sort token_length",
                 BTreeMap::new(),
                 ScriptMutability::Immutable,
             )
             .map_err(|e| DbError::Cozo(e.to_string()))?;
 
         assert_eq!(result.rows.len(), 2);
+
 
         // Verify the first document
         if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {
@@ -1514,17 +1502,17 @@ mod tests {
             panic!("Expected Uuid DataValue for id");
         }
 
+        // Verify the second document
         eprintln!("{:?}", result.rows[0]);
         if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[0][3] {
-            assert_eq!(token_length, 128);
+            assert_eq!(token_length, 42);
         } else {
             panic!("Expected Int DataValue for token_length");
         }
 
-        // Verify the second document
         eprintln!("{:?}", result.rows[1]);
         if let DataValue::Num(cozo::Num::Int(token_length)) = result.rows[1][3] {
-            assert_eq!(token_length, 42);
+            assert_eq!(token_length, 128);
         } else {
             panic!("Expected Int DataValue for token_length");
         }
