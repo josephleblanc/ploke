@@ -376,6 +376,7 @@ pub struct DocData {
     pub id: Uuid,
     pub meta: DocMeta,
     pub snippet: String,
+    pub name: String,
 }
 
 impl From<(&EmbeddingData, &String)> for DocData {
@@ -384,11 +385,12 @@ impl From<(&EmbeddingData, &String)> for DocData {
         let tracking_hash = value.0.node_tracking_hash; // Use node tracking hash from EmbeddingData
         DocData {
             id: value.0.id,
-            snippet: value.1.clone(),
             meta: DocMeta {
                 token_length,
                 tracking_hash,
             },
+            snippet: value.1.clone(),
+            name: value.0.name.clone(),
         }
     }
 }
@@ -410,7 +412,8 @@ impl From<(&EmbeddingData, &String)> for DocData {
     ///     token_length: CodeTokenizer::count_tokens_in_code(&snippet),
     ///     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
     /// };
-    /// let doc = DocData { id, meta, snippet };
+    /// let name = String::from("add_one");
+    /// let doc = DocData { id, meta, snippet, name };
     /// idx.upsert_batch(std::iter::once(doc));
     /// let res = idx.search("add_one", 5);
     /// assert!(!res.is_empty());
@@ -480,14 +483,15 @@ impl Bm25Indexer {
         }
     }
 
-    /// Index a batch of (uuid, snippet) pairs.
+    /// Index a batch of (uuid, snippet, name) items.
     /// Returns the number of items indexed.
     pub fn index_batch(&mut self, batch: Vec<DocData>) -> usize {
         let inserted = batch.len();
-        for DocData { id, meta, snippet } in batch {
-            let tokens = CodeTokenizer::tokens_from_code(&snippet);
-            tracing::debug!("index_batch tokens: {:?}", tokens);
-            let embedding = self.embedder.embed(&snippet);
+        for DocData { id, meta, snippet, name } in batch {
+            // Boost the identifier by repeating it once before the snippet.
+            // The tokenizer will split the identifier into subtokens.
+            let combined = format!("{} {} {}", name, name, snippet);
+            let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
             // Stage per-doc metadata for atomic Finalize
             let tracking_hash = meta.tracking_hash;
@@ -503,12 +507,13 @@ impl Bm25Indexer {
         inserted
     }
 
-    /// Index a batch of (uuid, snippet) pairs.
+    /// Index a batch of (uuid, snippet, name) items.
     /// Returns the number of items indexed.
     pub fn upsert_batch(&mut self, batch: impl IntoIterator<Item = DocData>) -> usize {
         let mut inserted = 0;
-        for DocData { id, meta, snippet } in batch {
-            let embedding = self.embedder.embed(&snippet);
+        for DocData { id, meta, snippet, name } in batch {
+            let combined = format!("{} {} {}", name, name, snippet);
+            let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
             // Stage per-doc metadata for atomic Finalize and avgdl computation
             self.staged_meta.insert(id, meta);
@@ -526,8 +531,9 @@ impl Bm25Indexer {
     ) -> Result<usize, DbError> {
         let mut inserted = 0;
         let new_iter = batch.into_iter().map(|d| {
-            let DocData { id, meta, snippet } = d;
-            let embedding = self.embedder.embed(&snippet);
+            let DocData { id, meta, snippet, name } = d;
+            let combined = format!("{} {} {}", name, name, snippet);
+            let embedding = self.embedder.embed(&combined);
             self.scorer.upsert(&id, embedding);
             // Stage per-doc metadata (keeps parity with index_batch and supports avgdl/finalize)
             self.staged_meta.insert(id, meta);
@@ -717,6 +723,7 @@ fn compute_answer() -> i32 { 42 }",
                     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, a.as_bytes())),
                 },
                 snippet: a.clone(),
+                name: String::from("alpha"),
             },
             DocData {
                 id: id_b,
@@ -725,6 +732,7 @@ fn compute_answer() -> i32 { 42 }",
                     tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, b.as_bytes())),
                 },
                 snippet: b.clone(),
+                name: String::from("beta"),
             },
         ];
         idx.index_batch(docs);
@@ -757,6 +765,7 @@ fn hello() { println!(\"hi\"); }",
             id,
             meta,
             snippet: snippet.clone(),
+            name: String::from("hello"),
         }];
         let inserted = idx
             .upsert_batch_with_cozo(db.as_ref(), docs)
@@ -809,8 +818,8 @@ fn hello() { println!(\"hi\"); }",
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, s2.as_bytes())),
         };
         let docs = vec![
-            DocData { id: id1, meta: m1, snippet: s1.to_string() },
-            DocData { id: id2, meta: m2, snippet: s2.to_string() },
+            DocData { id: id1, meta: m1, snippet: s1.to_string(), name: String::from("first_token") },
+            DocData { id: id2, meta: m2, snippet: s2.to_string(), name: String::from("second_token_longer_name") },
         ];
         idx.index_batch(docs);
         let expected = (m1.token_length as f32 + m2.token_length as f32) / 2.0;
@@ -830,7 +839,7 @@ fn hello() { println!(\"hi\"); }",
             token_length: CodeTokenizer::count_tokens_in_code(&snippet),
             tracking_hash: TrackingHash(Uuid::new_v5(&Uuid::NAMESPACE_DNS, snippet.as_bytes())),
         };
-        let doc = DocData { id, meta, snippet: snippet.clone() };
+        let doc = DocData { id, meta, snippet: snippet.clone(), name: String::from("unique_xylophone_token") };
 
         // Index
         tx.send(bm25_service::Bm25Cmd::IndexBatch { docs: vec![doc] })
