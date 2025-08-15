@@ -58,9 +58,8 @@ impl CodeTokenizer {
                     let upper_seq_then_lower = prev.is_uppercase()
                         && ch.is_uppercase()
                         && next.map_or_else(|| false, |n| n.is_lowercase());
-                    let digit_boundary = (prev.is_ascii_digit() && !ch.is_ascii_digit())
-                        || (!prev.is_ascii_digit() && ch.is_ascii_digit());
-                    if (lower_to_upper || upper_seq_then_lower || digit_boundary) && !cur.is_empty()
+                    // Do not split at letter<->digit boundaries; keep tokens like "v2" intact.
+                    if (lower_to_upper || upper_seq_then_lower) && !cur.is_empty()
                     {
                         parts.push(cur.to_lowercase());
                         cur.clear();
@@ -303,9 +302,8 @@ impl CodeTokenizer {
                     let upper_seq_then_lower = prev.is_uppercase()
                         && ch.is_uppercase()
                         && next.map_or_else(|| false, |n| n.is_lowercase());
-                    let digit_boundary = (prev.is_ascii_digit() && !ch.is_ascii_digit())
-                        || (!prev.is_ascii_digit() && ch.is_ascii_digit());
-                    if (lower_to_upper || upper_seq_then_lower || digit_boundary) && part_len > 0 {
+                    // Do not split at letter<->digit boundaries; keep tokens like "v2" intact.
+                    if (lower_to_upper || upper_seq_then_lower) && part_len > 0 {
                         total += 1;
                         part_len = 0;
                     }
