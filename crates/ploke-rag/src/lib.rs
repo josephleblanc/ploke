@@ -484,7 +484,8 @@ mod tests {
         let source = EmbeddingSource::Local(model);
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db.clone(), embedding_processor)?;
-
+        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
+        rag.bm25_rebuild().await?;
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
         assert!(
             !fused.is_empty(),
@@ -604,10 +605,19 @@ mod tests {
           This indicates either the test fixture or the model changed."
         );
 
-        let results: Vec<(Uuid, f32)> = rag.search_bm25(search_term, 15).await?;
+        // Ensure sparse index is populated so we test BM25 behavior (not dense fallback).
+        rag.bm25_rebuild().await?;
+        let mut results: Vec<(Uuid, f32)> = Vec::new();
+        for _ in 0..10 {
+            results = rag.search_bm25(search_term, 15).await?;
+            if !results.is_empty() {
+                break;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
         assert!(
             !results.is_empty(),
-            "BM25 fallback returned no results for '{}'",
+            "BM25 search returned no results for '{}'",
             search_term
         );
 
@@ -759,7 +769,8 @@ mod tests {
         let source = EmbeddingSource::Local(model);
         let embedding_processor = Arc::new(EmbeddingProcessor::new(source));
         let rag = RagService::new(db.clone(), embedding_processor)?;
-
+        // Rebuild BM25 index so hybrid search uses real sparse scores rather than dense fallback.
+        rag.bm25_rebuild().await?;
         let fused: Vec<(Uuid, f32)> = rag.hybrid_search(search_term, 15).await?;
         assert!(
             !fused.is_empty(),
