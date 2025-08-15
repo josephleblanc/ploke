@@ -2,6 +2,16 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+static TRACER_INIT: std::sync::Once = std::sync::Once::new();
+
+fn ensure_tracer_initialized() {
+    TRACER_INIT.call_once(|| {
+        // Best-effort initialise a global tracer; ignore if already set by tests.
+        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+        let _ = tracing_subscriber::registry().with(fmt_layer).try_init();
+    });
+}
+
 use ploke_core::EmbeddingData;
 use ploke_db::{
     bm25_index::bm25_service::{self, Bm25Cmd},
@@ -60,6 +70,7 @@ impl RagService {
         db: Arc<Database>,
         dense_embedder: Arc<EmbeddingProcessor>,
     ) -> Result<Self, RagError> {
+        ensure_tracer_initialized();
         let bm_embedder = bm25_service::start_default(db.clone())?;
         Ok(Self {
             db,
