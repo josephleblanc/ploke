@@ -27,6 +27,5 @@ Error types across crates are disorganized, and do not share a common organizati
 
 ## Compliance
 - Aligns with planned structure for error handling ([`PROPOSED_ARCH_V3.md`](PROPOSED_ARCH_V3.md)).
-- Improves error handling (C-GOOD-ERR) ([`IDIOMATIC_RUST.md`](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md)).
 
 Accepted git tag: `125de731cc5f5f2284fe5c8fa192bf4d9516ec80`

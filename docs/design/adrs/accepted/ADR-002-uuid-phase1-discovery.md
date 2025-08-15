@@ -32,10 +32,8 @@ Implement **Phase 1: Discovery & Context Setup** as described in the [UUID Refac
 
 ## Compliance
 [PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items: Supports the overall architecture by preparing data for the parallel processing pipeline (`ingest`).
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections:
     - C-COMMON-TRAITS: New context structs should derive common traits.
     - C-GOOD-ERR: Error handling for file I/O and TOML parsing must be robust.
     - C-METADATA: Requires adding `toml` dependency to relevant `Cargo.toml`.
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items:
     - Error handling: Use `Result<_, Box<dyn Error>>` at boundaries.
     - Type System: New context structs must be `Send + Sync` if passed across threads (likely needed for Phase 2).

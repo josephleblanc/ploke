@@ -46,7 +46,5 @@ Implement a minimal change to ensure unique synthetic IDs by incorporating CFG i
     - Stores raw CFG strings on nodes, deferring parsing cost.
 
 ## Compliance
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections: N/A (No direct impact beyond standard data structures)
 
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A
 [PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items: N/A

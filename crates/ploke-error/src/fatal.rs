@@ -1,4 +1,3 @@
-use std::collections::btree_map::Keys;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -136,7 +135,7 @@ impl Clone for FatalError {
                 path: path.clone(),
                 source: source.clone(),
             },
-            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg: msg.clone() }
+            Self::DefaultConfigDir { msg } => Self::DefaultConfigDir { msg }
         }
     }
 }

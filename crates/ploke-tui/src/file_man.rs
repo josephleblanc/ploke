@@ -74,7 +74,7 @@ impl FileManager {
                     Ok(s) => s,
                     Err(e) => {self.send_path_error(e); return;}
                 };
-                self.realtime_event_tx.send(AppEvent::System(SystemEvent::LoadQuery{  query_content, query_name }))
+                self.realtime_event_tx.send(AppEvent::System(SystemEvent::WriteQuery{  query_content, query_name }))
                     .expect("Invariant Violated: AppEvent rx closed before FileManager Dropped");
 
             }

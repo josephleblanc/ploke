@@ -32,9 +32,7 @@ These typed IDs will be used in the fields of node structs (where appropriate) a
 ## Compliance
 [PROPOSED_ARCH_V3.md](/PROPOSED_ARCH_V3.md) Items:
 - Section 5: Component Details (affects data structures like `CodeGraph`, `FunctionNode`, etc.)
-[IDIOMATIC_RUST.md](ai_workflow/AI_Always_Instructions/IDIOMATIC_RUST.md) Sections:
 - C-NEWTYPE: Newtypes provide static distinctions.
 - Type safety: Leverages the type system effectively.
-[CONVENTIONS.md](ai_workflow/AI_Always_Instructions/CONVENTIONS.md) Items: N/A
 
 [ADR-014: Strict Private Encapsulation...]:./ADR-014-strict-private-typed-ids.md

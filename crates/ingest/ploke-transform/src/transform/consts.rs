@@ -79,9 +79,6 @@ mod tests {
         schema::{primary_nodes::ConstNodeSchema, secondary_nodes::AttributeNodeSchema},
     };
 
-    use ploke_test_utils::init_test_tracing;
-    use tracing::Level;
-
     use super::transform_consts;
     #[test]
     fn test_transform_consts() -> Result<(), Box<TransformError>> {

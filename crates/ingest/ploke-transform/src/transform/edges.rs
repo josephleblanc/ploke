@@ -107,9 +107,6 @@ mod tests {
 
     use super::transform_relations;
 
-    use ploke_test_utils::init_test_tracing;
-    use tracing::Level;
-
     #[test]
     fn test_transform_edges() -> Result<(), Box<TransformError>> {
         // init_test_tracing(Level::TRACE);

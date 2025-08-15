@@ -206,36 +206,6 @@ impl AppState {
             rag: None,
         }
     }
-
-    /// Provides read-only access to chat history with a closure.
-    ///
-    /// This method offers a convenient way to access chat state while properly
-    /// managing the read lock lifecycle. The closure receives a reference to
-    /// the underlying `ChatHistory` and can return any computed value.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `R` - The return type of the closure
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Closure that receives `&ChatHistory` and returns `R`
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let message_count = state.with_history(|history| history.messages.len()).await;
-    /// ```
-    ///
-    /// # Notes
-    ///
-    /// This method is maintained for backward compatibility. New code should
-    /// prefer direct access via `state.chat.read().await` for more explicit
-    /// control over lock duration.
-    pub async fn with_history<R>(&self, f: impl FnOnce(&ChatHistory) -> R) -> R {
-        let guard = self.chat.0.read().await;
-        f(&guard)
-    }
 }
 
 #[derive(Debug, Default)]
@@ -415,7 +385,7 @@ pub enum StateCommand {
         alias_or_id: String,
     },
     /// Loads a named query into the database for execution.
-    LoadQuery {
+    WriteQuery {
         query_name: String,
         query_content: String,
     },
@@ -485,15 +455,15 @@ impl StateCommand {
             UpdateDatabase => "UpdateDatabase",
             EmbedMessage { .. } => "EmbedMessage",
             SwitchModel { .. } => "SwitchModel",
-            LoadQuery { .. } => "LoadQuery",
+            WriteQuery { .. } => "WriteQuery",
             ReadQuery { .. } => "ReadQuery",
             SaveDb => "SaveDb",
-            #[allow(non_snake_case)]
-            LoadDb => "LoadDb",
+            LoadDb { .. } => "LoadDb",
             BatchPromptSearch { .. } => "BatchPromptSearch",
             Bm25Rebuild => "Bm25Rebuild",
             Bm25Search { .. } => "Bm25Search",
             HybridSearch { .. } => "HybridSearch",
+            ScanForChange { .. } => "ScanForChange",
             // ... other variants
         }
     }
@@ -870,11 +840,11 @@ pub async fn state_manager(
                 models::switch_model(&state, &event_bus, alias_or_id).await;
             }
 
-            StateCommand::LoadQuery {
+            StateCommand::WriteQuery {
                 query_name,
                 query_content,
             } => {
-                database::load_query(&state, query_content).await;
+                database::write_query(&state, query_content).await;
             }
             StateCommand::ReadQuery {
                 query_name,

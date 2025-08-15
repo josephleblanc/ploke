@@ -213,7 +213,7 @@ fn test_cfg_evaluation() {
             let cfgs: Vec<CfgExpr> = item_mod
                 .attrs
                 .iter()
-                .filter_map(|attr| parse_cfg_attribute(attr))
+                .filter_map(parse_cfg_attribute)
                 .collect();
             modules.push((item_mod, cfgs));
         }

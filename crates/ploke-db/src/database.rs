@@ -1004,6 +1004,7 @@ impl Database {
     /// This is useful when doing a partial update of the database following change detection in
     /// previously parsed and inserted files.
     // WARN: This needs to be tested
+    #[allow(unreachable_code)]
     pub fn get_nodes_by_file_with_cursor(
         &self,
         node_type: NodeType,

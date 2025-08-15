@@ -374,6 +374,11 @@ impl IndexerTask {
         {
             tracing::trace!(target: "dbg_rows","row not_indexed {: <2} | {:?} - {} - {: >30}", i, at, name, idx);
         }
+
+        for ty in NodeType::primary_nodes() {
+            let db_ret = ploke_db::create_index_warn(&db_clone, ty);
+            tracing::info!("db_ret = {:?}", db_ret);
+        }
         tracing::info!("Ending index_workspace: {workspace_dir}");
         let inner = counter.load(std::sync::atomic::Ordering::SeqCst);
         tracing::info!("Ending index_workspace: {workspace_dir}: total count {inner}, counter {total_count_not_indexed} | {inner}/{total_count_not_indexed}");

@@ -256,7 +256,7 @@ mod tests {
         // Initialize tracing for the test
         ploke_test_utils::init_test_tracing(Level::DEBUG);
 
-        let search_term = "AttributedStruct";
+        let search_term = "use_all_const_static";
         let span = tracing::span!(Level::DEBUG, "test_search", search_term = %search_term);
         let _enter = span.enter();
         
@@ -342,4 +342,5 @@ mod tests {
         info!("Test completed successfully - found matching snippet for '{}'", search_term);
         Ok(())
     }
+    //
 }

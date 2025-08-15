@@ -241,7 +241,7 @@ pub mod system {
             file_name: String,
             query_name: String,
         },
-        LoadQuery {
+        WriteQuery {
             query_name: String,
             query_content: String,
         },
@@ -309,7 +309,7 @@ impl AppEvent {
             // update the UI.
             AppEvent::System(SystemEvent::ModelSwitched(_)) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReadQuery { .. }) => EventPriority::Realtime,
-            AppEvent::System(SystemEvent::LoadQuery { .. }) => EventPriority::Realtime,
+            AppEvent::System(SystemEvent::WriteQuery { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::BackupDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::LoadDb { .. }) => EventPriority::Realtime,
             AppEvent::System(SystemEvent::ReIndex { .. }) => EventPriority::Realtime,
@@ -456,7 +456,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                 Ok(status) => {
                     match status.status {
                         IndexStatus::Running => {
-                            tracing::warn!("event bus sending {:?}", status.status);
+                            tracing::info!("event bus sending {:?}", status.status);
                             let result = event_bus
                                 .realtime_tx
                                 .send(AppEvent::IndexingProgress(status));
@@ -465,7 +465,7 @@ async fn run_event_bus(event_bus: Arc<EventBus>) -> Result<()> {
                         }
                         IndexStatus::Completed => {
                             let result = event_bus.realtime_tx.send(AppEvent::IndexingCompleted);
-                            tracing::warn!(
+                            tracing::info!(
                                 "event bus sending {:?} with result {:?}",
                                 status.status,
                                 result

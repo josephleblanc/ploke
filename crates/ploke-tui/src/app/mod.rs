@@ -392,15 +392,15 @@ impl App {
                                 });
 
                             },
-                            SystemEvent::LoadQuery{ query_name, query_content } => {
-                                tracing::debug!("App receives LoadQuery from FileManager for {query_name}:\n{query_content}");
+                            SystemEvent::WriteQuery{ query_name, query_content } => {
+                                tracing::debug!("App receives WriteQuery from FileManager for {query_name}:\n{query_content}");
                                 let shortened_query = query_content.chars().take(20).collect::<String>();
                                 self.send_cmd(StateCommand::AddMessageImmediate {
                                     msg: format!("Query read from file with query name {query_name}:\n\t{shortened_query}..."),
                                     kind: MessageKind::SysInfo,
                                     new_msg_id: Uuid::new_v4(),
                                 });
-                                self.send_cmd(StateCommand::LoadQuery {
+                                self.send_cmd(StateCommand::WriteQuery {
                                     query_name,
                                     query_content,
                                 });

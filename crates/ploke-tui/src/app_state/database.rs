@@ -175,6 +175,7 @@ pub(super) async fn load_db(
         .import_from_backup(&valid_file, &prior_rels_vec)
         .map_err(ploke_db::DbError::from)
         .map_err(ploke_error::Error::from)?;
+    ploke_db::create_index_primary(&state.db)?;
     // .inspect_err(|e| e.emit_error())?;
 
     // get count for sanity and user feedback
@@ -204,7 +205,7 @@ pub(super) async fn load_db(
             }));
             Ok(())
         }
-        Ok(count) => {
+        Ok(_count) => {
             event_bus.send(AppEvent::System(SystemEvent::LoadDb {
                 crate_name,
                 file_dir: Some(Arc::new(valid_file)),
@@ -377,16 +378,16 @@ pub(super) async fn scan_for_change(
     Ok(())
 }
 
-pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
+pub(super) async fn write_query(state: &Arc<AppState>, query_content: String) {
     let result = state.db.raw_query_mut(&query_content)
         .inspect_err(|e| tracing::error!("{e}"));
-    tracing::info!(target: "load_query", "testing query result\n{:#?}", result);
+    tracing::info!(target: "write_query", "testing query result\n{:#?}", result);
     if let Ok(named_rows) = result {
         let mut output = String::new();
         let (header, rows) = (named_rows.headers, named_rows.rows);
         let cols_num = header.len();
         let display_header = header.into_iter().map(|h| format!("{}", h)).join("|");
-        tracing::info!(target: "load_query", "\n{display_header}");
+        tracing::info!(target: "write_query", "\n{display_header}");
         output.push('|');
         output.push_str(&display_header);
         output.push('|');
@@ -410,7 +411,7 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
                     .join("|")
             })
             .for_each(|r| {
-                tracing::info!(target: "load_query", "\n{}", r);
+                tracing::info!(target: "write_query", "\n{}", r);
                 output.push('|');
                 output.push_str(&r);
                 output.push('|');
@@ -422,7 +423,7 @@ pub(super) async fn load_query(state: &Arc<AppState>, query_content: String) {
         if let Ok(file) = out_file {
             // Writes to file within `if let`, only handling the error case if needed
             if let Err(e) = tokio::fs::write(file, output).await {
-                tracing::error!(target: "load_query", "Error writing query output to file {e}")
+                tracing::error!(target: "write_query", "Error writing query output to file {e}")
             }
         }
     }
@@ -610,14 +611,14 @@ mod test {
 
     #[tokio::test]
     async fn test_update_embed() -> color_eyre::Result<()> {
-        init_test_tracing(Level::INFO);
+        // init_test_tracing(Level::DEBUG);
         let workspace_root = workspace_root();
         let target_crate = "fixture_update_embed";
         let workspace = "tests/fixture_crates/fixture_update_embed";
 
         // ensure file begins in same state by using backup
         let backup_file = PathBuf::from(format!("{}/{}/src/backup_main.bak", workspace_root.display(), workspace));
-        tracing::info!("reading from backup files: {}", backup_file.display());
+        tracing::trace!("reading from backup files: {}", backup_file.display());
         let backup_contents = std::fs::read(&backup_file)?;
         let target_main = backup_file.with_file_name("main.rs");
         std::fs::write(&target_main, backup_contents)?;
@@ -704,7 +705,7 @@ mod test {
             let mut system_guard = state.system.write().await;
             let path = workspace_root.join(workspace);
             system_guard.crate_focus = Some(path);
-            tracing::info!("system_guard.crate_focus: {:?}", system_guard.crate_focus);
+            tracing::trace!("system_guard.crate_focus: {:?}", system_guard.crate_focus);
         }
 
         // Create command channel with backpressure
@@ -749,7 +750,7 @@ mod test {
         "#;
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
-        tracing::info!("rows from db:\n{printable_rows}");
+        tracing::trace!("rows from db:\n{printable_rows}");
 
 
         // Spawn subsystems with backpressure-aware command sender
@@ -768,10 +769,10 @@ mod test {
         while let Ok(event) = app_rx.recv().await {
             match event {
                 IndexingStatus { status: IndexStatus::Running, ..} => {
-                    tracing::info!("IndexStatus Running");
+                    tracing::trace!("IndexStatus Running");
                 },
                 IndexingStatus { status: IndexStatus::Completed, ..} => {
-                    tracing::info!("IndexStatus Completed, breaking loop");
+                    tracing::trace!("IndexStatus Completed, breaking loop");
                     break;
                 },
                 _ => {}
@@ -782,7 +783,7 @@ mod test {
         // or *struct{name, id, embedding & 'NOW'}
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
-        tracing::info!("rows from db:\n{printable_rows}");
+        tracing::trace!("rows from db:\n{printable_rows}");
 
         fn iter_col<'a>(query_result: &'a QueryResult, col_title: &str) -> Option< impl Iterator<Item = &'a DataValue> > {
             let col_idx = query_result.headers.iter().enumerate().find(|(idx, col)| col.as_str() == col_title)
@@ -845,32 +846,32 @@ mod test {
             system_guard.crate_focus = Some( workspace_root.join(workspace) );
             target_file = system_guard.crate_focus.clone().expect("Crate focus not set");
         }
-        tracing::info!("target_file before pushes:\n{}", target_file.display());
+        tracing::trace!("target_file before pushes:\n{}", target_file.display());
         target_file.push("src");
         target_file.push("main.rs");
-        tracing::info!("target_file after pushes:\n{}", target_file.display());
+        tracing::trace!("target_file after pushes:\n{}", target_file.display());
 
         // ----- start test function ------
         let (scan_tx, scan_rx) = oneshot::channel();
         let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
-        tracing::info!("result of scan_for_change: {:?}", result);
+        tracing::trace!("result of scan_for_change: {:?}", result);
         // ----- end test start test ------
 
 
         
-        tracing::info!("waiting for scan_rx");
+        tracing::trace!("waiting for scan_rx");
 
         // ----- await on end of test function `scan_for_change` -----
         match scan_rx.await {
-            Ok(_) => tracing::info!("scan_rx received for end of scan_for_change"),
-            Err(_) => tracing::info!("error in scan_rx awaiting on end of scan_for_change")
+            Ok(_) => tracing::trace!("scan_rx received for end of scan_for_change"),
+            Err(_) => tracing::trace!("error in scan_rx awaiting on end of scan_for_change")
         };
 
         
         // print database output after scan
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
-        tracing::info!("rows from db:\n{printable_rows}");
+        tracing::trace!("rows from db:\n{printable_rows}");
 
         // Nothing should have changed after running scan on the target when the target has not
         // changed.
@@ -887,7 +888,7 @@ mod test {
 
         // ----- make change to target file -----
         let contents = std::fs::read_to_string(&target_file)?;
-        tracing::info!("reading file:\n{}", &contents);
+        tracing::trace!("reading file:\n{}", &contents);
         let changed = contents.lines().map(|l| {
             if l.contains("pub struct TestStruct(pub i32)") {
                 "struct TestStruct(pub i32);"
@@ -895,19 +896,19 @@ mod test {
                 l
             }
         }).join("\n");
-        tracing::info!("writing changed file:\n{}", &changed);
+        tracing::trace!("writing changed file:\n{}", &changed);
         std::fs::write(&target_file, changed)?;
 
         // ----- start second scan -----
         let (scan_tx, scan_rx) = oneshot::channel();
         let result = scan_for_change(&state.clone(), &event_bus.clone(), scan_tx).await;
-        tracing::info!("result of after second scan_for_change: {:?}", result);
+        tracing::trace!("result of after second scan_for_change: {:?}", result);
         // ----- end second scan -----
 
         // print database output after second scan
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
-        tracing::info!("rows from db:\n{printable_rows}");
+        tracing::trace!("rows from db:\n{printable_rows}");
 
         // items in changed file, expect to have null embeddings after scan
         assert!(is_name_embed_null(&db_handle, NodeType::Module, "double_inner_mod")?);
@@ -933,10 +934,10 @@ mod test {
         while let Ok(event) = app_rx.recv().await {
             match event {
                 IndexingStatus { status: IndexStatus::Running, ..} => {
-                    tracing::info!("IndexStatus Running");
+                    tracing::trace!("IndexStatus Running");
                 },
                 IndexingStatus { status: IndexStatus::Completed, ..} => {
-                    tracing::info!("IndexStatus Completed, breaking loop");
+                    tracing::trace!("IndexStatus Completed, breaking loop");
                     break;
                 },
                 _ => {}
@@ -946,7 +947,7 @@ mod test {
         // print database output after reindex following the second scan
         let query_result = db_handle.raw_query(script)?;
         let printable_rows = query_result.rows.iter().map(|r| r.iter().join(", ")).join("\n");
-        tracing::info!("rows from db:\n{printable_rows}");
+        tracing::debug!("rows from db:\n{printable_rows}");
 
         // items in changed file, expect to have embeddings again after scan
         assert!(!is_name_embed_null(&db_handle, NodeType::Const, "NUMBER_ONE")?);
@@ -960,9 +961,9 @@ mod test {
         assert!(!is_name_embed_null(&db_handle, NodeType::Function, "simple_four")?);
         assert!(!is_name_embed_null(&db_handle, NodeType::Struct, "OtherStruct")?);
 
-        tracing::info!("changing back:\n{}", target_file.display());
+        tracing::trace!("changing back:\n{}", target_file.display());
         let contents = std::fs::read_to_string(&target_file)?;
-        tracing::info!("reading file:\n{}", &contents);
+        tracing::trace!("reading file:\n{}", &contents);
         let changed = contents.lines().map(|l| {
             if l.contains("struct TestStruct(pub i32)") {
                 "pub struct TestStruct(pub i32);"
@@ -970,7 +971,7 @@ mod test {
                 l
             }
         }).join("\n");
-        tracing::info!("writing changed file:\n{}", &changed);
+        tracing::trace!("writing changed file:\n{}", &changed);
         std::fs::write(&target_file, changed)?;
         Ok(())
     }
