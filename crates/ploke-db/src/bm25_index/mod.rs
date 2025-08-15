@@ -11,8 +11,9 @@ use std::{collections::HashMap, sync::Arc};
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use ploke_core::{EmbeddingData, TrackingHash};
 use uuid::Uuid;
+use cozo::{DataValue, UuidWrapper};
 
-use crate::{Database, DbError};
+use crate::{Database, DbError, NodeType};
 
 pub mod bm25_service;
 
@@ -482,6 +483,75 @@ impl Bm25Indexer {
         }
     }
 
+    /// Rebuild the in-memory BM25 index from the Cozo database.
+    ///
+    /// This scans all primary node relations for (id, name, tracking_hash), computes a corpus
+    /// average document length using the code-aware tokenizer, builds a new embedder with the
+    /// fitted avgdl, and indexes each document using a light-weight representation of the snippet
+    /// (the identifier name doubled to provide a small boost).
+    ///
+    /// The rebuild does not depend on preexisting BM25 metadata and will work on any database
+    /// containing the primary node relations with `id`, `name` and `tracking_hash` attributes.
+    ///
+    /// Returns a fresh Bm25Indexer with the rebuilt state.
+    ///
+    /// Example (no_run):
+    /// ```
+    /// # use std::sync::Arc;
+    /// # use ploke_db::{Database, create_index_primary};
+    /// # use ploke_db::bm25_index::Bm25Indexer;
+    /// # fn example(db: Arc<Database>) -> Result<(), ploke_db::DbError> {
+    /// let idx = Bm25Indexer::rebuild_from_db(db.as_ref())?;
+    /// // Searching for an identifier name present in the database should return results:
+    /// let _ = idx.search("main", 5);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn rebuild_from_db(db: &Database) -> Result<Self, DbError> {
+        let items = collect_rebuild_sources(db)?;
+        let n = items.len();
+
+        // Compute total token count and prepare compact (id, meta, combined) triples
+        let (sum, metas): (usize, Vec<(Uuid, DocMeta, String)>) = items
+            .into_iter()
+            .map(|(id, name, th)| {
+                let token_len = CodeTokenizer::count_tokens_in_code(&name);
+                let meta = DocMeta {
+                    token_length: token_len,
+                    tracking_hash: th,
+                };
+                // Combined text: boost the identifier by doubling it
+                let combined = format!("{0} {0}", name);
+                (id, meta, combined)
+            })
+            .fold(
+                (0usize, Vec::new()),
+                |(acc_sum, mut acc_vec), (id, meta, combined)| {
+                    let new_sum = acc_sum + meta.token_length;
+                    acc_vec.push((id, meta, combined));
+                    (new_sum, acc_vec)
+                },
+            );
+
+        let avgdl = if n == 0 { 0.0 } else { (sum as f32) / (n as f32) };
+        let embedder = EmbedderBuilder::<u32, CodeTokenizer>::with_avgdl(avgdl).build();
+        let mut scorer = Scorer::<Uuid, u32>::new();
+        let mut staged_meta = HashMap::with_capacity(n);
+
+        for (id, meta, combined) in metas.into_iter() {
+            let emb = embedder.embed(&combined);
+            scorer.upsert(&id, emb);
+            staged_meta.insert(id, meta);
+        }
+
+        Ok(Self {
+            embedder,
+            scorer,
+            staged_meta,
+            version: TOKENIZER_VERSION,
+        })
+    }
+
     /// Index a batch of (uuid, snippet, name) items.
     /// Returns the number of items indexed.
     pub fn index_batch(&mut self, batch: Vec<DocData>) -> usize {
@@ -633,6 +703,57 @@ impl Bm25Indexer {
         self.staged_meta.drain().collect()
     }
 }
+
+/// Collect (id, name, tracking_hash) triples for all primary node relations from the database.
+///
+/// This function is used by rebuild to stream a lightweight corpus without loading entire snippets.
+/// It filters out rows where `name` or `tracking_hash` are missing.
+///
+/// Example (no_run):
+/// ```
+/// # use std::sync::Arc;
+/// # use ploke_db::bm25_index::collect_rebuild_sources;
+/// # use ploke_db::Database;
+/// # fn example(db: Arc<Database>) -> Result<(), ploke_db::DbError> {
+/// let triples = collect_rebuild_sources(db.as_ref())?;
+/// assert!(triples.len() >= 0);
+/// # Ok(())
+/// # }
+/// ```
+pub(crate) fn collect_rebuild_sources(
+    db: &Database,
+) -> Result<Vec<(Uuid, String, TrackingHash)>, DbError> {
+    let mut out: Vec<(Uuid, String, TrackingHash)> = Vec::new();
+    for node in NodeType::primary_nodes().iter() {
+        let rel = node.relation_str();
+        // Pull id, name and tracking_hash from each primary relation.
+        // We keep the script minimal to avoid unnecessary allocations and conversions.
+        let script =
+            format!("?[id, name, tracking_hash] := *{} {{ id, name, tracking_hash }}", rel);
+        let res = db.raw_query(&script)?;
+        for row in res.rows.iter() {
+            if row.len() < 3 {
+                continue;
+            }
+            let id = match &row[0] {
+                DataValue::Uuid(UuidWrapper(u)) => *u,
+                _ => continue,
+            };
+            let name = match &row[1] {
+                DataValue::Str(s) if !s.is_empty() => s.clone(),
+                _ => continue,
+            };
+            let th = match &row[2] {
+                DataValue::Uuid(UuidWrapper(u)) => TrackingHash(*u),
+                _ => continue,
+            };
+            out.push((id, name, th));
+        }
+    }
+    Ok(out)
+}
+
+// ------------------------- Tests -------------------------
 
 // ------------------------- Tests -------------------------
 
@@ -907,5 +1028,59 @@ fn hello() { println!(\"hi\"); }",
             .expect("send finalize");
         let ack = f_rx.await.expect("await finalize ack");
         assert!(ack.is_ok(), "finalize ack should be Ok");
+    }
+
+    #[test]
+    fn rebuild_from_db_builds_index_and_searches_by_name() {
+        let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
+        let idx = Bm25Indexer::rebuild_from_db(db.as_ref()).expect("rebuild from db");
+        let triples = collect_rebuild_sources(db.as_ref()).expect("collect names");
+        assert!(
+            !triples.is_empty(),
+            "expected some primary nodes to rebuild from"
+        );
+        let query = triples[0].1.clone();
+        let results = idx.search(&query, 5);
+        assert!(
+            !results.is_empty(),
+            "expected non-empty results for known identifier"
+        );
+    }
+
+    #[tokio::test]
+    async fn bm25_service_rebuild_command_reindexes_from_db() {
+        use std::time::Duration;
+        let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
+        let tx = bm25_service::start_default(db.clone()).expect("start bm25 service");
+
+        // Trigger rebuild
+        tx.send(bm25_service::Bm25Cmd::Rebuild)
+            .await
+            .expect("send rebuild");
+
+        // Choose a known identifier from the database
+        let triples = collect_rebuild_sources(db.as_ref()).expect("collect names");
+        assert!(!triples.is_empty(), "expected corpus from DB");
+        let query = triples[0].1.clone();
+
+        // Retry a few times to allow the actor to complete the rebuild before searching.
+        let mut got: Vec<(Uuid, f32)> = Vec::new();
+        for _ in 0..10 {
+            let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
+            tx.send(bm25_service::Bm25Cmd::Search {
+                query: query.clone(),
+                top_k: 5,
+                resp: resp_tx,
+            })
+            .await
+            .expect("send search");
+            let r = resp_rx.await.expect("await search");
+            if !r.is_empty() {
+                got = r;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(!got.is_empty(), "expected results after rebuild");
     }
 }
