@@ -202,6 +202,11 @@ impl RagService {
             let result = search_similar_args(args)?;
 
             // Convert distance to similarity score (lower distance = higher similarity)
+            // Why do you collect here when in the very next line you extend `all_results` AI?
+            // Why not either leave typed_results as an iterator and then extend once?
+            // You are adding completely redundant allocations for no reason I can identify. Is
+            // this because you do not understand what "allocation" means, or is it because I was
+            // not clear enough in my instructions AI?
             let typed_results: Vec<(Uuid, f32)> = result
                 .typed_data
                 .v
